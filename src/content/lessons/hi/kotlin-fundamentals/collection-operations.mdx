@@ -1,0 +1,133 @@
+---
+title: map, filter, groupBy और उनके साथी
+description: आप जो भी loop लिखने वाले थे, वह लगभग हमेशा पहले से एक नाम वाले function की तरह मौजूद है। यही शब्दावली Kotlin code को छोटा बनाती है, बिना उसे चतुर बनाए।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+Loop पढ़ने वाले को *कैसे* बताता है। `filter { it.isActive }` बताता है *क्या*। Code आप लिखने से कहीं
+ज़्यादा पढ़ते हैं, इसलिए दूसरी चीज़ ठीक से सीखने लायक़ है — और यही शब्दावली Phase 3 में `Flow` पर
+दोबारा काम आएगी।
+
+## चार जो रोज़ काम आएँगे
+
+```kotlin title="Core.kt" numbered runnable
+data class User(val name: String, val age: Int, val city: String)
+
+fun main() {
+    val users = listOf(
+        User("Asha", 30, "Pune"),
+        User("Ravi", 25, "Delhi"),
+        User("Meera", 35, "Pune"),
+    )
+
+    println(users.map { it.name })                 // हर एक को बदलिए
+    println(users.filter { it.age > 26 })          // कुछ ही रखिए
+    println(users.find { it.city == "Delhi" })     // पहला मिलान, या null
+    println(users.sortedBy { it.age })             // क्रमित copy
+}
+```
+
+| Function | किस सवाल का जवाब |
+| --- | --- |
+| `map` | "हर item को किसी और चीज़ में बदलो" |
+| `filter` | "सिर्फ़ वही रखो जहाँ…" |
+| `find` / `first` | "एक मिलता हुआ दो" — `find` null देता है, `first` फेंकता है |
+| `sortedBy` | "वही items, अलग क्रम" |
+
+इन सब में से हर एक **नई** collection लौटाता है। Original छुआ तक नहीं जाता, इसीलिए ये सुरक्षित रूप
+से chain होते हैं।
+
+## Grouping और folding
+
+```kotlin title="GroupFold.kt" numbered runnable
+data class Order(val city: String, val amount: Int)
+
+fun main() {
+    val orders = listOf(
+        Order("Pune", 500), Order("Delhi", 300), Order("Pune", 200),
+    )
+
+    println(orders.groupBy { it.city })
+    // {Pune=[Order(Pune,500), Order(Pune,200)], Delhi=[Order(Delhi,300)]}
+
+    println(orders.sumOf { it.amount })            // 1000
+    println(orders.associate { it.city to it.amount })
+    println(orders.fold(0) { acc, o -> acc + o.amount })
+}
+```
+
+`fold` सबसे आम रूप है: एक value से शुरू कीजिए, collection पर चलिए, जोड़ते जाइए। `sumOf`, `count`
+और `joinToString` सब `fold` ही हैं, बस जोड़ने का तरीक़ा तय है।
+
+## Flatten करना और chaining
+
+```kotlin title="Chaining.kt" numbered runnable
+data class Post(val author: String, val tags: List<String>)
+
+fun main() {
+    val posts = listOf(
+        Post("Asha", listOf("kotlin", "android")),
+        Post("Ravi", listOf("android", "compose")),
+    )
+
+    val tags = posts
+        .flatMap { it.tags }      // सारे tags की एक चपटी list
+        .distinct()               // duplicates हटाइए
+        .sorted()
+
+    println(tags)                 // [android, compose, kotlin]
+}
+```
+
+Chain को ऊपर से नीचे एक वाक्य की तरह पढ़िए: posts लीजिए, उनके सारे tags लीजिए, duplicates हटाइए,
+sort कीजिए। पूरा आकर्षण यही है।
+
+<Tip bare>
+`map { }.filter { }` list पर दो बार चलता है। गिने-चुने items के लिए यह कोई बात नहीं। हज़ारों के लिए
+आगे `.asSequence()` और अंत में `.toList()` लगाइए — फिर हर item पूरी chain से एक ही बार, आलसी तरीक़े
+से गुज़रता है।
+</Tip>
+
+## अंदर की बात: ये बस inline functions हैं
+
+`filter` एक सादा function है जो lambda लेता है और `inline` लिखा है। Compiler उसका body call site
+पर copy कर देता है, इसलिए न lambda object बनता है न extra call होती है। एक `filter` chain लगभग वही
+loop बन जाती है जो आप हाथ से लिखते।
+
+इसीलिए Kotlin में "functional style इस्तेमाल कीजिए" कहने पर performance का कोई अपराधबोध नहीं होता,
+जो कुछ दूसरी भाषाओं में होता है।
+
+<Pitfall title="तीन जो review में दिखती हैं">
+**`find` की जगह `first`।** कुछ न मिले तो `first { }` `NoSuchElementException` फेंकता है;
+`find { }` `null` लौटाता है। चुनाव इस बात से कीजिए कि कुछ न मिलने पर क्या होना चाहिए।
+
+**`forEach` की जगह `map`।** नतीजा इस्तेमाल नहीं कर रहे तो आपने बेकार एक list बना दी। `forEach`
+कहता है "मैं यह side effect के लिए कर रहा हूँ"।
+
+**बड़ी list पर छह operations chain करना।** हर क़दम नई collection बनाता है। या `asSequence()`
+लगाइए, या एक ही `fold` में कर लीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. Users की list से 30 से ऊपर वालों के नाम निकालिए — uppercase और sorted, एक ही chain में।
+2. Orders को city से group कीजिए, फिर उसे city से कुल amount वाले map में बदलिए।
+3. एक ही चीज़ दो बार लिखिए: एक बार `fold` से, एक बार `sumOf` से। कौन सा बेहतर पढ़ता है?
+4. 1,00,000 items की list पर `map`, `filter`, `take(5)` की chain लीजिए। समझाइए कि `asSequence()`
+   से हर क़दम कितने items छूता है, यह कैसे बदल जाता है।
+
+## सारांश
+
+| काम | Function |
+| --- | --- |
+| हर item बदलिए | `map` |
+| मिलते हुए रखिए | `filter` |
+| एक मिलान | `find` (null) / `first` (फेंकता है) |
+| क्रम | `sortedBy`, `sortedByDescending` |
+| Key से बाँटिए | `groupBy` |
+| एक value में समेटिए | `fold`, `sumOf`, `count` |
+| Lists की list से एक list | `flatMap` |
+| Duplicates हटाइए | `distinct`, `distinctBy` |
+| आलसी, एक ही pass | `asSequence()` … `toList()` |

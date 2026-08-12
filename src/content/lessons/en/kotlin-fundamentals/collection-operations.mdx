@@ -1,0 +1,134 @@
+---
+title: map, filter, groupBy and friends
+description: Almost every loop you were about to write already exists as a named function. Learning the vocabulary is what makes Kotlin code short without making it clever.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+A loop tells the reader *how*. `filter { it.isActive }` tells them *what*. Since you read
+code far more often than you write it, the second is worth learning properly — and it is the
+exact vocabulary you will use again for `Flow` in Phase 3.
+
+## The four you will use daily
+
+```kotlin title="Core.kt" numbered runnable
+data class User(val name: String, val age: Int, val city: String)
+
+fun main() {
+    val users = listOf(
+        User("Asha", 30, "Pune"),
+        User("Ravi", 25, "Delhi"),
+        User("Meera", 35, "Pune"),
+    )
+
+    println(users.map { it.name })                 // transform each
+    println(users.filter { it.age > 26 })          // keep some
+    println(users.find { it.city == "Delhi" })     // first match, or null
+    println(users.sortedBy { it.age })             // ordered copy
+}
+```
+
+| Function | Question it answers |
+| --- | --- |
+| `map` | "turn each item into something else" |
+| `filter` | "keep only the ones where…" |
+| `find` / `first` | "give me one that matches" — `find` returns null, `first` throws |
+| `sortedBy` | "same items, different order" |
+
+Every one of these returns a **new** collection. The original is untouched, which is why they
+chain safely.
+
+## Grouping and folding
+
+```kotlin title="GroupFold.kt" numbered runnable
+data class Order(val city: String, val amount: Int)
+
+fun main() {
+    val orders = listOf(
+        Order("Pune", 500), Order("Delhi", 300), Order("Pune", 200),
+    )
+
+    println(orders.groupBy { it.city })
+    // {Pune=[Order(Pune,500), Order(Pune,200)], Delhi=[Order(Delhi,300)]}
+
+    println(orders.sumOf { it.amount })            // 1000
+    println(orders.associate { it.city to it.amount })
+    println(orders.fold(0) { acc, o -> acc + o.amount })
+}
+```
+
+`fold` is the general case: start from a value, walk the collection, combine. `sumOf`,
+`count` and `joinToString` are all `fold` with a specific combine step.
+
+## Flattening and chaining
+
+```kotlin title="Chaining.kt" numbered runnable
+data class Post(val author: String, val tags: List<String>)
+
+fun main() {
+    val posts = listOf(
+        Post("Asha", listOf("kotlin", "android")),
+        Post("Ravi", listOf("android", "compose")),
+    )
+
+    val tags = posts
+        .flatMap { it.tags }      // one flat list of all tags
+        .distinct()               // remove duplicates
+        .sorted()
+
+    println(tags)                 // [android, compose, kotlin]
+}
+```
+
+Read a chain top to bottom as a sentence: take the posts, take all their tags, remove
+duplicates, sort. That is the whole appeal.
+
+<Tip bare>
+`map { }.filter { }` walks the list twice. For a handful of items that is irrelevant. For
+thousands, put `.asSequence()` in front and `.toList()` at the end — then each item flows
+through the whole chain once, lazily.
+</Tip>
+
+## Under the hood: these are just inline functions
+
+`filter` is an ordinary function taking a lambda, marked `inline`. The compiler copies the
+body into the call site, so there is no lambda object and no extra call. A `filter` chain
+compiles to roughly the loop you would have written by hand.
+
+That is why "use the functional style" carries no performance guilt in Kotlin, unlike some
+other languages.
+
+<Pitfall title="Three that show up in review">
+**`first` where you meant `find`.** `first { }` throws `NoSuchElementException` when nothing
+matches; `find { }` returns `null`. Pick by what should happen when there is no match.
+
+**`map` when you meant `forEach`.** If you ignore the result, you built a list for nothing.
+`forEach` says "I am doing this for the side effect".
+
+**Chaining six operations on a huge list.** Each step allocates a new collection. Either add
+`asSequence()`, or do it in one `fold`.
+</Pitfall>
+
+## Practice
+
+1. From a list of users, produce the names of everyone over 30, uppercased and sorted — in
+   one chain.
+2. Group a list of orders by city, then turn that into a map of city to total amount.
+3. Write the same thing twice: once with `fold`, once with `sumOf`. Which reads better?
+4. Take a chain of `map`, `filter`, `take(5)` over a list of 100 000 items. Explain what
+   `asSequence()` changes about how many items each step touches.
+
+## Recap
+
+| Task | Function |
+| --- | --- |
+| Transform every item | `map` |
+| Keep matching items | `filter` |
+| One match | `find` (null) / `first` (throws) |
+| Order | `sortedBy`, `sortedByDescending` |
+| Bucket by a key | `groupBy` |
+| Collapse to one value | `fold`, `sumOf`, `count` |
+| List of lists to one list | `flatMap` |
+| Remove duplicates | `distinct`, `distinctBy` |
+| Lazy, single pass | `asSequence()` … `toList()` |

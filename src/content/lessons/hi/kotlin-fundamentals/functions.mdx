@@ -1,0 +1,116 @@
+---
+title: Functions, default और named arguments
+description: Kotlin के functions वे दो चीज़ें हटा देते हैं जिनसे Java की APIs फैल जाती हैं — overloads और builders। एक ही signature छह का काम कर देता है।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+कोई भी Java library खोलिए, एक ही method पाँच बार मिलेगा अलग-अलग parameter lists के साथ। Kotlin
+को एक ही चाहिए, क्योंकि parameters के default हो सकते हैं और बुलाने वाला उन्हें नाम से दे सकता है।
+
+## Function का ढाँचा
+
+```kotlin title="Shapes.kt" numbered runnable
+fun add(a: Int, b: Int): Int {
+    return a + b
+}
+
+// single expression: return type ख़ुद पता चल जाता है, न braces न return
+fun multiply(a: Int, b: Int) = a * b
+
+// कुछ काम की चीज़ नहीं लौटाता — type Unit है और छोड़ा जा सकता है
+fun log(message: String) {
+    println("[app] $message")
+}
+
+fun main() {
+    println(add(2, 3))
+    println(multiply(2, 3))
+    log("started")
+}
+```
+
+Parameters हमेशा `val` होते हैं। Function के अंदर उन्हें दोबारा assign नहीं कर सकते, और यह
+जान-बूझकर है — बीच में मतलब बदल देने वाला parameter पढ़ने वाले के लिए जाल है।
+
+## Default arguments
+
+```kotlin title="Defaults.kt" numbered runnable
+fun greet(name: String, greeting: String = "Hello", excited: Boolean = false): String {
+    val mark = if (excited) "!" else "."
+    return "$greeting, $name$mark"
+}
+
+fun main() {
+    println(greet("Asha"))
+    println(greet("Ravi", "Namaste"))
+    println(greet("Meera", excited = true))     // बीच वाला छोड़ दिया
+}
+```
+
+आख़िरी call ही असली बात है। Named arguments के बिना आपको `greeting` सिर्फ़ इसलिए देना पड़ता कि
+`excited` तक पहुँच सकें। इनके साथ आप सीधे उसी parameter को संबोधित करते हैं जिसकी आपको परवाह है।
+
+## Named arguments call site पढ़ने लायक़ बनाते हैं
+
+```kotlin title="Named.kt" numbered
+// यहाँ `true, false, true` का मतलब क्या है?
+showDialog("Delete?", true, false, true)
+
+// अब साफ़ है, और क्रम बदलना भी safe है
+showDialog(
+    message = "Delete?",
+    cancelable = true,
+    destructive = false,
+    showIcon = true,
+)
+```
+
+<Tip bare>
+एक सादा नियम: कोई भी boolean parameter call site पर नाम के साथ दीजिए। `setEnabled(true)` ठीक
+है; `configure(true, false)` पहेली है।
+</Tip>
+
+## Local functions
+
+दूसरे function के अंदर लिखा function अपने बाहर का scope देख सकता है, जिससे आप किसी टुकड़े को नाम दे
+सकते हैं बिना उसे बाहर दिखाए:
+
+```kotlin title="Local.kt" numbered runnable
+fun report(values: List<Int>): String {
+    fun format(n: Int) = if (n < 0) "($n)" else "$n"   // बाहर कुछ नहीं दिखता
+    return values.joinToString(", ") { format(it) }
+}
+
+fun main() = println(report(listOf(3, -4, 5)))
+```
+
+<Pitfall title="दो बातें जो Java से आने वालों को चौंकाती हैं">
+**Default arguments Java को दिखते ही नहीं।** Java को एक ही method दिखता है, सारे parameters के
+साथ। Java से छोटा रूप बुलाना हो तो `@JvmOverloads` लगाइए, compiler उसके लिए overloads बना देगा।
+
+**Mutable object वाला default हर call पर नया बनता है, एक बार नहीं।** `fun f(list:
+MutableList<Int> = mutableListOf())` हर बार नई list बनाता है — जो आप चाहते भी हों, और Python के
+classic जाल का उल्टा है। कौन सी भाषा क्या करती है, यह पता होना चाहिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `fun formatPrice(amount: Int, currency: String = "INR", showSymbol: Boolean = true)` लिखिए
+   और तीन तरीक़े से बुलाइए: सारे defaults, सिर्फ़ currency, और सिर्फ़ `showSymbol`।
+2. `fun square(n: Int): Int { return n * n }` को single-expression function बना दीजिए।
+3. चार parameters वाला एक function लीजिए जिसमें दो boolean हों। Call दो बार लिखिए — position से
+   और नाम से। Review में कौन सा पढ़ना पसंद करेंगे?
+4. `fun f(a: Int) { a = 5 }` क्यों नहीं लिख सकते?
+
+## सारांश
+
+| Feature | क्या देता है |
+| --- | --- |
+| Single-expression `=` | छोटे functions बिना तामझाम के |
+| `Unit` | जब कुछ काम का वापस न आए |
+| Default arguments | Overloads के पूरे परिवार की जगह एक function |
+| Named arguments | Call site जो ख़ुद अपना मतलब बता दे |
+| Local functions | Logic को नाम देना बिना scope बढ़ाए |
+| `@JvmOverloads` | Defaults को Java से इस्तेमाल लायक़ बनाना |

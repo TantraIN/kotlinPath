@@ -1,0 +1,112 @@
+---
+title: vararg, infix aur local functions
+description: Teen chhote features jo tay karte hain ki API ek wakya ki tarah padhegi ya ek form ki tarah. Apni library likhne se bahut pehle hi aap teeno use kar rahe hoge.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Aap pehle se `listOf(1, 2, 3)` bulate ho, `1 to "one"` likhte ho, aur `0 until 10` istemal
+karte ho. Ye koi khaas syntax nahi hai — ye saade functions hain jo isi lesson ke features
+use karte hain. Ye kaise chalte hain ye pata ho to library code jadoo se hatkar padhne laayak
+cheez ban jata hai.
+
+## `vararg`: kitne bhi arguments
+
+```kotlin title="Vararg.kt" numbered runnable
+fun total(vararg amounts: Int): Int {
+    var sum = 0
+    for (amount in amounts) sum += amount    // andar ye IntArray hai
+    return sum
+}
+
+fun main() {
+    println(total())
+    println(total(10, 20, 30))
+
+    val existing = intArrayOf(1, 2, 3)
+    println(total(*existing))                // maujooda array ko spread karo
+}
+```
+
+Do niyam: ek function mein ek hi `vararg`, aur pehle se array ho to `*` spread operator.
+`listOf`, `setOf` aur `printf` theek isi tarah declare hue hain.
+
+<Tip bare>
+`vararg` ko aakhir mein rakho, warna uske baad ka har parameter naam se dena padega. Kotlin
+kahin bhi rakhne deta hai, par keemat call site chukata hai.
+</Tip>
+
+## `infix`: bina dot ke bulana
+
+```kotlin title="Infix.kt" numbered runnable
+infix fun Int.repeatedTimes(times: Int): String = "$this ".repeat(times).trim()
+
+fun main() {
+    println(3 repeatedTimes 4)          // wakya ki tarah padhta hai
+    println(3.repeatedTimes(4))         // wahi call, saade roop mein
+}
+```
+
+`infix` function ya to member hona chahiye ya extension, theek ek parameter lena chahiye, aur
+wo parameter na `vararg` ho na uska default ho. `to`, `until`, `downTo` aur `step` — sab
+standard library ke infix functions hi hain:
+
+```kotlin title="Stdlib.kt" numbered runnable
+fun main() {
+    val pair = 1 to "one"               // Pair(1, "one")
+    val map = mapOf(1 to "one", 2 to "two")
+    println("$pair $map")
+    for (i in 0 until 3) print("$i ")
+}
+```
+
+<Pitfall title="Jahan infix chaturai nahi rehti">
+Infix dot hata deta hai, aur uske saath wo ishara bhi jo kehta hai "ye ek method call hai".
+Ise tabhi use karo jab natija sach mein angrezi ki tarah padhe — `1 to "one"`, `x shl 2`. Koi
+`user save database` API nahi, paheli hai.
+
+Iski precedence arithmetic se kam bhi hai: `1 to 2 + 3` ka matlab `1 to 5` hai, `(1 to 2) + 3`
+nahi. Shak ho to bracket laga do.
+</Pitfall>
+
+## Local functions, aur wo kya pakadte hain
+
+```kotlin title="Local.kt" numbered runnable
+fun validate(username: String, email: String): List<String> {
+    val errors = mutableListOf<String>()
+
+    // `errors` bina diye hi dikhta hai
+    fun require(condition: Boolean, message: String) {
+        if (!condition) errors += message
+    }
+
+    require(username.length >= 3, "username too short")
+    require("@" in email, "email looks wrong")
+    return errors
+}
+
+fun main() = println(validate("jo", "nope"))
+```
+
+Local function apne aas-paas ke variables ko pakad leta hai. Ye suvidha hai, aur yahi wajah
+hai ki use aise hi bahar nahi nikala ja sakta — bahar le jaane ka matlab hai jo kuch usne
+pakda tha wo sab parameter mein dena.
+
+## Practice
+
+1. `fun joinAll(separator: String = ", ", vararg parts: String): String` likho. Ise bina
+   parts ke bulao, teen ke saath bulao, aur ek maujooda array spread karke bulao.
+2. `infix fun Int.percentOf(total: Int): Double` likho aur `20 percentOf 400` ki tarah use
+   karo. Phir tark do ki yahan infix sahi chunav tha ya nahi.
+3. `1 to 2 + 3` ki value ka andaza lagao, phir jaanch lo.
+4. Upar wale `validate` se `require` ko top level par le jao. Kaun sa extra parameter dena
+   pada, aur kyun?
+
+## Recap
+
+| Feature | Niyam | Stdlib mein kahan dikha |
+| --- | --- | --- |
+| `vararg` | Ek function mein ek; `*` se spread | `listOf`, `setOf` |
+| `infix` | Ek parameter, na default na vararg | `to`, `until`, `step` |
+| Local function | Apna aas-paas ka scope pakadta hai | Validation aur formatting helpers |

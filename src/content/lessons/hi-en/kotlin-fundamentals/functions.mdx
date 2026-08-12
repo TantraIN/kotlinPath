@@ -1,0 +1,120 @@
+---
+title: Functions, default aur named arguments
+description: Kotlin ke functions wo do cheezein hata dete hain jinse Java ki APIs phail jati hain — overloads aur builders. Ek hi signature chhah ka kaam kar deta hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Koi bhi Java library kholo, ek hi method paanch baar milega alag-alag parameter lists ke
+saath. Kotlin ko ek hi chahiye, kyunki parameters ke default ho sakte hain aur bulane wala
+unhe naam se de sakta hai.
+
+## Function ka dhaancha
+
+```kotlin title="Shapes.kt" numbered runnable
+fun add(a: Int, b: Int): Int {
+    return a + b
+}
+
+// single expression: return type khud pata chal jata hai, na braces na return
+fun multiply(a: Int, b: Int) = a * b
+
+// kuch kaam ki cheez nahi lautata — type Unit hai aur chhoda ja sakta hai
+fun log(message: String) {
+    println("[app] $message")
+}
+
+fun main() {
+    println(add(2, 3))
+    println(multiply(2, 3))
+    log("started")
+}
+```
+
+Parameters hamesha `val` hote hain. Function ke andar unhe dobara assign nahi kar sakte, aur
+ye jaan-boojh kar hai — beech mein matlab badal dene wala parameter padhne wale ke liye jaal
+hai.
+
+## Default arguments
+
+```kotlin title="Defaults.kt" numbered runnable
+fun greet(name: String, greeting: String = "Hello", excited: Boolean = false): String {
+    val mark = if (excited) "!" else "."
+    return "$greeting, $name$mark"
+}
+
+fun main() {
+    println(greet("Asha"))
+    println(greet("Ravi", "Namaste"))
+    println(greet("Meera", excited = true))     // beech wala chhod diya
+}
+```
+
+Aakhri call hi asli baat hai. Named arguments ke bina aapko `greeting` sirf isliye dena padta
+ki `excited` tak pahunch sako. Inke saath aap seedhe usi parameter ko sambodhit karte ho
+jiski aapko parwah hai.
+
+## Named arguments call site padhne laayak banate hain
+
+```kotlin title="Named.kt" numbered
+// yahan `true, false, true` ka matlab kya hai?
+showDialog("Delete?", true, false, true)
+
+// ab saaf hai, aur kram badalna bhi safe hai
+showDialog(
+    message = "Delete?",
+    cancelable = true,
+    destructive = false,
+    showIcon = true,
+)
+```
+
+<Tip bare>
+Ek saada niyam: koi bhi boolean parameter call site par naam ke saath do. `setEnabled(true)`
+theek hai; `configure(true, false)` paheli hai.
+</Tip>
+
+## Local functions
+
+Dusre function ke andar likha function apne bahar ka scope dekh sakta hai, jisse aap kisi
+tukde ko naam de sakte ho bina use bahar dikhaye:
+
+```kotlin title="Local.kt" numbered runnable
+fun report(values: List<Int>): String {
+    fun format(n: Int) = if (n < 0) "($n)" else "$n"   // bahar kuch nahi dikhta
+    return values.joinToString(", ") { format(it) }
+}
+
+fun main() = println(report(listOf(3, -4, 5)))
+```
+
+<Pitfall title="Do baatein jo Java se aane walon ko chaunkati hain">
+**Default arguments Java ko dikhte hi nahi.** Java ko ek hi method dikhta hai, saare
+parameters ke saath. Java se chhota roop bulana ho to `@JvmOverloads` lagao, compiler uske
+liye overloads bana dega.
+
+**Mutable object wala default har call par naya banta hai, ek baar nahi.** `fun f(list:
+MutableList<Int> = mutableListOf())` har baar nayi list banata hai — jo aap chahte bhi ho, aur
+Python ke classic jaal ka ulta hai. Kaun si language kya karti hai, ye pata hona chahiye.
+</Pitfall>
+
+## Practice
+
+1. `fun formatPrice(amount: Int, currency: String = "INR", showSymbol: Boolean = true)` likho
+   aur teen tarike se bulao: saare defaults, sirf currency, aur sirf `showSymbol`.
+2. `fun square(n: Int): Int { return n * n }` ko single-expression function bana do.
+3. Chaar parameters wala ek function lo jismein do boolean hon. Call do baar likho — position
+   se aur naam se. Review mein kaun sa padhna pasand karoge?
+4. `fun f(a: Int) { a = 5 }` kyun nahi likh sakte?
+
+## Recap
+
+| Feature | Kya deta hai |
+| --- | --- |
+| Single-expression `=` | Chhote functions bina tamjhaam ke |
+| `Unit` | Jab kuch kaam ka wapas na aaye |
+| Default arguments | Overloads ke pure parivaar ki jagah ek function |
+| Named arguments | Call site jo khud apna matlab bata de |
+| Local functions | Logic ko naam dena bina scope badhaye |
+| `@JvmOverloads` | Defaults ko Java se istemal laayak banana |

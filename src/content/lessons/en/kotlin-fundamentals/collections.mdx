@@ -1,0 +1,124 @@
+---
+title: List, Set, Map and their mutable twins
+description: Kotlin splits every collection into a read-only view and a mutable one. Choosing correctly is the cheapest bug prevention in the language.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Most app state is a collection: a list of messages, a set of selected ids, a map of settings.
+Kotlin makes you say, in the type, whether that collection can change. Getting this right
+stops a whole family of "who modified my list?" bugs before they exist.
+
+## Three shapes
+
+```kotlin title="Three.kt" numbered runnable
+fun main() {
+    val names = listOf("Asha", "Ravi", "Asha")   // ordered, duplicates allowed
+    val ids = setOf(1, 2, 2, 3)                  // unordered, duplicates collapse
+    val ages = mapOf("Asha" to 30, "Ravi" to 25) // keys to values
+
+    println(names)   // [Asha, Ravi, Asha]
+    println(ids)     // [1, 2, 3]
+    println(ages)    // {Asha=30, Ravi=25}
+}
+```
+
+| Type | Ordered | Duplicates | Ask it |
+| --- | --- | --- | --- |
+| `List` | Yes | Yes | "what is at position 3?" |
+| `Set` | No guarantee | No | "is this already in here?" |
+| `Map` | No guarantee | Keys unique | "what is stored under this key?" |
+
+<Tip bare>
+If your code does `list.contains(x)` inside a loop, you wanted a `Set`. `contains` is a scan
+on a list and a hash lookup on a set — the difference shows up the moment the data grows.
+</Tip>
+
+## Read-only versus mutable
+
+```kotlin title="Mutable.kt" numbered runnable
+fun main() {
+    val fixed = listOf(1, 2, 3)
+    // fixed.add(4)                       // no such function
+
+    val growing = mutableListOf(1, 2, 3)
+    growing.add(4)
+    growing.removeAt(0)
+    println(growing)                      // [2, 3, 4]
+
+    val readOnlyView: List<Int> = growing // same object, narrower type
+    println(readOnlyView.size)
+}
+```
+
+This is the subtle part: `List` is **read-only**, not immutable. `readOnlyView` above cannot
+be used to modify the list, but the list itself can still change through `growing`. If you
+need a snapshot nobody can alter, copy it: `growing.toList()`.
+
+## Reading safely
+
+```kotlin title="Access.kt" numbered runnable
+fun main() {
+    val names = listOf("Asha", "Ravi")
+
+    println(names[0])                 // Asha
+    // println(names[5])              // IndexOutOfBoundsException
+    println(names.getOrNull(5))       // null
+    println(names.getOrElse(5) { "?" })// ?
+    println(names.firstOrNull())      // Asha
+
+    val ages = mapOf("Asha" to 30)
+    println(ages["Ravi"])             // null — maps return null, they do not throw
+    println(ages.getOrDefault("Ravi", 0))
+}
+```
+
+Note the asymmetry: indexing a list out of range throws, but a missing map key returns
+`null`. That is worth remembering, because it is the opposite of what most people guess.
+
+## What a `Set` and `Map` need from your types
+
+```kotlin title="Keys.kt" numbered runnable
+class Plain(val id: Int)
+data class Good(val id: Int)
+
+fun main() {
+    println(setOf(Plain(1), Plain(1)).size)   // 2 — different objects
+    println(setOf(Good(1), Good(1)).size)     // 1 — equal contents
+}
+```
+
+Sets and map keys work by `equals` and `hashCode`. An ordinary class compares by identity, so
+two equal-looking objects are two different entries. This is the first place `data class`
+stops being a convenience and becomes a correctness requirement.
+
+<Pitfall title="Two that cause real bugs">
+**Using a `var` property as a map key.** Change it after insertion and its hash changes — the
+entry becomes unreachable, still occupying space. Keys must be effectively immutable, which
+is another reason keys are usually `data class` with `val` properties.
+
+**Exposing a `MutableList` from a class.** Anyone holding the reference can change your
+state from outside. Expose `List` and keep the `MutableList` private.
+</Pitfall>
+
+## Practice
+
+1. Build a `List`, a `Set` and a `Map` of the same five values, two of which repeat. Print
+   each and explain the sizes.
+2. Write a class holding a private `mutableListOf<String>()` that exposes only a read-only
+   `List` and an `add` function. Prove from outside that the list cannot be modified directly.
+3. Put two instances of an ordinary class with the same field into a `Set`. Then make it a
+   `data class`. Explain the change in size.
+4. When would `getOrNull` be wrong and an exception right?
+
+## Recap
+
+| Need | Reach for |
+| --- | --- |
+| Ordered, duplicates fine | `List` / `MutableList` |
+| Membership, no duplicates | `Set` / `MutableSet` |
+| Lookup by key | `Map` / `MutableMap` |
+| Safe read | `getOrNull`, `getOrElse`, `firstOrNull` |
+| Snapshot that cannot change | `.toList()` — not just a `List` type |
+| Set element or map key | `data class` with `val` properties |

@@ -1,0 +1,117 @@
+---
+title: Functions, default and named arguments
+description: Kotlin functions remove the two things that make Java APIs sprawl — overloads and builders. One signature can do the work of six.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Open any Java library and you find the same method five times with different parameter
+lists. Kotlin needs one, because parameters can have defaults and callers can name them.
+
+## The shape of a function
+
+```kotlin title="Shapes.kt" numbered runnable
+fun add(a: Int, b: Int): Int {
+    return a + b
+}
+
+// single expression: the return type is inferred, no braces, no return
+fun multiply(a: Int, b: Int) = a * b
+
+// returns nothing useful — the type is Unit and may be left out
+fun log(message: String) {
+    println("[app] $message")
+}
+
+fun main() {
+    println(add(2, 3))
+    println(multiply(2, 3))
+    log("started")
+}
+```
+
+Parameters are always `val`. You cannot reassign one inside the function, and that is
+deliberate — a parameter that changes meaning halfway through a function is a reading trap.
+
+## Default arguments
+
+```kotlin title="Defaults.kt" numbered runnable
+fun greet(name: String, greeting: String = "Hello", excited: Boolean = false): String {
+    val mark = if (excited) "!" else "."
+    return "$greeting, $name$mark"
+}
+
+fun main() {
+    println(greet("Asha"))
+    println(greet("Ravi", "Namaste"))
+    println(greet("Meera", excited = true))     // skips the middle one
+}
+```
+
+That last call is the point. Without named arguments you would have to pass `greeting`
+just to reach `excited`. With them, you address the parameter you actually care about.
+
+## Named arguments make call sites readable
+
+```kotlin title="Named.kt" numbered
+// what does `true, false, true` mean here?
+showDialog("Delete?", true, false, true)
+
+// now it is obvious, and reordering is safe
+showDialog(
+    message = "Delete?",
+    cancelable = true,
+    destructive = false,
+    showIcon = true,
+)
+```
+
+<Tip bare>
+Rule of thumb: any boolean parameter should be named at the call site. `setEnabled(true)` is
+fine; `configure(true, false)` is a puzzle.
+</Tip>
+
+## Local functions
+
+A function declared inside another can see its enclosing scope, which lets you name a piece
+of logic without exposing it:
+
+```kotlin title="Local.kt" numbered runnable
+fun report(values: List<Int>): String {
+    fun format(n: Int) = if (n < 0) "($n)" else "$n"   // sees nothing it should not
+    return values.joinToString(", ") { format(it) }
+}
+
+fun main() = println(report(listOf(3, -4, 5)))
+```
+
+<Pitfall title="Two that surprise people coming from Java">
+**Default arguments are not visible from Java.** Java sees one method with every parameter.
+If a Java caller needs the short form, annotate with `@JvmOverloads` and the compiler will
+generate the overloads for it.
+
+**A default that is a mutable object is evaluated per call, not once.** `fun f(list:
+MutableList<Int> = mutableListOf())` creates a fresh list each time — which is what you want,
+and the opposite of the classic Python trap. Worth knowing which language does which.
+</Pitfall>
+
+## Practice
+
+1. Write `fun formatPrice(amount: Int, currency: String = "INR", showSymbol: Boolean = true)`
+   and call it three ways: all defaults, currency only, and `showSymbol` only.
+2. Rewrite `fun square(n: Int): Int { return n * n }` as a single-expression function.
+3. Take a function with four parameters, two of them booleans. Write the call twice —
+   positionally and with names. Which would you rather read in a review?
+4. Why can you not write `fun f(a: Int) { a = 5 }`?
+
+## Recap
+
+| Feature | What it buys you |
+| --- | --- |
+| Single-expression `=` | Short functions with no ceremony |
+| `Unit` | The return type when nothing useful comes back |
+| Default arguments | One function instead of a family of overloads |
+| Named arguments | Call sites that explain themselves |
+| Local functions | Naming logic without widening its scope |
+| `@JvmOverloads` | Making defaults usable from Java |

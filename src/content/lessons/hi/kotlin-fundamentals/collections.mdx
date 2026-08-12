@@ -1,0 +1,124 @@
+---
+title: List, Set, Map और उनके mutable जोड़ीदार
+description: Kotlin हर collection को दो हिस्सों में बाँट देता है — read-only view और mutable। सही चुनना इस भाषा में bug रोकने का सबसे सस्ता तरीक़ा है।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+App का ज़्यादातर state एक collection ही होता है: messages की list, चुने हुए ids का set, settings
+का map। Kotlin आपसे type में ही कहलवाता है कि वह collection बदल सकता है या नहीं। यह सही हो जाए तो
+"मेरी list किसने बदली?" वाले पूरे परिवार के bugs पैदा ही नहीं होते।
+
+## तीन रूप
+
+```kotlin title="Three.kt" numbered runnable
+fun main() {
+    val names = listOf("Asha", "Ravi", "Asha")   // क्रमित, duplicates चलते हैं
+    val ids = setOf(1, 2, 2, 3)                  // बिना क्रम, duplicates हट जाते हैं
+    val ages = mapOf("Asha" to 30, "Ravi" to 25) // key से value
+
+    println(names)   // [Asha, Ravi, Asha]
+    println(ids)     // [1, 2, 3]
+    println(ages)    // {Asha=30, Ravi=25}
+}
+```
+
+| Type | क्रम | Duplicates | इससे यह पूछिए |
+| --- | --- | --- | --- |
+| `List` | हाँ | हाँ | "तीसरी जगह पर क्या है?" |
+| `Set` | Guarantee नहीं | नहीं | "यह पहले से इसमें है क्या?" |
+| `Map` | Guarantee नहीं | Keys unique | "इस key के नीचे क्या रखा है?" |
+
+<Tip bare>
+अगर आपका code loop के अंदर `list.contains(x)` करता है, तो आपको `Set` चाहिए था। List पर
+`contains` पूरी scan है और set पर hash lookup — data बढ़ते ही फ़र्क़ दिखने लगता है।
+</Tip>
+
+## Read-only और mutable
+
+```kotlin title="Mutable.kt" numbered runnable
+fun main() {
+    val fixed = listOf(1, 2, 3)
+    // fixed.add(4)                       // ऐसा कोई function ही नहीं
+
+    val growing = mutableListOf(1, 2, 3)
+    growing.add(4)
+    growing.removeAt(0)
+    println(growing)                      // [2, 3, 4]
+
+    val readOnlyView: List<Int> = growing // वही object, सँकरा type
+    println(readOnlyView.size)
+}
+```
+
+यही सूक्ष्म बात है: `List` **read-only** है, immutable नहीं। ऊपर वाले `readOnlyView` से list बदली
+नहीं जा सकती, पर list ख़ुद `growing` के ज़रिए बदल सकती है। ऐसा snapshot चाहिए जिसे कोई न बदल सके तो
+copy कीजिए: `growing.toList()`।
+
+## सुरक्षित तरीक़े से पढ़ना
+
+```kotlin title="Access.kt" numbered runnable
+fun main() {
+    val names = listOf("Asha", "Ravi")
+
+    println(names[0])                 // Asha
+    // println(names[5])              // IndexOutOfBoundsException
+    println(names.getOrNull(5))       // null
+    println(names.getOrElse(5) { "?" })// ?
+    println(names.firstOrNull())      // Asha
+
+    val ages = mapOf("Asha" to 30)
+    println(ages["Ravi"])             // null — map फेंकता नहीं, null लौटाता है
+    println(ages.getOrDefault("Ravi", 0))
+}
+```
+
+ध्यान दीजिए कि दोनों अलग behave करते हैं: list का ग़लत index फेंकता है, पर map की ग़ायब key `null`
+लौटाती है। यह याद रखने लायक़ है, क्योंकि ज़्यादातर लोग इसका उल्टा अंदाज़ा लगाते हैं।
+
+## `Set` और `Map` को आपके types से क्या चाहिए
+
+```kotlin title="Keys.kt" numbered runnable
+class Plain(val id: Int)
+data class Good(val id: Int)
+
+fun main() {
+    println(setOf(Plain(1), Plain(1)).size)   // 2 — अलग objects
+    println(setOf(Good(1), Good(1)).size)     // 1 — बराबर contents
+}
+```
+
+Sets और map keys `equals` तथा `hashCode` से चलते हैं। सादी class identity से तुलना करती है, इसलिए
+एक जैसे दिखने वाले दो objects दो अलग entries बन जाते हैं। यहीं से `data class` सुविधा से हटकर
+शुद्धता की शर्त बन जाती है।
+
+<Pitfall title="दो जो असली bugs बनती हैं">
+**`var` property को map key बनाना।** Insert के बाद उसे बदलिए और उसका hash बदल जाता है — entry
+पहुँच से बाहर हो जाती है, जगह फिर भी घेरे रहती है। Keys प्रभावी रूप से immutable होनी चाहिए, और यही
+एक और वजह है कि keys आम तौर पर `val` वाली `data class` होती हैं।
+
+**Class से `MutableList` बाहर देना।** जिसके पास reference है वह आपका state बाहर से बदल सकता है।
+बाहर `List` दीजिए और `MutableList` private रखिए।
+</Pitfall>
+
+## अभ्यास
+
+1. एक ही पाँच values से `List`, `Set` और `Map` बनाइए जिसमें दो दोहरी हों। तीनों print कीजिए और
+   size समझाइए।
+2. एक class लिखिए जिसमें private `mutableListOf<String>()` हो और बाहर सिर्फ़ read-only `List` तथा
+   एक `add` function दिखे। बाहर से साबित कीजिए कि list सीधे बदली नहीं जा सकती।
+3. एक सादी class के दो instances, जिनका field एक जैसा हो, `Set` में डालिए। फिर उसे `data class`
+   बना दीजिए। Size का फ़र्क़ समझाइए।
+4. `getOrNull` कब ग़लत होगा और exception कब सही?
+
+## सारांश
+
+| ज़रूरत | क्या उठाइए |
+| --- | --- |
+| क्रम चाहिए, duplicates ठीक हैं | `List` / `MutableList` |
+| सदस्यता, duplicates नहीं | `Set` / `MutableSet` |
+| Key से ढूँढ़ना | `Map` / `MutableMap` |
+| सुरक्षित पढ़ना | `getOrNull`, `getOrElse`, `firstOrNull` |
+| ऐसा snapshot जो बदले नहीं | `.toList()` — सिर्फ़ `List` type काफ़ी नहीं |
+| Set element या map key | `val` वाली `data class` |

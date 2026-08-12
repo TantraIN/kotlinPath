@@ -1,0 +1,110 @@
+---
+title: vararg, infix and local functions
+description: Three small features that decide whether an API reads like a sentence or like a form. You will use all three long before you write your own library.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+You already call `listOf(1, 2, 3)` and write `1 to "one"` and `0 until 10`. Those are not
+special syntax — they are ordinary functions using the features in this lesson. Knowing how
+they work turns library code from magic into something you can read.
+
+## `vararg`: any number of arguments
+
+```kotlin title="Vararg.kt" numbered runnable
+fun total(vararg amounts: Int): Int {
+    var sum = 0
+    for (amount in amounts) sum += amount    // inside, it is an IntArray
+    return sum
+}
+
+fun main() {
+    println(total())
+    println(total(10, 20, 30))
+
+    val existing = intArrayOf(1, 2, 3)
+    println(total(*existing))                // spread an existing array
+}
+```
+
+Two rules: one `vararg` per function, and the `*` spread operator when you already have an
+array. That is exactly how `listOf`, `setOf` and `printf` are declared.
+
+<Tip bare>
+Put `vararg` last, or every parameter after it must be passed by name. Kotlin allows it
+anywhere, but the call site pays for it.
+</Tip>
+
+## `infix`: calling without the dot
+
+```kotlin title="Infix.kt" numbered runnable
+infix fun Int.repeatedTimes(times: Int): String = "$this ".repeat(times).trim()
+
+fun main() {
+    println(3 repeatedTimes 4)          // reads as a sentence
+    println(3.repeatedTimes(4))         // the same call, ordinary form
+}
+```
+
+An `infix` function must be a member or an extension, take exactly one parameter, and that
+parameter cannot be `vararg` or have a default. `to`, `until`, `downTo` and `step` are all
+just infix functions in the standard library:
+
+```kotlin title="Stdlib.kt" numbered runnable
+fun main() {
+    val pair = 1 to "one"               // Pair(1, "one")
+    val map = mapOf(1 to "one", 2 to "two")
+    println("$pair $map")
+    for (i in 0 until 3) print("$i ")
+}
+```
+
+<Pitfall title="Where infix stops being clever">
+Infix removes the dot, and with it the reading cue that says "this is a method call". Use it
+only when the result genuinely reads as English — `1 to "one"`, `x shl 2`. An infix
+`user save database` is a puzzle, not an API.
+
+Precedence is also lower than arithmetic: `1 to 2 + 3` is `1 to 5`, not `(1 to 2) + 3`. When
+in doubt, add brackets.
+</Pitfall>
+
+## Local functions, and what they capture
+
+```kotlin title="Local.kt" numbered runnable
+fun validate(username: String, email: String): List<String> {
+    val errors = mutableListOf<String>()
+
+    // sees `errors` without being passed it
+    fun require(condition: Boolean, message: String) {
+        if (!condition) errors += message
+    }
+
+    require(username.length >= 3, "username too short")
+    require("@" in email, "email looks wrong")
+    return errors
+}
+
+fun main() = println(validate("jo", "nope"))
+```
+
+A local function closes over the variables around it. That is convenient, and it is also why
+it cannot be extracted mechanically — moving it out means passing everything it captured.
+
+## Practice
+
+1. Write `fun joinAll(separator: String = ", ", vararg parts: String): String`. Call it with
+   no parts, with three, and by spreading an existing array.
+2. Write an `infix fun Int.percentOf(total: Int): Double` and use it as `20 percentOf 400`.
+   Then argue whether infix was the right choice here.
+3. Predict the value of `1 to 2 + 3`, then check.
+4. Take the `validate` function above and pull `require` out to the top level. What extra
+   parameter did you have to add, and why?
+
+## Recap
+
+| Feature | Rule | Seen in the stdlib as |
+| --- | --- | --- |
+| `vararg` | One per function; spread with `*` | `listOf`, `setOf` |
+| `infix` | One parameter, no default, no vararg | `to`, `until`, `step` |
+| Local function | Captures its enclosing scope | Validation and formatting helpers |

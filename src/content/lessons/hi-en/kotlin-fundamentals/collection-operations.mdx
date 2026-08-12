@@ -1,0 +1,133 @@
+---
+title: map, filter, groupBy aur unke saathi
+description: Aap jo bhi loop likhne wale the, wo lagbhag hamesha pehle se ek naam wale function ki tarah maujood hai. Yahi shabdawali Kotlin code ko chhota banati hai, bina use chatur banaye.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Loop padhne wale ko *kaise* batata hai. `filter { it.isActive }` batata hai *kya*. Code aap
+likhne se kahin zyada padhte ho, isliye dusri cheez theek se seekhne laayak hai — aur yahi
+shabdawali Phase 3 mein `Flow` par dobara kaam aayegi.
+
+## Chaar jo roz kaam aayenge
+
+```kotlin title="Core.kt" numbered runnable
+data class User(val name: String, val age: Int, val city: String)
+
+fun main() {
+    val users = listOf(
+        User("Asha", 30, "Pune"),
+        User("Ravi", 25, "Delhi"),
+        User("Meera", 35, "Pune"),
+    )
+
+    println(users.map { it.name })                 // har ek ko badlo
+    println(users.filter { it.age > 26 })          // kuch hi rakho
+    println(users.find { it.city == "Delhi" })     // pehla milaan, ya null
+    println(users.sortedBy { it.age })             // kramit copy
+}
+```
+
+| Function | Kis sawal ka jawab |
+| --- | --- |
+| `map` | "har item ko kisi aur cheez mein badlo" |
+| `filter` | "sirf wahi rakho jahan…" |
+| `find` / `first` | "ek milta hua do" — `find` null deta hai, `first` fenkta hai |
+| `sortedBy` | "wahi items, alag kram" |
+
+In sab mein se har ek **nayi** collection lautata hai. Original chhua tak nahi jata, isiliye
+ye surakshit roop se chain hote hain.
+
+## Grouping aur folding
+
+```kotlin title="GroupFold.kt" numbered runnable
+data class Order(val city: String, val amount: Int)
+
+fun main() {
+    val orders = listOf(
+        Order("Pune", 500), Order("Delhi", 300), Order("Pune", 200),
+    )
+
+    println(orders.groupBy { it.city })
+    // {Pune=[Order(Pune,500), Order(Pune,200)], Delhi=[Order(Delhi,300)]}
+
+    println(orders.sumOf { it.amount })            // 1000
+    println(orders.associate { it.city to it.amount })
+    println(orders.fold(0) { acc, o -> acc + o.amount })
+}
+```
+
+`fold` sabse aam roop hai: ek value se shuru karo, collection par chalo, jodte jao. `sumOf`,
+`count` aur `joinToString` sab `fold` hi hain, bas jodne ka tarika tay hai.
+
+## Flatten karna aur chaining
+
+```kotlin title="Chaining.kt" numbered runnable
+data class Post(val author: String, val tags: List<String>)
+
+fun main() {
+    val posts = listOf(
+        Post("Asha", listOf("kotlin", "android")),
+        Post("Ravi", listOf("android", "compose")),
+    )
+
+    val tags = posts
+        .flatMap { it.tags }      // saare tags ki ek chapti list
+        .distinct()               // duplicates hatao
+        .sorted()
+
+    println(tags)                 // [android, compose, kotlin]
+}
+```
+
+Chain ko upar se neeche ek wakya ki tarah padho: posts lo, unke saare tags lo, duplicates
+hatao, sort karo. Poora aakarshan yahi hai.
+
+<Tip bare>
+`map { }.filter { }` list par do baar chalta hai. Gine-chune items ke liye ye koi baat nahi.
+Hazaron ke liye aage `.asSequence()` aur ant mein `.toList()` lagao — phir har item poori
+chain se ek hi baar, aalasi tarike se guzarta hai.
+</Tip>
+
+## Andar ki baat: ye bas inline functions hain
+
+`filter` ek saada function hai jo lambda leta hai aur `inline` likha hai. Compiler uska body
+call site par copy kar deta hai, isliye na lambda object banta hai na extra call hoti hai. Ek
+`filter` chain lagbhag wahi loop ban jati hai jo aap haath se likhte.
+
+Isiliye Kotlin mein "functional style use karo" kehne par performance ka koi apraadhbodh nahi
+hota, jo kuch dusri languages mein hota hai.
+
+<Pitfall title="Teen jo review mein dikhti hain">
+**`find` ki jagah `first`.** Kuch na mile to `first { }` `NoSuchElementException` fenkta hai;
+`find { }` `null` lautata hai. Chunav is baat se karo ki kuch na milne par kya hona chahiye.
+
+**`forEach` ki jagah `map`.** Natija istemal nahi kar rahe to aapne bekaar ek list bana di.
+`forEach` kehta hai "main ye side effect ke liye kar raha hoon".
+
+**Badi list par chhah operations chain karna.** Har kadam nayi collection banata hai. Ya
+`asSequence()` lagao, ya ek hi `fold` mein kar lo.
+</Pitfall>
+
+## Practice
+
+1. Users ki list se 30 se upar walon ke naam nikalo — uppercase aur sorted, ek hi chain mein.
+2. Orders ko city se group karo, phir use city se kul amount wale map mein badlo.
+3. Ek hi cheez do baar likho: ek baar `fold` se, ek baar `sumOf` se. Kaun sa behtar padhta hai?
+4. 1,00,000 items ki list par `map`, `filter`, `take(5)` ki chain lo. Samjhao ki
+   `asSequence()` se har kadam kitne items chhuta hai, ye kaise badal jata hai.
+
+## Recap
+
+| Kaam | Function |
+| --- | --- |
+| Har item badlo | `map` |
+| Milte hue rakho | `filter` |
+| Ek milaan | `find` (null) / `first` (fenkta hai) |
+| Kram | `sortedBy`, `sortedByDescending` |
+| Key se baanto | `groupBy` |
+| Ek value mein simeto | `fold`, `sumOf`, `count` |
+| Lists ki list se ek list | `flatMap` |
+| Duplicates hatao | `distinct`, `distinctBy` |
+| Aalasi, ek hi pass | `asSequence()` … `toList()` |

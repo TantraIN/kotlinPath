@@ -1,0 +1,110 @@
+---
+title: vararg, infix और local functions
+description: तीन छोटे features जो तय करते हैं कि API एक वाक्य की तरह पढ़ेगी या एक form की तरह। अपनी library लिखने से बहुत पहले ही आप तीनों इस्तेमाल कर रहे होंगे।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+आप पहले से `listOf(1, 2, 3)` बुलाते हैं, `1 to "one"` लिखते हैं, और `0 until 10` इस्तेमाल करते
+हैं। यह कोई ख़ास syntax नहीं है — ये सादे functions हैं जो इसी पाठ के features इस्तेमाल करते हैं। ये
+कैसे चलते हैं यह पता हो तो library code जादू से हटकर पढ़ने लायक़ चीज़ बन जाता है।
+
+## `vararg`: कितने भी arguments
+
+```kotlin title="Vararg.kt" numbered runnable
+fun total(vararg amounts: Int): Int {
+    var sum = 0
+    for (amount in amounts) sum += amount    // अंदर यह IntArray है
+    return sum
+}
+
+fun main() {
+    println(total())
+    println(total(10, 20, 30))
+
+    val existing = intArrayOf(1, 2, 3)
+    println(total(*existing))                // मौजूदा array को spread कीजिए
+}
+```
+
+दो नियम: एक function में एक ही `vararg`, और पहले से array हो तो `*` spread operator। `listOf`,
+`setOf` और `printf` ठीक इसी तरह declare हुए हैं।
+
+<Tip bare>
+`vararg` को आख़िर में रखिए, वरना उसके बाद का हर parameter नाम से देना पड़ेगा। Kotlin कहीं भी रखने
+देता है, पर क़ीमत call site चुकाता है।
+</Tip>
+
+## `infix`: बिना dot के बुलाना
+
+```kotlin title="Infix.kt" numbered runnable
+infix fun Int.repeatedTimes(times: Int): String = "$this ".repeat(times).trim()
+
+fun main() {
+    println(3 repeatedTimes 4)          // वाक्य की तरह पढ़ता है
+    println(3.repeatedTimes(4))         // वही call, सादे रूप में
+}
+```
+
+`infix` function या तो member होना चाहिए या extension, ठीक एक parameter लेना चाहिए, और वह
+parameter न `vararg` हो न उसका default हो। `to`, `until`, `downTo` और `step` — सब standard
+library के infix functions ही हैं:
+
+```kotlin title="Stdlib.kt" numbered runnable
+fun main() {
+    val pair = 1 to "one"               // Pair(1, "one")
+    val map = mapOf(1 to "one", 2 to "two")
+    println("$pair $map")
+    for (i in 0 until 3) print("$i ")
+}
+```
+
+<Pitfall title="जहाँ infix चतुराई नहीं रहती">
+Infix dot हटा देता है, और उसके साथ वह इशारा भी जो कहता है "यह एक method call है"। इसे तभी इस्तेमाल
+कीजिए जब नतीजा सच में अंग्रेज़ी की तरह पढ़े — `1 to "one"`, `x shl 2`। कोई `user save database`
+API नहीं, पहेली है।
+
+इसकी precedence arithmetic से कम भी है: `1 to 2 + 3` का मतलब `1 to 5` है, `(1 to 2) + 3` नहीं।
+शक हो तो bracket लगा दीजिए।
+</Pitfall>
+
+## Local functions, और वे क्या पकड़ते हैं
+
+```kotlin title="Local.kt" numbered runnable
+fun validate(username: String, email: String): List<String> {
+    val errors = mutableListOf<String>()
+
+    // `errors` बिना दिए ही दिखता है
+    fun require(condition: Boolean, message: String) {
+        if (!condition) errors += message
+    }
+
+    require(username.length >= 3, "username too short")
+    require("@" in email, "email looks wrong")
+    return errors
+}
+
+fun main() = println(validate("jo", "nope"))
+```
+
+Local function अपने आस-पास के variables को पकड़ लेता है। यह सुविधा है, और यही वजह है कि उसे ऐसे ही
+बाहर नहीं निकाला जा सकता — बाहर ले जाने का मतलब है जो कुछ उसने पकड़ा था वह सब parameter में देना।
+
+## अभ्यास
+
+1. `fun joinAll(separator: String = ", ", vararg parts: String): String` लिखिए। इसे बिना parts
+   के बुलाइए, तीन के साथ बुलाइए, और एक मौजूदा array spread करके बुलाइए।
+2. `infix fun Int.percentOf(total: Int): Double` लिखिए और `20 percentOf 400` की तरह इस्तेमाल
+   कीजिए। फिर तर्क दीजिए कि यहाँ infix सही चुनाव था या नहीं।
+3. `1 to 2 + 3` की value का अंदाज़ा लगाइए, फिर जाँच लीजिए।
+4. ऊपर वाले `validate` से `require` को top level पर ले जाइए। कौन सा extra parameter देना पड़ा, और
+   क्यों?
+
+## सारांश
+
+| Feature | नियम | Stdlib में कहाँ दिखा |
+| --- | --- | --- |
+| `vararg` | एक function में एक; `*` से spread | `listOf`, `setOf` |
+| `infix` | एक parameter, न default न vararg | `to`, `until`, `step` |
+| Local function | अपना आस-पास का scope पकड़ता है | Validation और formatting helpers |
