@@ -1,0 +1,123 @@
+---
+title: if ek expression hai, aur when ki taakat
+description: Kotlin mein branching apne aap mein ek value hai. Bas is ek badlaav se aapke code se aadhe-adhoore variables ki poori shreni hi gayab ho jati hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Java mein aap variable declare karte ho, khaali chhod dete ho, branch karte ho, aur ummeed
+karte ho ki har raste ne use bhar diya. Kotlin mein branch khud hi value ban jati hai, isliye
+aisa koi pal hota hi nahi jab variable aadha bana ho.
+
+## `if` kuch lautata hai
+
+```kotlin title="IfExpression.kt" numbered runnable
+fun main() {
+    val score = 72
+
+    // statement style — var chahiye, aur ek pal jab grade tay hi nahi
+    var grade = ""
+    if (score >= 70) grade = "A" else grade = "B"
+
+    // expression style — ek val, koi khaali pal nahi
+    val better = if (score >= 70) "A" else "B"
+
+    println("$grade $better")
+}
+```
+
+Jab `if` expression ki tarah use hota hai to `else` zaruri ho jata hai — warna koi rasta aisa
+hota jo kuch banata hi nahi. Compiler theek wahi chhed band kar raha hai jo statement style
+khula chhod deta hai.
+
+<Tip bare>
+Kotlin mein iske liye alag ternary `?:` operator hai hi nahi, kyunki `if` khud ternary hai.
+`if (a) b else c` hi ternary hai.
+</Tip>
+
+## `when`, chaar tarah se
+
+```kotlin title="When.kt" numbered runnable
+fun label(code: Int): String = when (code) {
+    200 -> "OK"
+    301, 302 -> "Redirect"                 // ek branch mein kai values
+    in 400..499 -> "Client error"          // ek range
+    else -> "Something else"
+}
+
+fun size(n: Int): String = when {          // bina subject: koi bhi condition
+    n < 10 -> "small"
+    n < 100 -> "medium"
+    else -> "large"
+}
+
+fun main() {
+    println(label(302))
+    println(label(404))
+    println(size(50))
+}
+```
+
+`when` type check bhi karta hai, aur branch ke andar smart cast bhi:
+
+```kotlin title="WhenType.kt" numbered runnable
+fun describe(value: Any): String = when (value) {
+    is String -> "text of ${value.length} chars"
+    is Int -> "number ${value + 1} follows"
+    is List<*> -> "list of ${value.size}"
+    else -> "unknown"
+}
+
+fun main() = println(describe(listOf(1, 2, 3)))
+```
+
+## Wo hissa jo aage bahut kaam aayega
+
+Jab `when` kisi **sealed** type par expression ki tarah chalta hai, compiler har case handle
+karwata hai — aur `else` ki zarurat hi nahi rehti.
+
+```kotlin title="Exhaustive.kt" numbered
+sealed interface Result
+data class Success(val body: String) : Result
+data class Failure(val code: Int) : Result
+object Loading : Result
+
+fun render(result: Result): String = when (result) {
+    is Success -> result.body
+    is Failure -> "Error ${result.code}"
+    Loading -> "Please wait"
+    // else ki zarurat nahi — compiler jaanta hai ki bas itne hi hain
+}
+```
+
+Agle mahine chautha subtype jodo aur har wo `when` compile hona band ho jayega jisne use
+chhod diya. Poori language mein yahi sabse keemti safety hai, aur Phase 2 isi par khada hai.
+
+<Pitfall title="Do aadatein jo shuru mein hi chhod dena behtar hai">
+**Sealed type par `else -> throw IllegalStateException()` likhna.** Isse compiler chup ho
+jata hai aur wahi suraksha chali jati hai jo aap chahte the. `else` mat likho.
+
+**Fall-through ki ummeed.** Kotlin mein fall-through hai hi nahi: theek ek branch chalti hai,
+aur `break` ki zarurat nahi. C jaisa fall-through chahiye to values ek hi branch mein likho:
+`301, 302 ->`.
+</Pitfall>
+
+## Practice
+
+1. `if (x > 0) sign = 1 else if (x < 0) sign = -1 else sign = 0` ko ek hi `val` mein badlo,
+   `if` ko expression ki tarah use karke.
+2. Ek `when` likho jo HTTP status ko message mein badle — ek single value, kai values ki list,
+   ek range aur `else` teeno use karke.
+3. Teen subtypes wala sealed interface banao aur us par bina `else` ke `when` likho. Chautha
+   subtype jodkar compiler ka error padho.
+4. `val x = if (a) 1` compile kyun nahi hota, jabki `if (a) doThing()` ho jata hai?
+
+## Recap
+
+| Roop | Value lautata hai? |
+| --- | --- |
+| `if (a) b else c` | Haan — tab `else` zaruri hai |
+| `when (x) { ... }` | Haan, jab har rasta dhaka ho |
+| `when { ... }` | Wahi, subject ke bajaye koi bhi condition |
+| `sealed` par `when` | Bina `else` ke exhaustive — compiler khud jaanchta hai |

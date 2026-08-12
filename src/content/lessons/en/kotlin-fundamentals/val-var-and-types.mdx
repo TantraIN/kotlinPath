@@ -1,0 +1,155 @@
+---
+title: val, var and Kotlin's type system
+description: Every value in Kotlin has a type the compiler knows exactly. That single fact is what lets it catch mistakes you would otherwise find at three in the morning.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+In a language without types, `"5" + 3` might be `"53"`, or `8`, or a crash — you find out
+by running it. Kotlin decides before the program ever runs.
+
+That is not bureaucracy. It is the compiler holding a map of your entire program, and
+refusing to let you walk off the edge of it.
+
+## Two ways to name a value
+
+```kotlin title="Basics.kt" numbered runnable
+fun main() {
+    val name = "Asha"      // read-only: assigned once
+    var score = 0          // mutable: can be reassigned
+
+    score = score + 10
+    println("$name scored $score")
+}
+```
+
+<Compare
+  left={{
+    title: "val",
+    subtitle: "Your default",
+    accent: "emerald",
+    points: [
+      "+ Assigned exactly once",
+      "+ Safe to read from several threads",
+      "+ Makes the reader's job easier — this will not change",
+      "~ Does not freeze the object, only the reference",
+    ],
+  }}
+  right={{
+    title: "var",
+    subtitle: "When the value genuinely changes",
+    accent: "amber",
+    points: [
+      "+ Can be reassigned any number of times",
+      "- Every reader must now track when it changes",
+      "- Not thread-safe on its own",
+      "~ Reach for it only after val will not do",
+    ],
+  }}
+/>
+
+<Tip bare>
+Write `val` first, every time. Change it to `var` only when the compiler stops you. Most
+code needs far less mutability than people reach for.
+</Tip>
+
+## Types you did not have to write
+
+Kotlin worked out that `name` is a `String` and `score` is an `Int` without being told. That
+is **type inference** — inference, not absence. The types are just as fixed as if you had
+spelled them out.
+
+```kotlin title="Inference.kt" numbered runnable
+fun main() {
+    val a = 42          // Int
+    val b = 42L         // Long
+    val c = 42.0        // Double
+    val d = 42.0f       // Float
+    val e = '4'         // Char, single quotes
+    val f = "42"        // String, double quotes
+    val g = true        // Boolean
+
+    println(listOf(a, b, c, d, e, f, g))
+}
+```
+
+Spell the type out when the value alone is ambiguous, or when you are declaring a public
+API and want it pinned:
+
+```kotlin title="Explicit.kt" numbered
+val timeoutMs: Long = 30_000        // without `: Long` this would be an Int
+val ratio: Double = 1 / 3.0
+```
+
+## The numbers, and where they break
+
+| Type | Bits | Range | Use it for |
+| --- | --- | --- | --- |
+| `Byte` | 8 | −128 … 127 | Raw bytes, rarely arithmetic |
+| `Short` | 16 | −32 768 … 32 767 | Almost never |
+| `Int` | 32 | ±2.1 billion | The default whole number |
+| `Long` | 64 | ±9.2 quintillion | Timestamps, IDs, file sizes |
+| `Float` | 32 | ~7 digits | Graphics, when memory matters |
+| `Double` | 64 | ~15 digits | The default decimal |
+
+<Pitfall title="Two arithmetic surprises that ship to production">
+**`Int` overflow is silent.** `Int.MAX_VALUE + 1` does not throw — it wraps around to
+`Int.MIN_VALUE`. A millisecond timestamp does not fit in an `Int`, which is why every
+Android time API returns `Long`.
+
+**`Double` cannot hold `0.1`.** `0.1 + 0.2 == 0.3` is `false`, in Kotlin and in every other
+language using IEEE 754. Never store money in a `Double`. Use `Int` paise, or `BigDecimal`.
+</Pitfall>
+
+```kotlin title="Surprises.kt" numbered runnable
+fun main() {
+    println(Int.MAX_VALUE + 1)     // -2147483648
+    println(0.1 + 0.2)             // 0.30000000000000004
+    println(0.1 + 0.2 == 0.3)      // false
+}
+```
+
+## Under the hood: `val` freezes the slot, not the object
+
+```kotlin title="Slots.kt" numbered runnable
+fun main() {
+    val items = mutableListOf("a")
+    items.add("b")             // fine — the list changed
+    // items = mutableListOf()  // error — the slot cannot be re-pointed
+    println(items)
+}
+```
+
+The stack slot still holds the same reference. The heap object it points to changed. If you
+want the contents fixed too, ask for a type that has no `add`: `List` instead of
+`MutableList`.
+
+## Practice
+
+1. Declare a value holding your birth year, one holding your name, and one holding your
+   height in metres. Do not write a single type annotation. Then write down what type each
+   one got, and check with `::class`.
+2. `val big = 3_000_000_000` does not compile. Explain why, and fix it two different ways.
+3. Compute `0.1 + 0.2` and print it. Now express the same sum using `Int` paise and print
+   rupees. Which one would you put in a payments screen?
+4. Take a `val` holding a `MutableList`, add two items, then try to reassign it. Which line
+   fails, and which of the two things `val` protects explains it?
+
+## Recap
+
+| Idea | One line |
+| --- | --- |
+| `val` | Read-only reference; your default |
+| `var` | Mutable reference; justify each one |
+| Type inference | The compiler works the type out — it is still fixed |
+| `Int` vs `Long` | Timestamps and IDs never fit in `Int` |
+| `Double` | Approximate; never use it for money |
+
+<Interview title="Sounds trivial, filters a lot of people">
+"Is a `val` immutable?"
+
+The complete answer is no: `val` makes the *reference* read-only, not the object. Follow up
+with `val list = mutableListOf<Int>()` — you can still call `add`. Immutability of the
+contents is a property of the type, not of `val`.
+</Interview>

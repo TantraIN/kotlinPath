@@ -1,0 +1,155 @@
+---
+title: val, var और Kotlin का type system
+description: Kotlin में हर value का एक type है जो compiler को ठीक-ठीक पता है। इसी एक बात की वजह से वह ऐसी ग़लतियाँ पकड़ लेता है जो वरना रात तीन बजे मिलतीं।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+बिना types वाली भाषा में `"5" + 3` का नतीजा `"53"` भी हो सकता है, `8` भी, या crash भी — पता
+लगाने के लिए चलाना पड़ता है। Kotlin यह फ़ैसला program चलने से पहले ही कर लेता है।
+
+यह बाबूगीरी नहीं है। यह compiler के पास आपके पूरे program का नक़्शा होना है, और वह आपको उस
+नक़्शे के बाहर गिरने नहीं देता।
+
+## Value को नाम देने के दो तरीक़े
+
+```kotlin title="Basics.kt" numbered runnable
+fun main() {
+    val name = "Asha"      // read-only: एक बार assign
+    var score = 0          // mutable: दोबारा assign हो सकता है
+
+    score = score + 10
+    println("$name scored $score")
+}
+```
+
+<Compare
+  left={{
+    title: "val",
+    subtitle: "आपका default",
+    accent: "emerald",
+    points: [
+      "+ ठीक एक बार assign होता है",
+      "+ कई threads से पढ़ना safe है",
+      "+ पढ़ने वाले का काम आसान — यह बदलेगा नहीं",
+      "~ Object को freeze नहीं करता, सिर्फ़ reference को",
+    ],
+  }}
+  right={{
+    title: "var",
+    subtitle: "जब value सच में बदलती हो",
+    accent: "amber",
+    points: [
+      "+ कितनी भी बार दोबारा assign हो सकता है",
+      "- अब हर पढ़ने वाले को ध्यान रखना होगा कि कब बदला",
+      "- अपने आप में thread-safe नहीं",
+      "~ तभी उठाइए जब val से काम न चले",
+    ],
+  }}
+/>
+
+<Tip bare>
+हर बार पहले `val` लिखिए। `var` तभी बनाइए जब compiler रोके। ज़्यादातर code को उतनी mutability
+चाहिए ही नहीं जितनी लोग डाल देते हैं।
+</Tip>
+
+## वे types जो आपको लिखने ही नहीं पड़े
+
+Kotlin ने ख़ुद पता कर लिया कि `name` एक `String` है और `score` एक `Int`। यह **type inference**
+है — inference, ग़ायब होना नहीं। Types उतने ही पक्के हैं जितने आप ख़ुद लिखते तो होते।
+
+```kotlin title="Inference.kt" numbered runnable
+fun main() {
+    val a = 42          // Int
+    val b = 42L         // Long
+    val c = 42.0        // Double
+    val d = 42.0f       // Float
+    val e = '4'         // Char, single quotes
+    val f = "42"        // String, double quotes
+    val g = true        // Boolean
+
+    println(listOf(a, b, c, d, e, f, g))
+}
+```
+
+Type ख़ुद लिखिए जब सिर्फ़ value से बात साफ़ न हो, या जब public API declare कर रहे हों और उसे
+पक्का रखना हो:
+
+```kotlin title="Explicit.kt" numbered
+val timeoutMs: Long = 30_000        // बिना `: Long` के यह Int बन जाता
+val ratio: Double = 1 / 3.0
+```
+
+## Numbers, और वे कहाँ टूटते हैं
+
+| Type | Bits | Range | किस लिए |
+| --- | --- | --- | --- |
+| `Byte` | 8 | −128 … 127 | कच्चे bytes, arithmetic के लिए कम |
+| `Short` | 16 | −32 768 … 32 767 | लगभग कभी नहीं |
+| `Int` | 32 | ±2.1 billion | पूर्ण संख्या का default |
+| `Long` | 64 | ±9.2 quintillion | Timestamps, IDs, file sizes |
+| `Float` | 32 | ~7 अंक | Graphics, जब memory मायने रखे |
+| `Double` | 64 | ~15 अंक | दशमलव का default |
+
+<Pitfall title="दो arithmetic वाले झटके जो production तक पहुँच जाते हैं">
+**`Int` का overflow चुपचाप होता है।** `Int.MAX_VALUE + 1` error नहीं देता — वह घूमकर
+`Int.MIN_VALUE` बन जाता है। Millisecond timestamp `Int` में आता ही नहीं, इसीलिए Android का
+हर time API `Long` लौटाता है।
+
+**`Double` में `0.1` रखा ही नहीं जा सकता।** `0.1 + 0.2 == 0.3` `false` है — Kotlin में भी और
+IEEE 754 इस्तेमाल करने वाली हर दूसरी भाषा में भी। पैसा कभी `Double` में मत रखिए। `Int` पैसे
+इस्तेमाल कीजिए, या `BigDecimal`।
+</Pitfall>
+
+```kotlin title="Surprises.kt" numbered runnable
+fun main() {
+    println(Int.MAX_VALUE + 1)     // -2147483648
+    println(0.1 + 0.2)             // 0.30000000000000004
+    println(0.1 + 0.2 == 0.3)      // false
+}
+```
+
+## अंदर की बात: `val` slot को freeze करता है, object को नहीं
+
+```kotlin title="Slots.kt" numbered runnable
+fun main() {
+    val items = mutableListOf("a")
+    items.add("b")             // ठीक है — list बदली
+    // items = mutableListOf()  // error — slot दोबारा point नहीं हो सकता
+    println(items)
+}
+```
+
+Stack का slot वही पुराना reference लिए हुए है। Heap पर जिस object की ओर वह इशारा करता है, वह
+बदल गया। Contents भी पक्के चाहिए तो ऐसा type माँगिए जिसमें `add` है ही नहीं: `MutableList` की
+जगह `List`।
+
+## अभ्यास
+
+1. एक value बनाइए जिसमें आपका जन्म वर्ष हो, एक जिसमें नाम, और एक जिसमें आपकी लंबाई metre में।
+   एक भी type annotation मत लिखिए। फिर लिखिए कि हर एक को कौन सा type मिला, और `::class` से
+   जाँच लीजिए।
+2. `val big = 3_000_000_000` compile नहीं होता। क्यों, और दो अलग तरीक़ों से ठीक कीजिए।
+3. `0.1 + 0.2` print कीजिए। अब वही जोड़ `Int` पैसों में करके रुपये print कीजिए। Payments screen
+   पर कौन सा रखेंगे?
+4. एक `val` में `MutableList` रखिए, दो items add कीजिए, फिर दोबारा assign करके देखिए। कौन सी
+   line fail हुई, और `val` जिन दो चीज़ों को बचाता है उनमें से कौन सी इसे समझाती है?
+
+## सारांश
+
+| बात | एक line |
+| --- | --- |
+| `val` | Read-only reference; आपका default |
+| `var` | Mutable reference; हर एक की वजह होनी चाहिए |
+| Type inference | Compiler type निकाल लेता है — type फिर भी पक्का है |
+| `Int` vs `Long` | Timestamps और IDs `Int` में कभी नहीं आते |
+| `Double` | लगभग सही; पैसे के लिए कभी नहीं |
+
+<Interview title="साधारण लगता है, बहुत लोगों को छाँट देता है">
+"क्या `val` immutable होता है?"
+
+पूरा जवाब है नहीं: `val` *reference* को read-only बनाता है, object को नहीं। आगे जोड़िए
+`val list = mutableListOf<Int>()` — `add` फिर भी चलेगा। Contents का immutable होना type का गुण
+है, `val` का नहीं।
+</Interview>

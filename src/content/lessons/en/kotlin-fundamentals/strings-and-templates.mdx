@@ -1,0 +1,148 @@
+---
+title: Strings, templates and raw strings
+description: Building text is the single most common thing you do in an app. Kotlin gives you three tools for it, and knowing which to reach for keeps your code readable.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Every screen you ship is text: labels, error messages, formatted prices, log lines. In Java
+this meant `+` chains or `String.format`. Kotlin has something better, and it is the first
+Kotlin feature that makes people smile.
+
+## Templates: `$` inside a string
+
+```kotlin title="Templates.kt" numbered runnable
+fun main() {
+    val name = "Ravi"
+    val items = 3
+
+    println("Hello, $name")
+    println("You have $items items")
+    println("Total: ${items * 250} rupees")   // braces for an expression
+    println("Name length: ${name.length}")
+}
+```
+
+The rule is small: `$name` for a plain variable, `${...}` for anything with a dot, a call or
+an operator in it. Prefer templates over `+` — they read as the sentence they produce.
+
+<Tip bare>
+To print a literal dollar sign, escape it: `"Price: \${amount}"` prints the braces and all,
+and `"\$5"` prints `$5`.
+</Tip>
+
+## Raw strings: no escaping at all
+
+Triple quotes keep every character exactly as written — newlines, quotes, backslashes.
+
+```kotlin title="Raw.kt" numbered runnable
+fun main() {
+    val json = """
+        {
+          "name": "Asha",
+          "city": "Pune"
+        }
+    """.trimIndent()
+
+    println(json)
+}
+```
+
+`trimIndent()` removes the common leading whitespace, so the string is not indented just
+because your code is. Without it, every line would carry eight spaces.
+
+<Compare
+  left={{
+    title: "Escaped string",
+    subtitle: "Double quotes",
+    accent: "amber",
+    points: [
+      "+ Fine for one short line",
+      "- Quotes and backslashes need escaping",
+      "- Multi-line means escape sequences and concatenation",
+    ],
+  }}
+  right={{
+    title: "Raw string",
+    subtitle: "Triple quotes",
+    accent: "emerald",
+    points: [
+      "+ JSON, SQL and regex read as themselves",
+      "+ Real newlines, no escape sequences",
+      "~ Pair it with trimIndent()",
+    ],
+  }}
+/>
+
+## Strings are immutable
+
+```kotlin title="Immutable.kt" numbered runnable
+fun main() {
+    val greeting = "hello"
+    val shouted = greeting.uppercase()
+
+    println(greeting)   // hello — unchanged
+    println(shouted)    // HELLO — a new object
+}
+```
+
+Every `String` operation returns a new object. `uppercase`, `trim`, `replace` and `plus` all
+leave the original alone. That is why building a string in a loop with `+` is slow — each
+step allocates a whole new string. Use `buildString` when you are assembling many pieces.
+
+```kotlin title="Building.kt" numbered runnable
+fun main() {
+    val report = buildString {
+        append("Report")
+        appendLine()
+        repeat(3) { index -> appendLine("row ${index + 1}") }
+    }
+    println(report)
+}
+```
+
+## Comparing text
+
+```kotlin title="Comparing.kt" numbered runnable
+fun main() {
+    val a = "kotlin"
+    val b = "KOTLIN"
+
+    println(a == b)                            // false
+    println(a.equals(b, ignoreCase = true))    // true
+    println(a.startsWith("kot"))               // true
+    println(a.contains("tl"))                  // true
+}
+```
+
+<Pitfall title="Two that bite in real apps">
+**Comparing with `===`.** `==` compares contents, `===` compares identity. For text you
+almost always want `==`. If you have written `===` on strings, it is a bug.
+
+**Case-folding user input with `uppercase()` in order to compare.** In Turkish,
+`"i".uppercase()` is not `"I"`. For case-insensitive matching use
+`equals(other, ignoreCase = true)`, which does the right thing per locale rather than
+mangling the text first.
+</Pitfall>
+
+## Practice
+
+1. Print `Asha has 3 unread messages` using a template, with the name and count in
+   variables. Then print the same sentence with the count doubled — inside the template.
+2. Write a raw string containing a small SQL query with double quotes in it. Confirm you did
+   not need a single backslash.
+3. Build a five-line string with `+=` in a loop, then rewrite it with `buildString`. Explain
+   which one allocates more, and why.
+4. `"Hello".replace("l", "L")` — what does the original variable hold afterwards, and why?
+
+## Recap
+
+| Tool | Use it for |
+| --- | --- |
+| `"$name"` | Dropping a variable into a sentence |
+| `"${expr}"` | Anything with a dot, call or operator |
+| Triple quotes | JSON, SQL, regex, anything multi-line |
+| `.trimIndent()` | Stripping the indentation your code added |
+| `buildString { }` | Assembling many pieces without churn |
+| `equals(x, ignoreCase = true)` | Case-insensitive comparison done correctly |

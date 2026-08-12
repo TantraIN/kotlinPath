@@ -1,0 +1,126 @@
+---
+title: Operators, smart casts, is and as
+description: Kotlin removes almost every manual cast you would write in Java. Understanding how it manages that tells you when it cannot, and what to do then.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+`ClassCastException` used to be one of the most common crashes in Java code. Kotlin makes it
+rare — not by catching it, but by making most casts unnecessary in the first place.
+
+## Operators are function calls
+
+```kotlin title="Operators.kt" numbered runnable
+fun main() {
+    println(7 / 2)        // 3   — Int division truncates
+    println(7 / 2.0)      // 3.5 — one Double makes it Double
+    println(7 % 2)        // 1   — remainder
+    println(7.0 / 0)      // Infinity, no exception
+    // println(7 / 0)     // ArithmeticException
+}
+```
+
+Every operator maps to a named function: `+` is `plus`, `==` is `equals`, `<` is
+`compareTo`. That is why you can define them for your own types later, and why `==` on a
+`data class` compares contents — it is calling a generated `equals`.
+
+| You write | Kotlin calls |
+| --- | --- |
+| `a + b` | `a.plus(b)` |
+| `a == b` | `a?.equals(b) ?: (b === null)` |
+| `a > b` | `a.compareTo(b) > 0` |
+| `a in c` | `c.contains(a)` |
+| `a[i]` | `a.get(i)` |
+
+<Tip bare>
+`==` on any value is null-safe in Kotlin. `a == b` where `a` is null does not crash — it
+becomes a null check. You never need the `a != null && a.equals(b)` dance.
+</Tip>
+
+## `is`, and the smart cast that follows
+
+```kotlin title="SmartCast.kt" numbered runnable
+fun describe(value: Any): String {
+    if (value is String) {
+        // inside here, `value` is a String — no cast written
+        return "text of ${value.length} characters"
+    }
+    if (value is Int && value > 100) {
+        return "a big number"
+    }
+    return "something else"
+}
+
+fun main() {
+    println(describe("Kotlin"))
+    println(describe(500))
+    println(describe(1.5))
+}
+```
+
+The compiler tracks what it has proved. Once `value is String` is true, every later use in
+that branch is typed as `String`. This is **smart casting**, and it is why Kotlin code has so
+few explicit casts.
+
+## When the smart cast refuses
+
+```kotlin title="NoSmartCast.kt" numbered
+class Screen(var title: Any)
+
+fun show(screen: Screen) {
+    if (screen.title is String) {
+        // println(screen.title.length)  // error: smart cast is impossible
+        val title = screen.title         // copy to a local val
+        if (title is String) println(title.length)
+    }
+}
+```
+
+A smart cast needs a guarantee that the value cannot change between the check and the use. A
+`var` property could be reassigned by another thread, so the compiler refuses. Copying it
+into a local `val` gives it that guarantee.
+
+## `as` and `as?`
+
+```kotlin title="Casting.kt" numbered runnable
+fun main() {
+    val any: Any = "Kotlin"
+
+    val forced = any as String        // works, but throws if wrong
+    val safe = any as? Int            // null instead of throwing
+    val fallback = any as? Int ?: 0   // null-coalesced to a default
+
+    println("$forced $safe $fallback")
+}
+```
+
+<Pitfall title="The two casting mistakes">
+**Reaching for `as` when `as?` would do.** `as` throws `ClassCastException`; `as?` returns
+`null`. Unless a wrong type genuinely means your program is broken, use `as?` with `?:`.
+
+**Casting a generic type and expecting a check.** `list as List<String>` compiles with an
+unchecked warning and does nothing at runtime — the JVM erased the type parameter. The crash
+arrives later, at the first element you read. Check the elements, not the list.
+</Pitfall>
+
+## Practice
+
+1. Predict, then run: `println(5 / 2)`, `println(5 / 2.0)`, `println(5.0 / 0)`,
+   `println(5 / 0)`. Explain each result.
+2. Write a function taking `Any` that returns a description for `String`, `Int`, `List<*>`
+   and anything else, using `is` and smart casts, without writing `as` once.
+3. Make a class with a `var name: Any`. Try to smart cast it inside an `if`. Read the error,
+   then fix it in two ways.
+4. `val n = someAny as? Int ?: -1` — describe every path this line can take.
+
+## Recap
+
+| Tool | Behaviour |
+| --- | --- |
+| `is` | Runtime type check, and enables a smart cast |
+| Smart cast | Automatic, only when the value cannot change |
+| `as` | Throws `ClassCastException` on mismatch |
+| `as?` | Returns `null` on mismatch — usually what you want |
+| `==` | Calls `equals`, and is null-safe |
+| `===` | Reference identity, rarely what you want |

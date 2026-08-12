@@ -1,0 +1,123 @@
+---
+title: if as an expression, and the power of when
+description: In Kotlin, branching produces a value. That one change removes a whole category of half-initialised variables from your code.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+In Java you declare a variable, leave it empty, branch, and hope every path assigned it.
+Kotlin lets the branch *be* the value, so there is no window in which the variable is
+half-built.
+
+## `if` returns something
+
+```kotlin title="IfExpression.kt" numbered runnable
+fun main() {
+    val score = 72
+
+    // statement style — needs var, and a moment where grade is undecided
+    var grade = ""
+    if (score >= 70) grade = "A" else grade = "B"
+
+    // expression style — one val, no gap
+    val better = if (score >= 70) "A" else "B"
+
+    println("$grade $better")
+}
+```
+
+When `if` is used as an expression the `else` is mandatory — otherwise there would be a path
+that produces nothing. That is the compiler closing the exact hole the statement style leaves
+open.
+
+<Tip bare>
+Kotlin has no ternary `?:` operator for this, because `if` already is one. `if (a) b else c`
+*is* the ternary.
+</Tip>
+
+## `when`, four ways
+
+```kotlin title="When.kt" numbered runnable
+fun label(code: Int): String = when (code) {
+    200 -> "OK"
+    301, 302 -> "Redirect"                 // several values in one branch
+    in 400..499 -> "Client error"          // a range
+    else -> "Something else"
+}
+
+fun size(n: Int): String = when {          // no subject: arbitrary conditions
+    n < 10 -> "small"
+    n < 100 -> "medium"
+    else -> "large"
+}
+
+fun main() {
+    println(label(302))
+    println(label(404))
+    println(size(50))
+}
+```
+
+`when` also does type checks, and smart casts inside the branch:
+
+```kotlin title="WhenType.kt" numbered runnable
+fun describe(value: Any): String = when (value) {
+    is String -> "text of ${value.length} chars"
+    is Int -> "number ${value + 1} follows"
+    is List<*> -> "list of ${value.size}"
+    else -> "unknown"
+}
+
+fun main() = println(describe(listOf(1, 2, 3)))
+```
+
+## The part that matters later
+
+When `when` is used as an expression over a **sealed** type, the compiler forces you to
+handle every case — and `else` becomes unnecessary.
+
+```kotlin title="Exhaustive.kt" numbered
+sealed interface Result
+data class Success(val body: String) : Result
+data class Failure(val code: Int) : Result
+object Loading : Result
+
+fun render(result: Result): String = when (result) {
+    is Success -> result.body
+    is Failure -> "Error ${result.code}"
+    Loading -> "Please wait"
+    // no else needed — the compiler knows these are all of them
+}
+```
+
+Add a fourth subtype next month and every `when` that missed it stops compiling. That is the
+single most valuable safety property in the whole language, and Phase 2 builds on it.
+
+<Pitfall title="Two habits worth breaking early">
+**Writing `else -> throw IllegalStateException()` over a sealed type.** It silences the
+compiler and throws away exactly the protection you wanted. Leave `else` off.
+
+**Falling through.** Kotlin has no fall-through: exactly one branch runs, and there is no
+`break`. If you expected C-style fall-through, list the values in one branch instead:
+`301, 302 ->`.
+</Pitfall>
+
+## Practice
+
+1. Rewrite `if (x > 0) sign = 1 else if (x < 0) sign = -1 else sign = 0` as a single `val`
+   using `if` as an expression.
+2. Write a `when` that turns an HTTP status into a message, using a single value, a list of
+   values, a range and `else`.
+3. Make a sealed interface with three subtypes and a `when` over it with no `else`. Add a
+   fourth subtype and read the compiler error.
+4. Why does `val x = if (a) 1` not compile, while `if (a) doThing()` does?
+
+## Recap
+
+| Form | Returns a value? |
+| --- | --- |
+| `if (a) b else c` | Yes — `else` is then required |
+| `when (x) { ... }` | Yes, when every path is covered |
+| `when { ... }` | Same, with arbitrary conditions instead of a subject |
+| `when` over `sealed` | Exhaustive without `else` — the compiler checks for you |

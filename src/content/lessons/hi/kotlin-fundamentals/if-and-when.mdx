@@ -1,0 +1,122 @@
+---
+title: if एक expression है, और when की ताक़त
+description: Kotlin में branching अपने आप में एक value है। बस इस एक बदलाव से आपके code से आधे-अधूरे variables की पूरी श्रेणी ही ग़ायब हो जाती है।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+Java में आप variable declare करते हैं, ख़ाली छोड़ देते हैं, branch करते हैं, और उम्मीद करते हैं कि
+हर रास्ते ने उसे भर दिया। Kotlin में branch ख़ुद ही value बन जाती है, इसलिए ऐसा कोई पल होता ही
+नहीं जब variable आधा बना हो।
+
+## `if` कुछ लौटाता है
+
+```kotlin title="IfExpression.kt" numbered runnable
+fun main() {
+    val score = 72
+
+    // statement style — var चाहिए, और एक पल जब grade तय ही नहीं
+    var grade = ""
+    if (score >= 70) grade = "A" else grade = "B"
+
+    // expression style — एक val, कोई ख़ाली पल नहीं
+    val better = if (score >= 70) "A" else "B"
+
+    println("$grade $better")
+}
+```
+
+जब `if` expression की तरह इस्तेमाल होता है तो `else` ज़रूरी हो जाता है — वरना कोई रास्ता ऐसा होता
+जो कुछ बनाता ही नहीं। Compiler ठीक वही छेद बंद कर रहा है जो statement style खुला छोड़ देता है।
+
+<Tip bare>
+Kotlin में इसके लिए अलग ternary `?:` operator है ही नहीं, क्योंकि `if` ख़ुद ternary है।
+`if (a) b else c` ही ternary है।
+</Tip>
+
+## `when`, चार तरह से
+
+```kotlin title="When.kt" numbered runnable
+fun label(code: Int): String = when (code) {
+    200 -> "OK"
+    301, 302 -> "Redirect"                 // एक branch में कई values
+    in 400..499 -> "Client error"          // एक range
+    else -> "Something else"
+}
+
+fun size(n: Int): String = when {          // बिना subject: कोई भी condition
+    n < 10 -> "small"
+    n < 100 -> "medium"
+    else -> "large"
+}
+
+fun main() {
+    println(label(302))
+    println(label(404))
+    println(size(50))
+}
+```
+
+`when` type check भी करता है, और branch के अंदर smart cast भी:
+
+```kotlin title="WhenType.kt" numbered runnable
+fun describe(value: Any): String = when (value) {
+    is String -> "text of ${value.length} chars"
+    is Int -> "number ${value + 1} follows"
+    is List<*> -> "list of ${value.size}"
+    else -> "unknown"
+}
+
+fun main() = println(describe(listOf(1, 2, 3)))
+```
+
+## वह हिस्सा जो आगे बहुत काम आएगा
+
+जब `when` किसी **sealed** type पर expression की तरह चलता है, compiler हर case handle करवाता है
+— और `else` की ज़रूरत ही नहीं रहती।
+
+```kotlin title="Exhaustive.kt" numbered
+sealed interface Result
+data class Success(val body: String) : Result
+data class Failure(val code: Int) : Result
+object Loading : Result
+
+fun render(result: Result): String = when (result) {
+    is Success -> result.body
+    is Failure -> "Error ${result.code}"
+    Loading -> "Please wait"
+    // else की ज़रूरत नहीं — compiler जानता है कि बस इतने ही हैं
+}
+```
+
+अगले महीने चौथा subtype जोड़िए और हर वह `when` compile होना बंद हो जाएगा जिसने उसे छोड़ दिया।
+पूरी भाषा में यही सबसे क़ीमती safety है, और Phase 2 इसी पर खड़ा है।
+
+<Pitfall title="दो आदतें जो शुरू में ही छोड़ देना बेहतर है">
+**Sealed type पर `else -> throw IllegalStateException()` लिखना।** इससे compiler चुप हो जाता है
+और वही सुरक्षा चली जाती है जो आप चाहते थे। `else` मत लिखिए।
+
+**Fall-through की उम्मीद।** Kotlin में fall-through है ही नहीं: ठीक एक branch चलती है, और
+`break` की ज़रूरत नहीं। C जैसा fall-through चाहिए तो values एक ही branch में लिखिए:
+`301, 302 ->`।
+</Pitfall>
+
+## अभ्यास
+
+1. `if (x > 0) sign = 1 else if (x < 0) sign = -1 else sign = 0` को एक ही `val` में बदलिए,
+   `if` को expression की तरह इस्तेमाल करके।
+2. एक `when` लिखिए जो HTTP status को message में बदले — एक single value, कई values की list, एक
+   range और `else` तीनों इस्तेमाल करके।
+3. तीन subtypes वाला sealed interface बनाइए और उस पर बिना `else` के `when` लिखिए। चौथा subtype
+   जोड़कर compiler का error पढ़िए।
+4. `val x = if (a) 1` compile क्यों नहीं होता, जबकि `if (a) doThing()` हो जाता है?
+
+## सारांश
+
+| रूप | Value लौटाता है? |
+| --- | --- |
+| `if (a) b else c` | हाँ — तब `else` ज़रूरी है |
+| `when (x) { ... }` | हाँ, जब हर रास्ता ढका हो |
+| `when { ... }` | वही, subject के बजाय कोई भी condition |
+| `sealed` पर `when` | बिना `else` के exhaustive — compiler ख़ुद जाँचता है |

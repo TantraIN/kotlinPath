@@ -1,0 +1,128 @@
+---
+title: Operators, smart casts, is aur as
+description: Java mein jo manual casts likhne padte the, Kotlin unmein se lagbhag sab hata deta hai. Ye kaise karta hai ye samajh lo to pata chal jayega ki kab nahi kar pata, aur tab kya karna hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Java code mein `ClassCastException` sabse aam crashes mein se ek tha. Kotlin ise durlabh bana
+deta hai — pakad kar nahi, balki zyadatar casts ki zarurat hi khatam karke.
+
+## Operators asal mein function calls hain
+
+```kotlin title="Operators.kt" numbered runnable
+fun main() {
+    println(7 / 2)        // 3   — Int division kaat deta hai
+    println(7 / 2.0)      // 3.5 — ek Double ho to natija Double
+    println(7 % 2)        // 1   — shesh
+    println(7.0 / 0)      // Infinity, koi exception nahi
+    // println(7 / 0)     // ArithmeticException
+}
+```
+
+Har operator ek naam wale function par jata hai: `+` yaani `plus`, `==` yaani `equals`, `<`
+yaani `compareTo`. Isiliye aage chalkar aap inhe apne types ke liye bhi likh sakte ho, aur
+isiliye `data class` par `==` contents compare karta hai — wo generated `equals` bula raha
+hota hai.
+
+| Aap likhte ho | Kotlin bulata hai |
+| --- | --- |
+| `a + b` | `a.plus(b)` |
+| `a == b` | `a?.equals(b) ?: (b === null)` |
+| `a > b` | `a.compareTo(b) > 0` |
+| `a in c` | `c.contains(a)` |
+| `a[i]` | `a.get(i)` |
+
+<Tip bare>
+Kotlin mein `==` har value par null-safe hai. `a` null ho to bhi `a == b` crash nahi karta —
+wo null check ban jata hai. `a != null && a.equals(b)` wala natak kabhi nahi chahiye.
+</Tip>
+
+## `is`, aur uske baad aane wala smart cast
+
+```kotlin title="SmartCast.kt" numbered runnable
+fun describe(value: Any): String {
+    if (value is String) {
+        // yahan andar `value` String hai — koi cast nahi likha
+        return "text of ${value.length} characters"
+    }
+    if (value is Int && value > 100) {
+        return "a big number"
+    }
+    return "something else"
+}
+
+fun main() {
+    println(describe("Kotlin"))
+    println(describe(500))
+    println(describe(1.5))
+}
+```
+
+Compiler yaad rakhta hai ki usne kya sabit kar liya hai. Ek baar `value is String` sach ho
+gaya, to us branch mein har aage ka istemal `String` maana jata hai. Yahi **smart casting**
+hai, aur isiliye Kotlin code mein explicit casts itne kam dikhte hain.
+
+## Jab smart cast mana kar deta hai
+
+```kotlin title="NoSmartCast.kt" numbered
+class Screen(var title: Any)
+
+fun show(screen: Screen) {
+    if (screen.title is String) {
+        // println(screen.title.length)  // error: smart cast is impossible
+        val title = screen.title         // local val mein copy karo
+        if (title is String) println(title.length)
+    }
+}
+```
+
+Smart cast ke liye guarantee chahiye ki check aur istemal ke beech value badal nahi sakti.
+`var` property koi dusra thread badal sakta hai, isliye compiler mana kar deta hai. Use local
+`val` mein copy kar dene se wahi guarantee mil jati hai.
+
+## `as` aur `as?`
+
+```kotlin title="Casting.kt" numbered runnable
+fun main() {
+    val any: Any = "Kotlin"
+
+    val forced = any as String        // chalta hai, par galat ho to fenkta hai
+    val safe = any as? Int            // fenkne ke bajaye null
+    val fallback = any as? Int ?: 0   // null par default
+
+    println("$forced $safe $fallback")
+}
+```
+
+<Pitfall title="Casting ki do galtiyan">
+**`as?` se kaam chalta ho phir bhi `as` uthana.** `as` `ClassCastException` fenkta hai; `as?`
+`null` lautata hai. Jab tak galat type ka matlab ye na ho ki program hi toota hai, `as?` aur
+`?:` use karo.
+
+**Generic type cast karke check ki ummeed rakhna.** `list as List<String>` unchecked warning
+ke saath compile hota hai aur runtime par kuch karta hi nahi — JVM ne type parameter mita
+diya. Crash baad mein aata hai, pehle padhe gaye element par. List nahi, elements check karo.
+</Pitfall>
+
+## Practice
+
+1. Pehle andaza lagao, phir chalao: `println(5 / 2)`, `println(5 / 2.0)`, `println(5.0 / 0)`,
+   `println(5 / 0)`. Har natije ki wajah batao.
+2. `Any` lene wala ek function likho jo `String`, `Int`, `List<*>` aur baaki sabke liye alag
+   description laute — `is` aur smart cast se, bina ek baar bhi `as` likhe.
+3. Ek class banao jismein `var name: Any` ho. `if` ke andar use smart cast karke dekho. Error
+   padho, phir do tarikon se theek karo.
+4. `val n = someAny as? Int ?: -1` — is ek line ke sabhi sambhavit raste likho.
+
+## Recap
+
+| Tool | Vyavhaar |
+| --- | --- |
+| `is` | Runtime type check, aur smart cast chalu karta hai |
+| Smart cast | Apne aap, sirf tab jab value badal na sake |
+| `as` | Mel na khaye to `ClassCastException` |
+| `as?` | Mel na khaye to `null` — aam taur par yahi chahiye |
+| `==` | `equals` bulata hai, aur null-safe hai |
+| `===` | Reference identity, kam hi zarurat padti hai |

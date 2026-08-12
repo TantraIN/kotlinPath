@@ -1,0 +1,148 @@
+---
+title: Strings, templates aur raw strings
+description: App mein sabse zyada kaam text banane ka hi hota hai. Kotlin iske liye teen tools deta hai, aur kaun sa kab uthana hai ye pata ho to code padhne laayak rehta hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Jo bhi screen aap bhejte ho wo text hi hai: labels, error messages, formatted prices, log
+lines. Java mein iska matlab tha `+` ki lambi zanjeer ya `String.format`. Kotlin ke paas
+isse behtar cheez hai, aur yahi pehla Kotlin feature hai jo logon ko muskurata hai.
+
+## Templates: string ke andar `$`
+
+```kotlin title="Templates.kt" numbered runnable
+fun main() {
+    val name = "Ravi"
+    val items = 3
+
+    println("Hello, $name")
+    println("You have $items items")
+    println("Total: ${items * 250} rupees")   // expression ke liye braces
+    println("Name length: ${name.length}")
+}
+```
+
+Niyam chhota hai: saade variable ke liye `$name`, aur jismein dot, call ya operator ho uske
+liye `${...}`. `+` ke bajaye templates chuno — wo waise hi padhte hain jaisa wakya banate
+hain.
+
+<Tip bare>
+Asli dollar sign print karna ho to escape karo: `"\$5"` `$5` print karta hai.
+</Tip>
+
+## Raw strings: escaping ki zarurat hi nahi
+
+Triple quotes har character wahi rakhte hain jo likha hai — newlines, quotes, backslashes.
+
+```kotlin title="Raw.kt" numbered runnable
+fun main() {
+    val json = """
+        {
+          "name": "Asha",
+          "city": "Pune"
+        }
+    """.trimIndent()
+
+    println(json)
+}
+```
+
+`trimIndent()` shuru ki common whitespace hata deta hai, taaki string sirf isliye indented na
+rahe kyunki aapka code indented tha. Iske bina har line par aath spaces aa jate.
+
+<Compare
+  left={{
+    title: "Escaped string",
+    subtitle: "Double quotes",
+    accent: "amber",
+    points: [
+      "+ Ek chhoti line ke liye theek",
+      "- Quotes aur backslashes escape karne padte hain",
+      "- Multi-line matlab escape sequences aur concatenation",
+    ],
+  }}
+  right={{
+    title: "Raw string",
+    subtitle: "Triple quotes",
+    accent: "emerald",
+    points: [
+      "+ JSON, SQL aur regex jaise ke waise padhte hain",
+      "+ Asli newlines, koi escape sequence nahi",
+      "~ Iske saath trimIndent() lagao",
+    ],
+  }}
+/>
+
+## Strings immutable hote hain
+
+```kotlin title="Immutable.kt" numbered runnable
+fun main() {
+    val greeting = "hello"
+    val shouted = greeting.uppercase()
+
+    println(greeting)   // hello — nahi badla
+    println(shouted)    // HELLO — naya object
+}
+```
+
+`String` ka har operation naya object lautata hai. `uppercase`, `trim`, `replace` aur `plus`
+sab original ko chhedte nahi. Isiliye loop mein `+` se string banana dheema hai — har kadam
+par poori nayi string banti hai. Bahut saare tukde jodne hon to `buildString` use karo.
+
+```kotlin title="Building.kt" numbered runnable
+fun main() {
+    val report = buildString {
+        append("Report")
+        appendLine()
+        repeat(3) { index -> appendLine("row ${index + 1}") }
+    }
+    println(report)
+}
+```
+
+## Text ki tulna
+
+```kotlin title="Comparing.kt" numbered runnable
+fun main() {
+    val a = "kotlin"
+    val b = "KOTLIN"
+
+    println(a == b)                            // false
+    println(a.equals(b, ignoreCase = true))    // true
+    println(a.startsWith("kot"))               // true
+    println(a.contains("tl"))                  // true
+}
+```
+
+<Pitfall title="Do jo asli apps mein kaatti hain">
+**`===` se tulna karna.** `==` contents compare karta hai, `===` identity. Text ke liye
+lagbhag hamesha `==` chahiye. Agar aapne strings par `===` likha hai, to wo bug hai.
+
+**Tulna ke liye user input ko `uppercase()` se case-fold karna.** Turkish mein
+`"i".uppercase()` `"I"` nahi hota. Case-insensitive milaan ke liye
+`equals(other, ignoreCase = true)` use karo, jo locale ke hisab se sahi kaam karta hai, text
+ko pehle bigadta nahi.
+</Pitfall>
+
+## Practice
+
+1. Template se `Asha has 3 unread messages` print karo, naam aur count variables mein
+   rakhkar. Phir wahi wakya count dugna karke print karo — template ke andar hi.
+2. Ek raw string likho jismein chhota sa SQL query ho aur usmein double quotes hon. Dekho ki
+   ek bhi backslash nahi lagana pada.
+3. Loop mein `+=` se paanch line ki string banao, phir `buildString` se dobara likho.
+   Samjhao kaun sa zyada allocate karta hai aur kyun.
+4. `"Hello".replace("l", "L")` — uske baad original variable mein kya pada hai, aur kyun?
+
+## Recap
+
+| Tool | Kis liye |
+| --- | --- |
+| `"$name"` | Wakya mein variable daalne ke liye |
+| `"${expr}"` | Jismein dot, call ya operator ho |
+| Triple quotes | JSON, SQL, regex, koi bhi multi-line cheez |
+| `.trimIndent()` | Code ne jo indentation di thi use hatane ke liye |
+| `buildString { }` | Bahut saare tukde bina kachra banaye jodne ke liye |
+| `equals(x, ignoreCase = true)` | Case-insensitive tulna, sahi tarike se |
