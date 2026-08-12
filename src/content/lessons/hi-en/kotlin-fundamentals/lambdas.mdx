@@ -1,0 +1,143 @@
+---
+title: Lambdas aur higher-order functions
+description: Aisa function jise aap value ki tarah idhar-udhar bhej sako. Har collection operation, har click listener, aur aage chalkar har composable isi vichaar par khada hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Pehle `filter { }` se hi aap lambdas bhej rahe ho. Ye lesson us cheez ko naam deta hai, taaki
+jab Compose `onClick: () -> Unit` maange to aap use ek type ki tarah padho, chinh ki tarah
+nahi.
+
+## Lambda ek value hai
+
+```kotlin title="Values.kt" numbered runnable
+fun main() {
+    val double: (Int) -> Int = { n -> n * 2 }
+    val greet: (String) -> String = { "Hello, $it" }   // ek parameter ho to `it`
+    val log: () -> Unit = { println("something happened") }
+
+    println(double(5))
+    println(greet("Asha"))
+    log()
+}
+```
+
+Type ko baayein se daayein padho: `(Int) -> Int` yaani "Int leta hai, Int wapas deta hai".
+`() -> Unit` yaani "kuch nahi leta, kaam ki koi cheez wapas nahi deta" — click listener theek
+yahi hai.
+
+## Wo functions jo functions lete hain
+
+```kotlin title="HigherOrder.kt" numbered runnable
+fun <T> List<T>.keepIf(predicate: (T) -> Boolean): List<T> {
+    val result = mutableListOf<T>()
+    for (item in this) if (predicate(item)) result += item
+    return result
+}
+
+fun main() {
+    val numbers = listOf(1, 2, 3, 4, 5, 6)
+    println(numbers.keepIf { it % 2 == 0 })
+}
+```
+
+Ye `filter` hi hai, khol kar likha hua. Standard library mein aisa kuch nahi ho raha jo aap
+khud na likh sakte — usne bas use achha naam pehle de diya hai.
+
+<Tip bare>
+Lambda aakhri parameter ho to use bracket ke bahar le jaya ja sakta hai. Isi ek niyam ki wajah
+se `repeat(3) { }`, `list.filter { }` aur `Column { }` language syntax jaise lagte hain,
+jabki wo saade function calls hain.
+</Tip>
+
+```kotlin title="TrailingLambda.kt" numbered runnable
+fun main() {
+    // ye teeno ek hi call hain
+    repeat(3, { println("hi") })
+    repeat(3) { println("hi") }
+    val block: (Int) -> Unit = { println("hi") }
+    repeat(3, block)
+}
+```
+
+## `it`, aur naam kab dena
+
+```kotlin title="Naming.kt" numbered runnable
+data class User(val name: String, val age: Int)
+
+fun main() {
+    val users = listOf(User("Asha", 30), User("Ravi", 25))
+
+    println(users.map { it.name })                  // ek level: `it` theek hai
+    println(users.map { user -> user.name.length }) // naam diya: nested mein saaf
+    println(users.map { (name, age) -> "$name is $age" })  // destructured
+}
+```
+
+Ek chhote expression ke liye `it` theek hai. Jaise hi ek lambda dusre ke andar aaye, naam de
+do — ek hi block mein do `it` future mein padhne wale ko (yaani aapko) uljhane ka sabse tez
+tarika hai.
+
+## Function references
+
+```kotlin title="References.kt" numbered runnable
+fun isLong(text: String) = text.length > 4
+
+fun main() {
+    val words = listOf("hi", "kotlin", "android")
+
+    println(words.filter { isLong(it) })   // call ko lambda mein lapetna
+    println(words.filter(::isLong))        // seedha function ka reference
+    println(words.map(String::uppercase))  // member ka reference
+}
+```
+
+## Andar ki baat: inline matlab koi object nahi
+
+Lambda aam taur par ek object hota hai, aur loop mein har call par ek banana allocation hai.
+Isiliye collection functions `inline` hain — compiler lambda ka body seedha call site par copy
+kar deta hai. Na object, na call, aur lambda ke andar likha `return` bahar wale function se
+bhi wapas aa sakta hai.
+
+```kotlin title="NonLocal.kt" numbered runnable
+fun firstNegative(numbers: List<Int>): Int? {
+    numbers.forEach { if (it < 0) return it }   // firstNegative se return
+    return null
+}
+
+fun main() = println(firstNegative(listOf(3, -7, 2)))
+```
+
+<Pitfall title="Do jo Android par mayne rakhti hain">
+**Lambe samay tak zinda lambda mein `Context` ya `View` pakad lena.** Lambda ne jo pakda hai
+uska reference wo rakhta hai. Use singleton ya static callback mein rakh do, aur poori screen
+leak ho gayi. Android mein sabse aam memory leak yahi hai.
+
+**Har lambda ko muft samajhna.** Inline wale muft hain. Property mein rakha lambda, ya
+non-inline function ko diya lambda, har baar banne par asli object hai.
+</Pitfall>
+
+## Practice
+
+1. `fun applyTwice(value: Int, operation: (Int) -> Int): Int` likho aur ise teen tarike se
+   bulao: lambda se, trailing lambda se, aur function reference se.
+2. In sabka type batao: `String` par lagaya `{ println(it) }`, `{ a: Int, b: Int -> a + b }`,
+   aur `{ }`.
+3. `List<T>` par apna `myMap` extension likho jo `(T) -> R` parameter le. Asli `map` se tulna
+   karo.
+4. `forEach { return }` bahar wale function se wapas kyun aa sakta hai, jabki variable mein
+   rakha lambda nahi aa sakta?
+
+## Recap
+
+| Baat | Kaise likha jata hai |
+| --- | --- |
+| Lambda | `{ a, b -> a + b }` |
+| Ek parameter | `it` |
+| Function type | `(Int) -> String` |
+| Na parameter na natija | `() -> Unit` |
+| Trailing lambda | `f(x) { ... }` |
+| Function reference | `::isLong`, `String::uppercase` |
+| `inline` | Koi lambda object nahi; non-local `return` sambhav |

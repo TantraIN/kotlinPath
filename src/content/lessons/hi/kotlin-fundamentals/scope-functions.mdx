@@ -1,0 +1,126 @@
+---
+title: let, run, with, apply, also — कौन सा कब
+description: पाँच functions जो लगभग एक जैसा ही काम करते हैं। इन्हें अलग करने वाली table एक screen में आ जाती है, और वह पता हो तो अंदाज़ा लगाना हमेशा के लिए ख़त्म।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+हर Kotlin codebase इन्हें इस्तेमाल करता है, अक्सर ग़लत तरीक़े से। ये सिर्फ़ दो बातों पर अलग होते हैं,
+और वे दो बातें दिख जाएँ तो फिर कभी अंदाज़ा नहीं लगाना पड़ता।
+
+## दो सवाल
+
+हर scope function बस इन्हीं का जवाब देता है:
+
+1. Block के अंदर receiver को **`it`** कहते हैं या **`this`**?
+2. पूरी call **block का नतीजा** लौटाती है या **receiver ख़ुद**?
+
+| Function | Receiver | लौटाता है |
+| --- | --- | --- |
+| `let` | `it` | block का नतीजा |
+| `run` | `this` | block का नतीजा |
+| `with` | `this` | block का नतीजा |
+| `apply` | `this` | receiver |
+| `also` | `it` | receiver |
+
+पूरा पाठ यही है। नीचे का सब बस यह है कि हर column असली code में कैसा लगता है।
+
+## Block का नतीजा: `let` और `run`
+
+```kotlin title="Transform.kt" numbered runnable
+fun main() {
+    val name: String? = "asha"
+
+    // let — बदलिए, और classic null guard
+    val greeting = name?.let { "Hello, ${it.replaceFirstChar(Char::uppercase)}" }
+    println(greeting)
+
+    // run — वही, पर receiver `this` है, इसलिए members बिना prefix के पढ़ते हैं
+    val length = name?.run { trim().length }
+    println(length)
+}
+```
+
+`let` तब जब value को नाम देना हो, या जब `?.let { }` null से बचा रहा हो। `run` तब जब एक ही object
+के कई members बुला रहे हों और `it.` सिर्फ़ शोर लग रहा हो।
+
+## Receiver वापस: `apply` और `also`
+
+```kotlin title="Configure.kt" numbered runnable
+class Request {
+    var url: String = ""
+    var timeout: Int = 0
+    override fun toString() = "$url ($timeout ms)"
+}
+
+fun main() {
+    // apply — configure कीजिए और object वापस दीजिए; classic builder
+    val request = Request().apply {
+        url = "https://example.com"
+        timeout = 5000
+    }
+
+    // also — उसके साथ कुछ कीजिए, पर आगे जाने वाली चीज़ बदले बिना
+    val checked = request.also { println("built $it") }
+
+    println(checked)
+}
+```
+
+`apply` चीज़ें set करने के लिए है। `also` chain के बीच में side effect के लिए — logging,
+validation, caching — जहाँ value वैसी की वैसी आगे जानी चाहिए।
+
+## `with` थोड़ा अलग है
+
+```kotlin title="With.kt" numbered runnable
+fun main() {
+    val numbers = listOf(1, 2, 3)
+
+    // extension नहीं है: receiver argument की तरह जाता है
+    val summary = with(numbers) {
+        "$size items, first is ${first()}, sum is ${sum()}"
+    }
+    println(summary)
+}
+```
+
+`with(x) { }` असल में `x.run { }` ही है, बस लिखा अलग है। `x` null हो सकता हो तो `run` चुनिए,
+क्योंकि `with` का safe-call रूप है ही नहीं।
+
+## चुनाव, एक-एक line में
+
+```kotlin title="Choosing.kt" numbered
+user?.let { save(it) }                    // सिर्फ़ तब जब null न हो
+val n = text.run { trim().length }        // कई members से एक value बनाइए
+val v = View(context).apply { id = 1 }    // बनाइए और configure कीजिए
+repo.load().also { Log.d("app", "$it") }  // झाँकिए, value बदले बिना
+```
+
+<Pitfall title="दो आदतें जो scope functions को अपाठ्य बना देती हैं">
+**इन्हें nested करना।** `a.let { b.let { ... } }` से एक ही scope में दो `it` आ जाते हैं और अंदर
+वाला बाहर वाले को चुपचाप ढक देता है। Nest करना ही हो तो parameters को नाम दीजिए:
+`a.let { outer -> ... }`।
+
+**जहाँ constructor या `data class` से काम हो, वहाँ `apply` उठाना।** `apply` इसलिए है क्योंकि Java
+APIs को setters चाहिए। Type आपका अपना है तो values constructor में लीजिए — फिर कोई भूलना संभव ही
+नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. पाँचों के लिए एक-एक line असली लगने वाला code लिखिए जहाँ वही सही चुनाव हो।
+2. `val len = if (s != null) s.trim().length else 0` को scope function और `?:` से दोबारा लिखिए।
+3. `apply` से object बनाने वाली chain लीजिए, फिर chain तोड़े बिना एक log line जोड़िए। कौन सा
+   function इस्तेमाल किया, और दूसरा क्यों नहीं?
+4. `val x = user.also { it.name = "new" }` — `x` में क्या है, और क्या बदला?
+
+## सारांश
+
+| मुझे चाहिए… | इस्तेमाल कीजिए |
+| --- | --- |
+| सिर्फ़ non-null पर code चलाना | `?.let { }` |
+| कई members से एक value बनाना | `run { }` |
+| Object बनाकर configure करना | `apply { }` |
+| Chain के बीच log या check, value वही रहे | `also { }` |
+| Non-null object पर कई calls एक जगह | `with(x) { }` |

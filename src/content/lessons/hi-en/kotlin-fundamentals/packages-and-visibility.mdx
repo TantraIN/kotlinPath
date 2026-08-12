@@ -1,0 +1,123 @@
+---
+title: Packages, imports aur visibility modifiers
+description: Aapka code kahan rehta hai aur use dekhne ki ijazat kise hai. Ye ek baar sahi ho jaye to project paanch files par jitna navigable hai, pachaas par bhi utna hi rehta hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Visibility hi wo iklauta auzaar hai jo code ko surakshit roop se badalne deta hai. Jo bhi
+`public` hai wo ek waada hai; jo `private` hai use aap aaj dopahar dobara likh sakte ho.
+Beginners sab kuch public kar dete hain aur phir paate hain ki kuch bhi badla nahi ja sakta
+bina kuch toote.
+
+## Packages
+
+```kotlin title="User.kt" numbered
+package com.example.myapp.data
+
+class User(val id: Int, val name: String)
+```
+
+Package file ke sabse upar likha jata hai aur parampara se folder path jaisa hi hota hai.
+Kotlin Java ki tarah folders aur package ka milna zaruri nahi karta — par phir bhi milaao,
+kyunki har tool aur har teammate yahi ummeed karta hai.
+
+<FileTree
+  caption="Aisa layout jo badhta hai: upar feature se, andar layer se."
+  entries={[
+    { name: "com/example/myapp/", kind: "folder" },
+    { name: "MainActivity.kt", kind: "kotlin", depth: 1 },
+    { name: "data/", kind: "folder", depth: 1, note: "repositories, DTOs" },
+    { name: "UserRepository.kt", kind: "kotlin", depth: 2 },
+    { name: "domain/", kind: "folder", depth: 1, note: "models, use cases" },
+    { name: "User.kt", kind: "kotlin", depth: 2 },
+    { name: "ui/", kind: "folder", depth: 1, note: "screens" },
+    { name: "profile/", kind: "folder", depth: 2 },
+    { name: "ProfileScreen.kt", kind: "kotlin", depth: 3, highlight: true },
+  ]}
+/>
+
+## Imports
+
+```kotlin title="Imports.kt" numbered
+import com.example.myapp.data.UserRepository
+import com.example.myapp.domain.User as DomainUser   // alias naam ka takraav suljhata hai
+import kotlinx.coroutines.flow.*                     // poora package, kam hi use karo
+```
+
+`kotlin.*`, `kotlin.collections.*` aur kuch aur har file mein apne aap aa jate hain, isiliye
+`listOf` aur `println` ke liye import nahi lagta. Jab do packages ek hi naam dein — aur `User`
+data aur domain dono mein hona bahut aam hai — to `as` alias sabse saaf rasta hai.
+
+## Chaar visibilities
+
+| Modifier | Kise dikhta hai |
+| --- | --- |
+| `public` | Sabko. Default yahi hai — isiliye soch kar tay karna padta hai |
+| `internal` | Usi **module** ki har cheez ko |
+| `protected` | Declare karne wali class aur uski subclasses ko |
+| `private` | Usi file ko, ya usi class ko |
+
+```kotlin title="Visibility.kt" numbered
+class Cart {
+    private val items = mutableListOf<String>()      // bahar se koi nahi chhu sakta
+    internal var lastSyncedAt: Long = 0              // is module ka baaki code chhu sakta hai
+    val size: Int get() = items.size                 // public surface
+
+    fun add(item: String) { items += item }
+}
+```
+
+`internal` wahi hai jo log kam use karte hain. Multi-module Android project mein ye kisi module
+ko andar se bhari-bharkam API rakhne deta hai aur bahar sirf gine-chune types dikhata hai — aur
+compiler ise lagu karwata hai.
+
+<Tip bare>
+Har declaration `private` se shuru karo. Tabhi khola karo jab bahar kisi ko sach mein zarurat
+ho. Private se public jaana ek akshar ka badlav hai; ulta jaana ek refactor hai.
+</Tip>
+
+## Top-level declarations
+
+```kotlin title="TopLevel.kt" numbered
+package com.example.myapp.util
+
+private const val PREFIX = "app"                   // sirf is file ko
+fun log(message: String) = println("[$PREFIX] $message")
+```
+
+Kotlin functions aur properties ko class ke bahar bhi rehne deta hai. `private` top-level
+declaration sirf apni file mein dikhta hai, jisse ek-file wale helpers sach mein simite rehte
+hain — Java mein iska koi jod nahi hai.
+
+<Pitfall title="Do jo codebase badalna mushkil bana deti hain">
+**Sab kuch default se public.** Public default hai, isliye ye faisla lekar nahi, chhod dene se
+hota hai. Har public symbol wo cheez hai jise callers dekhe bina badla nahi ja sakta.
+
+**`util` package jo kabaad ka dabba ban jaye.** `StringUtils`, `Helpers`, `Common` — andar kya
+hai koi andaza nahi laga sakta. Behtar hai extension function usi type ke paas rakho jise wo
+badha raha hai, usi package mein jiska wo type hai.
+</Pitfall>
+
+## Practice
+
+1. Do packages banao jinmein dono mein `User` naam ki class ho. Dono ko ek hi file mein import
+   karke compile karwao.
+2. Apni koi class lo aur uske har member ko `private` kar do. Sirf wahi errors theek karo jo
+   sach mein bahar ke istemal hain. Kitne members ko sach mein public hona chahiye tha?
+3. Multi-module project ka udaharan lekar samjhao ki `internal` kab sahi chunav hai aur
+   `private` kab nahi.
+4. `private` top-level function usi file ki dusri class ko kyun dikhta hai, par usi package ki
+   dusri file ko kyun nahi?
+
+## Recap
+
+| Baat | Ek line |
+| --- | --- |
+| `package` | File ke upar; folders mein bhi wahi rakho |
+| `import ... as` | Naam takrane par saaf hal |
+| `public` | Default — ise faisla maano, chhoot nahi |
+| `internal` | Poore module mein; multi-module projects ka asli auzaar |
+| `private` | Usi file ya usi class mein; har declaration yahin se shuru ho |
+| Top-level declarations | Bina class ke functions aur constants |

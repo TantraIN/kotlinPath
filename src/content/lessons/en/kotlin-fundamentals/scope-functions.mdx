@@ -1,0 +1,126 @@
+---
+title: let, run, with, apply, also — and when to use which
+description: Five functions that all do nearly the same thing. The table that separates them fits on one screen, and knowing it stops the guesswork for good.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Every Kotlin codebase uses these, often badly. They differ on exactly two axes, and once you
+see those two axes you never have to guess again.
+
+## The two questions
+
+Each scope function answers only these:
+
+1. Inside the block, is the receiver called **`it`** or **`this`**?
+2. Does the whole call return the **block's result** or the **receiver itself**?
+
+| Function | Receiver is | Returns |
+| --- | --- | --- |
+| `let` | `it` | the block result |
+| `run` | `this` | the block result |
+| `with` | `this` | the block result |
+| `apply` | `this` | the receiver |
+| `also` | `it` | the receiver |
+
+That is the whole lesson. Everything below is how each column feels in real code.
+
+## Returns the block result: `let` and `run`
+
+```kotlin title="Transform.kt" numbered runnable
+fun main() {
+    val name: String? = "asha"
+
+    // let — transform, and the classic null guard
+    val greeting = name?.let { "Hello, ${it.replaceFirstChar(Char::uppercase)}" }
+    println(greeting)
+
+    // run — same, but the receiver is `this`, so members read without a prefix
+    val length = name?.run { trim().length }
+    println(length)
+}
+```
+
+Use `let` when you want a name for the value, or when `?.let { }` is guarding against null.
+Use `run` when you are calling several members of the same object and the `it.` prefix is
+just noise.
+
+## Returns the receiver: `apply` and `also`
+
+```kotlin title="Configure.kt" numbered runnable
+class Request {
+    var url: String = ""
+    var timeout: Int = 0
+    override fun toString() = "$url ($timeout ms)"
+}
+
+fun main() {
+    // apply — configure and hand the object back; the classic builder
+    val request = Request().apply {
+        url = "https://example.com"
+        timeout = 5000
+    }
+
+    // also — do something *with* it, without changing what flows on
+    val checked = request.also { println("built $it") }
+
+    println(checked)
+}
+```
+
+`apply` is for setting things up. `also` is for a side effect in the middle of a chain —
+logging, validation, caching — where the value must continue unchanged.
+
+## `with` is the odd one
+
+```kotlin title="With.kt" numbered runnable
+fun main() {
+    val numbers = listOf(1, 2, 3)
+
+    // not an extension: the receiver is an argument
+    val summary = with(numbers) {
+        "$size items, first is ${first()}, sum is ${sum()}"
+    }
+    println(summary)
+}
+```
+
+`with(x) { }` is `x.run { }` written differently. Prefer `run` when `x` might be null, since
+`with` has no safe-call form.
+
+## Choosing, in one line each
+
+```kotlin title="Choosing.kt" numbered
+user?.let { save(it) }                    // do this only if not null
+val n = text.run { trim().length }        // compute from several members
+val v = View(context).apply { id = 1 }    // build and configure
+repo.load().also { Log.d("app", "$it") }  // peek without changing the value
+```
+
+<Pitfall title="Two habits that make scope functions unreadable">
+**Nesting them.** `a.let { b.let { ... } }` gives you two `it`s in one scope and the inner one
+silently shadows the outer. If you must nest, name the parameters: `a.let { outer -> ... }`.
+
+**Using `apply` where a constructor or a `data class` would do.** `apply` exists because Java
+APIs need setters. If you control the type, take the values in the constructor — then it is
+impossible to forget one.
+</Pitfall>
+
+## Practice
+
+1. For each of the five, write one line of real-looking code where it is the right choice.
+2. Rewrite `val len = if (s != null) s.trim().length else 0` using a scope function and `?:`.
+3. Take a chain that builds an object with `apply`, then add a log line without breaking the
+   chain. Which function did you use, and why not the other one?
+4. `val x = user.also { it.name = "new" }` — what is in `x`, and what changed?
+
+## Recap
+
+| I want to… | Use |
+| --- | --- |
+| Run code only when non-null | `?.let { }` |
+| Compute a value from several members | `run { }` |
+| Build and configure an object | `apply { }` |
+| Log or check mid-chain, keep the value | `also { }` |
+| Group calls on a non-null object | `with(x) { }` |

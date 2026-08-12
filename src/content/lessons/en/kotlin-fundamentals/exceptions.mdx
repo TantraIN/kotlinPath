@@ -1,0 +1,137 @@
+---
+title: Exceptions, try/catch and the Result type
+description: Kotlin has no checked exceptions, which means nothing forces you to handle failure. That freedom is only safe if you decide deliberately where errors are handled.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+In Java the compiler nagged you about `IOException`. Kotlin does not. Nobody will remind you
+that a network call can fail — so the decision of *where* failure is handled has to be yours,
+made on purpose.
+
+## `try` is an expression too
+
+```kotlin title="TryExpression.kt" numbered runnable
+fun parseAge(text: String): Int {
+    return try {
+        text.toInt()
+    } catch (e: NumberFormatException) {
+        -1
+    } finally {
+        // always runs — cleanup, never a return value
+    }
+}
+
+fun main() {
+    println(parseAge("42"))
+    println(parseAge("abc"))
+}
+```
+
+Because `try` produces a value, you rarely need a `var` declared above it. `finally` runs on
+every path, but its value is discarded — put cleanup there, never the result.
+
+## Often you do not need `try` at all
+
+```kotlin title="SafeApis.kt" numbered runnable
+fun main() {
+    println("42".toIntOrNull())      // 42
+    println("abc".toIntOrNull())     // null — no exception thrown
+
+    val numbers = listOf(1, 2, 3)
+    println(numbers.getOrNull(9))    // null
+    println(numbers.firstOrNull { it > 5 })
+}
+```
+
+The standard library gives you an `OrNull` twin for most things that can fail predictably. If
+a failure is *expected* — bad user input, a missing key — prefer the nullable API. Exceptions
+are for the unexpected.
+
+<Tip bare>
+A good rule: exceptions are for bugs and for the outside world failing. They are not a control
+flow tool. If you can see the failure coming, model it in the return type instead.
+</Tip>
+
+## `Result` and `runCatching`
+
+```kotlin title="Result.kt" numbered runnable
+fun loadName(id: Int): Result<String> = runCatching {
+    if (id < 0) error("bad id")
+    "user-$id"
+}
+
+fun main() {
+    val ok = loadName(1)
+    println(ok.getOrNull())                     // user-1
+    println(ok.getOrDefault("unknown"))
+
+    val bad = loadName(-1)
+    println(bad.isFailure)                      // true
+    println(bad.exceptionOrNull()?.message)     // bad id
+
+    bad.fold(
+        onSuccess = { println("got $it") },
+        onFailure = { println("failed: ${it.message}") },
+    )
+}
+```
+
+`Result<T>` carries "either a value or the failure that stopped it" in the type, so the caller
+cannot forget it exists. `runCatching { }` wraps a block that might throw.
+
+<Warning>
+`runCatching` catches **everything**, including `CancellationException`. In coroutines that
+exception is how cancellation travels, so swallowing it makes a cancelled job keep running.
+Inside `suspend` code, catch specific exceptions instead — Phase 3 covers this properly.
+</Warning>
+
+## Your own exceptions, and `require`
+
+```kotlin title="Own.kt" numbered runnable
+class InsufficientBalance(val shortfall: Int) : Exception("Short by $shortfall")
+
+fun withdraw(balance: Int, amount: Int): Int {
+    require(amount > 0) { "amount must be positive" }        // IllegalArgumentException
+    check(balance >= amount) { "balance too low" }           // IllegalStateException
+    return balance - amount
+}
+
+fun main() {
+    println(withdraw(500, 200))
+    println(runCatching { withdraw(500, 900) }.exceptionOrNull()?.message)
+}
+```
+
+`require` guards arguments, `check` guards state. Both read better than a hand-written `if`
+plus `throw`, and both say clearly whose fault the failure is.
+
+<Pitfall title="Two that hide real problems">
+**`catch (e: Exception) { }` with an empty body.** The failure still happened; you just made
+it invisible. At minimum log it. Better, decide whether this layer can actually recover.
+
+**Catching at the wrong layer.** A repository that swallows a network error and returns an
+empty list makes it impossible for the screen to show "no connection". Catch where you can do
+something about it, and let the type carry the failure until then.
+</Pitfall>
+
+## Practice
+
+1. Write `fun parsePort(text: String): Int` returning 8080 for invalid input, first with
+   `try/catch` and then with `toIntOrNull()`. Which is better, and why?
+2. Wrap a function that can throw in `runCatching` and handle both branches with `fold`.
+3. Add `require` and `check` to a `transfer(from, to, amount)` function. Which failure is
+   which, and why does the distinction matter to a caller?
+4. Explain why `runCatching` inside a coroutine can break cancellation.
+
+## Recap
+
+| Tool | Use it for |
+| --- | --- |
+| `try/catch/finally` | Genuinely exceptional failure; it is an expression |
+| `toIntOrNull`, `getOrNull` | Expected failure — prefer these |
+| `runCatching { }` | Wrapping a throwing block into a `Result` |
+| `Result<T>` | Carrying success or failure in the type |
+| `require` | The caller passed something wrong |
+| `check` | The object is in the wrong state |

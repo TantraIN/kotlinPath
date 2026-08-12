@@ -1,0 +1,141 @@
+---
+title: Exceptions, try/catch aur Result type
+description: Kotlin mein checked exceptions hain hi nahi, matlab koi aapko failure handle karne par majboor nahi karta. Ye azadi tabhi safe hai jab aap soch-samajh kar tay karo ki error kahan sambhalna hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Java mein compiler `IOException` ke liye tokta tha. Kotlin nahi tokta. Koi yaad nahi dilayega
+ki network call fail ho sakti hai — isliye *kahan* failure sambhalna hai, ye faisla aapka hai,
+aur jaan-boojh kar lena hoga.
+
+## `try` bhi ek expression hai
+
+```kotlin title="TryExpression.kt" numbered runnable
+fun parseAge(text: String): Int {
+    return try {
+        text.toInt()
+    } catch (e: NumberFormatException) {
+        -1
+    } finally {
+        // hamesha chalta hai — cleanup, kabhi return value nahi
+    }
+}
+
+fun main() {
+    println(parseAge("42"))
+    println(parseAge("abc"))
+}
+```
+
+`try` value banata hai, isliye uske upar `var` declare karne ki zarurat kam hi padti hai.
+`finally` har raste par chalta hai, par uski value phenk di jati hai — wahan cleanup rakho,
+natija kabhi nahi.
+
+## Aksar `try` ki zarurat hi nahi
+
+```kotlin title="SafeApis.kt" numbered runnable
+fun main() {
+    println("42".toIntOrNull())      // 42
+    println("abc".toIntOrNull())     // null — koi exception nahi
+
+    val numbers = listOf(1, 2, 3)
+    println(numbers.getOrNull(9))    // null
+    println(numbers.firstOrNull { it > 5 })
+}
+```
+
+Jo cheezein anumaanit roop se fail ho sakti hain, unmein se zyadatar ka standard library ek
+`OrNull` joda deta hai. Failure *apekshit* ho — galat user input, gayab key — to nullable API
+chuno. Exceptions anapekshit ke liye hain.
+
+<Tip bare>
+Ek achha niyam: exceptions bugs ke liye hain aur bahar ki duniya ke fail hone ke liye. Ye
+control flow ka auzaar nahi hain. Failure aate hue dikh rahi ho to use return type mein model
+karo.
+</Tip>
+
+## `Result` aur `runCatching`
+
+```kotlin title="Result.kt" numbered runnable
+fun loadName(id: Int): Result<String> = runCatching {
+    if (id < 0) error("bad id")
+    "user-$id"
+}
+
+fun main() {
+    val ok = loadName(1)
+    println(ok.getOrNull())                     // user-1
+    println(ok.getOrDefault("unknown"))
+
+    val bad = loadName(-1)
+    println(bad.isFailure)                      // true
+    println(bad.exceptionOrNull()?.message)     // bad id
+
+    bad.fold(
+        onSuccess = { println("got $it") },
+        onFailure = { println("failed: ${it.message}") },
+    )
+}
+```
+
+`Result<T>` "ya to value ya wo failure jisne roka" type mein hi le aata hai, isliye bulane
+wala bhool nahi sakta ki failure sambhav hai. `runCatching { }` aise block ko lapetta hai jo
+fenk sakta hai.
+
+<Warning>
+`runCatching` **sab kuch** pakad leta hai, `CancellationException` bhi. Coroutines mein wahi
+exception cancellation le jata hai, isliye use nigal jaane par cancel hua kaam chalta rehta
+hai. `suspend` code ke andar khaas exceptions pakdo — Phase 3 ise theek se cover karta hai.
+</Warning>
+
+## Apne exceptions, aur `require`
+
+```kotlin title="Own.kt" numbered runnable
+class InsufficientBalance(val shortfall: Int) : Exception("Short by $shortfall")
+
+fun withdraw(balance: Int, amount: Int): Int {
+    require(amount > 0) { "amount must be positive" }        // IllegalArgumentException
+    check(balance >= amount) { "balance too low" }           // IllegalStateException
+    return balance - amount
+}
+
+fun main() {
+    println(withdraw(500, 200))
+    println(runCatching { withdraw(500, 900) }.exceptionOrNull()?.message)
+}
+```
+
+`require` arguments ki rakhwali karta hai, `check` state ki. Dono haath se likhe `if` aur
+`throw` se behtar padhte hain, aur dono saaf batate hain ki galti kiski hai.
+
+<Pitfall title="Do jo asli samasya chhupa deti hain">
+**Khaali body wala `catch (e: Exception) { }`.** Failure phir bhi hui; aapne bas use adrishya
+kar diya. Kam se kam log to karo. Isse behtar, ye tay karo ki is layer par sudhaar sambhav hai
+bhi ya nahi.
+
+**Galat layer par pakadna.** Jo repository network error nigal kar khaali list de deta hai, wo
+screen ke liye "no connection" dikhana asambhav bana deta hai. Wahan pakdo jahan aap kuch kar
+sakte ho, aur tab tak failure ko type mein chalne do.
+</Pitfall>
+
+## Practice
+
+1. `fun parsePort(text: String): Int` likho jo galat input par 8080 laute — pehle `try/catch`
+   se, phir `toIntOrNull()` se. Kaun sa behtar hai aur kyun?
+2. Fenk sakne wale function ko `runCatching` mein lapeto aur dono branches `fold` se sambhalo.
+3. `transfer(from, to, amount)` mein `require` aur `check` dono lagao. Kaun si failure kaun si
+   hai, aur bulane wale ke liye ye farak kyun mayne rakhta hai?
+4. Samjhao ki coroutine ke andar `runCatching` cancellation kaise todh sakta hai.
+
+## Recap
+
+| Tool | Kis liye |
+| --- | --- |
+| `try/catch/finally` | Sach mein asadharan failure; ye ek expression hai |
+| `toIntOrNull`, `getOrNull` | Apekshit failure — inhe chuno |
+| `runCatching { }` | Fenkne wale block ko `Result` mein lapetna |
+| `Result<T>` | Safalta ya failure ko type mein le jana |
+| `require` | Bulane wale ne galat cheez di |
+| `check` | Object galat state mein hai |

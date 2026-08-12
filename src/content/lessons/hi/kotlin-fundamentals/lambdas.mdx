@@ -1,0 +1,139 @@
+---
+title: Lambdas और higher-order functions
+description: ऐसा function जिसे आप value की तरह इधर-उधर भेज सकें। हर collection operation, हर click listener, और आगे चलकर हर composable इसी विचार पर खड़ा है।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+पहले `filter { }` से ही आप lambdas भेज रहे हैं। यह पाठ उस चीज़ को नाम देता है, ताकि जब Compose
+`onClick: () -> Unit` माँगे तो आप उसे एक type की तरह पढ़ें, चिह्न की तरह नहीं।
+
+## Lambda एक value है
+
+```kotlin title="Values.kt" numbered runnable
+fun main() {
+    val double: (Int) -> Int = { n -> n * 2 }
+    val greet: (String) -> String = { "Hello, $it" }   // एक parameter हो तो `it`
+    val log: () -> Unit = { println("something happened") }
+
+    println(double(5))
+    println(greet("Asha"))
+    log()
+}
+```
+
+Type को बाएँ से दाएँ पढ़िए: `(Int) -> Int` यानी "Int लेता है, Int वापस देता है"। `() -> Unit` यानी
+"कुछ नहीं लेता, काम की कोई चीज़ वापस नहीं देता" — click listener ठीक यही है।
+
+## वे functions जो functions लेते हैं
+
+```kotlin title="HigherOrder.kt" numbered runnable
+fun <T> List<T>.keepIf(predicate: (T) -> Boolean): List<T> {
+    val result = mutableListOf<T>()
+    for (item in this) if (predicate(item)) result += item
+    return result
+}
+
+fun main() {
+    val numbers = listOf(1, 2, 3, 4, 5, 6)
+    println(numbers.keepIf { it % 2 == 0 })
+}
+```
+
+यह `filter` ही है, खोलकर लिखा हुआ। Standard library में ऐसा कुछ नहीं हो रहा जो आप ख़ुद न लिख सकें
+— उसने बस उसे अच्छा नाम पहले दे दिया है।
+
+<Tip bare>
+Lambda आख़िरी parameter हो तो उसे bracket के बाहर ले जाया जा सकता है। इसी एक नियम की वजह से
+`repeat(3) { }`, `list.filter { }` और `Column { }` language syntax जैसे लगते हैं, जबकि वे सादे
+function calls हैं।
+</Tip>
+
+```kotlin title="TrailingLambda.kt" numbered runnable
+fun main() {
+    // ये तीनों एक ही call हैं
+    repeat(3, { println("hi") })
+    repeat(3) { println("hi") }
+    val block: (Int) -> Unit = { println("hi") }
+    repeat(3, block)
+}
+```
+
+## `it`, और नाम कब देना
+
+```kotlin title="Naming.kt" numbered runnable
+data class User(val name: String, val age: Int)
+
+fun main() {
+    val users = listOf(User("Asha", 30), User("Ravi", 25))
+
+    println(users.map { it.name })                  // एक level: `it` ठीक है
+    println(users.map { user -> user.name.length }) // नाम दिया: nested में साफ़
+    println(users.map { (name, age) -> "$name is $age" })  // destructured
+}
+```
+
+एक छोटे expression के लिए `it` ठीक है। जैसे ही एक lambda दूसरे के अंदर आए, नाम दे दीजिए — एक ही
+block में दो `it` भविष्य में पढ़ने वाले को (यानी आपको) उलझाने का सबसे तेज़ तरीक़ा है।
+
+## Function references
+
+```kotlin title="References.kt" numbered runnable
+fun isLong(text: String) = text.length > 4
+
+fun main() {
+    val words = listOf("hi", "kotlin", "android")
+
+    println(words.filter { isLong(it) })   // call को lambda में लपेटना
+    println(words.filter(::isLong))        // सीधा function का reference
+    println(words.map(String::uppercase))  // member का reference
+}
+```
+
+## अंदर की बात: inline मतलब कोई object नहीं
+
+Lambda आम तौर पर एक object होता है, और loop में हर call पर एक बनाना allocation है। इसीलिए
+collection functions `inline` हैं — compiler lambda का body सीधा call site पर copy कर देता है। न
+object, न call, और lambda के अंदर लिखा `return` बाहर वाले function से भी वापस आ सकता है।
+
+```kotlin title="NonLocal.kt" numbered runnable
+fun firstNegative(numbers: List<Int>): Int? {
+    numbers.forEach { if (it < 0) return it }   // firstNegative से return
+    return null
+}
+
+fun main() = println(firstNegative(listOf(3, -7, 2)))
+```
+
+<Pitfall title="दो जो Android पर मायने रखती हैं">
+**लंबे समय तक ज़िंदा lambda में `Context` या `View` पकड़ लेना।** Lambda ने जो पकड़ा है उसका reference
+वह रखता है। उसे singleton या static callback में रख दीजिए, और पूरी screen leak हो गई। Android में
+सबसे आम memory leak यही है।
+
+**हर lambda को मुफ़्त समझना।** Inline वाले मुफ़्त हैं। Property में रखा lambda, या non-inline
+function को दिया lambda, हर बार बनने पर असली object है।
+</Pitfall>
+
+## अभ्यास
+
+1. `fun applyTwice(value: Int, operation: (Int) -> Int): Int` लिखिए और इसे तीन तरीक़े से बुलाइए:
+   lambda से, trailing lambda से, और function reference से।
+2. इन सबका type बताइए: `String` पर लगाया `{ println(it) }`, `{ a: Int, b: Int -> a + b }`, और
+   `{ }`।
+3. `List<T>` पर अपना `myMap` extension लिखिए जो `(T) -> R` parameter ले। असली `map` से तुलना
+   कीजिए।
+4. `forEach { return }` बाहर वाले function से वापस क्यों आ सकता है, जबकि variable में रखा lambda
+   नहीं आ सकता?
+
+## सारांश
+
+| बात | कैसे लिखा जाता है |
+| --- | --- |
+| Lambda | `{ a, b -> a + b }` |
+| एक parameter | `it` |
+| Function type | `(Int) -> String` |
+| न parameter न नतीजा | `() -> Unit` |
+| Trailing lambda | `f(x) { ... }` |
+| Function reference | `::isLong`, `String::uppercase` |
+| `inline` | कोई lambda object नहीं; non-local `return` संभव |

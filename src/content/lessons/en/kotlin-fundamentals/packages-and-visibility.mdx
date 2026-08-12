@@ -1,0 +1,122 @@
+---
+title: Packages, imports and visibility modifiers
+description: Where your code lives and who is allowed to see it. Get this right once and your project stays navigable at fifty files as well as at five.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Visibility is the only tool that lets you change code safely. Anything `public` is a promise;
+anything `private` is yours to rewrite this afternoon. Beginners make everything public and
+then find nothing can be changed without breaking something.
+
+## Packages
+
+```kotlin title="User.kt" numbered
+package com.example.myapp.data
+
+class User(val id: Int, val name: String)
+```
+
+The package is declared at the top of the file and, by convention, mirrors the folder path.
+Kotlin does not force the folders to match the package the way Java does — but do it anyway,
+because every tool and every teammate expects it.
+
+<FileTree
+  caption="A layout that scales: package by feature at the top level, by layer inside it."
+  entries={[
+    { name: "com/example/myapp/", kind: "folder" },
+    { name: "MainActivity.kt", kind: "kotlin", depth: 1 },
+    { name: "data/", kind: "folder", depth: 1, note: "repositories, DTOs" },
+    { name: "UserRepository.kt", kind: "kotlin", depth: 2 },
+    { name: "domain/", kind: "folder", depth: 1, note: "models, use cases" },
+    { name: "User.kt", kind: "kotlin", depth: 2 },
+    { name: "ui/", kind: "folder", depth: 1, note: "screens" },
+    { name: "profile/", kind: "folder", depth: 2 },
+    { name: "ProfileScreen.kt", kind: "kotlin", depth: 3, highlight: true },
+  ]}
+/>
+
+## Imports
+
+```kotlin title="Imports.kt" numbered
+import com.example.myapp.data.UserRepository
+import com.example.myapp.domain.User as DomainUser   // alias resolves a clash
+import kotlinx.coroutines.flow.*                     // whole package, use sparingly
+```
+
+`kotlin.*`, `kotlin.collections.*` and a few others are imported into every file
+automatically, which is why `listOf` and `println` need no import. An `as` alias is the clean
+way out when two packages give you the same name — very common with a `User` in both your
+data and domain layers.
+
+## The four visibilities
+
+| Modifier | Visible to |
+| --- | --- |
+| `public` | Everyone. The default — which is why you must think about it |
+| `internal` | Everything in the same **module** |
+| `protected` | The declaring class and its subclasses |
+| `private` | The same file, or the same class |
+
+```kotlin title="Visibility.kt" numbered
+class Cart {
+    private val items = mutableListOf<String>()      // nobody outside touches this
+    internal var lastSyncedAt: Long = 0              // other code in this module may
+    val size: Int get() = items.size                 // the public surface
+
+    fun add(item: String) { items += item }
+}
+```
+
+`internal` is the one people underuse. In a multi-module Android project it lets a module have
+a rich internal API while exposing only a handful of types — and the compiler enforces it.
+
+<Tip bare>
+Start every declaration as `private`. Widen it only when something outside genuinely needs it.
+Going from private to public is a one-character change; going the other way is a refactor.
+</Tip>
+
+## Top-level declarations
+
+```kotlin title="TopLevel.kt" numbered
+package com.example.myapp.util
+
+private const val PREFIX = "app"                   // file-private
+fun log(message: String) = println("[$PREFIX] $message")
+```
+
+Kotlin lets functions and properties live outside a class. A `private` top-level declaration
+is visible only within its file, which makes single-file helpers genuinely contained — there
+is no Java equivalent.
+
+<Pitfall title="Two that make a codebase hard to change">
+**Everything public by default.** Public is the default, so it happens by omission rather than
+by decision. Every public symbol is something you cannot change without checking callers.
+
+**A `util` package that becomes a junk drawer.** `StringUtils`, `Helpers`, `Common` — nobody
+can guess what is inside. Prefer an extension function next to the type it extends, in the
+package that owns it.
+</Pitfall>
+
+## Practice
+
+1. Create two packages that each define a class called `User`. Import both into one file and
+   make it compile.
+2. Take a class of yours and mark every member `private`. Fix only the errors that are real
+   external uses. How many members actually needed to be public?
+3. Explain when `internal` is the right choice and `private` is not, using a multi-module
+   project as the example.
+4. Why can a `private` top-level function be seen from another class in the same file, but not
+   from another file in the same package?
+
+## Recap
+
+| Idea | One line |
+| --- | --- |
+| `package` | Declared at the top; mirror it in the folders |
+| `import ... as` | The clean fix for a name clash |
+| `public` | The default — treat it as a decision, not a fallback |
+| `internal` | Module-wide; the workhorse of multi-module projects |
+| `private` | Same file or same class; where every declaration should start |
+| Top-level declarations | Functions and constants without a class |

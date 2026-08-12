@@ -1,0 +1,142 @@
+---
+title: Lambdas and higher-order functions
+description: A function you can pass around like a value. This is the idea behind every collection operation, every click listener and, later, every composable.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+You have been passing lambdas since the first `filter { }`. This lesson names what you were
+doing, so that when Compose asks for `onClick: () -> Unit` you read it as a type rather than
+as punctuation.
+
+## A lambda is a value
+
+```kotlin title="Values.kt" numbered runnable
+fun main() {
+    val double: (Int) -> Int = { n -> n * 2 }
+    val greet: (String) -> String = { "Hello, $it" }   // `it` when there is one parameter
+    val log: () -> Unit = { println("something happened") }
+
+    println(double(5))
+    println(greet("Asha"))
+    log()
+}
+```
+
+Read the type left to right: `(Int) -> Int` is "takes an Int, gives back an Int". `() -> Unit`
+is "takes nothing, gives back nothing useful" — which is exactly what a click listener is.
+
+## Functions that take functions
+
+```kotlin title="HigherOrder.kt" numbered runnable
+fun <T> List<T>.keepIf(predicate: (T) -> Boolean): List<T> {
+    val result = mutableListOf<T>()
+    for (item in this) if (predicate(item)) result += item
+    return result
+}
+
+fun main() {
+    val numbers = listOf(1, 2, 3, 4, 5, 6)
+    println(numbers.keepIf { it % 2 == 0 })
+}
+```
+
+That is `filter`, written out. Nothing in the standard library is doing anything you could
+not have written — it just already named it well.
+
+<Tip bare>
+When the lambda is the last parameter it can move outside the brackets. That single rule is
+why `repeat(3) { }`, `list.filter { }` and `Column { }` all look like language syntax when
+they are ordinary function calls.
+</Tip>
+
+```kotlin title="TrailingLambda.kt" numbered runnable
+fun main() {
+    // these three are the same call
+    repeat(3, { println("hi") })
+    repeat(3) { println("hi") }
+    val block: (Int) -> Unit = { println("hi") }
+    repeat(3, block)
+}
+```
+
+## `it`, and when to name it
+
+```kotlin title="Naming.kt" numbered runnable
+data class User(val name: String, val age: Int)
+
+fun main() {
+    val users = listOf(User("Asha", 30), User("Ravi", 25))
+
+    println(users.map { it.name })                  // one level: `it` is fine
+    println(users.map { user -> user.name.length }) // named: clearer when nested
+    println(users.map { (name, age) -> "$name is $age" })  // destructured
+}
+```
+
+Use `it` for a single short expression. The moment you nest one lambda inside another, name
+them — two `it`s in the same block is the fastest way to confuse a future reader, including
+you.
+
+## Function references
+
+```kotlin title="References.kt" numbered runnable
+fun isLong(text: String) = text.length > 4
+
+fun main() {
+    val words = listOf("hi", "kotlin", "android")
+
+    println(words.filter { isLong(it) })   // lambda wrapping a call
+    println(words.filter(::isLong))        // reference to the function itself
+    println(words.map(String::uppercase))  // reference to a member
+}
+```
+
+## Under the hood: inline means no object
+
+A lambda is normally an object, and creating one per call in a loop would allocate. That is
+why the collection functions are `inline` — the compiler copies the lambda body straight into
+the call site. No object, no call, and `return` inside the lambda can even return from the
+enclosing function.
+
+```kotlin title="NonLocal.kt" numbered runnable
+fun firstNegative(numbers: List<Int>): Int? {
+    numbers.forEach { if (it < 0) return it }   // returns from firstNegative
+    return null
+}
+
+fun main() = println(firstNegative(listOf(3, -7, 2)))
+```
+
+<Pitfall title="Two that matter on Android">
+**Capturing a `Context` or `View` in a long-lived lambda.** The lambda holds a reference to
+everything it captured. Store it in a singleton or a static callback and you have leaked the
+whole screen. This is the most common memory leak in Android.
+
+**Assuming every lambda is free.** Inline ones are. A lambda stored in a property, or passed
+to a non-inline function, is a real object allocated on each creation.
+</Pitfall>
+
+## Practice
+
+1. Write `fun applyTwice(value: Int, operation: (Int) -> Int): Int` and call it with a lambda,
+   with a trailing lambda, and with a function reference.
+2. Give the type of each: `{ println(it) }` used on a `String`, `{ a: Int, b: Int -> a + b }`,
+   and `{ }`.
+3. Write your own `myMap` extension on `List<T>` with a `(T) -> R` parameter. Compare it with
+   the real `map`.
+4. Why can `forEach { return }` return from the enclosing function, while a lambda stored in a
+   variable cannot?
+
+## Recap
+
+| Idea | Written as |
+| --- | --- |
+| Lambda | `{ a, b -> a + b }` |
+| Single parameter | `it` |
+| Function type | `(Int) -> String` |
+| No parameters, no result | `() -> Unit` |
+| Trailing lambda | `f(x) { ... }` |
+| Function reference | `::isLong`, `String::uppercase` |
+| `inline` | No lambda object; enables non-local `return` |

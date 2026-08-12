@@ -1,0 +1,127 @@
+---
+title: let, run, with, apply, also — kaun sa kab
+description: Paanch functions jo lagbhag ek jaisa hi kaam karte hain. Inhe alag karne wali table ek screen mein aa jati hai, aur wo pata ho to andaza lagana hamesha ke liye khatam.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Har Kotlin codebase inhe use karta hai, aksar galat tarike se. Ye sirf do baaton par alag
+hote hain, aur wo do baatein dikh jayein to phir kabhi andaza nahi lagana padta.
+
+## Do sawal
+
+Har scope function bas inhi ka jawab deta hai:
+
+1. Block ke andar receiver ko **`it`** kehte hain ya **`this`**?
+2. Poori call **block ka natija** lautati hai ya **receiver khud**?
+
+| Function | Receiver | Lautata hai |
+| --- | --- | --- |
+| `let` | `it` | block ka natija |
+| `run` | `this` | block ka natija |
+| `with` | `this` | block ka natija |
+| `apply` | `this` | receiver |
+| `also` | `it` | receiver |
+
+Poora lesson yahi hai. Neeche ka sab bas ye hai ki har column asli code mein kaisa lagta hai.
+
+## Block ka natija: `let` aur `run`
+
+```kotlin title="Transform.kt" numbered runnable
+fun main() {
+    val name: String? = "asha"
+
+    // let — badlo, aur classic null guard
+    val greeting = name?.let { "Hello, ${it.replaceFirstChar(Char::uppercase)}" }
+    println(greeting)
+
+    // run — wahi, par receiver `this` hai, isliye members bina prefix ke padhte hain
+    val length = name?.run { trim().length }
+    println(length)
+}
+```
+
+`let` tab jab value ko naam dena ho, ya jab `?.let { }` null se bacha raha ho. `run` tab jab
+ek hi object ke kai members bula rahe ho aur `it.` sirf shor lag raha ho.
+
+## Receiver wapas: `apply` aur `also`
+
+```kotlin title="Configure.kt" numbered runnable
+class Request {
+    var url: String = ""
+    var timeout: Int = 0
+    override fun toString() = "$url ($timeout ms)"
+}
+
+fun main() {
+    // apply — configure karo aur object wapas do; classic builder
+    val request = Request().apply {
+        url = "https://example.com"
+        timeout = 5000
+    }
+
+    // also — uske saath kuch karo, par aage jane wali cheez badle bina
+    val checked = request.also { println("built $it") }
+
+    println(checked)
+}
+```
+
+`apply` cheezein set karne ke liye hai. `also` chain ke beech mein side effect ke liye —
+logging, validation, caching — jahan value waisi ki waisi aage jani chahiye.
+
+## `with` thoda alag hai
+
+```kotlin title="With.kt" numbered runnable
+fun main() {
+    val numbers = listOf(1, 2, 3)
+
+    // extension nahi hai: receiver argument ki tarah jata hai
+    val summary = with(numbers) {
+        "$size items, first is ${first()}, sum is ${sum()}"
+    }
+    println(summary)
+}
+```
+
+`with(x) { }` asal mein `x.run { }` hi hai, bas likha alag hai. `x` null ho sakta ho to `run`
+chuno, kyunki `with` ka safe-call roop hai hi nahi.
+
+## Chunav, ek-ek line mein
+
+```kotlin title="Choosing.kt" numbered
+user?.let { save(it) }                    // sirf tab jab null na ho
+val n = text.run { trim().length }        // kai members se ek value banao
+val v = View(context).apply { id = 1 }    // banao aur configure karo
+repo.load().also { Log.d("app", "$it") }  // jhaanko, value badle bina
+```
+
+<Pitfall title="Do aadatein jo scope functions ko apathya bana deti hain">
+**Inhe nested karna.** `a.let { b.let { ... } }` se ek hi scope mein do `it` aa jate hain aur
+andar wala bahar wale ko chupchap dhak deta hai. Nest karna hi ho to parameters ko naam do:
+`a.let { outer -> ... }`.
+
+**Jahan constructor ya `data class` se kaam ho, wahan `apply` uthana.** `apply` isliye hai
+kyunki Java APIs ko setters chahiye. Type aapka apna hai to values constructor mein lo — phir
+koi bhoolna sambhav hi nahi.
+</Pitfall>
+
+## Practice
+
+1. Paanchon ke liye ek-ek line asli lagne wala code likho jahan wahi sahi chunav ho.
+2. `val len = if (s != null) s.trim().length else 0` ko scope function aur `?:` se dobara
+   likho.
+3. `apply` se object banane wali chain lo, phir chain tode bina ek log line jodo. Kaun sa
+   function use kiya, aur dusra kyun nahi?
+4. `val x = user.also { it.name = "new" }` — `x` mein kya hai, aur kya badla?
+
+## Recap
+
+| Mujhe chahiye… | Use karo |
+| --- | --- |
+| Sirf non-null par code chalana | `?.let { }` |
+| Kai members se ek value banana | `run { }` |
+| Object banakar configure karna | `apply { }` |
+| Chain ke beech log ya check, value wahi rahe | `also { }` |
+| Non-null object par kai calls ek jagah | `with(x) { }` |
