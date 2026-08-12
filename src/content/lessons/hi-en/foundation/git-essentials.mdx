@@ -1,0 +1,197 @@
+---
+title: Is course ke liye Git ki buniyaad
+description: Itna Git jitne se is course ka har project safe rahe, ek kharab dopahar wapas ho jaye, aur aap waise kaam karo jaise asli Android teams karti hain — bina poora tool seekhe.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Aap kuch todoge. Shayad nahi — pakka. Phase 6 ke beech mein koi refactor bigdega aur jo app
+ek ghante pehle chal rahi thi wo compile hi nahi hogi.
+
+Git ke saath ye tees second ki samasya hai. Git ke bina ye aapki poori shaam hai.
+
+Is course ka har project commit hoga. Ye dikhawa nahi hai — yahi cheez experiment karna safe
+banati hai.
+
+## Aapka code teen jagah rehta hai
+
+Ye wo model hai jo beginners ko kabhi bataya nahi jata, aur yahi lagbhag har uljhane wale
+Git message ko samjha deta hai.
+
+<Timeline>
+  <TimelineItem title="Working directory" meta="aapki files">
+    Disk par padi files, jaisi aapka editor dekhta hai. Yahan file badalne se Git ke record
+    mein kuch nahi badalta.
+  </TimelineItem>
+  <TimelineItem title="Staging area" meta="git add">
+    Un badlavon ki chhoti list jo agle commit mein jayenge. Isiliye aap teen cheezein theek
+    karke unhe teen alag, padhne laayak commits bana sakte ho.
+  </TimelineItem>
+  <TimelineItem title="Repository" meta="git commit">
+    Sthayi history. Commit ek poora snapshot hai plus ek message, aur likhne ke baad kabhi
+    badalta nahi.
+  </TimelineItem>
+</Timeline>
+
+```bash title="Wo loop jo sau baar chalega" no-glossary
+git status                       # kya badla?
+git add app/src/main/            # jo saath jata hai wahi stage karo
+git commit -m "Add lesson list screen"
+git push
+```
+
+<Tip bare>
+`git status` sirf formality nahi hai. Har `add` aur har `commit` se pehle chalao — Git ke
+zyadatar haadse wahi file commit kar dene se hote hain jo karni hi nahi thi.
+</Tip>
+
+## Branches, banakar dekho
+
+Branch tab tak abstract lagti hai jab tak dikh na jaye. Wo bas ek commit ki taraf ishara
+karta hua khiskane wala pointer hai.
+
+<Figure caption="Feature branch commits ki alag line hai. Merge uska kaam wapas main mein le aata hai, aur beech mein main kabhi toota hi nahi.">
+  <GitGraph
+    title="Feature branch banti hai, kaam hota hai, aur wapas merge hoti hai"
+    description="Main par do commits, phir ek feature branch alag hoti hai apne do commits ke saath, phir ek merge commit us kaam ko wapas main mein le aata hai."
+    mainLabel="main"
+    branchLabel="feature"
+    nodes={[
+      { label: "a1b2", lane: 0, note: "initial" },
+      { label: "c3d4", lane: 0, note: "setup" },
+      { label: "e5f6", lane: 1, note: "branch off" },
+      { label: "g7h8", lane: 1, note: "screen banayi" },
+      { label: "i9j0", lane: 0, note: "merge", merge: true },
+    ]}
+  />
+</Figure>
+
+```bash title="Terminal" no-glossary
+git switch -c feature/lesson-list   # branch banao aur uspar chale jao
+# ... kaam, commit, commit ...
+git switch main
+git merge feature/lesson-list
+```
+
+Akele ke course project mein ye jhanjhat kyun? Kyunki `main` hamesha wo version rehta hai jo
+pakka chalta hai. Experiment fail ho to branch delete kar do, kuch nahi gaya. Professional
+Android teams theek isi tarah kaam karti hain, to aadat abhi se daal lo.
+
+## Kya kabhi commit nahi hona chahiye
+
+Android projects bahut si aisi files banate hain jo history mein nahi honi chahiye. Kuch bas
+shor hain; do sach mein khatarnaak hain.
+
+<FileTree
+  caption="Jo aapki likhi hui hain wo Git mein jani chahiye. Generated, machine-specific ya secret files bahar rehni chahiye."
+  entries={[
+    { name: "MyApp/", kind: "folder" },
+    { name: ".gitignore", kind: "text", depth: 1, note: "commit karo" },
+    { name: "gradlew", kind: "text", depth: 1, note: "commit — Gradle version pin karta hai" },
+    { name: "app/src/", kind: "folder", depth: 1, note: "commit — aapka asli code" },
+    { name: "app/build.gradle.kts", kind: "gradle", depth: 1, note: "commit" },
+    { name: "build/", kind: "folder", depth: 1, note: "ignore — har build par dobara banta hai" },
+    { name: ".gradle/", kind: "folder", depth: 1, note: "ignore — local cache" },
+    { name: ".idea/", kind: "folder", depth: 1, note: "ignore — IDE ki state" },
+    { name: "local.properties", kind: "text", depth: 1, note: "ignore — machine ka SDK path", highlight: true },
+    { name: "release.keystore", kind: "text", depth: 1, note: "KABHI commit nahi — signing key", highlight: true },
+  ]}
+/>
+
+Android Studio project banate waqt theek-thaak `.gitignore` likh deta hai. Use ek baar padho
+aur jo chhoot gaya wo jod do:
+
+```text title=".gitignore" no-glossary
+*.iml
+.gradle/
+.idea/
+build/
+local.properties
+*.keystore
+*.jks
+secrets.properties
+```
+
+<Warning>
+Signing keystore wo iklauti file hai jo na wapas mil sakti hai na badli ja sakti hai. Leak ho
+gayi to koi bhi aisa update publish kar sakta hai jise Google Play aapka maan lega. Kho gayi
+to aap khud kabhi apni app us pehchaan se update nahi kar paoge. Ise Git se bahar rakho, aur
+kahin alag backup karo.
+</Warning>
+
+## Cheezein wapas karna
+
+Jo commands asal mein chahiye hote hain, kitne khatarnaak hain uske kram mein:
+
+| Sthiti | Command | Kaam jayega? |
+| --- | --- | --- |
+| Galti se file stage ho gayi | `git restore --staged <file>` | Nahi |
+| Ek file ke edits phenkne hain | `git restore <file>` | Haan, wo file |
+| Pichhle commit ka message galat tha | `git commit --amend` | Nahi |
+| Pichhla commit hatana hai, badlav rakhne hain | `git reset --soft HEAD~1` | Nahi |
+| Commit aur uske badlav dono jane hain | `git reset --hard HEAD~1` | Haan |
+| Push ho chuka hai aur wapas karna hai | `git revert <hash>` | Nahi — ulta commit jodta hai |
+
+<Pitfall title="Do jo sach mein nuksaan karte hain">
+**Bina commit kiye kaam par `git reset --hard`.** Ye wapas nahi aata — lautne ke liye koi
+snapshot hi nahi hai. Pehle commit, phir reset. Ganda commit baad mein amend ho sakta hai;
+gaya hua kaam nahi.
+
+**Dusron ki pull ki hui history badalna.** `--amend` aur `reset` commit hashes badal dete
+hain. Shared branch par isse baaki sabko takleef hoti hai. Jis branch ko sirf aapne chhua
+hai, wahan dono bilkul safe hain.
+</Pitfall>
+
+## Is course ka flow
+
+<Timeline>
+  <TimelineItem title="Har project mein ek baar" meta="git init">
+    `git init`, phir Android Studio ke starter ko pehla commit banao. Isse ek line likhne se
+    pehle hi ek pakka-chalta-hua state mil jata hai.
+  </TimelineItem>
+  <TimelineItem title="Har lesson par" meta="branch">
+    `git switch -c phase-1/null-safety`. Khulkar experiment karo — branch phenkne ke liye hi
+    hai.
+  </TimelineItem>
+  <TimelineItem title="Jab bhi kuch chal jaye" meta="commit">
+    Har us jagah commit karo jahan kaam khone par dukh hoga. Chhote commits muft hain; gayi
+    hui dopahar nahi.
+  </TimelineItem>
+  <TimelineItem title="Aakhir mein" meta="merge aur push">
+    `main` mein merge karo aur GitHub par push. Course khatam hone tak wo repository aapka
+    portfolio hai, jismein commit history iska saboot hai ki aap kaam kaise karte ho.
+  </TimelineItem>
+</Timeline>
+
+## Practice
+
+1. Ek repository banao, ek file commit karo, use edit karo, aur har step ke baad
+   `git status` chalao. Har point par batao ki aapka badlav teeno mein se kahan hai.
+2. Do bilkul alag edits karo, phir bina kisi ko undo kiye unhe do alag commits banao. Kaun
+   sa command ye sambhav banata hai?
+3. Jaan-boojh kar `local.properties` commit karo. Ab use disk se hataye bina tracking se
+   nikalo aur `.gitignore` mein daalo. Kaun sa command file rakhta hai par tracking band kar
+   deta hai?
+4. Ek branch banao, ek commit karo, `main` par wapas aao, aur file dekho. Samjhao ki aapka
+   badlav gayab kyun hua — aur ye bug kyun nahi hai.
+
+## Recap
+
+| Command | Kya karta hai |
+| --- | --- |
+| `git status` | Kya badla aur kya stage hai |
+| `git add <path>` | Badlav staging area mein le jao |
+| `git commit -m "..."` | Sthayi snapshot record karo |
+| `git switch -c <name>` | Branch banao aur uspar jao |
+| `git merge <branch>` | Kisi branch ka kaam maujuda branch mein lao |
+| `git restore <file>` | File ke bina-commit kiye edits phenko |
+| `git log --oneline` | History chhote roop mein padho |
+
+<Interview title="Ye Git ka sawal nahi, samajh ka sawal hai">
+"Android project mein aap kya commit karoge aur kya nahi?"
+
+`build/`, `.gradle/` aur `.idea/` ka naam lena batata hai ki aap generated cheezein pehchante
+ho. `local.properties` ka naam batata hai ki aapne team mein kaam kiya hai. Keystore ka naam
+lena — aur ye kehna ki use badla nahi ja sakta — batata hai ki aapne app ship ki hai.
+</Interview>

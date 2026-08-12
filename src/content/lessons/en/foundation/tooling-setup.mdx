@@ -1,0 +1,161 @@
+---
+title: Android Studio, SDK and emulator setup
+description: Get a machine that builds and runs Android apps — and understand what each piece is, so that when one breaks you know which one to fix.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Setup is where most people quietly give up. Not because it is hard, but because five
+separate tools get installed at once and nobody explains which is which. Then something
+fails and there is no way to tell whether the problem is Studio, the SDK, Gradle, the JDK
+or the emulator.
+
+So: install them, but name them as you go.
+
+## The four things you are installing
+
+<Figure caption="Android Studio is the editor. Everything that actually builds and runs your app is separate from it, which is why builds work fine from a terminal with no IDE open.">
+  <LayerStack
+    title="What gets installed on your machine"
+    description="Android Studio is the editor on top. Underneath it sit the Gradle build system, the Android SDK with its platform and build tools, and a JDK that runs the compiler."
+    youWriteThis="you write this"
+    topLabel="what you look at"
+    bottomLabel="what does the work"
+    layers={[
+      { label: "JDK", sub: "runs the compiler", accent: "rose", detail: "Runs the Kotlin and Java compilers. When a build fails with a class-file version error, this is the piece that disagrees with another." },
+      { label: "Android SDK", sub: "platforms, build-tools, adb", accent: "amber", detail: "The platform APIs you compile against, plus `adb`, the emulator and the build tools. Shared by every project on the machine." },
+      { label: "Gradle", sub: "orchestrates the build", accent: "emerald", detail: "Decides what to compile, in what order, and what can be skipped. It is what actually produces your APK." },
+      { label: "Android Studio", sub: "editor + debugger", accent: "violet", highlight: true, detail: "The editor, debugger and profiler. Convenient, but it builds nothing itself — the terminal can do the same job." },
+    ]}
+  />
+</Figure>
+
+| Piece | What it does | You notice it when |
+| --- | --- | --- |
+| **Android Studio** | Editor, debugger, profiler, device manager | The UI is slow or a wizard misbehaves |
+| **Gradle** | Compiles, packages, signs — the actual build | A build fails or takes forever |
+| **Android SDK** | Platform APIs, `adb`, emulator images | A device will not connect, an API is missing |
+| **JDK** | Runs the Kotlin and Java compilers | `Unsupported class file major version` |
+
+## Install, in order
+
+<Timeline>
+  <TimelineItem title="Install Android Studio" meta="~1 GB">
+    Take the stable channel from `developer.android.com/studio`. On the first run the setup
+    wizard offers a standard install — accept it. It downloads a recent SDK platform, the
+    build tools and one emulator image.
+  </TimelineItem>
+  <TimelineItem title="Open the SDK Manager" meta="Settings → SDK">
+    Under **SDK Platforms**, install the latest stable API level. Under **SDK Tools**, make
+    sure *Android SDK Build-Tools*, *Android SDK Platform-Tools* and *Android Emulator* are
+    all ticked.
+  </TimelineItem>
+  <TimelineItem title="Put adb on your PATH" meta="platform-tools">
+    Being able to run `adb` from any terminal is worth the two minutes it takes. The
+    commands below assume it.
+  </TimelineItem>
+  <TimelineItem title="Create a virtual device" meta="Device Manager">
+    Pick a Pixel profile and a system image whose API level matches what you are building.
+    Prefer an image marked for your CPU architecture — on Apple Silicon that is arm64, on
+    most PCs x86_64. The wrong architecture is the number one cause of an unusably slow
+    emulator.
+  </TimelineItem>
+  <TimelineItem title="Or use a real phone" meta="recommended">
+    Settings → About phone → tap *Build number* seven times → Developer options → enable
+    **USB debugging**. A mid-range real device tells you far more about performance than any
+    emulator will.
+  </TimelineItem>
+</Timeline>
+
+## Where everything lands
+
+<FileTree
+  caption="The SDK lives outside your project. Every project on your machine shares this one directory — which is why deleting a project never breaks your tooling."
+  entries={[
+    { name: "Android/Sdk/", kind: "folder", note: "ANDROID_HOME points here" },
+    { name: "platform-tools/", kind: "folder", depth: 1, note: "adb, fastboot" },
+    { name: "platforms/", kind: "folder", depth: 1, note: "one folder per API level" },
+    { name: "android-35/", kind: "folder", depth: 2 },
+    { name: "build-tools/", kind: "folder", depth: 1, note: "aapt2, d8, zipalign" },
+    { name: "emulator/", kind: "folder", depth: 1 },
+    { name: "system-images/", kind: "folder", depth: 1, note: "what the emulator boots" },
+    { name: "licenses/", kind: "folder", depth: 1, note: "accepted SDK licences" },
+  ]}
+/>
+
+Your project only records *which* SDK directory to use, in a file that is deliberately not
+committed:
+
+```properties title="local.properties" no-glossary
+# Generated by Android Studio. Machine-specific — never commit this.
+sdk.dir=/Users/you/Library/Android/sdk
+```
+
+<Warning>
+`local.properties` is in `.gitignore` for a reason: the path is different on every machine.
+If you commit it, your teammate's build breaks with "SDK location not found". You will meet
+this file again in the Git lesson.
+</Warning>
+
+## Commands worth knowing on day one
+
+```bash title="Terminal" no-glossary
+# Which devices can I see? Emulators and real phones both show up here.
+adb devices -l
+
+# Install a built APK
+adb install app/build/outputs/apk/debug/app-debug.apk
+
+# Watch your app's logs only, filtering out the system noise
+adb logcat --pid=$(adb shell pidof -s com.example.myapp)
+
+# The build does not need Android Studio open
+./gradlew assembleDebug
+
+# When something is inexplicably stale
+./gradlew clean
+```
+
+<Tip bare>
+`./gradlew` is a script committed inside your project. It downloads the exact Gradle version
+that project needs, so your build is identical on your machine and on a CI server. Never
+install Gradle globally for Android work.
+</Tip>
+
+## Common mistakes
+
+<Pitfall title="The three that eat an afternoon">
+**A slow emulator.** Almost always an architecture mismatch, or hardware acceleration being
+off. Check that the system image matches your CPU, and that virtualisation is enabled — on
+Windows that means Hyper-V or WHPX, on Linux KVM.
+
+**Two JDKs fighting.** Studio ships its own JDK; your terminal may use a different one. When
+a build behaves differently in the IDE and the terminal, this is why. Point them at the same
+one under Settings → Build Tools → Gradle → Gradle JDK.
+
+**Committing `local.properties`.** Machine-specific paths in version control break everyone
+else. If it is already committed, remove it from tracking and add it to `.gitignore`.
+</Pitfall>
+
+## Practice
+
+1. Run `adb devices -l` with nothing connected, then with an emulator running. What changed?
+2. Find your SDK directory and list `platforms/`. Which API levels do you have installed?
+3. Build the sample project from the terminal with `./gradlew assembleDebug`, with Android
+   Studio closed. Where did the APK land?
+4. Deliberately stop the emulator mid-build. Read the error. Which of the four pieces
+   produced that message?
+
+## Recap
+
+| Tool | Command you will type most |
+| --- | --- |
+| Gradle wrapper | `./gradlew assembleDebug` |
+| adb | `adb devices -l`, `adb install`, `adb logcat` |
+| SDK Manager | Inside Studio: Settings → SDK |
+| Device Manager | Inside Studio: create and boot an AVD |
+
+Checklist before moving on: Studio opens, a device or emulator appears in `adb devices`, and
+`./gradlew assembleDebug` succeeds from a terminal. If all three are true, your machine is
+ready for the rest of the course.

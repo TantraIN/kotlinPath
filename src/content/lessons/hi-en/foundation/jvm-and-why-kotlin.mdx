@@ -1,0 +1,195 @@
+---
+title: JVM, aur Kotlin bana hi kyun
+description: Kotlin na theek-theek compiled hai na interpreted, jaisa pichhle lesson mein bataya. Ye beech ka rasta samajh lo to aadhe error messages apne aap khul jayenge.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Kabhi na kabhi build kuch aisa bolkar fail hogi:
+
+```text no-glossary
+Unsupported class file major version 65
+> Task :app:compileDebugKotlin FAILED
+```
+
+Is message mein na Kotlin hai, na Android, na aapka code. Ye baat kar raha hai **bytecode**
+aur **JDK versions** ki — yaani us layer ki, jo is lesson ka vishay hai. Ye layer dikhne
+lag jaye to aise errors rahasya nahi rehte, ek line ka fix ban jate hain.
+
+## Beech ka rasta
+
+Pichhle lesson mein do raste the: sab kuch pehle hi compile kar do, ya line by line
+interpret karo. Kotlin in dono mein se koi nahi chunta.
+
+Wo pehle hi compile karta hai — lekin aapke processor ke machine code mein nahi. Wo
+**bytecode** mein compile karta hai: ek kalpanik computer ke liye instructions. Phir
+**Java Virtual Machine** naam ka program us bytecode ko us asli machine par chalata hai
+jahan wo install hai.
+
+<Figure caption="Ek compile step bytecode banata hai. Har platform par alag JVM usi bytecode ko us machine ki samajh me aane wale instructions me badal deta hai.">
+  <PipelineDiagram
+    title="Kotlin source se processor tak ka safar"
+    description="Kotlin source ko kotlinc ek baar compile karke JVM bytecode banata hai jo class files mein rehta hai. Run time par Java Virtual Machine us bytecode ko padhkar apne processor ke liye machine code banata hai."
+    stages={[
+      { label: "Main.kt", sub: "source", accent: "violet" },
+      { label: "kotlinc", sub: "compiler", accent: "sky" },
+      { label: ".class", sub: "bytecode", accent: "amber" },
+      { label: "JVM", sub: "chalata hai", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Yahi poora khel hai. Bhaari kaam compiler ek baar kar deta hai. Jo cheez Windows laptop,
+Linux server aur phone ke beech alag hoti hai, use JVM sambhalta hai.
+
+<Tip bare>
+"Write once, run anywhere" ka matlab yahi hai. Source portable hai isliye nahi — balki
+**compile ki hui cheez** portable hai isliye.
+</Tip>
+
+## Jis stack par aap khade ho
+
+<Figure caption="Har layer sirf apne neeche wali layer se baat karti hai. Aapka code kabhi seedha processor se baat nahi karta.">
+  <LayerStack
+    title="Aapki Kotlin file aur processor ke beech ki layers"
+    description="Neeche se: hardware, operating system, Java Virtual Machine, Kotlin standard library, aur sabse upar aapka apna code."
+    youWriteThis="ye aap likhte ho"
+    topLabel="aapke sabse kareeb"
+    bottomLabel="machine ke sabse kareeb"
+    layers={[
+      { label: "Hardware", sub: "CPU, RAM", accent: "rose", detail: "Wo processor aur memory jo aakhir mein sab chalate hain. Aapka code inse seedha baat nahi karta — beech mein chaar layers hain." },
+      { label: "Operating system", sub: "Linux, macOS, Windows", accent: "amber", detail: "Processes schedule karta hai, memory aur files sambhalta hai, devices se baat karta hai. Isiliye Windows ka JVM Linux ke JVM se alag hota hai." },
+      { label: "JVM", sub: "java", accent: "emerald", detail: "Bytecode padhkar chalata hai, aur chalte-chalte garam hisson ko asli machine code bana deta hai. Yahi layer ek compiled cheez ko kahin bhi chalne laayak banati hai." },
+      { label: "Kotlin stdlib", sub: "kotlin.*", accent: "sky", detail: "`kotlin.*` ke neeche sab kuch — collections, strings, scope functions, coroutine primitives. Bina kisi import ke milta hai." },
+      { label: "Aapka code", sub: "Main.kt", accent: "violet", highlight: true, detail: "Iklauti layer jo aap likhte ho. Neeche ki har cheez machine ke har dusre Kotlin program ke saath saajha hai." },
+    ]}
+  />
+</Figure>
+
+Do naam baar-baar milenge:
+
+- **JDK** — Java Development Kit. Tools *aur* JVM dono. Build karne ke liye chahiye.
+- **JRE** — Java Runtime Environment. Sirf JVM. Chalane ke liye kaafi, build ke liye nahi.
+
+Android Studio apne saath ek JDK leke aata hai, isliye aam taur par alag install nahi karna
+padta — aur isiliye "ye build kaun sa JDK use kar rahi hai?" ka jawab dhundhna aana chahiye.
+
+## Andar ki baat: bytecode padha ja sakta hai
+
+Bytecode koi jadoo nahi hai. Ye ek saada Kotlin function hai:
+
+```kotlin title="Adder.kt" numbered runnable
+fun add(a: Int, b: Int): Int {
+    return a + b
+}
+
+fun main() {
+    println(add(2, 3))
+}
+```
+
+Compile hone par `add` lagbhag chaar bytecode instructions ban jata hai: pehla argument
+load karo, dusra load karo, jodo, return karo. JVM inhe chalata hai — aur jab koi function
+kaafi baar chal chuka hota hai to **JIT compiler** use asli machine code mein badal deta
+hai, taaki aage ki calls mein interpretation ka kaam bache hi na.
+
+<Note>
+Isiliye JVM program pehle ek second dheema aur uske baad tez lagta hai. Android par yahi
+soch **Baseline Profiles** ke roop mein aati hai, jo runtime ko pehle hi bata deti hai ki
+kya compile karna hai — taaki aapke user ko wo dheema pehla second dikhe hi na. Inse
+dobara Phase 12 mein mulaqat hogi.
+</Note>
+
+## To Kotlin hi kyun, Java kyun nahi?
+
+Dono ka bytecode ek hi hai. JVM ko farak hi pata nahi chalta. Farak sirf itna hai ki
+language aapko kya kehne deti hai — aur kya likhne se **rok** deti hai.
+
+<Compare
+  left={{
+    title: "Java",
+    subtitle: "Jiske liye JVM banaya hi gaya tha",
+    accent: "amber",
+    points: [
+      "+ Bahut bada ecosystem, har library isi ko target karti hai",
+      "- Koi bhi reference null ho sakta hai, aur koi chetavni nahi milti",
+      "- Simple data ke liye bhi getter, setter aur boilerplate",
+      "~ Naye versions ne kuch faasla kam kiya hai",
+    ],
+  }}
+  right={{
+    title: "Kotlin",
+    subtitle: "2019 se Android ke liye Google ki pehli pasand",
+    accent: "violet",
+    points: [
+      "+ Null safety compiler khud enforce karta hai",
+      "+ Data class, when, extensions — bahut kam code",
+      "+ Coroutines language mein hi built-in",
+      "+ Java ko aaram se call karta hai, ecosystem bacha rehta hai",
+    ],
+  }}
+/>
+
+Ek hi cheez, dono languages mein:
+
+```java title="User.java" numbered
+public class User {
+    private final String name;
+    public User(String name) { this.name = name; }
+    public String getName() { return name; }
+    // aur equals, hashCode, toString haath se
+}
+```
+
+```kotlin title="User.kt" numbered runnable
+data class User(val name: String)
+```
+
+Ek line, aur `equals`, `hashCode`, `toString` aur `copy` mufta mein. Ye koi jaadu ka khel
+nahi hai — value equality hi wo cheez hai jiski wajah se list diffing aur Compose
+recomposition sahi chalte hain, jo aap Phase 2 mein dekhoge.
+
+## Common galtiyan
+
+<Pitfall title="Do galtiyan jo beginners ka ek-ek din khaati hain">
+**JDK versions mila dena.** Aapki Gradle build, Kotlin compiler aur Android Studio — teeno
+ka JDK ek hona chahiye. `Unsupported class file major version 65` ka matlab hai ki kuch
+naye JDK se compile hua hai aur padhne wala purana hai. Ise ek hi jagah theek karo —
+project ka Java toolchain — na ki randomly cheezein reinstall karke.
+
+**Java se aayi value par bharosa kar lena.** Compiler ko pata hi nahi chalta ki Java ka
+method null lauta sakta hai ya nahi, isliye wo use *platform type* maan kar peechhe hat
+jata hai. Us boundary par null safety chupchap band ho jati hai. Aisi value jaise hi Kotlin
+code mein aaye, use turant explicitly nullable type (`String?`) mein daal do.
+</Pitfall>
+
+## Practice
+
+1. Terminal mein `java -version` aur `javac -version` chalao. Dono same hain? JDK aur JRE
+   shabd sahi jagah use karke batao ki har ek kya hai.
+2. `add(2, 3)` lagbhag chaar instructions banta hai. Apne shabdon mein likho ki har ek
+   instruction shayad kya karta hoga.
+3. Koi kehta hai "Kotlin Java se tez hai". Is lesson ke aadhar par samjhao ki ye baat aise
+   kehna bemani kyun hai, aur wo asal mein kehna kya chahta hoga.
+4. Android saada JVM kyun nahi bhej sakta? Pehle andaza lagao, phir agla lesson padhkar
+   apna jawab check karo.
+
+## Recap
+
+| Term | Ye kya hai | Kahan milega |
+| --- | --- | --- |
+| Bytecode | Ek kalpanik machine ke instructions | `.class` files, build errors |
+| JVM | Wo program jo bytecode chalata hai | Har `java` command |
+| JDK | Tools + JVM, build ke liye zaruri | Gradle toolchain settings |
+| JIT | Run time par hot code ko machine code banata hai | Pehla run dheema, baad mein tez |
+| Platform type | Java ki wo value jiska null Kotlin check nahi kar sakta | Interop crashes |
+
+<Interview title="Bahut common opening question">
+"Kotlin aur Java dono JVM par chalte hain. To Kotlin add kya karta hai?"
+
+Achha jawab dono layers alag karta hai: bytecode level par kuch nahi — JVM ko wahi
+instructions dikhte hain — aur language level par bahut kuch, jahan compiler null safety
+enforce karta hai, data class ke members khud banata hai, aur `suspend` functions ko
+bytecode banne se pehle hi state machine mein badal deta hai.
+</Interview>

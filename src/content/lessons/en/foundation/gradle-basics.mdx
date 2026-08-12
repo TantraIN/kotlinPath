@@ -1,0 +1,231 @@
+---
+title: Gradle without the fear
+description: Gradle is where beginners lose days. It is not complicated once you see that a build file is just Kotlin code that configures a pipeline.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Every Android project has files you did not write, cannot read, and are afraid to touch.
+So when a tutorial says "add this line to build.gradle", you paste it into the wrong one,
+the build breaks, and you learn nothing.
+
+Twenty minutes of structure fixes that permanently.
+
+## Gradle is a pipeline, not a mystery
+
+A build is a chain of steps, each turning one thing into another. Gradle's job is to run
+those steps in the right order and skip the ones whose inputs have not changed.
+
+<Figure caption="Every Android build runs these steps. When a build fails, the message tells you which one — which is why reading the task name is usually enough to locate the problem.">
+  <PipelineDiagram
+    title="What an Android build actually does"
+    description="Resources are compiled, Kotlin is compiled to class files, R8 converts them to DEX, everything is packaged into an APK or bundle, and finally the artefact is signed."
+    stages={[
+      { label: "Resources", sub: "aapt2", accent: "sky" },
+      { label: "Compile", sub: "kotlinc", accent: "violet" },
+      { label: "Dex", sub: "R8", accent: "amber" },
+      { label: "Package", sub: "apk / aab", accent: "rose" },
+      { label: "Sign", sub: "apksigner", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Those steps are **tasks**. `./gradlew assembleDebug` is you asking for the task named
+`assembleDebug`; Gradle works out everything it depends on and runs that too.
+
+```bash title="Terminal" no-glossary
+./gradlew tasks              # what can I ask for?
+./gradlew assembleDebug      # build a debug APK
+./gradlew installDebug       # build it and push it to the device
+./gradlew :app:dependencies  # where did this library come from?
+```
+
+## The files, and which is which
+
+<FileTree
+  caption="Two build files, and they do different jobs. Almost every 'I pasted it in the wrong place' error is confusion between these two."
+  entries={[
+    { name: "MyApp/", kind: "folder" },
+    { name: "settings.gradle.kts", kind: "gradle", depth: 1, note: "which modules exist" },
+    { name: "build.gradle.kts", kind: "gradle", depth: 1, note: "project-wide — plugin versions" },
+    { name: "gradle.properties", kind: "text", depth: 1, note: "JVM memory, flags" },
+    { name: "gradle/", kind: "folder", depth: 1 },
+    { name: "libs.versions.toml", kind: "text", depth: 2, note: "the version catalogue" },
+    { name: "gradlew", kind: "text", depth: 1, note: "the wrapper script — commit this" },
+    { name: "local.properties", kind: "text", depth: 1, note: "machine-specific — never commit" },
+    { name: "app/", kind: "folder", depth: 1 },
+    { name: "build.gradle.kts", kind: "gradle", depth: 2, note: "this module — dependencies go here", highlight: true },
+    { name: "src/main/", kind: "folder", depth: 2 },
+    { name: "AndroidManifest.xml", kind: "xml", depth: 3 },
+    { name: "java/", kind: "folder", depth: 3, note: "Kotlin lives here too" },
+    { name: "res/", kind: "folder", depth: 3, note: "layouts, strings, drawables" },
+  ]}
+/>
+
+<Tip bare>
+The rule that removes most confusion: **library dependencies go in the module's
+`app/build.gradle.kts`.** The root `build.gradle.kts` only declares which plugins the whole
+project may use, and at what version.
+</Tip>
+
+## Reading a real module build file
+
+```kotlin title="app/build.gradle.kts" numbered
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace = "com.example.myapp"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.example.myapp"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    testImplementation(libs.junit)
+}
+```
+
+It reads as four questions:
+
+| Block | The question it answers |
+| --- | --- |
+| `plugins` | What kind of thing is this module — an app, a library? |
+| `android` | Which SDK levels, which package name, which build types? |
+| `buildTypes` | How should debug and release differ? |
+| `dependencies` | What outside code does this module need? |
+
+Two lines deserve a closer look. `namespace` is the package your generated `R` class lands
+in. `applicationId` is your app's permanent identity on the device and on Google Play — it
+can never change after your first release. They usually match, but they mean different
+things.
+
+## The version catalogue
+
+Notice there are no version numbers in `dependencies`. They live in one file:
+
+```toml title="gradle/libs.versions.toml" no-glossary
+[versions]
+kotlin = "2.1.0"
+coreKtx = "1.15.0"
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+junit = { module = "junit:junit", version = "4.13.2" }
+
+[plugins]
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+```
+
+One place to bump a version, and every module picks it up. In a multi-module project this
+is the difference between an upgrade taking a minute and taking an afternoon.
+
+## Under the hood: why the first build is slow
+
+Gradle runs in two distinct phases, and knowing which one you are in explains most
+confusing behaviour.
+
+<Timeline>
+  <TimelineItem title="Configuration" meta="every build">
+    Gradle reads every build file and constructs the task graph. Anything written at the top
+    level of a build file runs **now** — even for a task you did not ask for. This is why a
+    stray `println` or a file read in a build script slows down every single build.
+  </TimelineItem>
+  <TimelineItem title="Execution" meta="only what is needed">
+    Gradle runs the tasks required for what you asked. Tasks whose inputs and outputs have
+    not changed are skipped and reported as `UP-TO-DATE`.
+  </TimelineItem>
+</Timeline>
+
+```bash title="Terminal output" no-glossary
+> Task :app:preBuild UP-TO-DATE
+> Task :app:compileDebugKotlin
+> Task :app:dexBuilderDebug
+BUILD SUCCESSFUL in 12s
+38 actionable tasks: 6 executed, 32 up-to-date
+```
+
+That last line is the useful one. 32 tasks were skipped because nothing they depend on
+changed. That is Gradle's incremental build doing its job — and the reason `./gradlew clean`
+should be a last resort, not a habit.
+
+## `implementation` versus `api`
+
+```kotlin title="app/build.gradle.kts" numbered
+dependencies {
+    implementation(libs.retrofit)  // [!code highlight]
+    api(libs.okhttp)               // [!code highlight]
+}
+```
+
+`implementation` keeps the library private to this module. `api` leaks it to everything that
+depends on this module.
+
+Prefer `implementation` almost always. It means changing that library only recompiles this
+module — in a large project that is the difference between a five-second build and a
+two-minute one.
+
+## Common mistakes
+
+<Pitfall title="The three that cost the most time">
+**Pasting a dependency into the root `build.gradle.kts`.** It belongs in the module's file.
+The error you get — an unresolved reference to `implementation` — never says so.
+
+**Reaching for `clean` at the first sign of trouble.** It throws away every cached output and
+makes the next build a full rebuild. Try `./gradlew --stop` or `./gradlew build --rerun-tasks`
+first; save `clean` for when you genuinely suspect stale output.
+
+**Bumping a library version without reading its changelog.** Gradle will happily resolve a
+newer version that changes behaviour silently. Use `./gradlew :app:dependencies` to see what
+you actually got — transitive dependencies mean the version you asked for is not always the
+version you use.
+</Pitfall>
+
+## Practice
+
+1. Run `./gradlew tasks` and find three tasks you have never seen. What do their names
+   suggest they do?
+2. Add a `println("configuring")` at the top level of `app/build.gradle.kts`. Run any task
+   and observe when it prints. Which phase is it in? Now remove it.
+3. Run `./gradlew assembleDebug` twice in a row. Compare the `actionable tasks` line. Explain
+   the difference.
+4. Move one dependency from `implementation` to `api`. Nothing visible changes — explain why,
+   and when it would start to matter.
+
+## Recap
+
+| Term | One line |
+| --- | --- |
+| Task | One step of the build; what you actually invoke |
+| Wrapper (`./gradlew`) | Pins the Gradle version inside the project |
+| Configuration phase | Reads build files, builds the task graph — runs every time |
+| Execution phase | Runs only the tasks that are needed and out of date |
+| Version catalogue | `libs.versions.toml` — one place for every version |
+| `implementation` | Dependency stays private to this module |
+| `api` | Dependency is exposed to consumers of this module |
+
+<Interview title="Separates people who have shipped from people who have followed tutorials">
+"Why is `implementation` preferred over `api`?"
+
+The answer is about build times, not correctness: `api` puts the library on the compile
+classpath of every dependent module, so changing it triggers a much wider recompile. Mention
+that it also leaks your internal choices into your module's public surface.
+</Interview>

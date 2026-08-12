@@ -1,0 +1,174 @@
+---
+title: प्रोग्राम असल में चलता कैसे है
+description: Kotlin की एक भी लाइन लिखने से पहले यह समझिए कि machine उसका करती क्या है। यह तस्वीर दिमाग़ में बैठ जाए तो आगे का पूरा course आसान हो जाता है।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+ज़्यादातर लोग code लिखना पहले सीख लेते हैं, और code *होता क्या है* यह बाद में। यह तब तक चलता है
+जब तक पहला अजीब bug न आए — app धीमी है, या एक phone पर crash होती है और दूसरे पर नहीं, या कोई
+संख्या ग़लत निकल रही है — और सोचने के लिए कोई मानसिक मॉडल ही नहीं होता।
+
+यह पाठ वही मॉडल देता है। बारह मिनट लगेंगे, और महीनों बचाएगा।
+
+## लिखे हुए text से लेकर machine के हुक्म तक
+
+Processor `println` शब्द नहीं पढ़ सकता। वह सिर्फ़ संख्याएँ समझता है: "यह value copy करो", "इन
+दोनों को जोड़ो", "उस address पर जाओ"। आप जो भी लिखते हैं, उसे नीचे इसी स्तर तक translate करना
+पड़ता है।
+
+Translate करने के दो पारंपरिक तरीक़े हैं।
+
+<Figure caption="Compiled languages एक बार, पहले ही translate कर देती हैं। Interpreted languages हर run पर, line by line translate करती हैं।">
+  <PipelineDiagram
+    title="Compilation और interpretation"
+    description="Compiler source code को चलाने से पहले एक बार machine code में बदलता है। Interpreter run time पर source को line by line पढ़कर चलाता है।"
+    stages={[
+      { label: "Source", sub: ".kt / .py", accent: "violet" },
+      { label: "Translate", sub: "compiler", accent: "sky" },
+      { label: "Machine code", sub: "0 और 1", accent: "amber" },
+      { label: "CPU", sub: "चलाता है", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+**Compiler** पूरा translation पहले ही कर देता है और processor को तैयार file सौंप देता है।
+Translation की क़ीमत एक बार चुकती है — आपके build time पर।
+
+**Interpreter** program चलते समय source पढ़ता है और थोड़ा-थोड़ा करके execute करता है। Build करने
+की ज़रूरत नहीं, लेकिन translation की क़ीमत हर run पर चुकती है — आपके user के phone पर।
+
+Kotlin इन दोनों में से ठीक-ठीक कोई एक नहीं करता — और उसने तीसरा रास्ता क्यों चुना, यही अगले पाठ
+का पूरा विषय है।
+
+## चलते हुए program के चार हिस्से
+
+भाषा कोई भी हो, चलता हुआ program — यानी एक **process** — इन्हीं चार हिस्सों से बनता है। आप
+ज़िंदगी में जितने भी performance problem और crash debug करेंगे, सब इन्हीं में से किसी एक में
+होंगे।
+
+<Timeline>
+  <TimelineItem title="Code segment" meta="read-only">
+    Translate किए हुए instructions, memory में load। आकार तय होता है, program चलते समय कभी
+    नहीं बदलता।
+  </TimelineItem>
+  <TimelineItem title="Stack" meta="तेज़, छोटा">
+    हर function call का एक frame, जिसमें उसके parameters और local variables रहते हैं। Call पर
+    frame push होता है, return पर pop — इसीलिए locals अपने आप ग़ायब हो जाते हैं।
+  </TimelineItem>
+  <TimelineItem title="Heap" meta="बड़ा, managed">
+    यहाँ objects रहते हैं। Constructor से बना कोई भी object यहीं जाता है, और तब तक रहता है जब
+    तक उसे कोई refer कर रहा हो।
+  </TimelineItem>
+  <TimelineItem title="Registers और program counter" meta="CPU के अंदर">
+    कुछ गिने-चुने छोटे slots, जिनमें अभी का काम चल रहा है, और अगला instruction कहाँ है उसका
+    address।
+  </TimelineItem>
+</Timeline>
+
+इन चार में से दो नाम पूरा career साथ चलेंगे: **StackOverflowError** का मतलब है function calls
+बहुत गहरी nest हो गईं, और **OutOfMemoryError** का मतलब है heap भर गया। दोनों का मतलब आपको अब
+अभी से पता है।
+
+## Code में देखिए
+
+यह सबसे छोटा पूरा Kotlin program है। एक बार पढ़िए, फिर नीचे का trace पढ़िए।
+
+```kotlin title="Main.kt" numbered runnable
+fun main() {
+    val greeting = "Namaste"
+    var count = 3
+
+    while (count > 0) {
+        println("$greeting, world")
+        count = count - 1
+    }
+}
+```
+
+<Tip bare>
+ऊपर रेखांकित किसी भी token पर hover कीजिए — `val`, `var`, `fun` — और दिख जाएगा कि वह क्या है,
+कहाँ से आता है, और आस-पास के code पर क्या असर डालता है। इस course का हर code block ऐसे ही काम
+करता है।
+</Tip>
+
+अब trace कीजिए कि machine क्या करती है:
+
+<Timeline>
+  <TimelineItem title="main call होता है" meta="stack frame 1">
+    एक frame push होता है। उसमें `greeting` और `count` की जगह है।
+  </TimelineItem>
+  <TimelineItem title="greeting bind होता है" meta="heap + stack">
+    `"Namaste"` text heap पर एक object है। Stack frame उसका *reference* रखता है, characters
+    ख़ुद नहीं।
+  </TimelineItem>
+  <TimelineItem title="loop तीन बार चलता है" meta="registers">
+    `count` इतना छोटा है कि register में ही रह जाता है। Compare और decrement करने में गिने-चुने
+    CPU cycles लगते हैं।
+  </TimelineItem>
+  <TimelineItem title="main return करता है" meta="frame pop">
+    Frame ग़ायब, दोनों locals उसके साथ ग़ायब। Heap पर पड़ा string object अब किसी की पहुँच में
+    नहीं है, इसलिए garbage collection के लिए eligible हो जाता है।
+  </TimelineItem>
+</Timeline>
+
+<Note>
+आख़िरी step याद रखने लायक़ है। Kotlin में आप कभी हाथ से memory free नहीं करते। Garbage collector
+वे objects ढूँढ़ता है जिनकी ओर अब कोई इशारा नहीं कर रहा, और उन्हें वापस ले लेता है। यह सुविधा है
+— और यही वजह भी है कि *भूला हुआ* reference, जो किसी लंबी उम्र वाले object ने पकड़ रखा है, memory
+को हमेशा ज़िंदा रखता है। इसी को memory leak कहते हैं।
+</Note>
+
+## अंदर की बात: `val` का मतलब "constant" नहीं है
+
+Variable एक slot का नाम है। `val` slot को freeze करता है, उसके अंदर जो पड़ा है उसे नहीं।
+
+```kotlin title="Mutability.kt" numbered
+val numbers = mutableListOf(1, 2, 3)
+
+numbers.add(4)          // ठीक है — list object बदला
+// numbers = mutableListOf()  // error — slot दोबारा point नहीं हो सकता
+```
+
+Stack पर पड़ा slot वही पुराना reference लिए हुए है। Heap पर पड़ा जिस object की ओर वह reference
+है, वह बदल गया। ये दो अलग चीज़ें हैं, और इन्हें मिला देना बहुत सारे bugs की जड़ है।
+
+<Pitfall title="यहाँ सब यही दो ग़लतियाँ करते हैं">
+**`val` को immutable समझ लेना।** इसका मतलब सिर्फ़ इतना है कि reference दोबारा assign नहीं हो
+सकता। Contents भी तय चाहिए तो `MutableList` की जगह `List` इस्तेमाल कीजिए।
+
+**`==` को identity समझ लेना।** Kotlin में `==` `equals` को बुलाता है, जो `data class` के लिए
+*contents* की तुलना करता है और साधारण class के लिए *reference* की। हमेशा identity की तुलना
+करने वाला operator `===` है।
+</Pitfall>
+
+## अभ्यास
+
+1. ऊपर वाले `Main.kt` के लिए उस क्षण का stack और heap बनाइए जब `count` `1` होता है। कौन सी
+   value कहाँ बैठी है?
+2. एक ऐसा function लिखिए जो ख़ुद को बिना exit condition के बुलाता रहे, चलाइए, और error पढ़िए।
+   अब उस error को ऊपर वाले चार हिस्सों से समझाइए।
+3. एक `val` बनाइए जिसमें `mutableListOf<String>()` हो। तीन items जोड़िए। फिर उसे दोबारा assign
+   करके देखिए। कौन सी line fail हुई, और यह अभी सीखी बात से कैसे मेल खाता है?
+4. एक phone में 4 GB RAM है और photos load करते समय आपकी app `OutOfMemoryError` के साथ crash हो
+   रही है। सिर्फ़ इस पाठ के आधार पर दो संभावित वजहें बताइए।
+
+## सारांश
+
+| शब्द | यह क्या है | कहाँ रहता है |
+| --- | --- | --- |
+| Compiler | पूरा source पहले ही translate करता है | आपकी machine, build पर |
+| Interpreter | Line by line translate करके चलाता है | User की machine, run पर |
+| Stack | हर function call का frame, locals रखता है | RAM, छोटा और तेज़ |
+| Heap | जहाँ objects रहते हैं | RAM, बड़ा और garbage collected |
+| `val` | ऐसा slot जो दोबारा point नहीं हो सकता | Stack frame |
+| Reference | Heap object की ओर इशारा करता address | Stack frame |
+
+<Interview title="लगभग हर junior Android interview में पूछा जाता है">
+"Stack और heap में क्या फ़र्क़ है?"
+
+पूरे जवाब में तीन चीज़ें आनी चाहिए: दोनों क्या store करते हैं (call frames बनाम objects), memory
+वापस कैसे मिलती है (return पर अपने आप बनाम garbage collector से), और भरने पर कौन सा error आता है
+(`StackOverflowError` बनाम `OutOfMemoryError`)।
+</Interview>

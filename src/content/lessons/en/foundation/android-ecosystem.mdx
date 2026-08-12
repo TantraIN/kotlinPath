@@ -1,0 +1,220 @@
+---
+title: The Android ecosystem, top to bottom
+description: Android is Linux with five layers stacked on it. Knowing which layer a problem lives in tells you where to look — and why permissions, sandboxing and API levels exist at all.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Android asks you to make decisions on day one that only make sense if you know what is
+underneath: which `minSdk` to support, why your app cannot read another app's files, why
+`targetSdk` changes behaviour you never wrote.
+
+None of those are arbitrary. Each falls out of the architecture. Fifteen minutes here saves
+you from cargo-culting settings you do not understand.
+
+## The stack
+
+<Figure caption="Android is not an operating system built from scratch. It is a Linux kernel with a runtime, a set of native libraries, and a Java-facing framework layered on top.">
+  <LayerStack
+    title="The five layers of the Android platform"
+    description="From the bottom: the Linux kernel, the hardware abstraction layer, native libraries alongside the Android Runtime, the Java API framework, and applications at the top."
+    youWriteThis="you write this"
+    topLabel="what you ship"
+    bottomLabel="the device"
+    layers={[
+      { label: "Linux kernel", sub: "drivers, memory, power", accent: "rose", detail: "Processes, memory, drivers and power. Android borrows Linux's user and permission model, which is exactly what the app sandbox is built from." },
+      { label: "Hardware abstraction layer", sub: "HAL", accent: "amber", detail: "A fixed interface each manufacturer implements for cameras, sensors and audio, so one Android build runs on very different hardware." },
+      { label: "Native libraries + ART", sub: "libc, SQLite, runtime", accent: "emerald", detail: "SQLite, media codecs and OpenGL in C++, alongside the Android Runtime that executes your DEX bytecode." },
+      { label: "Java API framework", sub: "Activity, View, Context", accent: "sky", detail: "Every Android class you import — `Activity`, `View`, `Context`. A documented surface over everything below it." },
+      { label: "Your app", sub: "MainActivity.kt", accent: "violet", highlight: true, detail: "Your APK, running as its own Linux user in its own process, on exactly the same layer as the system apps." },
+    ]}
+  />
+</Figure>
+
+Read it bottom-up:
+
+<Timeline>
+  <TimelineItem title="Linux kernel" meta="C">
+    Process scheduling, memory, drivers, power management. Android inherits decades of
+    hardened work here rather than reinventing it — including the user and permission model
+    that the app sandbox is built on.
+  </TimelineItem>
+  <TimelineItem title="Hardware abstraction layer" meta="HAL">
+    A stable interface for cameras, sensors, Bluetooth and audio. It is why the same
+    Android build can run on hardware from a hundred manufacturers.
+  </TimelineItem>
+  <TimelineItem title="Native libraries and ART" meta="C++ / runtime">
+    SQLite, OpenGL, media codecs, and the **Android Runtime** that executes your code.
+  </TimelineItem>
+  <TimelineItem title="Java API framework" meta="what you call">
+    `Activity`, `View`, `Context`, `PackageManager`. Every Android class you import lives
+    here. It is a thin, well-documented surface over everything below.
+  </TimelineItem>
+  <TimelineItem title="Applications" meta="your APK">
+    Your app, and the system apps, sitting on exactly the same layer with the same rules.
+  </TimelineItem>
+</Timeline>
+
+## ART is not the JVM
+
+The last lesson ended with a question: why can Android not just ship the JVM?
+
+Because a phone is not a server. It has a small battery, limited RAM, and a user watching a
+spinner. Android replaced the JVM with the **Android Runtime**, which makes different
+trade-offs.
+
+<Compare
+  left={{
+    title: "JVM",
+    subtitle: "Built for servers and desktops",
+    accent: "amber",
+    points: [
+      "~ Runs .class bytecode, one file per class",
+      "~ Compiles hot code with JIT while running",
+      "- Assumes plenty of RAM and mains power",
+      "- Startup cost paid on every launch",
+    ],
+  }}
+  right={{
+    title: "ART",
+    subtitle: "Built for battery-powered devices",
+    accent: "emerald",
+    points: [
+      "+ Runs DEX bytecode, one file for many classes",
+      "+ Compiles ahead of time at install, plus JIT",
+      "+ Tuned for low memory and fast cold start",
+      "+ Profile-guided: optimises what users actually run",
+    ],
+  }}
+/>
+
+So your Kotlin does not stop at `.class` files. One more step converts them into **DEX**,
+which is what actually ships.
+
+<Figure caption="The extra DEX step is the whole reason an Android build is slower than a plain Kotlin build.">
+  <PipelineDiagram
+    title="From Kotlin source to an installed Android app"
+    description="Kotlin is compiled to JVM bytecode, then R8 converts and optimises it into DEX, which is packaged with resources into an app bundle, then installed and executed by the Android Runtime."
+    stages={[
+      { label: ".kt", sub: "source", accent: "violet" },
+      { label: ".class", sub: "bytecode", accent: "sky" },
+      { label: ".dex", sub: "R8", accent: "amber" },
+      { label: "ART", sub: "on device", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+## The sandbox
+
+Here is the single most consequential design decision in Android: **every app gets its own
+Linux user ID.**
+
+Not a metaphor — an actual user, the way `root` and `www-data` are users on a server. Your
+app's files are owned by that user, and Linux file permissions do the rest.
+
+```bash title="Terminal" no-glossary
+# Two apps, two completely separate identities
+adb shell ps -A | grep -E "com.example|com.android.chrome"
+
+u0_a142  ...  com.example.myapp
+u0_a201  ...  com.android.chrome
+```
+
+Everything else follows from this:
+
+- Another app cannot read your database, because the file is not readable by its user.
+- A permission is the system granting your user ID access to something outside your
+  sandbox — the camera, the network, the user's contacts.
+- Each app runs in its own process with its own runtime instance, so one app crashing
+  cannot take down another.
+
+<Note>
+This is why "just write the file to the SD card and read it from my other app" stopped
+working years ago, and why every storage question on Android eventually becomes a question
+about which sandbox the file lives in. Phase 8 covers scoped storage in detail.
+</Note>
+
+## API levels: the number that actually matters
+
+Users talk about "Android 15". The platform talks about **API level 35**. They are two
+names for the same release, and the API level is the one your build uses.
+
+| Setting | What it means | Set it to |
+| --- | --- | --- |
+| `compileSdk` | Which API your code is compiled against | Always the latest stable |
+| `minSdk` | The oldest device that can install your app | As low as your users need |
+| `targetSdk` | The behaviour your app is tested against | Latest, and raise it deliberately |
+
+`targetSdk` is the subtle one. The system reads it and decides how strictly to treat you.
+Raise it and behaviours change — background limits tighten, permissions become stricter —
+without you editing a single line. Google Play also requires it to stay recent, so it is
+not optional.
+
+<Pitfall title="Two assumptions that break real apps">
+**Assuming a class exists because it compiles.** `compileSdk 35` lets you call an API added
+in level 33. On a `minSdk 24` device that class is simply not there, and the app crashes
+with `NoSuchMethodError`. Guard it: `if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)`.
+
+**Raising `targetSdk` to silence a warning.** It is a declaration that you have tested
+against that version's behaviour changes. Raise it, then actually run the app — do not raise
+it the evening before a release.
+</Pitfall>
+
+## What you actually ship
+
+You do not upload an APK to Google Play any more. You upload an **AAB** — an Android App
+Bundle — and Play generates a right-sized APK for each device.
+
+<Compare
+  left={{
+    title: "APK",
+    subtitle: "The installable package",
+    accent: "sky",
+    points: [
+      "+ Installs directly, good for testing and sideloading",
+      "- Contains every screen density and every language",
+      "- Users download resources they will never use",
+    ],
+  }}
+  right={{
+    title: "AAB",
+    subtitle: "What Google Play requires",
+    accent: "violet",
+    points: [
+      "+ Play builds a per-device APK from it",
+      "+ Typically 15 to 35 percent smaller downloads",
+      "- Cannot be installed directly, needs bundletool",
+    ],
+  }}
+/>
+
+## Practice
+
+1. For each of these, name the layer it belongs to: `SQLite`, `Activity`, the camera
+   driver, `PackageManager`, DEX execution.
+2. Your app crashes with `NoSuchMethodError` only on older phones. Which of the three SDK
+   settings is wrong, and what is the fix?
+3. Explain, using the sandbox, why a to-do app cannot read a banking app's saved session —
+   without using the word "security".
+4. Your APK is 40 MB. Give two reasons an AAB would make the actual download smaller.
+
+## Recap
+
+| Term | One line |
+| --- | --- |
+| Linux kernel | The bottom layer; source of the user-ID sandbox |
+| HAL | Stable interface to hardware from many manufacturers |
+| ART | Android's runtime — runs DEX, compiles ahead of time |
+| DEX | Android's bytecode format, produced by R8 |
+| Sandbox | One Linux user per app; permissions are grants outside it |
+| API level | The number your build targets, e.g. 35 for Android 15 |
+| AAB | What you upload; Play turns it into per-device APKs |
+
+<Interview title="Asked to check you understand the platform, not just the SDK">
+"What is the difference between `minSdk`, `targetSdk` and `compileSdk`?"
+
+The answer that lands: `compileSdk` is compile time, `minSdk` is install time, `targetSdk`
+is run time. Then give the consequence of each being wrong — code that will not compile,
+users who cannot install, and behaviour changes you never tested.
+</Interview>

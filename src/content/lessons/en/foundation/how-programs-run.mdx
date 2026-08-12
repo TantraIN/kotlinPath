@@ -1,0 +1,174 @@
+---
+title: How a program actually runs
+description: Before writing a single line of Kotlin, understand what the machine does with it. Everything later in this course is easier once this picture is in your head.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Most people learn to write code before they learn what code *is*. That works until the
+first strange bug — the app is slow, or it crashes on one phone and not another, or a
+number comes out wrong — and there is no mental model to reason with.
+
+This lesson gives you that model. It takes twelve minutes and it will save you months.
+
+## From text to something the machine obeys
+
+A processor cannot read the word `println`. It understands numbers: instructions like
+"copy this value", "add these two", "jump to that address". Everything you write has to be
+translated down to that level.
+
+There are two classic ways to do the translation.
+
+<Figure caption="Compiled languages translate once, ahead of time. Interpreted languages translate line by line, every time the program runs.">
+  <PipelineDiagram
+    title="Compilation versus interpretation"
+    description="A compiler turns source code into machine code once, before running. An interpreter reads and executes the source line by line at run time."
+    stages={[
+      { label: "Source", sub: ".kt / .py", accent: "violet" },
+      { label: "Translate", sub: "compiler", accent: "sky" },
+      { label: "Machine code", sub: "0s and 1s", accent: "amber" },
+      { label: "CPU", sub: "executes", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+A **compiler** does the whole translation up front and hands the processor a finished
+file. The translation cost is paid once, by you, at build time.
+
+An **interpreter** reads your source while the program is running and executes it a piece
+at a time. Nothing to build, but the translation cost is paid on every run, by your user.
+
+Kotlin does neither of these exactly — and the reason it does something else is the whole
+point of the next lesson.
+
+## The four things a running program has
+
+Whatever language you use, a running program — a **process** — is made of the same four
+parts. Every performance problem and every crash you will ever debug lives in one of them.
+
+<Timeline>
+  <TimelineItem title="Code segment" meta="read-only">
+    The translated instructions, loaded into memory. Fixed size, never changes while the
+    program runs.
+  </TimelineItem>
+  <TimelineItem title="Stack" meta="fast, small">
+    One frame per function call, holding its parameters and local variables. Frames are
+    pushed on call and popped on return, which is why locals disappear automatically.
+  </TimelineItem>
+  <TimelineItem title="Heap" meta="large, managed">
+    Where objects live. Anything created with a constructor goes here, and it stays until
+    nothing refers to it any more.
+  </TimelineItem>
+  <TimelineItem title="Registers and the program counter" meta="inside the CPU">
+    A handful of tiny slots holding the values being worked on right now, plus the address
+    of the next instruction to run.
+  </TimelineItem>
+</Timeline>
+
+Two of these names will follow you for your entire career: **StackOverflowError** means you
+nested function calls too deeply, and **OutOfMemoryError** means the heap filled up. You
+now already know what both of them mean.
+
+## Seeing it in code
+
+Here is the smallest complete Kotlin program. Read it once, then read the annotations.
+
+```kotlin title="Main.kt" numbered runnable
+fun main() {
+    val greeting = "Namaste"
+    var count = 3
+
+    while (count > 0) {
+        println("$greeting, world")
+        count = count - 1
+    }
+}
+```
+
+<Tip bare>
+Hover any underlined token above — `val`, `var`, `fun` — to see what it is, where it comes
+from, and what it changes about the code around it. Every code block in this course works
+that way.
+</Tip>
+
+Now trace what the machine does:
+
+<Timeline>
+  <TimelineItem title="main is called" meta="stack frame 1">
+    A frame is pushed. It has room for `greeting` and `count`.
+  </TimelineItem>
+  <TimelineItem title="greeting is bound" meta="heap + stack">
+    The text `"Namaste"` is an object on the heap. The stack frame holds a *reference* to
+    it, not the characters themselves.
+  </TimelineItem>
+  <TimelineItem title="the loop runs three times" meta="registers">
+    `count` is small enough to live in a register. Comparing and decrementing it costs a
+    handful of CPU cycles.
+  </TimelineItem>
+  <TimelineItem title="main returns" meta="frame popped">
+    The frame disappears and both locals vanish with it. The string object on the heap is
+    now unreachable and becomes eligible for garbage collection.
+  </TimelineItem>
+</Timeline>
+
+<Note>
+That last step is the one worth remembering. In Kotlin you never free memory by hand. A
+garbage collector finds objects nothing points to any more and reclaims them. This is
+convenient, and it is also why a reference you *forgot* about — held by a long-lived
+object — keeps memory alive forever. That is exactly what a memory leak is.
+</Note>
+
+## Under the hood: why `val` is not "constant"
+
+A variable is a name for a slot. `val` freezes the slot, not what is inside it.
+
+```kotlin title="Mutability.kt" numbered
+val numbers = mutableListOf(1, 2, 3)
+
+numbers.add(4)          // fine — the list object changed
+// numbers = mutableListOf()  // error — the slot cannot be re-pointed
+```
+
+The slot on the stack still holds the same reference. The object on the heap that the
+reference points to changed. Those are two different things, and confusing them is the
+source of a surprising number of bugs.
+
+<Pitfall title="The two mistakes everyone makes here">
+**Assuming `val` means immutable.** It means the reference cannot be reassigned. Use
+`List` instead of `MutableList` when you want the contents fixed too.
+
+**Assuming `==` compares identity.** In Kotlin `==` calls `equals`, which compares
+*contents* for a `data class` and *references* for an ordinary class. `===` is the one that
+always compares identity.
+</Pitfall>
+
+## Practice
+
+1. Draw the stack and heap for the `Main.kt` program above at the moment `count` becomes
+   `1`. Which values sit where?
+2. Write a function that calls itself with no exit condition, run it, and read the error.
+   Now explain the error using the four parts above.
+3. Create a `val` holding a `mutableListOf<String>()`. Add three items. Then try to
+   reassign it. Which line fails, and why is that consistent with what you just learned?
+4. A phone has 4 GB of RAM and your app crashes with `OutOfMemoryError` while loading
+   photos. Using only this lesson, name two plausible causes.
+
+## Recap
+
+| Term | What it is | Where it lives |
+| --- | --- | --- |
+| Compiler | Translates all source ahead of time | Your machine, at build |
+| Interpreter | Translates and runs line by line | The user's machine, at run |
+| Stack | One frame per function call, holds locals | RAM, small and fast |
+| Heap | Where objects live | RAM, large and garbage collected |
+| `val` | A slot that cannot be re-pointed | Stack frame |
+| Reference | An address pointing at a heap object | Stack frame |
+
+<Interview title="Asked in almost every junior Android interview">
+"What is the difference between the stack and the heap?"
+
+A complete answer names three things: what each stores (call frames versus objects), how
+memory is reclaimed (automatically on return versus by the garbage collector), and the
+error each produces when exhausted (`StackOverflowError` versus `OutOfMemoryError`).
+</Interview>

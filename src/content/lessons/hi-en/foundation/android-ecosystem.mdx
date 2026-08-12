@@ -1,0 +1,225 @@
+---
+title: Android ecosystem, upar se neeche tak
+description: Android ek Linux hai jiske upar paanch layers rakhi hain. Problem kis layer mein hai ye pata ho to dhundhna aasan ho jata hai — aur permissions, sandboxing aur API levels hain hi kyun, ye bhi samajh aata hai.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Android pehle hi din aapse aise faisle karwata hai jo tabhi samajh aate hain jab neeche ka
+dhaancha pata ho: kaun sa `minSdk` support karna hai, aapki app dusri app ki files kyun
+nahi padh sakti, aur `targetSdk` badalne se wo behaviour kyun badal jata hai jo aapne likha
+hi nahi.
+
+In mein se koi cheez manmaani nahi hai. Har ek architecture se nikalti hai. Yahan pandrah
+minute lagane se aap wo settings copy-paste karne se bach jaoge jinka matlab pata hi nahi.
+
+## Poora stack
+
+<Figure caption="Android shuru se banaya gaya operating system nahi hai. Ye Linux kernel hai, jiske upar ek runtime, kuch native libraries aur ek Java-facing framework rakha gaya hai.">
+  <LayerStack
+    title="Android platform ki paanch layers"
+    description="Neeche se: Linux kernel, hardware abstraction layer, native libraries aur Android Runtime, Java API framework, aur sabse upar applications."
+    youWriteThis="ye aap likhte ho"
+    topLabel="jo aap bhejte ho"
+    bottomLabel="device"
+    layers={[
+      { label: "Linux kernel", sub: "drivers, memory, power", accent: "rose", detail: "Processes, memory, drivers aur power. Android ne Linux ka user aur permission model liya hai — app sandbox usi se bana hai." },
+      { label: "Hardware abstraction layer", sub: "HAL", accent: "amber", detail: "Ek tay interface jise har manufacturer camera, sensors aur audio ke liye implement karta hai, taaki ek hi Android build bahut alag hardware par chal jaye." },
+      { label: "Native libraries + ART", sub: "libc, SQLite, runtime", accent: "emerald", detail: "C++ mein SQLite, media codecs aur OpenGL, aur saath mein Android Runtime jo aapka DEX bytecode chalata hai." },
+      { label: "Java API framework", sub: "Activity, View, Context", accent: "sky", detail: "Jo bhi Android class aap import karte ho — `Activity`, `View`, `Context`. Neeche ki har cheez ke upar ek documented parat." },
+      { label: "Aapki app", sub: "MainActivity.kt", accent: "violet", highlight: true, detail: "Aapki APK, apne alag Linux user aur apne process mein, theek usi layer par jahan system apps hain." },
+    ]}
+  />
+</Figure>
+
+Neeche se upar padho:
+
+<Timeline>
+  <TimelineItem title="Linux kernel" meta="C">
+    Process scheduling, memory, drivers, power management. Android ne ye sab dobara banane
+    ke bajaye Linux ka dashkon purana, tested kaam le liya — jismein wahi user aur permission
+    model bhi hai jis par app sandbox khada hai.
+  </TimelineItem>
+  <TimelineItem title="Hardware abstraction layer" meta="HAL">
+    Camera, sensors, Bluetooth aur audio ke liye ek sthir interface. Isiliye ek hi Android
+    build sau manufacturers ke hardware par chal jati hai.
+  </TimelineItem>
+  <TimelineItem title="Native libraries aur ART" meta="C++ / runtime">
+    SQLite, OpenGL, media codecs, aur **Android Runtime** jo aapka code chalata hai.
+  </TimelineItem>
+  <TimelineItem title="Java API framework" meta="jo aap call karte ho">
+    `Activity`, `View`, `Context`, `PackageManager`. Jo bhi Android class aap import karte
+    ho wo yahin rehti hai. Ye neeche ki har cheez ke upar ek patli, achhi tarah documented
+    parat hai.
+  </TimelineItem>
+  <TimelineItem title="Applications" meta="aapka APK">
+    Aapki app, aur system apps — dono theek ek hi layer par, ek jaise niyamon ke saath.
+  </TimelineItem>
+</Timeline>
+
+## ART, JVM nahi hai
+
+Pichhla lesson ek sawal par khatam hua tha: Android saada JVM kyun nahi bhej sakta?
+
+Kyunki phone server nahi hai. Usmein chhoti battery hai, kam RAM hai, aur ek user spinner
+dekh raha hota hai. Android ne JVM ki jagah **Android Runtime** rakha, jo alag trade-offs
+karta hai.
+
+<Compare
+  left={{
+    title: "JVM",
+    subtitle: "Servers aur desktops ke liye bana",
+    accent: "amber",
+    points: [
+      "~ .class bytecode chalata hai, har class ki alag file",
+      "~ Chalte-chalte JIT se hot code compile karta hai",
+      "- Maanta hai ki RAM aur bijli dono kaafi hai",
+      "- Har launch par startup ki keemat lagti hai",
+    ],
+  }}
+  right={{
+    title: "ART",
+    subtitle: "Battery par chalne wale devices ke liye bana",
+    accent: "emerald",
+    points: [
+      "+ DEX bytecode chalata hai, ek file mein kai classes",
+      "+ Install par pehle hi compile, saath mein JIT bhi",
+      "+ Kam memory aur tez cold start ke liye tuned",
+      "+ Profile-guided: jo user asal mein chalata hai wahi optimise karta hai",
+    ],
+  }}
+/>
+
+To aapka Kotlin `.class` par nahi rukta. Ek aur step use **DEX** mein badalta hai, aur wahi
+device tak jata hai.
+
+<Figure caption="Ye extra DEX step hi wajah hai ki Android build saadi Kotlin build se dheemi hoti hai.">
+  <PipelineDiagram
+    title="Kotlin source se installed Android app tak"
+    description="Kotlin JVM bytecode mein compile hota hai, phir R8 use DEX mein badalkar optimise karta hai, jo resources ke saath app bundle mein package hota hai, aur Android Runtime use install karke chalata hai."
+    stages={[
+      { label: ".kt", sub: "source", accent: "violet" },
+      { label: ".class", sub: "bytecode", accent: "sky" },
+      { label: ".dex", sub: "R8", accent: "amber" },
+      { label: "ART", sub: "device par", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+## Sandbox
+
+Android ka sabse zyada asar daalne wala design faisla yahi hai: **har app ko apna alag
+Linux user ID milta hai.**
+
+Ye koi upma nahi hai — sach mein ek user, jaise server par `root` aur `www-data` users hote
+hain. Aapki app ki files us user ki hain, aur baaki kaam Linux ki file permissions kar deti
+hain.
+
+```bash title="Terminal" no-glossary
+# Do apps, do bilkul alag pehchaan
+adb shell ps -A | grep -E "com.example|com.android.chrome"
+
+u0_a142  ...  com.example.myapp
+u0_a201  ...  com.android.chrome
+```
+
+Baaki sab isi se nikalta hai:
+
+- Dusri app aapka database nahi padh sakti, kyunki wo file uske user ke liye readable hi
+  nahi hai.
+- Permission ka matlab hai system aapke user ID ko sandbox ke bahar ki kisi cheez tak
+  pahunch de raha hai — camera, network, user ke contacts.
+- Har app apne alag process aur apne runtime instance mein chalti hai, isliye ek app ka
+  crash dusri ko nahi le doobta.
+
+<Note>
+Isiliye "file SD card par likh do aur dusri app se padh lo" wala tarika saalon pehle band ho
+gaya, aur isiliye Android par har storage sawal ghoom-phirkar yahi ban jata hai ki file kis
+sandbox mein padi hai. Scoped storage Phase 8 mein detail se aayega.
+</Note>
+
+## API level: asli number
+
+Log kehte hain "Android 15". Platform kehta hai **API level 35**. Ek hi release ke do naam
+hain, aur build API level wala naam use karti hai.
+
+| Setting | Matlab | Kya rakho |
+| --- | --- | --- |
+| `compileSdk` | Kis API ke against code compile hoga | Hamesha latest stable |
+| `minSdk` | Sabse purana device jo app install kar sake | Jitna neeche aapke users ko chahiye |
+| `targetSdk` | Kis behaviour ke against app test ki gayi hai | Latest, aur soch-samajh kar badhao |
+
+`targetSdk` sabse sookshm hai. System ise padhkar tay karta hai ki aapke saath kitni sakhti
+karni hai. Ise badhao aur behaviour badal jate hain — background limits kas jati hain,
+permissions sakht ho jati hain — bina aapke ek line badle. Google Play bhi ise recent rakhna
+zaruri karta hai, to ye optional nahi hai.
+
+<Pitfall title="Do maanyataayein jo asli apps todti hain">
+**Compile ho gaya matlab class hai — ye maan lena.** `compileSdk 35` aapko level 33 mein
+juda API call karne deta hai. `minSdk 24` wale device par wo class hai hi nahi, aur app
+`NoSuchMethodError` ke saath crash ho jati hai. Guard lagao:
+`if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)`.
+
+**Warning chupane ke liye `targetSdk` badha dena.** Ye ek ghoshna hai ki aapne us version ke
+behaviour changes ke against test kar liya hai. Badhao, phir app sach mein chalao — release
+se ek raat pehle mat badhao.
+</Pitfall>
+
+## Aap bhejte kya ho
+
+Ab Google Play par APK upload nahi hota. **AAB** upload hota hai — Android App Bundle — aur
+Play har device ke liye sahi naap ka APK khud bana leta hai.
+
+<Compare
+  left={{
+    title: "APK",
+    subtitle: "Install hone wala package",
+    accent: "sky",
+    points: [
+      "+ Seedha install ho jata hai, testing aur sideloading ke liye achha",
+      "- Har screen density aur har language andar hoti hai",
+      "- User wo resources bhi download karta hai jo kabhi use nahi honge",
+    ],
+  }}
+  right={{
+    title: "AAB",
+    subtitle: "Jo Google Play maangta hai",
+    accent: "violet",
+    points: [
+      "+ Play isse har device ka apna APK banata hai",
+      "+ Aam taur par 15 se 35 percent chhota download",
+      "- Seedha install nahi hota, bundletool chahiye",
+    ],
+  }}
+/>
+
+## Practice
+
+1. In sabki layer batao: `SQLite`, `Activity`, camera driver, `PackageManager`, DEX
+   execution.
+2. Aapki app sirf purane phones par `NoSuchMethodError` deti hai. Teen SDK settings mein se
+   kaun si galat hai, aur fix kya hai?
+3. Sandbox ke aadhar par samjhao ki ek to-do app banking app ka saved session kyun nahi
+   padh sakti — bina "security" shabd use kiye.
+4. Aapka APK 40 MB ka hai. Do wajah batao ki AAB se asli download chhota kyun ho jayega.
+
+## Recap
+
+| Term | Ek line |
+| --- | --- |
+| Linux kernel | Sabse neeche ki layer; user-ID sandbox ka srot |
+| HAL | Alag-alag manufacturers ke hardware tak sthir interface |
+| ART | Android ka runtime — DEX chalata hai, pehle hi compile karta hai |
+| DEX | Android ka bytecode format, R8 banata hai |
+| Sandbox | Har app ka ek Linux user; permission uske bahar ki anumati hai |
+| API level | Wo number jise build target karti hai, jaise Android 15 ke liye 35 |
+| AAB | Jo aap upload karte ho; Play isse per-device APK banata hai |
+
+<Interview title="Ye dekhne ke liye poochha jata hai ki platform samajh aaya ya sirf SDK">
+"`minSdk`, `targetSdk` aur `compileSdk` mein kya farak hai?"
+
+Jo jawab jamta hai: `compileSdk` compile time hai, `minSdk` install time hai, `targetSdk`
+run time hai. Phir har ek ke galat hone ka nateeja batao — code compile hi nahi hoga, users
+install nahi kar payenge, aur wo behaviour badal jayega jo aapne kabhi test hi nahi kiya.
+</Interview>

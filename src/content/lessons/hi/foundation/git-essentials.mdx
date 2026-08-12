@@ -1,0 +1,190 @@
+---
+title: इस course के लिए Git की बुनियाद
+description: इतना Git जितने से इस course का हर project सुरक्षित रहे, एक ख़राब दोपहर वापस हो जाए, और आप वैसे काम करें जैसे असली Android teams करती हैं — बिना पूरा tool सीखे।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+आप कुछ तोड़ेंगे। शायद नहीं — पक्का। Phase 6 के बीच में कोई refactor बिगड़ेगा और जो app एक घंटे
+पहले चल रही थी वह compile ही नहीं होगी।
+
+Git के साथ यह तीस second की समस्या है। Git के बिना यह आपकी पूरी शाम है।
+
+इस course का हर project commit होगा। यह दिखावा नहीं है — यही चीज़ experiment करना safe बनाती है।
+
+## आपका code तीन जगह रहता है
+
+यह वह model है जो beginners को कभी बताया नहीं जाता, और यही लगभग हर उलझाने वाले Git message को
+समझा देता है।
+
+<Timeline>
+  <TimelineItem title="Working directory" meta="आपकी files">
+    Disk पर पड़ी files, जैसी आपका editor देखता है। यहाँ file बदलने से Git के record में कुछ नहीं
+    बदलता।
+  </TimelineItem>
+  <TimelineItem title="Staging area" meta="git add">
+    उन बदलावों की छोटी list जो अगले commit में जाएँगे। इसीलिए आप तीन चीज़ें ठीक करके उन्हें तीन
+    अलग, पढ़ने लायक़ commits बना सकते हैं।
+  </TimelineItem>
+  <TimelineItem title="Repository" meta="git commit">
+    स्थायी history। Commit एक पूरा snapshot है plus एक message, और लिखने के बाद कभी बदलता नहीं।
+  </TimelineItem>
+</Timeline>
+
+```bash title="वह loop जो सौ बार चलेगा" no-glossary
+git status                       # क्या बदला?
+git add app/src/main/            # जो साथ जाता है वही stage कीजिए
+git commit -m "Add lesson list screen"
+git push
+```
+
+<Tip bare>
+`git status` सिर्फ़ औपचारिकता नहीं है। हर `add` और हर `commit` से पहले चलाइए — Git के ज़्यादातर
+हादसे वही file commit कर देने से होते हैं जो करनी ही नहीं थी।
+</Tip>
+
+## Branches, बनाकर देखिए
+
+Branch तब तक abstract लगती है जब तक दिख न जाए। वह बस एक commit की ओर इशारा करता हुआ खिसकने वाला
+pointer है।
+
+<Figure caption="Feature branch commits की अलग line है। Merge उसका काम वापस main में ले आता है, और बीच में main कभी टूटा ही नहीं।">
+  <GitGraph
+    title="Feature branch बनती है, काम होता है, और वापस merge होती है"
+    description="Main पर दो commits, फिर एक feature branch अलग होती है अपने दो commits के साथ, फिर एक merge commit उस काम को वापस main में ले आता है।"
+    mainLabel="main"
+    branchLabel="feature"
+    nodes={[
+      { label: "a1b2", lane: 0, note: "initial" },
+      { label: "c3d4", lane: 0, note: "setup" },
+      { label: "e5f6", lane: 1, note: "branch off" },
+      { label: "g7h8", lane: 1, note: "screen बनाई" },
+      { label: "i9j0", lane: 0, note: "merge", merge: true },
+    ]}
+  />
+</Figure>
+
+```bash title="Terminal" no-glossary
+git switch -c feature/lesson-list   # branch बनाइए और उस पर चले जाइए
+# ... काम, commit, commit ...
+git switch main
+git merge feature/lesson-list
+```
+
+अकेले के course project में यह झंझट क्यों? क्योंकि `main` हमेशा वह version रहता है जो पक्का चलता
+है। Experiment fail हो तो branch delete कर दीजिए, कुछ नहीं गया। Professional Android teams ठीक
+इसी तरह काम करती हैं, तो आदत अभी से डाल लीजिए।
+
+## क्या कभी commit नहीं होना चाहिए
+
+Android projects बहुत सी ऐसी files बनाते हैं जो history में नहीं होनी चाहिए। कुछ बस शोर हैं; दो
+सच में ख़तरनाक हैं।
+
+<FileTree
+  caption="जो आपकी लिखी हुई हैं वे Git में जानी चाहिए। Generated, machine-specific या secret files बाहर रहनी चाहिए।"
+  entries={[
+    { name: "MyApp/", kind: "folder" },
+    { name: ".gitignore", kind: "text", depth: 1, note: "commit कीजिए" },
+    { name: "gradlew", kind: "text", depth: 1, note: "commit — Gradle version pin करता है" },
+    { name: "app/src/", kind: "folder", depth: 1, note: "commit — आपका असली code" },
+    { name: "app/build.gradle.kts", kind: "gradle", depth: 1, note: "commit" },
+    { name: "build/", kind: "folder", depth: 1, note: "ignore — हर build पर दोबारा बनता है" },
+    { name: ".gradle/", kind: "folder", depth: 1, note: "ignore — local cache" },
+    { name: ".idea/", kind: "folder", depth: 1, note: "ignore — IDE की state" },
+    { name: "local.properties", kind: "text", depth: 1, note: "ignore — machine का SDK path", highlight: true },
+    { name: "release.keystore", kind: "text", depth: 1, note: "कभी commit नहीं — signing key", highlight: true },
+  ]}
+/>
+
+Android Studio project बनाते समय ठीक-ठाक `.gitignore` लिख देता है। उसे एक बार पढ़िए और जो छूट गया
+वह जोड़ दीजिए:
+
+```text title=".gitignore" no-glossary
+*.iml
+.gradle/
+.idea/
+build/
+local.properties
+*.keystore
+*.jks
+secrets.properties
+```
+
+<Warning>
+Signing keystore वह इकलौती file है जो न वापस मिल सकती है न बदली जा सकती है। Leak हो गई तो कोई
+भी ऐसा update publish कर सकता है जिसे Google Play आपका मान लेगा। खो गई तो आप ख़ुद कभी अपनी app
+उस पहचान से update नहीं कर पाएँगे। इसे Git से बाहर रखिए, और कहीं अलग backup कीजिए।
+</Warning>
+
+## चीज़ें वापस करना
+
+जो commands असल में चाहिए होते हैं, कितने ख़तरनाक हैं उसके क्रम में:
+
+| स्थिति | Command | काम जाएगा? |
+| --- | --- | --- |
+| ग़लती से file stage हो गई | `git restore --staged <file>` | नहीं |
+| एक file के edits फेंकने हैं | `git restore <file>` | हाँ, वह file |
+| पिछले commit का message ग़लत था | `git commit --amend` | नहीं |
+| पिछला commit हटाना है, बदलाव रखने हैं | `git reset --soft HEAD~1` | नहीं |
+| Commit और उसके बदलाव दोनों जाने हैं | `git reset --hard HEAD~1` | हाँ |
+| Push हो चुका है और वापस करना है | `git revert <hash>` | नहीं — उल्टा commit जोड़ता है |
+
+<Pitfall title="दो जो सच में नुक़सान करते हैं">
+**बिना commit किए काम पर `git reset --hard`।** यह वापस नहीं आता — लौटने के लिए कोई snapshot ही
+नहीं है। पहले commit, फिर reset। गंदा commit बाद में amend हो सकता है; गया हुआ काम नहीं।
+
+**दूसरों की pull की हुई history बदलना।** `--amend` और `reset` commit hashes बदल देते हैं। Shared
+branch पर इससे बाक़ी सबको तकलीफ़ होती है। जिस branch को सिर्फ़ आपने छुआ है, वहाँ दोनों बिलकुल safe
+हैं।
+</Pitfall>
+
+## इस course का flow
+
+<Timeline>
+  <TimelineItem title="हर project में एक बार" meta="git init">
+    `git init`, फिर Android Studio के starter को पहला commit बनाइए। इससे एक line लिखने से पहले
+    ही एक पक्का-चलता-हुआ state मिल जाता है।
+  </TimelineItem>
+  <TimelineItem title="हर lesson पर" meta="branch">
+    `git switch -c phase-1/null-safety`। खुलकर experiment कीजिए — branch फेंकने के लिए ही है।
+  </TimelineItem>
+  <TimelineItem title="जब भी कुछ चल जाए" meta="commit">
+    हर उस जगह commit कीजिए जहाँ काम खोने पर दुख होगा। छोटे commits मुफ़्त हैं; गई हुई दोपहर नहीं।
+  </TimelineItem>
+  <TimelineItem title="आख़िर में" meta="merge और push">
+    `main` में merge कीजिए और GitHub पर push। Course ख़त्म होने तक वह repository आपका portfolio
+    है, जिसमें commit history इसका सबूत है कि आप काम कैसे करते हैं।
+  </TimelineItem>
+</Timeline>
+
+## अभ्यास
+
+1. एक repository बनाइए, एक file commit कीजिए, उसे edit कीजिए, और हर step के बाद `git status`
+   चलाइए। हर point पर बताइए कि आपका बदलाव तीनों में से कहाँ है।
+2. दो बिलकुल अलग edits कीजिए, फिर बिना किसी को undo किए उन्हें दो अलग commits बनाइए। कौन सा
+   command यह संभव बनाता है?
+3. जान-बूझकर `local.properties` commit कीजिए। अब उसे disk से हटाए बिना tracking से निकालिए और
+   `.gitignore` में डालिए। कौन सा command file रखता है पर tracking बंद कर देता है?
+4. एक branch बनाइए, एक commit कीजिए, `main` पर वापस आइए, और file देखिए। समझाइए कि आपका बदलाव
+   ग़ायब क्यों हुआ — और यह bug क्यों नहीं है।
+
+## सारांश
+
+| Command | क्या करता है |
+| --- | --- |
+| `git status` | क्या बदला और क्या stage है |
+| `git add <path>` | बदलाव staging area में ले जाइए |
+| `git commit -m "..."` | स्थायी snapshot record कीजिए |
+| `git switch -c <name>` | Branch बनाइए और उस पर जाइए |
+| `git merge <branch>` | किसी branch का काम मौजूदा branch में लाइए |
+| `git restore <file>` | File के बिना-commit किए edits फेंकिए |
+| `git log --oneline` | History छोटे रूप में पढ़िए |
+
+<Interview title="यह Git का सवाल नहीं, समझ का सवाल है">
+"Android project में आप क्या commit करेंगे और क्या नहीं?"
+
+`build/`, `.gradle/` और `.idea/` का नाम लेना बताता है कि आप generated चीज़ें पहचानते हैं।
+`local.properties` का नाम बताता है कि आपने team में काम किया है। Keystore का नाम लेना — और यह
+कहना कि उसे बदला नहीं जा सकता — बताता है कि आपने app ship की है।
+</Interview>

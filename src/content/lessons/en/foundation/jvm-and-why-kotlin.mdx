@@ -1,0 +1,195 @@
+---
+title: The JVM, and why Kotlin exists
+description: Kotlin is neither compiled nor interpreted in the way the last lesson described. Understanding the middle path explains half the error messages you will meet.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+Sooner or later a build fails with something like this:
+
+```text no-glossary
+Unsupported class file major version 65
+> Task :app:compileDebugKotlin FAILED
+```
+
+Nothing in that message mentions Kotlin, Android, or your code. It is talking about
+**bytecode** and **JDK versions** — the layer this lesson is about. Once you can see that
+layer, errors like this stop being mysterious and become a one-line fix.
+
+## The middle path
+
+Last lesson gave you two options: compile everything ahead of time, or interpret it line
+by line. Kotlin takes neither.
+
+It compiles ahead of time — but not to machine code for your specific processor. It
+compiles to **bytecode**: instructions for an imaginary computer. A program called the
+**Java Virtual Machine** then runs that bytecode on the real machine it happens to be
+installed on.
+
+<Figure caption="One compile step produces bytecode. A different JVM on each platform turns the same bytecode into instructions that machine understands.">
+  <PipelineDiagram
+    title="How Kotlin source becomes something a processor runs"
+    description="Kotlin source is compiled once by kotlinc into JVM bytecode stored in class files. At run time a Java Virtual Machine reads that bytecode and produces machine code for the processor it is running on."
+    stages={[
+      { label: "Main.kt", sub: "source", accent: "violet" },
+      { label: "kotlinc", sub: "compiler", accent: "sky" },
+      { label: ".class", sub: "bytecode", accent: "amber" },
+      { label: "JVM", sub: "runs it", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+That split is the whole trick. The compiler does the expensive work once. The JVM handles
+the part that differs between a Windows laptop, a Linux server and a phone.
+
+<Tip bare>
+This is what "write once, run anywhere" means. Not that the source is portable — that the
+**compiled artefact** is.
+</Tip>
+
+## The stack you are standing on
+
+<Figure caption="Each layer only talks to the one below it. Your code never addresses the processor directly.">
+  <LayerStack
+    title="The layers between your Kotlin file and the processor"
+    description="From the bottom: hardware, operating system, the Java Virtual Machine, the Kotlin standard library, and your own code at the top."
+    youWriteThis="you write this"
+    topLabel="closest to you"
+    bottomLabel="closest to the metal"
+    layers={[
+      { label: "Hardware", sub: "CPU, RAM", accent: "rose", detail: "The processor and memory that ultimately run everything. Your code never addresses it directly — four layers sit in between." },
+      { label: "Operating system", sub: "Linux, macOS, Windows", accent: "amber", detail: "Schedules processes, owns memory and files, and talks to devices. It is what makes a JVM for Windows different from one for Linux." },
+      { label: "JVM", sub: "java", accent: "emerald", detail: "Reads bytecode and executes it, compiling the hot parts to real machine code as it goes. This is the layer that makes one compiled artefact run anywhere." },
+      { label: "Kotlin stdlib", sub: "kotlin.*", accent: "sky", detail: "Everything under `kotlin.*` — collections, strings, scope functions, coroutine primitives. Available without any import." },
+      { label: "Your code", sub: "Main.kt", accent: "violet", highlight: true, detail: "The only layer you write. Everything below is shared with every other Kotlin program on the machine." },
+    ]}
+  />
+</Figure>
+
+Two names you will keep meeting:
+
+- **JDK** — Java Development Kit. The tools *plus* a JVM. You need it to build.
+- **JRE** — Java Runtime Environment. Just the JVM. Enough to run, not to build.
+
+Android Studio bundles a JDK, which is why you rarely install one by hand — and also why
+"which JDK is this build using?" is a question worth knowing how to answer.
+
+## Under the hood: bytecode is readable
+
+Bytecode is not magic. Here is an ordinary Kotlin function:
+
+```kotlin title="Adder.kt" numbered runnable
+fun add(a: Int, b: Int): Int {
+    return a + b
+}
+
+fun main() {
+    println(add(2, 3))
+}
+```
+
+Compiled, `add` becomes roughly four bytecode instructions: load the first argument, load
+the second, add them, return. The JVM executes those, and after a function has run enough
+times the **JIT compiler** notices and translates it into real machine code so later calls
+skip the interpretation entirely.
+
+<Note>
+This is why a JVM program is often slow for its first second and fast afterwards. On
+Android the same idea appears as **Baseline Profiles**, which tell the runtime what to
+compile ahead of time so your users never see the slow first second. You will meet those
+again in Phase 12.
+</Note>
+
+## So why Kotlin and not Java?
+
+Both compile to the same bytecode. The JVM cannot tell them apart. The difference is
+entirely in what the language lets you express — and what it refuses to let you write.
+
+<Compare
+  left={{
+    title: "Java",
+    subtitle: "The language the JVM was built for",
+    accent: "amber",
+    points: [
+      "+ Enormous ecosystem, every library targets it",
+      "- Any reference can be null, and nothing warns you",
+      "- Getters, setters and boilerplate for simple data",
+      "~ Newer versions have closed some of the gap",
+    ],
+  }}
+  right={{
+    title: "Kotlin",
+    subtitle: "Google's preferred language for Android since 2019",
+    accent: "violet",
+    points: [
+      "+ Null safety enforced by the compiler",
+      "+ Data classes, when, extensions — far less code",
+      "+ Coroutines built into the language",
+      "+ Calls Java freely, so the ecosystem still works",
+    ],
+  }}
+/>
+
+The same idea in both languages:
+
+```java title="User.java" numbered
+public class User {
+    private final String name;
+    public User(String name) { this.name = name; }
+    public String getName() { return name; }
+    // plus equals, hashCode and toString by hand
+}
+```
+
+```kotlin title="User.kt" numbered runnable
+data class User(val name: String)
+```
+
+One line, and `equals`, `hashCode`, `toString` and `copy` come with it. That is not a party
+trick — value equality is what makes list diffing and Compose recomposition work correctly,
+as you will see in Phase 2.
+
+## Common mistakes
+
+<Pitfall title="The two that cost beginners a day each">
+**Mixing JDK versions.** Your Gradle build, your Kotlin compiler and Android Studio must
+agree. `Unsupported class file major version 65` means something compiled with a newer JDK
+than the one reading it. Fix it in one place — the project's Java toolchain — not by
+reinstalling things at random.
+
+**Trusting a value that came from Java.** The compiler cannot know whether a Java method
+returns null, so it marks the result a *platform type* and steps out of the way. Null
+safety silently stops protecting you at that boundary. Assign it to an explicitly nullable
+type (`String?`) the moment it enters your Kotlin code.
+</Pitfall>
+
+## Practice
+
+1. Run `java -version` and `javac -version` in a terminal. Are they the same? Explain what
+   each one is, using JDK and JRE correctly.
+2. `add(2, 3)` compiles to about four instructions. Write down, in plain words, what each
+   of the four probably does.
+3. A colleague says "Kotlin is faster than Java". Using this lesson, explain why that claim
+   is meaningless as stated, and what they might actually mean.
+4. Why can Android not simply ship the standard JVM? Guess, then read the next lesson to
+   check your answer.
+
+## Recap
+
+| Term | What it is | When you meet it |
+| --- | --- | --- |
+| Bytecode | Instructions for an imaginary machine | `.class` files, build errors |
+| JVM | The program that runs bytecode | Every `java` command |
+| JDK | Tools + JVM, needed to build | Gradle toolchain settings |
+| JIT | Compiles hot code to machine code at run time | Slow first run, fast after |
+| Platform type | A Java value Kotlin cannot check for null | Interop crashes |
+
+<Interview title="A very common opening question">
+"Kotlin and Java both run on the JVM. What does Kotlin actually add?"
+
+A strong answer separates the two layers: nothing at the bytecode level — the JVM sees the
+same instructions — and a great deal at the language level, where the compiler enforces
+null safety, generates data-class members, and turns `suspend` functions into state
+machines before any bytecode exists.
+</Interview>

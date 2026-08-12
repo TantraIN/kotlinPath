@@ -1,0 +1,194 @@
+---
+title: Git essentials for this course
+description: Enough Git to keep every project in this course safe, revert a bad afternoon, and work the way real Android teams do — without learning the whole tool.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+You will break something. Not maybe — certainly. Halfway through Phase 6 a refactor will go
+wrong and the app that worked an hour ago will not compile.
+
+With Git that is a thirty-second problem. Without it, it is your evening.
+
+Every project in this course gets committed. That is not ceremony — it is what makes
+experimenting safe.
+
+## The three places your code lives
+
+This is the model beginners are never given, and it explains almost every confusing Git
+message.
+
+<Timeline>
+  <TimelineItem title="Working directory" meta="your files">
+    The files on disk, as your editor sees them. Changing a file here changes nothing that
+    Git has recorded.
+  </TimelineItem>
+  <TimelineItem title="Staging area" meta="git add">
+    A shortlist of the changes that will go into the next commit. This is why you can fix
+    three things and commit them as three separate, readable commits.
+  </TimelineItem>
+  <TimelineItem title="Repository" meta="git commit">
+    The permanent history. A commit is a full snapshot plus a message, and it never changes
+    once written.
+  </TimelineItem>
+</Timeline>
+
+```bash title="The loop you will run a hundred times" no-glossary
+git status                       # what changed?
+git add app/src/main/            # stage what belongs together
+git commit -m "Add lesson list screen"
+git push
+```
+
+<Tip bare>
+`git status` is not a formality. Run it before every `add` and every `commit` — most Git
+accidents are committing a file you did not mean to.
+</Tip>
+
+## Branches, drawn
+
+A branch sounds abstract until you see it. It is nothing but a movable pointer to a commit.
+
+<Figure caption="The feature branch is a separate line of commits. Merging brings its work back into main without ever having broken main along the way.">
+  <GitGraph
+    title="A feature branch created, worked on, and merged back"
+    description="Two commits on main, then a feature branch splits off with two of its own commits, then a merge commit brings the feature work back into main."
+    mainLabel="main"
+    branchLabel="feature"
+    nodes={[
+      { label: "a1b2", lane: 0, note: "initial" },
+      { label: "c3d4", lane: 0, note: "setup" },
+      { label: "e5f6", lane: 1, note: "branch off" },
+      { label: "g7h8", lane: 1, note: "build screen" },
+      { label: "i9j0", lane: 0, note: "merge", merge: true },
+    ]}
+  />
+</Figure>
+
+```bash title="Terminal" no-glossary
+git switch -c feature/lesson-list   # create a branch and move onto it
+# ... work, commit, commit ...
+git switch main
+git merge feature/lesson-list
+```
+
+Why bother for a solo course project? Because `main` stays a version that definitely works.
+When an experiment fails you delete the branch and nothing is lost. That habit is exactly
+how professional Android teams operate, so you may as well build it now.
+
+## What must never be committed
+
+Android projects generate a lot of files that do not belong in history. Some are merely
+noise; two are genuinely dangerous.
+
+<FileTree
+  caption="Green files are yours and belong in Git. Red-marked paths are generated, machine-specific, or secret."
+  entries={[
+    { name: "MyApp/", kind: "folder" },
+    { name: ".gitignore", kind: "text", depth: 1, note: "commit this" },
+    { name: "gradlew", kind: "text", depth: 1, note: "commit — pins the Gradle version" },
+    { name: "app/src/", kind: "folder", depth: 1, note: "commit — your actual code" },
+    { name: "app/build.gradle.kts", kind: "gradle", depth: 1, note: "commit" },
+    { name: "build/", kind: "folder", depth: 1, note: "ignore — regenerated every build" },
+    { name: ".gradle/", kind: "folder", depth: 1, note: "ignore — local cache" },
+    { name: ".idea/", kind: "folder", depth: 1, note: "ignore — IDE state" },
+    { name: "local.properties", kind: "text", depth: 1, note: "ignore — machine-specific SDK path", highlight: true },
+    { name: "release.keystore", kind: "text", depth: 1, note: "NEVER commit — signing key", highlight: true },
+  ]}
+/>
+
+Android Studio writes a reasonable `.gitignore` when it creates a project. Read it once and
+add anything it missed:
+
+```text title=".gitignore" no-glossary
+*.iml
+.gradle/
+.idea/
+build/
+local.properties
+*.keystore
+*.jks
+secrets.properties
+```
+
+<Warning>
+A signing keystore is the one file you can never recover and never rotate. If it leaks,
+anyone can publish an update that Google Play will accept as yours. If it is lost, you can
+never update your own app under that identity again. Keep it out of Git, and back it up
+somewhere separate.
+</Warning>
+
+## Undoing things
+
+The commands people actually need, in order of how destructive they are:
+
+| Situation | Command | Destroys work? |
+| --- | --- | --- |
+| Staged a file by mistake | `git restore --staged <file>` | No |
+| Want to discard edits to one file | `git restore <file>` | Yes, that file |
+| Last commit message was wrong | `git commit --amend` | No |
+| Want to undo the last commit, keep changes | `git reset --soft HEAD~1` | No |
+| Want the commit and its changes gone | `git reset --hard HEAD~1` | Yes |
+| Already pushed and need to undo | `git revert <hash>` | No — adds a reversing commit |
+
+<Pitfall title="The two that cause real damage">
+**`git reset --hard` on work you have not committed.** It is not recoverable — there is no
+snapshot to go back to. Commit first, reset second. A messy commit you can amend later beats
+lost work.
+
+**Rewriting history that others have pulled.** `--amend` and `reset` change commit hashes.
+On a shared branch that forces everyone else into a painful reconciliation. On a branch only
+you have touched, both are perfectly safe.
+</Pitfall>
+
+## The flow for this course
+
+<Timeline>
+  <TimelineItem title="Once per project" meta="git init">
+    `git init`, then commit the Android Studio starter as your first commit. That gives you a
+    known-good state before you have written a line.
+  </TimelineItem>
+  <TimelineItem title="Per lesson" meta="branch">
+    `git switch -c phase-1/null-safety`. Experiment freely — the branch is disposable.
+  </TimelineItem>
+  <TimelineItem title="Whenever something works" meta="commit">
+    Commit at every point you would be sad to lose. Small commits are free; a lost afternoon
+    is not.
+  </TimelineItem>
+  <TimelineItem title="At the end" meta="merge and push">
+    Merge into `main` and push to GitHub. By the end of the course that repository is your
+    portfolio, with the commit history as evidence of how you work.
+  </TimelineItem>
+</Timeline>
+
+## Practice
+
+1. Create a repository, commit a file, edit it, and run `git status` after each step. Name
+   the three places your change is at each point.
+2. Make two unrelated edits, then commit them as two separate commits without undoing
+   either. Which command makes that possible?
+3. Commit `local.properties` on purpose. Now remove it from tracking without deleting it from
+   disk, and add it to `.gitignore`. Which command keeps the file but stops tracking it?
+4. Create a branch, make a commit, switch back to `main`, and look at the file. Explain why
+   your change vanished — and why that is not a bug.
+
+## Recap
+
+| Command | What it does |
+| --- | --- |
+| `git status` | What changed and what is staged |
+| `git add <path>` | Move changes into the staging area |
+| `git commit -m "..."` | Record a permanent snapshot |
+| `git switch -c <name>` | Create a branch and move to it |
+| `git merge <branch>` | Bring a branch's work into the current one |
+| `git restore <file>` | Throw away uncommitted edits to a file |
+| `git log --oneline` | Read the history compactly |
+
+<Interview title="Not a Git question — a judgement question">
+"Walk me through what you would commit in an Android project, and what you would not."
+
+Naming `build/`, `.gradle/` and `.idea/` shows you know what is generated. Naming
+`local.properties` shows you have worked on a team. Naming the keystore, and explaining that
+it cannot be rotated, shows you have shipped.
+</Interview>
