@@ -1,0 +1,158 @@
+---
+title: "Null safety: the billion dollar fix"
+description: Tony Hoare called the null reference his billion-dollar mistake. Kotlin does not remove null — it moves the problem from run time to compile time, where it costs you seconds instead of users.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+`NullPointerException` is the single most common crash in Java Android apps. Not a hard bug
+— a boring one, caused by a value being absent somewhere nobody checked.
+
+Kotlin's answer is not to ban null. It is to put absence **in the type**, so the compiler can
+see it.
+
+## Two different types
+
+```kotlin title="Nullable.kt" numbered runnable
+fun main() {
+    val definitely: String = "Kotlin"
+    val maybe: String? = null          // the ? is part of the type
+
+    println(definitely.length)         // fine
+    // println(maybe.length)           // will not compile
+    println(maybe?.length)             // null
+}
+```
+
+`String` and `String?` are different types. A `String` can never be null, so the compiler
+lets you use it freely. A `String?` might be, so it makes you say what should happen.
+
+<Figure caption="Absence stops being a runtime surprise and becomes a fact the compiler carries around with the value.">
+  <Compare
+    left={{
+      title: "Java",
+      subtitle: "Absence is invisible",
+      accent: "rose",
+      points: [
+        "- Every reference might be null",
+        "- Nothing in the type says so",
+        "- You find out when a user crashes",
+      ],
+    }}
+    right={{
+      title: "Kotlin",
+      subtitle: "Absence is written down",
+      accent: "emerald",
+      points: [
+        "+ String cannot be null, ever",
+        "+ String? forces you to handle it",
+        "+ You find out while typing",
+      ],
+    }}
+  />
+</Figure>
+
+## The four tools
+
+```kotlin title="Tools.kt" numbered runnable
+fun main() {
+    val name: String? = null
+
+    // 1. safe call — do it only if not null, otherwise the whole thing is null
+    println(name?.uppercase())            // null
+
+    // 2. elvis — supply a fallback
+    println(name?.uppercase() ?: "GUEST") // GUEST
+
+    // 3. let — run a block only when non-null
+    name?.let { println("hello $it") }    // does not run
+
+    // 4. not-null assertion — "trust me"; throws if wrong
+    // println(name!!.length)             // NullPointerException
+}
+```
+
+| Tool | Reads as | Result when null |
+| --- | --- | --- |
+| `?.` | "if it exists, then…" | `null` |
+| `?:` | "…otherwise use this" | the fallback |
+| `?.let { }` | "only when it exists, do this" | block is skipped |
+| `!!` | "I promise it is not null" | throws |
+
+<Tip bare>
+Elvis works with `return` and `throw` on the right, which is the cleanest way to leave a
+function early: `val user = findUser(id) ?: return null`.
+</Tip>
+
+## Chaining, and where it stops
+
+```kotlin title="Chains.kt" numbered runnable
+data class Address(val city: String?)
+data class User(val address: Address?)
+
+fun cityOf(user: User?): String =
+    user?.address?.city?.uppercase() ?: "unknown"
+
+fun main() {
+    println(cityOf(User(Address("Pune"))))
+    println(cityOf(User(Address(null))))
+    println(cityOf(null))
+}
+```
+
+The chain stops at the first `null` and the whole expression becomes `null`. One `?:` at the
+end handles every one of those cases.
+
+## Under the hood: there is no wrapper
+
+`String?` is not a box around a `String`. At runtime both are the same reference; the `?`
+exists only in the type system, and the compiler inserts the null checks it needs. Null
+safety therefore costs nothing at run time.
+
+That is also why the guarantee ends at the Java boundary — Java has no `?`, so a value coming
+from Java is a **platform type** the compiler cannot reason about.
+
+<Pitfall title="Three habits that give the safety away">
+**Reaching for `!!`.** Every `!!` is a place you told the compiler to stop helping. If you
+genuinely know it cannot be null, restructure so the type says so. If you are guessing, use
+`?:` and handle the case.
+
+**`lateinit` as a way around nullability.** It does not remove the problem, it removes the
+*check*. Reading it too early throws `UninitializedPropertyAccessException`, which is a
+`NullPointerException` wearing a longer name.
+
+**Trusting a value from Java or JSON.** Both hand you platform types. Assign them to an
+explicitly nullable type (`val name: String? = javaCall()`) the moment they cross into your
+Kotlin code.
+</Pitfall>
+
+## Practice
+
+1. Write `fun greet(name: String?): String` that returns `"Hello, Asha"` or `"Hello, guest"`,
+   using exactly one `?:` and no `if`.
+2. Model a `User` with a nullable `Address` that has a nullable `pincode`. Write one
+   expression returning the pincode or `"000000"`.
+3. Take a working `?.let { }` and rewrite it as `if (x != null) { }`. When does the compiler
+   allow the `if` form to smart cast, and when does it refuse?
+4. Find any `!!` you have written. For each, decide: can the type be changed so it is not
+   needed?
+
+## Recap
+
+| Idea | One line |
+| --- | --- |
+| `T` vs `T?` | Different types; only one can hold null |
+| `?.` | Call it only if non-null |
+| `?:` | Fallback value, or `return` / `throw` |
+| `?.let { }` | Run a block only for non-null |
+| `!!` | Deliberately opting out — treat as a smell |
+| Platform type | A Java value Kotlin cannot check; pin it to `T?` |
+
+<Interview title="Asked in nearly every Kotlin interview">
+"How does Kotlin prevent NullPointerException?"
+
+The answer that lands separates the type system from the runtime: nullability is part of the
+type, checked at compile time, with no runtime wrapper. Then name the three places the
+guarantee can still be lost — `!!`, `lateinit`, and platform types from Java.
+</Interview>

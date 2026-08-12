@@ -1,0 +1,157 @@
+---
+title: "Null safety: एक अरब डॉलर वाली ग़लती का इलाज"
+description: Tony Hoare ने null reference को अपनी billion-dollar mistake कहा था। Kotlin null हटाता नहीं — वह समस्या को run time से compile time पर ले आता है, जहाँ उसकी क़ीमत second है, users नहीं।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+Java Android apps में `NullPointerException` सबसे आम crash है। कोई गहरा bug नहीं — एक boring सा
+bug, जो तब होता है जब कहीं कोई value ग़ायब होती है और किसी ने check नहीं किया।
+
+Kotlin का जवाब null पर पाबंदी लगाना नहीं है। उसका जवाब है absence को **type के अंदर** रख देना,
+ताकि compiler उसे देख सके।
+
+## दो अलग types
+
+```kotlin title="Nullable.kt" numbered runnable
+fun main() {
+    val definitely: String = "Kotlin"
+    val maybe: String? = null          // ? type का हिस्सा है
+
+    println(definitely.length)         // ठीक है
+    // println(maybe.length)           // compile ही नहीं होगा
+    println(maybe?.length)             // null
+}
+```
+
+`String` और `String?` अलग types हैं। `String` कभी null हो ही नहीं सकता, इसलिए compiler उसे आराम
+से चलने देता है। `String?` हो सकता है, इसलिए वह आपसे पूछता है कि तब क्या करना है।
+
+<Figure caption="Absence अब runtime का झटका नहीं, एक तथ्य है जो compiler value के साथ-साथ उठाता है।">
+  <Compare
+    left={{
+      title: "Java",
+      subtitle: "Absence दिखता ही नहीं",
+      accent: "rose",
+      points: [
+        "- हर reference null हो सकता है",
+        "- Type में इसका कोई ज़िक्र नहीं",
+        "- पता तब चलता है जब user के पास crash हो",
+      ],
+    }}
+    right={{
+      title: "Kotlin",
+      subtitle: "Absence लिखा हुआ है",
+      accent: "emerald",
+      points: [
+        "+ String कभी null नहीं हो सकता",
+        "+ String? आपसे handle करवाता है",
+        "+ पता तब चलता है जब आप type कर रहे हों",
+      ],
+    }}
+  />
+</Figure>
+
+## चार tools
+
+```kotlin title="Tools.kt" numbered runnable
+fun main() {
+    val name: String? = null
+
+    // 1. safe call — null न हो तभी करो, वरना पूरा नतीजा null
+    println(name?.uppercase())            // null
+
+    // 2. elvis — बदले में कुछ दो
+    println(name?.uppercase() ?: "GUEST") // GUEST
+
+    // 3. let — सिर्फ़ non-null पर block चलाओ
+    name?.let { println("hello $it") }    // चलता ही नहीं
+
+    // 4. not-null assertion — "मुझ पर भरोसा करो"; ग़लत हुआ तो फेंकता है
+    // println(name!!.length)             // NullPointerException
+}
+```
+
+| Tool | कैसे पढ़ा जाए | Null होने पर नतीजा |
+| --- | --- | --- |
+| `?.` | "अगर है, तो…" | `null` |
+| `?:` | "…वरना यह लो" | बदले वाली value |
+| `?.let { }` | "सिर्फ़ जब हो, तब यह करो" | block चलता ही नहीं |
+| `!!` | "मैं कह रहा हूँ null नहीं है" | फेंकता है |
+
+<Tip bare>
+Elvis के दाएँ `return` और `throw` भी लिखा जा सकता है, जो function से जल्दी निकलने का सबसे साफ़
+तरीक़ा है: `val user = findUser(id) ?: return null`।
+</Tip>
+
+## Chaining, और वह कहाँ रुकती है
+
+```kotlin title="Chains.kt" numbered runnable
+data class Address(val city: String?)
+data class User(val address: Address?)
+
+fun cityOf(user: User?): String =
+    user?.address?.city?.uppercase() ?: "unknown"
+
+fun main() {
+    println(cityOf(User(Address("Pune"))))
+    println(cityOf(User(Address(null))))
+    println(cityOf(null))
+}
+```
+
+ज़ंजीर पहले `null` पर रुक जाती है और पूरा expression `null` बन जाता है। अंत में एक `?:` इन सभी
+मामलों को सँभाल लेता है।
+
+## अंदर की बात: कोई wrapper है ही नहीं
+
+`String?` किसी `String` के ऊपर डिब्बा नहीं है। Runtime पर दोनों एक ही reference हैं; `?` सिर्फ़
+type system में है, और compiler जो null checks चाहिए ख़ुद डाल देता है। इसलिए null safety की
+runtime क़ीमत शून्य है।
+
+इसी वजह से यह guarantee Java की सीमा पर ख़त्म हो जाती है — Java में `?` है ही नहीं, तो Java से आई
+value एक **platform type** है जिसके बारे में compiler कुछ कह नहीं सकता।
+
+<Pitfall title="तीन आदतें जो यह सुरक्षा दे देती हैं">
+**`!!` उठाना।** हर `!!` एक जगह है जहाँ आपने compiler से मदद बंद करने को कहा। अगर सच में पता है कि
+null नहीं हो सकता, तो structure ऐसा बनाइए कि type ख़ुद यह कहे। अगर अंदाज़ा लगा रहे हैं, तो `?:`
+इस्तेमाल कीजिए और उस स्थिति को handle कीजिए।
+
+**`lateinit` को nullability से बचने का रास्ता समझना।** वह समस्या नहीं हटाता, *check* हटाता है।
+जल्दी पढ़ने पर `UninitializedPropertyAccessException` आता है, जो लंबे नाम वाला
+`NullPointerException` ही है।
+
+**Java या JSON से आई value पर भरोसा।** दोनों platform types देते हैं। Kotlin code में आते ही उन्हें
+explicitly nullable type में डालिए: `val name: String? = javaCall()`।
+</Pitfall>
+
+## अभ्यास
+
+1. `fun greet(name: String?): String` लिखिए जो `"Hello, Asha"` या `"Hello, guest"` लौटाए — ठीक
+   एक `?:` से, बिना कोई `if` लिखे।
+2. एक `User` बनाइए जिसमें nullable `Address` हो और उसमें nullable `pincode`। एक ही expression
+   लिखिए जो pincode लौटाए या `"000000"`।
+3. एक चलता हुआ `?.let { }` लीजिए और उसे `if (x != null) { }` में बदलिए। Compiler `if` वाले रूप में
+   smart cast कब होने देता है और कब मना करता है?
+4. अपने लिखे किसी भी `!!` को ढूँढ़िए। हर एक के लिए तय कीजिए: क्या type ऐसे बदला जा सकता है कि उसकी
+   ज़रूरत ही न रहे?
+
+## सारांश
+
+| बात | एक line |
+| --- | --- |
+| `T` vs `T?` | अलग types; null सिर्फ़ एक में आ सकता है |
+| `?.` | Non-null हो तभी call कीजिए |
+| `?:` | बदले वाली value, या `return` / `throw` |
+| `?.let { }` | सिर्फ़ non-null पर block चलाइए |
+| `!!` | जान-बूझकर सुरक्षा छोड़ना — इसे शक से देखिए |
+| Platform type | Java की value जिसे Kotlin जाँच नहीं सकता; `T?` में pin कीजिए |
+
+<Interview title="लगभग हर Kotlin interview में पूछा जाता है">
+"Kotlin NullPointerException कैसे रोकता है?"
+
+जो जवाब जमता है वह type system और runtime को अलग करता है: nullability type का हिस्सा है, compile
+time पर जाँची जाती है, और runtime पर कोई wrapper नहीं है। फिर तीन जगह बताइए जहाँ यह guarantee फिर
+भी टूट सकती है — `!!`, `lateinit`, और Java से आए platform types।
+</Interview>

@@ -1,0 +1,107 @@
+---
+title: Loops, ranges and labels
+description: Kotlin has no C-style for loop. What it has instead reads closer to the sentence you would say out loud, and makes off-by-one errors much harder to write.
+updated: 2026-08-12
+---
+
+## Why this matters
+
+`for (int i = 0; i <= n; i++)` packs three separate decisions into one line, and one of them
+is almost always the bug. Kotlin splits them apart into a range you can read.
+
+## Ranges
+
+```kotlin title="Ranges.kt" numbered runnable
+fun main() {
+    for (i in 1..5) print("$i ")          // 1 2 3 4 5 — inclusive
+    println()
+    for (i in 1..<5) print("$i ")         // 1 2 3 4  — end excluded
+    println()
+    for (i in 5 downTo 1) print("$i ")    // 5 4 3 2 1
+    println()
+    for (i in 1..10 step 3) print("$i ")  // 1 4 7 10
+    println()
+}
+```
+
+`1..5` includes 5. `1..<5` does not. Choosing between them is the whole off-by-one question,
+made visible instead of hidden in a `<` versus `<=`.
+
+<Tip bare>
+To walk a list by index, use `indices`, and to get the value alongside it use
+`withIndex()` — never `0..list.size`, which runs one step past the end.
+</Tip>
+
+```kotlin title="Iterating.kt" numbered runnable
+fun main() {
+    val names = listOf("Asha", "Ravi", "Meera")
+
+    for (name in names) println(name)
+    for (i in names.indices) println("$i is ${names[i]}")
+    for ((i, name) in names.withIndex()) println("$i -> $name")
+
+    repeat(3) { println("tick") }
+}
+```
+
+## `while` and `do..while`
+
+```kotlin title="While.kt" numbered runnable
+fun main() {
+    var budget = 100
+    while (budget > 0) budget -= 30
+    println(budget)          // -20: the last step overshoots
+
+    var tries = 0
+    do { tries++ } while (tries < 3)
+    println(tries)           // 3 — the body always runs at least once
+}
+```
+
+## `break`, `continue` and labels
+
+```kotlin title="Labels.kt" numbered runnable
+fun main() {
+    outer@ for (i in 1..3) {
+        for (j in 1..3) {
+            if (j == 2) continue          // skips this inner step only
+            if (i == 3) break@outer       // leaves both loops
+            print("$i$j ")
+        }
+    }
+    println()
+}
+```
+
+Without the label, `break` only leaves the loop it is standing in. A label makes the target
+explicit, which is far easier to read than a `found` flag.
+
+<Pitfall title="Two loop mistakes that survive review">
+**`for (i in 0..list.size)`.** That runs `size + 1` times and throws
+`IndexOutOfBoundsException` on the last one. Use `list.indices`, or `0..<list.size`.
+
+**Modifying a list while looping over it.** Removing an item mid-iteration throws
+`ConcurrentModificationException`. Build a new list with `filter` instead, which you will
+meet properly two lessons from now.
+</Pitfall>
+
+## Practice
+
+1. Print the even numbers from 2 to 20 in one `for` line, then again in descending order.
+2. Print a list with its indices, first with `indices` and then with `withIndex()`. Which
+   reads better, and why?
+3. Write nested loops over two ranges that stop entirely as soon as their product exceeds 20.
+   Use a label.
+4. Why does `for (i in 0..list.size)` crash but `for (i in list.indices)` not?
+
+## Recap
+
+| Form | Produces |
+| --- | --- |
+| `a..b` | Inclusive of `b` |
+| `a..<b` | Excludes `b` |
+| `a downTo b` | Counts down |
+| `range step n` | Every `n`-th value |
+| `list.indices` | Valid indices, never one past the end |
+| `withIndex()` | Index and value together |
+| `label@` + `break@label` | Leave an outer loop explicitly |

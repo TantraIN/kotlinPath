@@ -1,0 +1,159 @@
+---
+title: "Null safety: ek arab dollar wali galti ka ilaaj"
+description: Tony Hoare ne null reference ko apni billion-dollar mistake kaha tha. Kotlin null hatata nahi — wo samasya ko run time se compile time par le aata hai, jahan uski keemat second hai, users nahi.
+updated: 2026-08-12
+---
+
+## Ye kyun zaruri hai
+
+Java Android apps mein `NullPointerException` sabse aam crash hai. Koi gehra bug nahi — ek
+boring sa bug, jo tab hota hai jab kahin koi value gayab hoti hai aur kisi ne check nahi kiya.
+
+Kotlin ka jawab null par pabandi lagana nahi hai. Uska jawab hai absence ko **type ke andar**
+rakh dena, taaki compiler use dekh sake.
+
+## Do alag types
+
+```kotlin title="Nullable.kt" numbered runnable
+fun main() {
+    val definitely: String = "Kotlin"
+    val maybe: String? = null          // ? type ka hissa hai
+
+    println(definitely.length)         // theek hai
+    // println(maybe.length)           // compile hi nahi hoga
+    println(maybe?.length)             // null
+}
+```
+
+`String` aur `String?` alag types hain. `String` kabhi null ho hi nahi sakta, isliye compiler
+use aaram se chalne deta hai. `String?` ho sakta hai, isliye wo aapse poochhta hai ki tab kya
+karna hai.
+
+<Figure caption="Absence ab runtime ka jhatka nahi, ek tathya hai jo compiler value ke saath-saath uthata hai.">
+  <Compare
+    left={{
+      title: "Java",
+      subtitle: "Absence dikhta hi nahi",
+      accent: "rose",
+      points: [
+        "- Har reference null ho sakta hai",
+        "- Type mein iska koi zikr nahi",
+        "- Pata tab chalta hai jab user ke paas crash ho",
+      ],
+    }}
+    right={{
+      title: "Kotlin",
+      subtitle: "Absence likha hua hai",
+      accent: "emerald",
+      points: [
+        "+ String kabhi null nahi ho sakta",
+        "+ String? aapse handle karwata hai",
+        "+ Pata tab chalta hai jab aap type kar rahe ho",
+      ],
+    }}
+  />
+</Figure>
+
+## Chaar tools
+
+```kotlin title="Tools.kt" numbered runnable
+fun main() {
+    val name: String? = null
+
+    // 1. safe call — null na ho tabhi karo, warna poora natija null
+    println(name?.uppercase())            // null
+
+    // 2. elvis — badal mein kuch do
+    println(name?.uppercase() ?: "GUEST") // GUEST
+
+    // 3. let — sirf non-null par block chalao
+    name?.let { println("hello $it") }    // chalta hi nahi
+
+    // 4. not-null assertion — "mujh par bharosa karo"; galat hua to fenkta hai
+    // println(name!!.length)             // NullPointerException
+}
+```
+
+| Tool | Kaise padha jaye | Null hone par natija |
+| --- | --- | --- |
+| `?.` | "agar hai, to…" | `null` |
+| `?:` | "…warna ye lo" | badal wali value |
+| `?.let { }` | "sirf jab ho, tab ye karo" | block chalta hi nahi |
+| `!!` | "main keh raha hoon null nahi hai" | fenkta hai |
+
+<Tip bare>
+Elvis ke daayein `return` aur `throw` bhi likha ja sakta hai, jo function se jaldi nikalne ka
+sabse saaf tarika hai: `val user = findUser(id) ?: return null`.
+</Tip>
+
+## Chaining, aur wo kahan rukti hai
+
+```kotlin title="Chains.kt" numbered runnable
+data class Address(val city: String?)
+data class User(val address: Address?)
+
+fun cityOf(user: User?): String =
+    user?.address?.city?.uppercase() ?: "unknown"
+
+fun main() {
+    println(cityOf(User(Address("Pune"))))
+    println(cityOf(User(Address(null))))
+    println(cityOf(null))
+}
+```
+
+Zanjeer pehle `null` par ruk jati hai aur poora expression `null` ban jata hai. Ant mein ek
+`?:` in sabhi maamlon ko sambhal leta hai.
+
+## Andar ki baat: koi wrapper hai hi nahi
+
+`String?` kisi `String` ke upar dabba nahi hai. Runtime par dono ek hi reference hain; `?`
+sirf type system mein hai, aur compiler jo null checks chahiye khud daal deta hai. Isliye null
+safety ki runtime keemat shoonya hai.
+
+Isi wajah se ye guarantee Java ki seema par khatam ho jati hai — Java mein `?` hai hi nahi, to
+Java se aayi value ek **platform type** hai jiske baare mein compiler kuch keh nahi sakta.
+
+<Pitfall title="Teen aadatein jo ye suraksha de deti hain">
+**`!!` uthana.** Har `!!` ek jagah hai jahan aapne compiler se madad band karne ko kaha. Agar
+sach mein pata hai ki null nahi ho sakta, to structure aisa banao ki type khud ye kahe. Agar
+andaza laga rahe ho, to `?:` use karo aur us sthiti ko handle karo.
+
+**`lateinit` ko nullability se bachne ka rasta samajhna.** Wo samasya nahi hatata, *check*
+hatata hai. Jaldi padhne par `UninitializedPropertyAccessException` aata hai, jo lambe naam
+wala `NullPointerException` hi hai.
+
+**Java ya JSON se aayi value par bharosa.** Dono platform types dete hain. Kotlin code mein
+aate hi unhe explicitly nullable type mein daalo: `val name: String? = javaCall()`.
+</Pitfall>
+
+## Practice
+
+1. `fun greet(name: String?): String` likho jo `"Hello, Asha"` ya `"Hello, guest"` laute —
+   theek ek `?:` se, bina koi `if` likhe.
+2. Ek `User` banao jismein nullable `Address` ho aur usmein nullable `pincode`. Ek hi
+   expression likho jo pincode laute ya `"000000"`.
+3. Ek chalta hua `?.let { }` lo aur use `if (x != null) { }` mein badlo. Compiler `if` wale
+   roop mein smart cast kab hone deta hai aur kab mana karta hai?
+4. Apne likhe kisi bhi `!!` ko dhundho. Har ek ke liye tay karo: kya type aise badla ja sakta
+   hai ki uski zarurat hi na rahe?
+
+## Recap
+
+| Baat | Ek line |
+| --- | --- |
+| `T` vs `T?` | Alag types; null sirf ek mein aa sakta hai |
+| `?.` | Non-null ho tabhi call karo |
+| `?:` | Badal wali value, ya `return` / `throw` |
+| `?.let { }` | Sirf non-null par block chalao |
+| `!!` | Jaan-boojh kar suraksha chhodna — isse shak se dekho |
+| Platform type | Java ki value jise Kotlin jaanch nahi sakta; `T?` mein pin karo |
+
+<Interview title="Lagbhag har Kotlin interview mein poochha jata hai">
+"Kotlin NullPointerException kaise rokta hai?"
+
+Jo jawab jamta hai wo type system aur runtime ko alag karta hai: nullability type ka hissa
+hai, compile time par jaanchi jati hai, aur runtime par koi wrapper nahi hai. Phir teen jagah
+batao jahan ye guarantee phir bhi tooti ja sakti hai — `!!`, `lateinit`, aur Java se aaye
+platform types.
+</Interview>

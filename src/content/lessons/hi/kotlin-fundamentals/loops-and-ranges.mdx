@@ -1,0 +1,106 @@
+---
+title: Loops, ranges और labels
+description: Kotlin में C जैसा for loop है ही नहीं। उसकी जगह जो है वह उस वाक्य के क़रीब पढ़ता है जो आप बोलकर कहते, और off-by-one ग़लतियाँ लिखना काफ़ी मुश्किल बना देता है।
+updated: 2026-08-12
+---
+
+## यह क्यों ज़रूरी है
+
+`for (int i = 0; i <= n; i++)` एक ही line में तीन अलग फ़ैसले ठूँस देता है, और bug लगभग हमेशा
+उनमें से एक होता है। Kotlin इन्हें अलग करके एक पढ़ने लायक़ range बना देता है।
+
+## Ranges
+
+```kotlin title="Ranges.kt" numbered runnable
+fun main() {
+    for (i in 1..5) print("$i ")          // 1 2 3 4 5 — 5 शामिल
+    println()
+    for (i in 1..<5) print("$i ")         // 1 2 3 4  — अंत छोड़ा गया
+    println()
+    for (i in 5 downTo 1) print("$i ")    // 5 4 3 2 1
+    println()
+    for (i in 1..10 step 3) print("$i ")  // 1 4 7 10
+    println()
+}
+```
+
+`1..5` में 5 शामिल है। `1..<5` में नहीं। इन दोनों में चुनना ही पूरा off-by-one सवाल है — जो `<`
+और `<=` में छुपने के बजाय साफ़ दिख रहा है।
+
+<Tip bare>
+List पर index से चलना हो तो `indices` इस्तेमाल कीजिए, और साथ में value भी चाहिए तो
+`withIndex()` — `0..list.size` कभी नहीं, वह अंत से एक क़दम आगे चला जाता है।
+</Tip>
+
+```kotlin title="Iterating.kt" numbered runnable
+fun main() {
+    val names = listOf("Asha", "Ravi", "Meera")
+
+    for (name in names) println(name)
+    for (i in names.indices) println("$i is ${names[i]}")
+    for ((i, name) in names.withIndex()) println("$i -> $name")
+
+    repeat(3) { println("tick") }
+}
+```
+
+## `while` और `do..while`
+
+```kotlin title="While.kt" numbered runnable
+fun main() {
+    var budget = 100
+    while (budget > 0) budget -= 30
+    println(budget)          // -20: आख़िरी क़दम आगे निकल जाता है
+
+    var tries = 0
+    do { tries++ } while (tries < 3)
+    println(tries)           // 3 — body कम से कम एक बार चलता ही है
+}
+```
+
+## `break`, `continue` और labels
+
+```kotlin title="Labels.kt" numbered runnable
+fun main() {
+    outer@ for (i in 1..3) {
+        for (j in 1..3) {
+            if (j == 2) continue          // सिर्फ़ यह अंदर वाला क़दम छोड़ता है
+            if (i == 3) break@outer       // दोनों loops से बाहर
+            print("$i$j ")
+        }
+    }
+    println()
+}
+```
+
+बिना label के `break` सिर्फ़ उसी loop से निकलता है जिसमें वह खड़ा है। Label से निशाना साफ़ हो जाता
+है, जो `found` flag रखने से कहीं बेहतर पढ़ता है।
+
+<Pitfall title="दो loop ग़लतियाँ जो review से भी बच जाती हैं">
+**`for (i in 0..list.size)`।** यह `size + 1` बार चलता है और आख़िरी बार
+`IndexOutOfBoundsException` फेंकता है। `list.indices` इस्तेमाल कीजिए, या `0..<list.size`।
+
+**Loop चलते हुए list बदलना।** बीच में item हटाएँगे तो `ConcurrentModificationException` आता है।
+उसकी जगह `filter` से नई list बनाइए, जो दो पाठ बाद ठीक से मिलेगा।
+</Pitfall>
+
+## अभ्यास
+
+1. 2 से 20 तक की सम संख्याएँ एक ही `for` line में print कीजिए, फिर उल्टे क्रम में।
+2. एक list को उसके indices के साथ print कीजिए — पहले `indices` से, फिर `withIndex()` से। कौन सा
+   बेहतर पढ़ता है और क्यों?
+3. दो ranges पर nested loops लिखिए जो उनका गुणनफल 20 से ऊपर जाते ही पूरी तरह रुक जाएँ। Label
+   इस्तेमाल कीजिए।
+4. `for (i in 0..list.size)` crash क्यों करता है और `for (i in list.indices)` क्यों नहीं?
+
+## सारांश
+
+| रूप | क्या बनाता है |
+| --- | --- |
+| `a..b` | `b` शामिल |
+| `a..<b` | `b` छोड़ा गया |
+| `a downTo b` | उल्टी गिनती |
+| `range step n` | हर `n`-वीं value |
+| `list.indices` | सही indices, अंत से आगे कभी नहीं |
+| `withIndex()` | Index और value साथ में |
+| `label@` + `break@label` | बाहर वाले loop से साफ़ तौर पर निकलना |
