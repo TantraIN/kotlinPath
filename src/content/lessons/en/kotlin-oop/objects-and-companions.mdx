@@ -1,0 +1,138 @@
+---
+title: object, companion object and singletons
+description: Kotlin has no `static`. It has something narrower and safer — a declaration that is itself the only instance.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`object` does not describe a class you can instantiate. It **is** the instance — created once,
+lazily, on first use.
+</KeyIdea>
+
+## One object, shared by everything
+
+<ObjectDiagram
+  typeName="AppConfig"
+  properties={["val baseUrl: String", "var retries: Int"]}
+  createLabel="object — created once"
+  blueprintLabel="declaration"
+  instanceLabel="the only instance"
+  instances={[
+    { name: "AppConfig", values: ['baseUrl = "https://api…"', "retries = 3"] },
+  ]}
+  caption="There is no second box to draw. Every reference to AppConfig anywhere in the program reaches this one."
+/>
+
+```kotlin title="Singleton.kt" numbered runnable
+object AppConfig {
+    val baseUrl = "https://api.example.com"
+    var retries = 3
+}
+
+fun main() {
+    AppConfig.retries = 5
+    println(AppConfig.retries)          // 5, everywhere
+    println(AppConfig === AppConfig)    // true — there is only one
+}
+```
+
+<Quiz
+  question="When is the body of an `object` declaration run?"
+  options={[
+    "When the program starts",
+    "On first access, once, and it is thread-safe",
+    "Every time you reference it",
+  ]}
+  answer={1}
+  explanation="Kotlin compiles it to a class with a static INSTANCE field initialised in a static initialiser, so the JVM guarantees it runs exactly once, on first use, safely across threads. That is why an `object` is a correct singleton without any locking code of your own."
+/>
+
+## The three forms
+
+<Tabs>
+  <Tab label="object declaration">
+
+A named singleton. Config, a registry, a stateless helper.
+
+```kotlin title="Declaration.kt" numbered
+object Analytics {
+    fun track(event: String) = println("track $event")
+}
+
+// Analytics.track("open")
+```
+
+  </Tab>
+  <Tab label="companion object">
+
+Attached to a class, so it can reach the class's private members. This is where factories live.
+
+```kotlin title="Companion.kt" numbered runnable
+class User private constructor(val name: String) {
+
+    companion object {
+        fun of(raw: String): User? =
+            raw.trim().takeIf { it.isNotEmpty() }?.let(::User)
+    }
+}
+
+fun main() {
+    println(User.of("  Asha ")?.name)
+    println(User.of("   ")?.name)      // null — rejected
+}
+```
+
+A private constructor plus a companion factory means invalid objects cannot be built at all.
+
+  </Tab>
+  <Tab label="object expression">
+
+An anonymous one-off, Kotlin's answer to an anonymous inner class.
+
+```kotlin title="Expression.kt" numbered
+val comparator = object : Comparator<String> {
+    override fun compare(a: String, b: String) = a.length - b.length
+}
+```
+
+Unlike the other two, a new one is created every time the expression runs.
+
+  </Tab>
+</Tabs>
+
+<Detail summary="There is no `static`, and that is deliberate">
+A `static` member belongs to no instance, so it cannot implement an interface or be overridden.
+A companion object is a real object, so it can do both — a companion can implement
+`Factory<T>` and be passed around. Kotlin gave up a keyword and got a value in return.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Two that hurt on Android specifically">
+**Holding a `Context` in an `object`.** The singleton outlives every Activity, so the Activity
+it references can never be collected. That is a textbook memory leak. Hold
+`applicationContext`, or better, pass what you need in.
+
+**Mutable state in a singleton.** `object Cache { var user: User? = null }` is reachable from
+every thread and every screen, with no ownership and no lifecycle. It is a global variable
+wearing a nicer hat. Prefer a scoped instance you pass explicitly.
+</Pitfall>
+
+## Practice
+
+1. Add a `var count` to `AppConfig`, increment it from two different functions, and print it.
+   Confirm both see the same number.
+2. Write a `Temperature` class with a private constructor and companion factories
+   `fromCelsius` and `fromFahrenheit`.
+3. Put a `println` in an `object` body and access it twice. Confirm it prints exactly once.
+4. Replace an `object` holding mutable state with a class you construct and pass. Which version
+   is easier to test?
+
+## Recap
+
+| Form | Instances | Use for |
+| --- | --- | --- |
+| `object Name { }` | Exactly one, lazily created | Config, registry, stateless helper |
+| `companion object` | One per class | Factories, constants, reaching private members |
+| `object : Type { }` | A new one per evaluation | One-off listener or comparator |
+| Kotlin's `static` | Does not exist | Use a companion, or a top-level function |

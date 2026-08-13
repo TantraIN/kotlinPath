@@ -1,0 +1,140 @@
+---
+title: object, companion object aur singletons
+description: Kotlin mein `static` hai hi nahi. Uski jagah kuch zyada seemit aur surakshit hai — ek declaration jo khud hi apna akela instance hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`object` koi aisi class nahi batata jise aap bana sako. Wo khud hi **wo instance hai** — ek baar,
+pehle istemal par bana hua.
+</KeyIdea>
+
+## Ek object, sabke liye wahi
+
+<ObjectDiagram
+  typeName="AppConfig"
+  properties={["val baseUrl: String", "var retries: Int"]}
+  createLabel="object — ek hi baar bana"
+  blueprintLabel="declaration"
+  instanceLabel="akela instance"
+  instances={[
+    { name: "AppConfig", values: ['baseUrl = "https://api…"', "retries = 3"] },
+  ]}
+  caption="Dusra dabba banane ko hai hi nahi. Poore program mein kahin bhi AppConfig likho, pahunchoge isi par."
+/>
+
+```kotlin title="Singleton.kt" numbered runnable
+object AppConfig {
+    val baseUrl = "https://api.example.com"
+    var retries = 3
+}
+
+fun main() {
+    AppConfig.retries = 5
+    println(AppConfig.retries)          // 5, har jagah
+    println(AppConfig === AppConfig)    // true — ek hi to hai
+}
+```
+
+<Quiz
+  question="`object` declaration ki body kab chalti hai?"
+  options={[
+    "Program shuru hote hi",
+    "Pehli baar chhune par, ek baar, aur thread-safe tarike se",
+    "Har baar jab uska naam likho",
+  ]}
+  answer={1}
+  explanation="Kotlin ise static INSTANCE field wali class banata hai jo static initialiser mein bharta hai, isliye JVM guarantee deta hai ki wo theek ek baar, pehle istemal par, saare threads ke liye surakshit tarike se chale. Isiliye `object` bina aapka koi locking code likhe sahi singleton hai."
+/>
+
+## Teen roop
+
+<Tabs>
+  <Tab label="object declaration">
+
+Naam wala singleton. Config, registry, ya bina state wala helper.
+
+```kotlin title="Declaration.kt" numbered
+object Analytics {
+    fun track(event: String) = println("track $event")
+}
+
+// Analytics.track("open")
+```
+
+  </Tab>
+  <Tab label="companion object">
+
+Class se juda hua, isliye class ke private members tak pahunch sakta hai. Factories yahin rehti hain.
+
+```kotlin title="Companion.kt" numbered runnable
+class User private constructor(val name: String) {
+
+    companion object {
+        fun of(raw: String): User? =
+            raw.trim().takeIf { it.isNotEmpty() }?.let(::User)
+    }
+}
+
+fun main() {
+    println(User.of("  Asha ")?.name)
+    println(User.of("   ")?.name)      // null — mana kar diya
+}
+```
+
+Private constructor aur companion factory ka matlab hai ki galat object banaya hi nahi ja sakta.
+
+  </Tab>
+  <Tab label="object expression">
+
+Ek baar ka bina-naam wala object — Kotlin ka anonymous inner class wala jawab.
+
+```kotlin title="Expression.kt" numbered
+val comparator = object : Comparator<String> {
+    override fun compare(a: String, b: String) = a.length - b.length
+}
+```
+
+Baaki do ke ulat, ye expression jitni baar chalega utne naye bante hain.
+
+  </Tab>
+</Tabs>
+
+<Detail summary="`static` hai hi nahi, aur ye jaan-boojh kar hai">
+`static` member kisi instance ka hota hi nahi, isliye wo na interface implement kar sakta hai na
+override ho sakta hai. Companion object ek asli object hai, isliye dono kar sakta hai — companion
+`Factory<T>` implement karke idhar-udhar bheja ja sakta hai. Kotlin ne ek keyword chhoda aur
+badle mein ek value paayi.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Do jo khaas taur par Android par kaatti hain">
+**`object` mein `Context` rakhna.** Singleton har Activity se zyada jeeta hai, isliye jis
+Activity ko wo pakde hai wo kabhi collect nahi ho sakti. Ye kitabi memory leak hai.
+`applicationContext` rakho, ya usse behtar, jo chahiye wahi paas karo.
+
+**Singleton mein badalne wali state.** `object Cache { var user: User? = null }` har thread aur
+har screen se pahunch mein hai, na koi maalik na koi lifecycle. Ye achhe kapdon mein global
+variable hai. Ek scoped instance banao aur use paas karo.
+</Pitfall>
+
+## Practice
+
+1. `AppConfig` mein ek `var count` jodo, do alag functions se badhao, aur print karo. Dekho ki
+   dono ko wahi number dikhta hai.
+2. Private constructor wali `Temperature` class likho, aur companion factories `fromCelsius`
+   aur `fromFahrenheit` banao.
+3. `object` ki body mein `println` daalo aur use do baar chhuo. Confirm karo ki theek ek baar
+   chhapta hai.
+4. Badalne wali state wale `object` ko ek class se badlo jise aap banate ho aur paas karte ho.
+   Kis version ko test karna aasan hai?
+
+## Recap
+
+| Roop | Kitne instances | Kis liye |
+| --- | --- | --- |
+| `object Name { }` | Theek ek, pehle istemal par | Config, registry, bina state ka helper |
+| `companion object` | Har class ka ek | Factories, constants, private tak pahunch |
+| `object : Type { }` | Har baar naya | Ek baar ka listener ya comparator |
+| Kotlin ka `static` | Hai hi nahi | Companion uthao, ya top-level function |

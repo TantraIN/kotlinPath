@@ -1,0 +1,138 @@
+---
+title: object, companion object और singletons
+description: Kotlin में `static` है ही नहीं। उसकी जगह कुछ ज़्यादा सीमित और सुरक्षित है — एक declaration जो ख़ुद ही अपना अकेला instance है।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`object` कोई ऐसी class नहीं बताता जिसे आप बना सकें। वह ख़ुद ही **वह instance है** — एक बार, पहले
+इस्तेमाल पर बना हुआ।
+</KeyIdea>
+
+## एक object, सबके लिए वही
+
+<ObjectDiagram
+  typeName="AppConfig"
+  properties={["val baseUrl: String", "var retries: Int"]}
+  createLabel="object — एक ही बार बना"
+  blueprintLabel="declaration"
+  instanceLabel="अकेला instance"
+  instances={[
+    { name: "AppConfig", values: ['baseUrl = "https://api…"', "retries = 3"] },
+  ]}
+  caption="दूसरा डिब्बा बनाने को है ही नहीं। पूरे program में कहीं भी AppConfig लिखिए, पहुँचेंगे इसी पर।"
+/>
+
+```kotlin title="Singleton.kt" numbered runnable
+object AppConfig {
+    val baseUrl = "https://api.example.com"
+    var retries = 3
+}
+
+fun main() {
+    AppConfig.retries = 5
+    println(AppConfig.retries)          // 5, हर जगह
+    println(AppConfig === AppConfig)    // true — एक ही तो है
+}
+```
+
+<Quiz
+  question="`object` declaration की body कब चलती है?"
+  options={[
+    "Program शुरू होते ही",
+    "पहली बार छूने पर, एक बार, और thread-safe तरीक़े से",
+    "हर बार जब उसका नाम लिखें",
+  ]}
+  answer={1}
+  explanation="Kotlin इसे static INSTANCE field वाली class बनाता है जो static initialiser में भरता है, इसलिए JVM guarantee देता है कि वह ठीक एक बार, पहले इस्तेमाल पर, सारे threads के लिए सुरक्षित तरीक़े से चले। इसीलिए `object` बिना आपका कोई locking code लिखे सही singleton है।"
+/>
+
+## तीन रूप
+
+<Tabs>
+  <Tab label="object declaration">
+
+नाम वाला singleton। Config, registry, या बिना state वाला helper।
+
+```kotlin title="Declaration.kt" numbered
+object Analytics {
+    fun track(event: String) = println("track $event")
+}
+
+// Analytics.track("open")
+```
+
+  </Tab>
+  <Tab label="companion object">
+
+Class से जुड़ा हुआ, इसलिए class के private members तक पहुँच सकता है। Factories यहीं रहती हैं।
+
+```kotlin title="Companion.kt" numbered runnable
+class User private constructor(val name: String) {
+
+    companion object {
+        fun of(raw: String): User? =
+            raw.trim().takeIf { it.isNotEmpty() }?.let(::User)
+    }
+}
+
+fun main() {
+    println(User.of("  Asha ")?.name)
+    println(User.of("   ")?.name)      // null — मना कर दिया
+}
+```
+
+Private constructor और companion factory का मतलब है कि ग़लत object बनाया ही नहीं जा सकता।
+
+  </Tab>
+  <Tab label="object expression">
+
+एक बार का बिना-नाम वाला object — Kotlin का anonymous inner class वाला जवाब।
+
+```kotlin title="Expression.kt" numbered
+val comparator = object : Comparator<String> {
+    override fun compare(a: String, b: String) = a.length - b.length
+}
+```
+
+बाक़ी दो के उलट, यह expression जितनी बार चलेगा उतने नए बनते हैं।
+
+  </Tab>
+</Tabs>
+
+<Detail summary="`static` है ही नहीं, और यह जान-बूझकर है">
+`static` member किसी instance का होता ही नहीं, इसलिए वह न interface implement कर सकता है न override
+हो सकता है। Companion object एक असली object है, इसलिए दोनों कर सकता है — companion `Factory<T>`
+implement करके इधर-उधर भेजा जा सकता है। Kotlin ने एक keyword छोड़ा और बदले में एक value पाई।
+</Detail>
+
+## आम ग़लतियाँ
+
+<Pitfall title="दो जो ख़ास तौर पर Android पर काटती हैं">
+**`object` में `Context` रखना।** Singleton हर Activity से ज़्यादा जीता है, इसलिए जिस Activity को वह
+पकड़े है वह कभी collect नहीं हो सकती। यह किताबी memory leak है। `applicationContext` रखिए, या उससे
+बेहतर, जो चाहिए वही pass कीजिए।
+
+**Singleton में बदलने वाली state।** `object Cache { var user: User? = null }` हर thread और हर screen
+से पहुँच में है, न कोई मालिक न कोई lifecycle। यह अच्छे कपड़ों में global variable है। एक scoped
+instance बनाइए और उसे pass कीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `AppConfig` में एक `var count` जोड़िए, दो अलग functions से बढ़ाइए, और print कीजिए। देखिए कि दोनों
+   को वही number दिखता है।
+2. Private constructor वाली `Temperature` class लिखिए, और companion factories `fromCelsius` और
+   `fromFahrenheit` बनाइए।
+3. `object` की body में `println` डालिए और उसे दो बार छुइए। Confirm कीजिए कि ठीक एक बार छपता है।
+4. बदलने वाली state वाले `object` को एक class से बदलिए जिसे आप बनाते और pass करते हैं। किस version
+   को test करना आसान है?
+
+## सारांश
+
+| रूप | कितने instances | किस लिए |
+| --- | --- | --- |
+| `object Name { }` | ठीक एक, पहले इस्तेमाल पर | Config, registry, बिना state का helper |
+| `companion object` | हर class का एक | Factories, constants, private तक पहुँच |
+| `object : Type { }` | हर बार नया | एक बार का listener या comparator |
+| Kotlin का `static` | है ही नहीं | Companion उठाइए, या top-level function |
