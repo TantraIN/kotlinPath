@@ -1,0 +1,126 @@
+---
+title: Data classes, equals aur destructuring
+description: Ek keyword equals, hashCode, toString aur copy bana deta hai — aur chupke se badal deta hai ki do objects ka barabar hona matlab kya.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`data` barabari ka matlab **ek jaisi values** kar deta hai, **ek hi object** nahi. Bas isi ek
+badlav ki wajah se data class ko `Set`, `Map` key ya Compose state mein rakhna surakshit hai.
+</KeyIdea>
+
+## Ye kaunsi samasya hal karta hai
+
+```kotlin title="Equality.kt" numbered runnable
+class PlainUser(val id: Int)
+data class DataUser(val id: Int)
+
+fun main() {
+    println(PlainUser(1) == PlainUser(1))   // false — alag objects
+    println(DataUser(1) == DataUser(1))     // true  — ek jaisi values
+}
+```
+
+Bilkul ek jaise contents wale do `PlainUser` barabar nahi hote, kyunki default `equals`
+references milata hai. Kisi id, price ya screen state ke liye ye lagbhag kabhi nahi chahiye.
+
+<MemoryDiagram
+  caption="Do objects, ek jaisa saamaan. `==` poochta hai contents milte hain kya; `===` poochta hai dabba wahi hai kya."
+  stackLabel="Stack"
+  heapLabel="Heap"
+  stack={[
+    { name: "a", ref: "#1" },
+    { name: "b", ref: "#2" },
+  ]}
+  heap={[
+    { id: "#1", type: "DataUser", fields: ["id = 1"] },
+    { id: "#2", type: "DataUser", fields: ["id = 1"] },
+  ]}
+/>
+
+<Quiz
+  question="`val a = DataUser(1)` aur `val b = DataUser(1)` par `a == b` aur `a === b` kya honge?"
+  options={[
+    "Dono true",
+    "`a == b` true, `a === b` false",
+    "Dono false",
+  ]}
+  answer={1}
+  explanation="`==` bana hua `equals` bulata hai jo constructor properties milata hai — isliye true. `===` references milata hai aur heap par sach mein do objects hain — isliye false. `data` pehle wale ko badalta hai, dusre ko kabhi nahi."
+/>
+
+## Keyword banata kya hai
+
+| Bana hua | Karta kya hai |
+| --- | --- |
+| `equals` / `hashCode` | **Primary constructor** ki properties milata aur hash karta hai |
+| `toString` | `DataUser@4f3a` ki jagah `DataUser(id=1)` |
+| `copy(...)` | Kuch fields badle hue naya object |
+| `component1()`… | Destructuring chalu karta hai |
+
+```kotlin title="Copy.kt" numbered runnable
+data class Order(val id: String, val qty: Int, val paid: Boolean = false)
+
+fun main() {
+    val order = Order("A1", 2)
+    val settled = order.copy(paid = true)     // baaki sab jaisa tha waisa
+
+    println(order)
+    println(settled)
+
+    val (id, qty) = settled                   // destructuring
+    println("$id x$qty")
+}
+```
+
+<Detail summary="copy() dikhne se zyada zaroori kyun hai">
+Compose aur coroutine `StateFlow` mein state badli nahi jati, badli jati hai — sunne wale ko
+sirf *nayi* value dikhti hai. `copy()` us nayi value ko ek padhne laayak line bana deta hai,
+warna har na-badla field dobara likhna padta.
+</Detail>
+
+## Wo niyam jispar sab phisalte hain
+
+Sirf **primary constructor** ki properties ginti hain.
+
+```kotlin title="Trap.kt" numbered runnable
+data class Note(val title: String) {
+    var body: String = ""        // body mein — equals ko dikhta hi nahi
+}
+
+fun main() {
+    val a = Note("Shopping").apply { body = "milk" }
+    val b = Note("Shopping").apply { body = "eggs" }
+    println(a == b)              // true, alag body hone ke bawajood
+}
+```
+
+<Pitfall title="Do jo asli bug bunti hain">
+**Body mein likhi properties ko** `equals`, `hashCode`, `toString` aur `copy` — chaaron
+anadekha kar dete hain. Agar koi value object ki pehchaan ka hissa hai, to uski jagah primary
+constructor hai.
+
+**`var` wali data class ko `Map` key ya `Set` mein daalna.** Bucket mein rakhne ke baad use
+badalne se uska `hashCode` badal jata hai, aur collection use dhoondh hi nahi paata. Data class
+ki properties `val` rakho.
+</Pitfall>
+
+## Practice
+
+1. `Order` ko body mein ek `discount` property do, sirf usme alag do orders banao, aur dekho ki
+   wo barabar nikalte hain. Phir use constructor mein le jaakar dobara chalao.
+2. `var` wali ek data class `mutableSetOf` mein daalo, property badlo, phir usi object se
+   `contains` bulao. Natija samjhao.
+3. `copy()` se ek chhota "order lifecycle" banao — placed, paid, shipped — bina kisi object ko
+   badle.
+4. Orders ki list par `for` loop ke andar `Order` ko destructure karo.
+
+## Recap
+
+| Cheez | Baat |
+| --- | --- |
+| `equals` / `hashCode` | Sirf primary constructor ki properties |
+| `toString` | Padhne laayak, property naamon ke saath |
+| `copy(...)` | Badli hui state banane ka sahi tarika |
+| Destructuring | `val (a, b) = obj`, kram se — order maayne rakhta hai |
+| Properties `val` rakho | Badalne wali key hash collections tod deti hai |

@@ -1,0 +1,123 @@
+---
+title: Data classes, equals और destructuring
+description: एक keyword equals, hashCode, toString और copy बना देता है — और चुपके से बदल देता है कि दो objects का बराबर होना मतलब क्या।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`data` बराबरी का मतलब **एक जैसी values** कर देता है, **एक ही object** नहीं। बस इसी एक बदलाव की वजह
+से data class को `Set`, `Map` key या Compose state में रखना सुरक्षित है।
+</KeyIdea>
+
+## यह कौन सी समस्या हल करता है
+
+```kotlin title="Equality.kt" numbered runnable
+class PlainUser(val id: Int)
+data class DataUser(val id: Int)
+
+fun main() {
+    println(PlainUser(1) == PlainUser(1))   // false — अलग objects
+    println(DataUser(1) == DataUser(1))     // true  — एक जैसी values
+}
+```
+
+बिलकुल एक जैसे contents वाले दो `PlainUser` बराबर नहीं होते, क्योंकि default `equals` references
+मिलाता है। किसी id, price या screen state के लिए यह लगभग कभी नहीं चाहिए।
+
+<MemoryDiagram
+  caption="दो objects, एक जैसा सामान। `==` पूछता है contents मिलते हैं क्या; `===` पूछता है डिब्बा वही है क्या।"
+  stackLabel="Stack"
+  heapLabel="Heap"
+  stack={[
+    { name: "a", ref: "#1" },
+    { name: "b", ref: "#2" },
+  ]}
+  heap={[
+    { id: "#1", type: "DataUser", fields: ["id = 1"] },
+    { id: "#2", type: "DataUser", fields: ["id = 1"] },
+  ]}
+/>
+
+<Quiz
+  question="`val a = DataUser(1)` और `val b = DataUser(1)` पर `a == b` और `a === b` क्या होंगे?"
+  options={[
+    "दोनों true",
+    "`a == b` true, `a === b` false",
+    "दोनों false",
+  ]}
+  answer={1}
+  explanation="`==` बना हुआ `equals` बुलाता है जो constructor properties मिलाता है — इसलिए true। `===` references मिलाता है और heap पर सच में दो objects हैं — इसलिए false। `data` पहले वाले को बदलता है, दूसरे को कभी नहीं।"
+/>
+
+## Keyword बनाता क्या है
+
+| बना हुआ | करता क्या है |
+| --- | --- |
+| `equals` / `hashCode` | **Primary constructor** की properties मिलाता और hash करता है |
+| `toString` | `DataUser@4f3a` की जगह `DataUser(id=1)` |
+| `copy(...)` | कुछ fields बदले हुए नया object |
+| `component1()`… | Destructuring चालू करता है |
+
+```kotlin title="Copy.kt" numbered runnable
+data class Order(val id: String, val qty: Int, val paid: Boolean = false)
+
+fun main() {
+    val order = Order("A1", 2)
+    val settled = order.copy(paid = true)     // बाक़ी सब जैसा था वैसा
+
+    println(order)
+    println(settled)
+
+    val (id, qty) = settled                   // destructuring
+    println("$id x$qty")
+}
+```
+
+<Detail summary="copy() दिखने से ज़्यादा ज़रूरी क्यों है">
+Compose और coroutine `StateFlow` में state बदली नहीं जाती, बदली जाती है — सुनने वाले को सिर्फ़ *नई*
+value दिखती है। `copy()` उस नई value को एक पढ़ने लायक़ line बना देता है, वरना हर न-बदला field दोबारा
+लिखना पड़ता।
+</Detail>
+
+## वह नियम जिसपर सब फिसलते हैं
+
+सिर्फ़ **primary constructor** की properties गिनती हैं।
+
+```kotlin title="Trap.kt" numbered runnable
+data class Note(val title: String) {
+    var body: String = ""        // body में — equals को दिखता ही नहीं
+}
+
+fun main() {
+    val a = Note("Shopping").apply { body = "milk" }
+    val b = Note("Shopping").apply { body = "eggs" }
+    println(a == b)              // true, अलग body होने के बावजूद
+}
+```
+
+<Pitfall title="दो जो असली bug बुनती हैं">
+**Body में लिखी properties को** `equals`, `hashCode`, `toString` और `copy` — चारों अनदेखा कर देते
+हैं। अगर कोई value object की पहचान का हिस्सा है, तो उसकी जगह primary constructor है।
+
+**`var` वाली data class को `Map` key या `Set` में डालना।** Bucket में रखने के बाद उसे बदलने से उसका
+`hashCode` बदल जाता है, और collection उसे ढूँढ ही नहीं पाता। Data class की properties `val` रखिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `Order` को body में एक `discount` property दीजिए, सिर्फ़ उसमें अलग दो orders बनाइए, और देखिए कि
+   वे बराबर निकलते हैं। फिर उसे constructor में ले जाकर दोबारा चलाइए।
+2. `var` वाली एक data class `mutableSetOf` में डालिए, property बदलिए, फिर उसी object से `contains`
+   बुलाइए। नतीजा समझाइए।
+3. `copy()` से एक छोटा "order lifecycle" बनाइए — placed, paid, shipped — बिना किसी object को बदले।
+4. Orders की list पर `for` loop के अंदर `Order` को destructure कीजिए।
+
+## सारांश
+
+| चीज़ | बात |
+| --- | --- |
+| `equals` / `hashCode` | सिर्फ़ primary constructor की properties |
+| `toString` | पढ़ने लायक़, property नामों के साथ |
+| `copy(...)` | बदली हुई state बनाने का सही तरीक़ा |
+| Destructuring | `val (a, b) = obj`, क्रम से — order मायने रखता है |
+| Properties `val` रखिए | बदलने वाली key hash collections तोड़ देती है |

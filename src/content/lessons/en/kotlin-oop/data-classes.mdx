@@ -1,0 +1,123 @@
+---
+title: Data classes, equals and destructuring
+description: One keyword generates equals, hashCode, toString and copy — and quietly changes what it means for two objects to be equal.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`data` makes equality mean **same values** instead of **same object**. That single change is
+why data classes are safe to put in a `Set`, a `Map` key, or a Compose state holder.
+</KeyIdea>
+
+## The problem it solves
+
+```kotlin title="Equality.kt" numbered runnable
+class PlainUser(val id: Int)
+data class DataUser(val id: Int)
+
+fun main() {
+    println(PlainUser(1) == PlainUser(1))   // false — different objects
+    println(DataUser(1) == DataUser(1))     // true  — same values
+}
+```
+
+Two `PlainUser` objects with identical contents are not equal, because the default `equals`
+compares references. For an id, a price or a screen state, that is almost never what you want.
+
+<MemoryDiagram
+  caption="Two objects, same contents. `==` asks whether the contents match; `===` asks whether it is the same box."
+  stack={[
+    { name: "a", ref: "#1" },
+    { name: "b", ref: "#2" },
+  ]}
+  heap={[
+    { id: "#1", type: "DataUser", fields: ["id = 1"] },
+    { id: "#2", type: "DataUser", fields: ["id = 1"] },
+  ]}
+/>
+
+<Quiz
+  question="For `val a = DataUser(1)` and `val b = DataUser(1)`, what are `a == b` and `a === b`?"
+  options={[
+    "Both true",
+    "`a == b` is true, `a === b` is false",
+    "Both false",
+  ]}
+  answer={1}
+  explanation="`==` calls the generated `equals`, which compares the constructor properties — so it is true. `===` compares references and there are genuinely two objects on the heap, so it is false. `data` changes the first, never the second."
+/>
+
+## What the keyword generates
+
+| Generated | Does |
+| --- | --- |
+| `equals` / `hashCode` | Compare and hash the **primary constructor** properties |
+| `toString` | `DataUser(id=1)` instead of `DataUser@4f3a` |
+| `copy(...)` | A new object with some fields changed |
+| `component1()`… | Enables destructuring |
+
+```kotlin title="Copy.kt" numbered runnable
+data class Order(val id: String, val qty: Int, val paid: Boolean = false)
+
+fun main() {
+    val order = Order("A1", 2)
+    val settled = order.copy(paid = true)     // everything else carried over
+
+    println(order)
+    println(settled)
+
+    val (id, qty) = settled                   // destructuring
+    println("$id x$qty")
+}
+```
+
+<Detail summary="Why copy() matters more than it looks">
+State in Compose and in coroutine `StateFlow` must be replaced, not mutated — a listener only
+notices a *new* value. `copy()` makes producing that new value a single readable line instead
+of a constructor call that repeats every unchanged field.
+</Detail>
+
+## The rule everyone trips on
+
+Only properties in the **primary constructor** count.
+
+```kotlin title="Trap.kt" numbered runnable
+data class Note(val title: String) {
+    var body: String = ""        // in the body — invisible to equals
+}
+
+fun main() {
+    val a = Note("Shopping").apply { body = "milk" }
+    val b = Note("Shopping").apply { body = "eggs" }
+    println(a == b)              // true, despite different bodies
+}
+```
+
+<Pitfall title="Two that cause real bugs">
+**Properties declared in the body are ignored** by `equals`, `hashCode`, `toString` and
+`copy`. If a value is part of the object's identity, it belongs in the primary constructor.
+
+**A `var` data class used as a `Map` key or in a `Set`.** Mutating it changes its `hashCode`
+after it has been placed in a bucket, and the collection can no longer find it. Keep data
+class properties `val`.
+</Pitfall>
+
+## Practice
+
+1. Give `Order` a `discount` property in the body, create two orders differing only in it, and
+   confirm they compare equal. Then move it into the constructor and re-run.
+2. Put a `data class` with a `var` into a `mutableSetOf`, mutate the property, then call
+   `contains` with the same object. Explain the result.
+3. Use `copy()` to build a small "order lifecycle" — placed, paid, shipped — without ever
+   mutating an object.
+4. Destructure an `Order` inside a `for` loop over a list of them.
+
+## Recap
+
+| Feature | Detail |
+| --- | --- |
+| `equals` / `hashCode` | Primary constructor properties only |
+| `toString` | Readable, includes property names |
+| `copy(...)` | The idiomatic way to produce changed state |
+| Destructuring | `val (a, b) = obj`, positional — order matters |
+| Keep properties `val` | A mutable key breaks hash-based collections |
