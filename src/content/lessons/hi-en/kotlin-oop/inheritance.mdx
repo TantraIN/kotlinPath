@@ -1,0 +1,123 @@
+---
+title: Inheritance — open, override aur super
+description: Kotlin ki classes default se band hoti hain. Aap use tabhi kholte ho jab aapne use badhaye jaane ke liye socha ho.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Kotlin mein class ko tab tak badhaya nahi ja sakta jab tak aap `open` na likho. Inheritance ek
+soch-samajh kar liya faisla hai, galti se mila hua default nahi.
+</KeyIdea>
+
+## Jo dhaancha aap bana rahe ho
+
+<ClassDiagram
+  base={{ name: "Payment", kind: "open class", members: ["val amount: Int", "open fun fee(): Int"], accent: "violet", highlight: true }}
+  children={[
+    { name: "Card", kind: "class", members: ["override fun fee()"], accent: "emerald" },
+    { name: "Upi", kind: "class", members: ["override fun fee()"], accent: "emerald" },
+    { name: "Cash", kind: "class", members: [], accent: "sky" },
+  ]}
+  relation="extends"
+  caption="Card aur Upi dono fee() badal dete hain. Cash nahi badalta, isliye uske paas Payment wala hi rehta hai."
+/>
+
+```kotlin title="Payment.kt" numbered runnable
+open class Payment(val amount: Int) {
+    open fun fee(): Int = 0
+    fun receipt(): String = "Paid $amount, fee ${fee()}"
+}
+
+class Card(amount: Int) : Payment(amount) {
+    override fun fee(): Int = amount / 50
+}
+
+class Upi(amount: Int) : Payment(amount) {
+    override fun fee(): Int = 0
+}
+
+fun main() {
+    val payments = listOf(Payment(100), Card(500), Upi(500))
+    payments.forEach { println(it.receipt()) }
+}
+```
+
+Dhyan do ki `receipt()` `open` nahi hai, phir bhi wo `fee()` ko bulata hai jo `open` hai. Ek
+method pakka hai, dusra ek khaali jagah hai jise subclasses bharti hain. Poora idea yahi hai.
+
+<Quiz
+  question="`Card(500).receipt()` fee 10 kyun batata hai jabki `receipt()` `Payment` mein rehta hai?"
+  options={[
+    "Kyunki `receipt()` compile time par `Card` mein copy ho gaya",
+    "Kyunki `fee()` virtual hai — call chalte waqt object ke asli type par jaati hai",
+    "Kyunki `Card` chupke se `receipt()` ko override kar deta hai",
+  ]}
+  answer={1}
+  explanation="`receipt()` ek hi baar, `Payment` mein compile hota hai. Uske andar ka `fee()` call object ki asli class par jata hai, isliye `Card` type ke object par `Card.fee()` chalta hai. Isi ko dynamic dispatch kehte hain, aur isiliye `open` sirf syntax nahi — behaviour ka vaada hai."
+/>
+
+## Teen keywords, har ek ka ek niyam
+
+| Keyword | Matlab |
+| --- | --- |
+| Class par `open` | Is class ko badhaya ja sakta hai |
+| Member par `open` | Is member ko badla ja sakta hai |
+| `override` | Ye member upar wale `open` member ki jagah leta hai |
+| `final override` | Jagah leta hai, aur silsila yahin rok deta hai |
+| `super.x()` | Jise maine abhi badla, wahi wala chalao |
+
+<Detail summary="Kotlin ne classes default se band kyun ki, Java ne kyun nahi">
+Java mein har class badhayi ja sakti thi jab tak `final` na likho, isliye library likhne wale
+ko har khatarnaak subclass pehle se soch kar rokni padti thi. Asal mein koi nahi rokta tha, aur
+fragile base class ki samasya aati thi: superclass ka ek method badlo aur aisi subclasses toot
+jaayein jinke hone ka pata bhi na ho. Kotlin ne default ulta kar diya. Ab wahi cheez badhayi ja
+sakti hai jiske baare mein likhne wale ne socha ho.
+</Detail>
+
+## `super` — purana behaviour rakhkar usme jodna
+
+```kotlin title="Super.kt" numbered runnable
+open class Logger {
+    open fun log(message: String) = println("LOG: $message")
+}
+
+class TimestampLogger : Logger() {
+    override fun log(message: String) {
+        super.log("[12:04] $message")     // dobara likho mat, use karo
+    }
+}
+
+fun main() = TimestampLogger().log("saved")
+```
+
+## Common galtiyan
+
+<Pitfall title="Do jo asli bug bunti hain">
+**Constructor ya `init` se `open` method bulana.** Subclass ki apni properties tab tak assign
+hui hi nahi hotin, isliye override aadhe-adhoore state par chalta hai aur `null` ya `0` padhta
+hai. Construction ke dauraan overridable method kabhi mat bulao.
+
+**Code baantne ke liye inheritance use karna.** Agar `Card` aur `Upi` ko sirf ek hi helper
+chahiye, to wo `is-a` rishta nahi hai — wo ek saanjha function hai. Inheritance subclass ko base
+ke har aane wale badlav se baandh deta hai. Composition behtar hai, ya default wala interface.
+</Pitfall>
+
+## Practice
+
+1. Ek `Wallet` payment jodo jiski fee seedhi 5 ho. Dekho ki `receipt()` use bina `Payment` chhue
+   utha leta hai.
+2. `Card` mein `fee()` ko `final override` karo, phir `Card` ko badhakar use dobara override
+   karne ki koshish karo. Compiler ki galti padho.
+3. `Payment` ke `init` mein ek `println` daalo jo `fee()` bulaye, phir `Card` banao. Jo number
+   mila use samjhao.
+4. Poore dhaanche ko aise likho ki `fee()` open class ki jagah interface se aaye. Paanchwa
+   payment type jodne par kaun sa version zyada aaram se jhelta?
+
+## Recap
+
+| Sthiti | Kya uthao |
+| --- | --- |
+| Subtypes state aur behaviour dono baantein | `open class` + `override` |
+| Subtypes sirf behaviour baantein | Default wala interface |
+| Reuse chahiye, `is-a` nahi | Composition — doosre object ko rakho |
+| Subtypes ka set tay aur pata ho | `sealed` — aage ke lesson mein |

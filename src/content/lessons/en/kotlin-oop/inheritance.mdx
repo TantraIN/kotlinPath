@@ -1,0 +1,122 @@
+---
+title: Inheritance — open, override and super
+description: Kotlin classes are sealed shut by default. You open one only when you have designed it to be extended.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+In Kotlin a class cannot be extended unless you write `open`. Inheritance is a decision you
+make on purpose, not a default you inherit by accident.
+</KeyIdea>
+
+## The shape you are building
+
+<ClassDiagram
+  base={{ name: "Payment", kind: "open class", members: ["val amount: Int", "open fun fee(): Int"], accent: "violet", highlight: true }}
+  children={[
+    { name: "Card", kind: "class", members: ["override fun fee()"], accent: "emerald" },
+    { name: "Upi", kind: "class", members: ["override fun fee()"], accent: "emerald" },
+    { name: "Cash", kind: "class", members: [], accent: "sky" },
+  ]}
+  relation="extends"
+  caption="Card and Upi each replace fee(). Cash does not, so it keeps whatever Payment does."
+/>
+
+```kotlin title="Payment.kt" numbered runnable
+open class Payment(val amount: Int) {
+    open fun fee(): Int = 0
+    fun receipt(): String = "Paid $amount, fee ${fee()}"
+}
+
+class Card(amount: Int) : Payment(amount) {
+    override fun fee(): Int = amount / 50
+}
+
+class Upi(amount: Int) : Payment(amount) {
+    override fun fee(): Int = 0
+}
+
+fun main() {
+    val payments = listOf(Payment(100), Card(500), Upi(500))
+    payments.forEach { println(it.receipt()) }
+}
+```
+
+Note that `receipt()` is not `open`, yet it calls `fee()`, which is. One method is fixed, the
+other is a hole subclasses fill. That is the whole idea.
+
+<Quiz
+  question="Why does `Card(500).receipt()` report a fee of 10 when `receipt()` lives in `Payment`?"
+  options={[
+    "Because `receipt()` was copied into `Card` at compile time",
+    "Because `fee()` is virtual — the call resolves to the object's real type at run time",
+    "Because `Card` overrides `receipt()` implicitly",
+  ]}
+  answer={1}
+  explanation="`receipt()` is compiled once, in `Payment`. Its call to `fee()` is dispatched on the object's actual class, so an object of type `Card` runs `Card.fee()`. This is dynamic dispatch, and it is why `open` is a promise about behaviour, not just syntax."
+/>
+
+## Three keywords, one rule each
+
+| Keyword | Means |
+| --- | --- |
+| `open` on a class | This class may be extended |
+| `open` on a member | This member may be replaced |
+| `override` | This member replaces an `open` one above it |
+| `final override` | Replaces it, and stops the chain here |
+| `super.x()` | Run the version I just replaced |
+
+<Detail summary="Why Kotlin closed classes by default and Java did not">
+Java made every class extensible unless marked `final`, so a library author had to predict and
+forbid every unsafe subclass. In practice nobody did, and fragile base classes followed:
+changing a superclass method silently broke subclasses nobody knew existed. Kotlin flipped the
+default. Now extending something is only possible where the author thought about it.
+</Detail>
+
+## `super` — keeping the old behaviour and adding to it
+
+```kotlin title="Super.kt" numbered runnable
+open class Logger {
+    open fun log(message: String) = println("LOG: $message")
+}
+
+class TimestampLogger : Logger() {
+    override fun log(message: String) {
+        super.log("[12:04] $message")     // reuse, do not reimplement
+    }
+}
+
+fun main() = TimestampLogger().log("saved")
+```
+
+## Common mistakes
+
+<Pitfall title="Two that cause real bugs">
+**Calling an `open` method from a constructor or `init`.** The subclass's own properties are
+not assigned yet, so the override runs against half-built state and reads `null` or `0`. Never
+call an overridable method during construction.
+
+**Using inheritance to share code.** If `Card` and `Upi` merely need the same helper, that is
+not an `is-a` relationship — it is a shared function. Inheritance couples the subclass to every
+future change in the base. Prefer composition, or an interface with a default implementation.
+</Pitfall>
+
+## Practice
+
+1. Add a `Wallet` payment whose fee is a flat 5. Confirm `receipt()` picks it up without any
+   change to `Payment`.
+2. Mark `fee()` as `final override` in `Card`, then try to extend `Card` and override it again.
+   Read the compiler error.
+3. Put a `println` in `Payment`'s `init` that calls `fee()`, then construct a `Card`. Explain
+   the number you get.
+4. Rewrite the hierarchy so `fee()` comes from an interface instead of an open class. Which
+   version would survive adding a fifth payment type more comfortably?
+
+## Recap
+
+| Situation | Reach for |
+| --- | --- |
+| Subtypes share state and behaviour | `open class` + `override` |
+| Subtypes share behaviour only | An interface with a default |
+| You want reuse, not an `is-a` | Composition — hold the other object |
+| The set of subtypes is fixed and known | `sealed` — covered in a later lesson |
