@@ -1,0 +1,139 @@
+---
+title: Interfaces aur default implementations
+description: Interface ek kaabiliyat ka naam hai. Class ka parent sirf ek ho sakta hai, par kaabiliyatein jitni chahiye utni.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Inheritance batata hai **cheez hai kya**. Interface batata hai **cheez kar kya sakti hai** — aur
+class bahut kuch kar sakti hai jabki hai wo sirf ek cheez.
+</KeyIdea>
+
+## Ek parent, kai kaabiliyatein
+
+<ClassDiagram
+  base={{ name: "Clickable", kind: "interface", members: ["fun onClick()", "fun label(): String = \"Button\""], accent: "sky", highlight: true }}
+  children={[
+    { name: "Button", kind: "class", members: ["override fun onClick()"], accent: "emerald" },
+    { name: "IconTile", kind: "class", members: ["override fun onClick()", "override fun label()"], accent: "emerald" },
+  ]}
+  relation="implements"
+  caption="Dono onClick() ka vaada karte hain. Sirf IconTile label() badalne ki zehmat uthata hai — dusre ka kaam default se chal jata hai."
+/>
+
+```kotlin title="Clickable.kt" numbered runnable
+interface Clickable {
+    fun onClick()                                // dena hi padega
+    fun label(): String = "Button"               // default, badal sakte ho
+}
+
+class Button : Clickable {
+    override fun onClick() = println("clicked ${label()}")
+}
+
+class IconTile : Clickable {
+    override fun onClick() = println("tapped ${label()}")
+    override fun label() = "Tile"
+}
+
+fun main() = listOf(Button(), IconTile()).forEach { it.onClick() }
+```
+
+Interface behaviour bata sakta hai, par state rakh nahi sakta. Wahan backing field hota hi nahi
+— interface ki property ek getter hai jo class ko dena padta hai.
+
+<Quiz
+  question="Interface `val id: String` likh sakta hai par use value kyun nahi de sakta?"
+  options={[
+    "Kyunki interfaces classes ke baad compile hote hain",
+    "Kyunki interface ke paas backing field nahi hota — wo property ek getter hai jo class ko banana padta hai",
+    "Kyunki interface ka `val` construct hone tak null rehta hai",
+  ]}
+  answer={1}
+  explanation="Interface ke paas na constructor hai na jagah, isliye value rakhne ki koi jagah hi nahi. `val id: String` likhna getter ki maang likhna hai. Use stored property se poora karna hai ya computed se, ye implementing class tay karti hai."
+/>
+
+## Interface ya abstract class
+
+<Tabs>
+  <Tab label="Interface">
+
+Jab aap ek **kaabiliyat** bata rahe ho jo alag-alag types mein ho sakti hai.
+
+```kotlin title="Capability.kt" numbered
+interface Refreshable { fun refresh() }
+
+class FeedScreen : Refreshable { override fun refresh() { } }
+class MapScreen  : Refreshable { override fun refresh() { } }
+```
+
+Ek class inme se kitne bhi implement kar sakti hai.
+
+  </Tab>
+  <Tab label="Abstract class">
+
+Jab subtypes behaviour ke saath **state** bhi baantein.
+
+```kotlin title="Shared.kt" numbered
+abstract class Screen(val title: String) {   // state rakhta hai
+    abstract fun render()
+    fun header() = "== $title =="            // saanjha, final
+}
+```
+
+Class inme se sirf ek badha sakti hai — yahi keemat hai.
+
+  </Tab>
+</Tabs>
+
+<Tip bare>
+Default interface rakho. Abstract class par tabhi jao jab har implementation mein wahi stored
+property dobara likhni pade.
+</Tip>
+
+## Jab do interfaces takrayein
+
+```kotlin title="Diamond.kt" numbered runnable
+interface A { fun hello() = "A" }
+interface B { fun hello() = "B" }
+
+class C : A, B {
+    // Compiler andaza lagane se mana kar deta hai. Batana padega.
+    override fun hello() = super<A>.hello() + super<B>.hello()
+}
+
+fun main() = println(C().hello())     // AB
+```
+
+## Common galtiyan
+
+<Pitfall title="Do jo shuru mein hi jaan lo">
+**Interface mein state daalna.** `var count: Int = 0` wahan compile hi nahi hoga. Agar kai
+classes ko wahi stored field chahiye, to wo abstract class hai, ya usse behtar, ek chhota object
+jise wo sab rakhein.
+
+**Ek bahut bada interface.** Barah method wala interface har implementer se barah method
+likhwata hai, jinme se zyadatar khaali. Use todo: class chaar chhote interfaces utni hi aasani
+se implement karti hai jitni ek bade ko.
+</Pitfall>
+
+## Practice
+
+1. `onDrag()` wala ek `Draggable` interface jodo aur `IconTile` se use bhi aur `Clickable` bhi
+   implement karwao. Dhyan do ki purana koi code nahi badla.
+2. `Clickable` ko ek `val id: String` do aur use ek baar constructor property se, ek baar
+   computed `get()` se poora karo.
+3. Upar wala `A`/`B` takraav bina `override` ke banao. Compiler ki galti dhyan se padho — wo
+   dono parents ka naam leti hai.
+4. Apni likhi kisi abstract class ko interface mein badalne ki koshish karo. Kis cheez ne aapko
+   abstract class rakhne par majboor kiya, agar kiya?
+
+## Recap
+
+| Sawal | Jawab |
+| --- | --- |
+| Kai implement kar sakte hain? | Interfaces haan, classes nahi — parent sirf ek |
+| State rakh sakta hai? | Backing field nahi; properties getters hain |
+| Body de sakta hai? | Haan — default implementation |
+| Ek naam ke do defaults? | Override karke `super<T>` se chunna padega |
+| Default kya rakhun? | Interface, jab tak saanjhi state zaroorat sabit na kare |

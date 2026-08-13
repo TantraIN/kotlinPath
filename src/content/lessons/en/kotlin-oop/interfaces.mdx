@@ -1,0 +1,139 @@
+---
+title: Interfaces and default implementations
+description: An interface names a capability. A class can have exactly one parent, but as many capabilities as it needs.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Inheritance says **what a thing is**. An interface says **what a thing can do** — and a class
+can do many things while being only one thing.
+</KeyIdea>
+
+## One parent, many capabilities
+
+<ClassDiagram
+  base={{ name: "Clickable", kind: "interface", members: ["fun onClick()", "fun label(): String = \"Button\""], accent: "sky", highlight: true }}
+  children={[
+    { name: "Button", kind: "class", members: ["override fun onClick()"], accent: "emerald" },
+    { name: "IconTile", kind: "class", members: ["override fun onClick()", "override fun label()"], accent: "emerald" },
+  ]}
+  relation="implements"
+  caption="Both promise onClick(). Only IconTile bothers to replace label() — the default covers the other one."
+/>
+
+```kotlin title="Clickable.kt" numbered runnable
+interface Clickable {
+    fun onClick()                                // must be provided
+    fun label(): String = "Button"               // default, may be replaced
+}
+
+class Button : Clickable {
+    override fun onClick() = println("clicked ${label()}")
+}
+
+class IconTile : Clickable {
+    override fun onClick() = println("tapped ${label()}")
+    override fun label() = "Tile"
+}
+
+fun main() = listOf(Button(), IconTile()).forEach { it.onClick() }
+```
+
+An interface may declare behaviour, but it may not hold state. There is no backing field —
+a property in an interface is a getter the class must supply.
+
+<Quiz
+  question="Why can an interface declare `val id: String` but never assign it a value?"
+  options={[
+    "Because interfaces are compiled after classes",
+    "Because an interface has no backing field — the property is a getter the class must implement",
+    "Because `val` in an interface is always null until constructed",
+  ]}
+  answer={1}
+  explanation="An interface has no constructor and no storage, so there is nowhere to put a value. Declaring `val id: String` declares the getter as a requirement. The implementing class decides whether to satisfy it with a stored property or a computed one."
+/>
+
+## Interface or abstract class
+
+<Tabs>
+  <Tab label="Interface">
+
+Use when you are describing a **capability** that unrelated types may have.
+
+```kotlin title="Capability.kt" numbered
+interface Refreshable { fun refresh() }
+
+class FeedScreen : Refreshable { override fun refresh() { } }
+class MapScreen  : Refreshable { override fun refresh() { } }
+```
+
+A class can implement any number of these.
+
+  </Tab>
+  <Tab label="Abstract class">
+
+Use when subtypes share **state** as well as behaviour.
+
+```kotlin title="Shared.kt" numbered
+abstract class Screen(val title: String) {   // holds state
+    abstract fun render()
+    fun header() = "== $title =="            // shared, final
+}
+```
+
+A class can extend only one — that is the cost.
+
+  </Tab>
+</Tabs>
+
+<Tip bare>
+Default to an interface. Move to an abstract class only when you find yourself repeating the
+same stored property in every implementation.
+</Tip>
+
+## When two interfaces collide
+
+```kotlin title="Diamond.kt" numbered runnable
+interface A { fun hello() = "A" }
+interface B { fun hello() = "B" }
+
+class C : A, B {
+    // The compiler refuses to guess. You must say which.
+    override fun hello() = super<A>.hello() + super<B>.hello()
+}
+
+fun main() = println(C().hello())     // AB
+```
+
+## Common mistakes
+
+<Pitfall title="Two worth knowing early">
+**Putting state in an interface.** `var count: Int = 0` will not compile there. If several
+classes need the same stored field, that is an abstract class, or better, a small object they
+each hold.
+
+**One giant interface.** An interface with twelve methods forces every implementer to write
+twelve, most of them empty. Split it: a class can implement four small interfaces as easily as
+one large one.
+</Pitfall>
+
+## Practice
+
+1. Add a `Draggable` interface with `onDrag()` and make `IconTile` implement both it and
+   `Clickable`. Note that no existing code changes.
+2. Give `Clickable` a `val id: String` and implement it once as a constructor property and once
+   as a computed `get()`.
+3. Create the `A`/`B` collision above without the `override`. Read the compiler error carefully
+   — it names both parents.
+4. Take an abstract class you have written and try to express it as an interface. What forced
+   you to keep the abstract class, if anything?
+
+## Recap
+
+| Question | Answer |
+| --- | --- |
+| Can a class implement several? | Interfaces yes, classes no — exactly one parent |
+| Can it hold state? | No backing fields; properties are getters |
+| Can it provide a body? | Yes — a default implementation |
+| Two defaults with the same name? | You must override and pick with `super<T>` |
+| Which should I default to? | The interface, until shared state proves otherwise |
