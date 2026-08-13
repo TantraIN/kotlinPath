@@ -1,0 +1,101 @@
+---
+title: Enum classes, aur kab sealed behtar hai
+description: Enum naamon ka ek tay set hai jo behaviour bhi rakh sakta hai. Wo kahan rukta hai, ye jaanna utna hi kaam ka hai jitna wo karta kya hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Enum ka har constant asal mein **naam wala singleton object** hai. Isiliye wo properties rakh
+sakta hai, interface implement kar sakta hai, aur phir bhi `==` se mila ja sakta hai.
+</KeyIdea>
+
+## Sirf naamon ki list se zyada
+
+```kotlin title="Status.kt" numbered runnable
+enum class Status(val label: String, val retryable: Boolean) {
+    PENDING("Waiting", true),
+    SHIPPED("On the way", false),
+    FAILED("Failed", true);
+
+    fun canRetry() = retryable
+}
+
+fun main() {
+    Status.entries.forEach { println("${it.name}: ${it.label} (${it.canRetry()})") }
+    println(Status.valueOf("SHIPPED").label)
+    println(Status.PENDING.ordinal)      // 0
+}
+```
+
+Har constant ke paas wahi fields hain. Yahi ek-jaisapan `sealed` se farq hai.
+
+<Quiz
+  question={'`Status.PENDING === Status.valueOf("PENDING")` kya lautata hai?'}
+  options={[
+    "false — valueOf naya constant banata hai",
+    "true — har constant ek hi saanjha object hai",
+    "Compile hi nahi hoga; enums par `===` nahi chalta",
+  ]}
+  answer={1}
+  explanation="Har enum constant ek hi baar banta hai aur saanjha rehta hai, bilkul `object` declaration ki tarah. `valueOf` kuch banata nahi, wahi instance dhoondhta hai, isliye reference barabari bhi sach hai. Isiliye enum par `when` bina `is` ke mila leta hai."
+/>
+
+## Har constant ka apna behaviour
+
+```kotlin title="Ops.kt" numbered runnable
+enum class Op {
+    ADD { override fun apply(a: Int, b: Int) = a + b },
+    TIMES { override fun apply(a: Int, b: Int) = a * b };
+
+    abstract fun apply(a: Int, b: Int): Int
+}
+
+fun main() = Op.entries.forEach { println("${it.name}: ${it.apply(3, 4)}") }
+```
+
+<Detail summary="`values()` nahi, `entries` use karo">
+`values()` har call par nayi array banata hai, isliye use loop ya Compose recomposition ke andar
+bulane se chupchap kachra banta rehta hai. `entries` (Kotlin 1.9+) ek saanjhi immutable list
+lautata hai. Naye code mein purana roop chunne ki koi wajah nahi.
+</Detail>
+
+## Enum aur sealed mein se chunna
+
+| Sawal | Haan to |
+| --- | --- |
+| Kya saare cases wahi fields rakhte hain? | `enum` |
+| Kya kisi ek case ko aisa data chahiye jo baakiyon ko nahi? | `sealed` |
+| Kya ek case ke kai instances chahiye? | `sealed` |
+| Kya `valueOf`, `ordinal` ya `entries` chahiye? | `enum` |
+| Kya ye screen state ya operation result hai? | Lagbhag hamesha `sealed` |
+
+## Common galtiyan
+
+<Pitfall title="Do jo production mein kaatti hain">
+**`ordinal` ko save karna.** Database mein `2` likhkar use `SHIPPED` padhna us din tootega jis
+din koi beech mein ek constant ghusa dega. `name` save karo, ya apna khud ka `val code: Int`.
+
+**Enum par `when` mein `else`.** Wahi jaal jo sealed ke saath tha: naya constant jodna compile
+error hona chahiye, aur `else` use chupchap nigal jata hai. Har constant likho, ya jahan theek
+baithe wahan `entries.forEach` use karo.
+</Pitfall>
+
+## Practice
+
+1. `Status` mein `CANCELLED` constant jodo aur har wo `when` dhoondho jo compile hona band ho
+   gaya. Yahi khoobi kaam kar rahi hai.
+2. `Status` ko ek `companion object` do jisme `fromCode(code: Int)` ho aur anjaan code par `null`
+   laute.
+3. Enum se interface implement karo — `Status` ko `label` ke hisaab se `Comparable` banao.
+4. Wahi teen statuses sealed interface se model karo jahan `FAILED` ek `reason` rakhta ho. API
+   response ke liye kaun sa version behtar baithta hai?
+
+## Recap
+
+| Cheez | Baat |
+| --- | --- |
+| Har constant | Saanjha singleton — `==` aur `===` dono surakshit |
+| Properties | Har constant ke liye wahi fields |
+| Har constant ki apni body | Chalti hai, `abstract` member ke zariye |
+| `entries` | `values()` se behtar — koi allocation nahi |
+| Kabhi save mat karo | `ordinal`; `name` ya apna code save karo |

@@ -1,0 +1,102 @@
+---
+title: Enum classes, and when to prefer sealed
+description: An enum is a fixed set of named values that can carry behaviour. Knowing where it stops is as useful as knowing what it does.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+An enum constant is a **singleton object with a name**. That is why it can hold properties,
+implement an interface, and still be compared with `==`.
+</KeyIdea>
+
+## More than a list of names
+
+```kotlin title="Status.kt" numbered runnable
+enum class Status(val label: String, val retryable: Boolean) {
+    PENDING("Waiting", true),
+    SHIPPED("On the way", false),
+    FAILED("Failed", true);
+
+    fun canRetry() = retryable
+}
+
+fun main() {
+    Status.entries.forEach { println("${it.name}: ${it.label} (${it.canRetry()})") }
+    println(Status.valueOf("SHIPPED").label)
+    println(Status.PENDING.ordinal)      // 0
+}
+```
+
+Every constant carries the same fields. That uniformity is the difference from `sealed`.
+
+<Quiz
+  question={'What does `Status.PENDING === Status.valueOf("PENDING")` return?'}
+  options={[
+    "false — valueOf builds a new constant",
+    "true — each constant is a single shared object",
+    "It does not compile; enums cannot use `===`",
+  ]}
+  answer={1}
+  explanation="Each enum constant is created once and shared, exactly like an `object` declaration. `valueOf` looks up that same instance rather than constructing anything, so reference equality holds. This is also why `when` over an enum can compare without `is`."
+/>
+
+## Behaviour per constant
+
+```kotlin title="Ops.kt" numbered runnable
+enum class Op {
+    ADD { override fun apply(a: Int, b: Int) = a + b },
+    TIMES { override fun apply(a: Int, b: Int) = a * b };
+
+    abstract fun apply(a: Int, b: Int): Int
+}
+
+fun main() = Op.entries.forEach { println("${it.name}: ${it.apply(3, 4)}") }
+```
+
+<Detail summary="Use `entries`, not `values()`">
+`values()` allocates a fresh array on every call, so calling it inside a loop or a Compose
+recomposition quietly produces garbage. `entries` (Kotlin 1.9+) returns a shared immutable
+list. There is no reason to prefer the old form in new code.
+</Detail>
+
+## Choosing between enum and sealed
+
+| Question | If yes |
+| --- | --- |
+| Do all cases carry the same fields? | `enum` |
+| Does one case need data the others do not? | `sealed` |
+| Do you need many instances of one case? | `sealed` |
+| Do you need `valueOf`, `ordinal`, or `entries`? | `enum` |
+| Is it a screen state or an operation result? | Almost always `sealed` |
+
+## Common mistakes
+
+<Pitfall title="Two that bite in production">
+**Persisting `ordinal`.** Writing `2` to a database and reading it back as `SHIPPED` breaks the
+day someone inserts a constant in the middle. Store `name`, or an explicit `val code: Int` you
+control.
+
+**A `when` over an enum with `else`.** Same trap as with sealed types: adding a constant should
+be a compile error, and `else` silently absorbs it. Handle each constant, or use
+`entries.forEach` where that fits.
+</Pitfall>
+
+## Practice
+
+1. Add a `CANCELLED` constant to `Status` and find every `when` that stops compiling. That is
+   the feature working.
+2. Give `Status` a `companion object` with `fromCode(code: Int)` that returns `null` for an
+   unknown code.
+3. Implement an interface from an enum — make `Status` implement `Comparable` by `label`.
+4. Model the same three statuses as a sealed interface where `FAILED` carries a `reason`. Which
+   version fits an API response better?
+
+## Recap
+
+| Feature | Detail |
+| --- | --- |
+| Each constant | A shared singleton — safe with `==` and `===` |
+| Properties | Same fields for every constant |
+| Per-constant bodies | Allowed, via an `abstract` member |
+| `entries` | Prefer it over `values()` — no allocation |
+| Never persist | `ordinal`; store `name` or your own code |
