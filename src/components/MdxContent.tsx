@@ -4,11 +4,17 @@ import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
 
 import { Callout, type CalloutKind } from "@/components/Callout";
+import { Detail } from "@/components/Detail";
+import { KeyIdea } from "@/components/KeyIdea";
+import { Quiz } from "@/components/Quiz";
+import { Tab, Tabs } from "@/components/Tabs";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Figure } from "@/components/Figure";
 import { Reveal } from "@/components/Reveal";
 import { Timeline, TimelineItem } from "@/components/Timeline";
+import { ClassDiagram } from "@/components/diagrams/ClassDiagram";
 import { Compare } from "@/components/diagrams/Compare";
+import { MemoryDiagram } from "@/components/diagrams/MemoryDiagram";
 import { FileTree } from "@/components/diagrams/FileTree";
 import { GitGraph } from "@/components/diagrams/GitGraph";
 import { LayerStack } from "@/components/diagrams/LayerStack";
@@ -202,6 +208,18 @@ function components(lang: Lang) {
     FileTree,
     GitGraph,
     Compare,
+    ClassDiagram,
+    MemoryDiagram,
+    KeyIdea,
+    Detail,
+    Tabs,
+    Tab,
+    Quiz: (props: {
+      question: string;
+      options: string[];
+      answer: number;
+      explanation: string;
+    }) => <Quiz uiLang={lang} {...props} />,
   };
 }
 

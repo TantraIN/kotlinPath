@@ -53,7 +53,11 @@ notice, so the site is never broken mid-translation.
 `Note` · `Tip` · `Warning` · `Pitfall` · `Interview` · `Figure` · `Timeline` /
 `TimelineItem` · `Reveal`
 
-Diagrams: `PipelineDiagram` (left-to-right flow) · `LayerStack` (platform layers, each row
+Structure: `KeyIdea` (the opening one-liner, required) · `Detail` (collapsible depth) ·
+`Tabs` / `Tab` (alternatives side by side) · `Quiz` (inline check-yourself, required)
+
+Diagrams: `ClassDiagram` (a base type and its subtypes) · `MemoryDiagram` (stack slots and
+heap objects, linked by colour) · `PipelineDiagram` (left-to-right flow) · `LayerStack` (platform layers, each row
 can carry a `detail` string that appears on hover) · `FileTree` (annotated project tree) ·
 `GitGraph` (two-lane commit graph) · `Compare` (two panels, points prefixed `+` `-` `~`)
 

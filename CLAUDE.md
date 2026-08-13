@@ -141,6 +141,26 @@ Every lesson must follow this shape:
 6. **Practice** — 2–4 exercises, hardest last.
 7. **Recap** — a compact table or checklist.
 
+### Pacing — the rule that keeps a lesson from becoming a wall of text
+
+A lesson is read on a phone, in the evening, by someone who is tired. Every rule below
+exists to make the page look *finishable*.
+
+- **Open with `<KeyIdea>`.** One sentence, before anything else. Someone who reads only that
+  should still have learned something true.
+- **Three lines per paragraph, maximum.** If a paragraph runs longer, it is two paragraphs,
+  or it is a table.
+- **Never more than about 120 words of unbroken prose.** Something visual — a diagram, a
+  table, a code block, a callout, a quiz — must break it up.
+- **At least one `<Quiz>` per lesson**, placed right after the hardest idea, not at the end.
+  Reading is passive; one question is not.
+- **Push depth into `<Detail>`.** The "but why does that work" paragraph belongs in a
+  collapsible, so the page stays short for everyone who does not want it.
+- **Use `<Tabs>` for alternatives.** Two approaches stacked read as "a lot to get through";
+  the same two behind tabs read as "pick one".
+- **Prefer a table to a list of paragraphs**, and a diagram to a table, whenever the content
+  allows it.
+
 Additional rules:
 
 - **Show, then name.** Introduce a problem, let the reader feel it, *then* give the term.

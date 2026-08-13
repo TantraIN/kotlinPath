@@ -1,0 +1,163 @@
+---
+title: Classes, constructors aur init blocks
+description: Class ek dhaancha hai data ka, aur unhi niyamon ka jo use sahi rakhte hain. Kotlin dono ek line mein kehla deta hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Kotlin class apna data **constructor mein** hi declare karta hai, isliye jo object bana hai wo
+pehle se sahi object hai.
+</KeyIdea>
+
+## Sabse chhoti kaam ki class
+
+```kotlin title="User.kt" numbered runnable
+class User(val name: String, var age: Int)
+
+fun main() {
+    val u = User("Asha", 30)
+    println("${u.name} is ${u.age}")
+    u.age = 31          // var hai, isliye chalega
+    // u.name = "Ravi"  // val hai, isliye nahi
+}
+```
+
+Us ek line ne ek class, do properties, aur unhe bharne wala constructor — teeno bana diye.
+
+<Detail summary="Java ko isi cheez ke liye kya chahiye">
+Har property ke liye ek field, ek constructor parameter, ek assignment aur ek getter. Jo
+Kotlin ek line mein kehta hai uske liye lagbhag pandrah lines. Bana hua bytecode dono ka ek
+hi hai.
+</Detail>
+
+## Parameters jaate kahan hain
+
+Kotlin mein do constructors hote hain aur beginners inhe lagatar mila dete hain.
+
+<Tabs>
+  <Tab label="Primary">
+
+Class ke header mein baithta hai. Lagbhag hamesha yahi chahiye hota hai.
+
+```kotlin title="Primary.kt" numbered
+class Order(
+    val id: String,
+    val items: List<String>,
+    val discount: Int = 0,      // defaults yahan bhi chalte hain
+)
+```
+
+  </Tab>
+  <Tab label="Secondary">
+
+Body ke andar `constructor` se likha jata hai. Ise `: this(...)` se primary ko dena hi padta hai.
+
+```kotlin title="Secondary.kt" numbered
+class Order(val id: String, val items: List<String>) {
+
+    // suvidha: ek hi item se bana lo
+    constructor(id: String, item: String) : this(id, listOf(item))
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Tip bare>
+Secondary constructor likhne se pehle default argument aazma lo. Aksar usi se zarurat khatam
+ho jati hai.
+</Tip>
+
+## `init`: wo niyam jo sach hone hi chahiye
+
+Constructor parameter property bharta hai. `init` block wo jagah hai jahan aap kehte ho ki
+uske baare mein kya **sach** hona chahiye.
+
+```kotlin title="Init.kt" numbered runnable
+class Order(val id: String, val quantity: Int) {
+
+    init {
+        require(id.isNotBlank()) { "id must not be blank" }
+        require(quantity > 0) { "quantity must be positive" }
+    }
+}
+
+fun main() {
+    println(Order("A1", 2).id)
+    println(runCatching { Order("", 2) }.exceptionOrNull()?.message)
+}
+```
+
+Ye construction ke waqt chalta hai, isliye jo `Order` maujood hai wo checks paar kar chuka
+hai. Baad mein aadhe-adhoore object se bachne ki zarurat hi nahi.
+
+<Quiz
+  question="Property initialiser aur init block kis kram mein chalte hain?"
+  options={[
+    "Pehle saari properties, phir saare init blocks",
+    "Upar se neeche, jis kram mein file mein likhe hain",
+    "Pehle init blocks, phir property initialisers",
+  ]}
+  answer={1}
+  explanation="Ye sakhti se upar se neeche, aapas mein guthe hue chalte hain. Isiliye koi init block apne se neeche likhi property padh nahi sakta — us pal tak wo assign hui hi nahi hoti."
+/>
+
+## Object memory mein dikhta kaisa hai
+
+```kotlin title="Sharing.kt" numbered runnable
+class Cart(val owner: String)
+
+fun main() {
+    val a = Cart("Asha")
+    val b = a               // copy nahi — wahi object
+    println(a === b)        // true
+}
+```
+
+<MemoryDiagram
+  caption="Do naam, ek object. Assignment reference copy karta hai, jis cheez ki taraf wo ishara karta hai use kabhi nahi."
+  stackLabel="Stack"
+  heapLabel="Heap"
+  stack={[
+    { name: "a", ref: "#1" },
+    { name: "b", ref: "#1" },
+  ]}
+  heap={[
+    { id: "#1", type: "Cart", fields: ["owner = \"Asha\""] },
+  ]}
+/>
+
+## Common galtiyan
+
+<Pitfall title="Do jo har pehle project mein dikhti hain">
+**Constructor se aayi cheez ko body mein dobara declare karna.**
+`class User(name: String) { val name = name }` chal to jata hai, par bina `val` wala parameter
+property hai hi nahi — wo sirf construction ke dauraan hota hai. Header mein `val` likho aur wo
+line hata do.
+
+**`init` mein asli kaam karna.** Network call, file read ya bhaari loop wahan object ke kaam
+laayak hone se pehle chalte hain, aur usi thread par jisne object banaya. `init` ko validation
+aur halke setup tak seemit rakho.
+</Pitfall>
+
+## Practice
+
+1. `class Book(val title: String, val pages: Int)` likho aur ek `init` jodo jo khaali title
+   aur shoonya-ya-kam pages dono ko mana kar de.
+2. Sirf title lene wala secondary constructor jodo jo pages 100 rakhe. Phir use hatakar wahi
+   kaam default argument se karo.
+3. Ek `init` block mein aur uske upar wale property initialiser mein `println` daalo. Chalao
+   aur kram confirm karo.
+4. Do variables ek hi object par point karwao, ek se `var` badlo, dusre se padho. Upar wale
+   memory diagram se natija samjhao.
+
+## Recap
+
+| Tukda | Kis liye |
+| --- | --- |
+| `class Name(val x: T)` | Class, property aur constructor ek saath |
+| Header mein `val` / `var` | Parameter ko property banata hai; bina iske nahi banta |
+| Default arguments | Aksar secondary constructor ki jagah le leta hai |
+| `constructor(...) : this(...)` | Secondary constructor, primary ko dete hue |
+| `init { }` | Validation; property initialisers ke saath upar se neeche |
+| `require(...)` | Galat arguments ko saaf message ke saath rokta hai |

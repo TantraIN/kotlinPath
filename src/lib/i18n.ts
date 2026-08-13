@@ -131,6 +131,12 @@ type Dict = {
     roadmapTitle: string;
     roadmapSubtitle: string;
   };
+  quiz: {
+    label: string;
+    correct: string;
+    notQuite: string;
+    tryAgain: string;
+  };
   progress: {
     label: string;
     markComplete: string;
@@ -142,7 +148,13 @@ type Dict = {
     phaseDone: string;
   };
   difficulty: { beginner: string; intermediate: string; advanced: string };
-  common: { phase: string; lesson: string; hours: string; project: string; of: string };
+  common: {
+    phase: string;
+    lesson: string;
+    hours: string;
+    project: string;
+    of: string;
+  };
 };
 
 export const DICT: Record<Lang, Dict> = {
@@ -157,7 +169,12 @@ export const DICT: Record<Lang, Dict> = {
       menu: "Menu",
       close: "Close",
     },
-    theme: { light: "Light", dark: "Dark", system: "System", toggle: "Change theme" },
+    theme: {
+      light: "Light",
+      dark: "Dark",
+      system: "System",
+      toggle: "Change theme",
+    },
     language: { label: "Language", switch: "Change language" },
     lesson: {
       onThisPage: "On this page",
@@ -212,7 +229,14 @@ export const DICT: Record<Lang, Dict> = {
       statsHours: "Hours",
       statsProjects: "Projects",
       roadmapTitle: "The full roadmap",
-      roadmapSubtitle: "Sixteen phases, ordered so nothing is ever used before it is taught.",
+      roadmapSubtitle:
+        "Sixteen phases, ordered so nothing is ever used before it is taught.",
+    },
+    quiz: {
+      label: "Check yourself",
+      correct: "Correct",
+      notQuite: "Not quite",
+      tryAgain: "Try again",
     },
     progress: {
       label: "Progress",
@@ -224,8 +248,18 @@ export const DICT: Record<Lang, Dict> = {
       savedLocally: "Saved in this browser only",
       phaseDone: "Phase complete",
     },
-    difficulty: { beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced" },
-    common: { phase: "Phase", lesson: "Lesson", hours: "hours", project: "Project", of: "of" },
+    difficulty: {
+      beginner: "Beginner",
+      intermediate: "Intermediate",
+      advanced: "Advanced",
+    },
+    common: {
+      phase: "Phase",
+      lesson: "Lesson",
+      hours: "hours",
+      project: "Project",
+      of: "of",
+    },
   },
 
   hi: {
@@ -239,7 +273,12 @@ export const DICT: Record<Lang, Dict> = {
       menu: "मेन्यू",
       close: "बंद करें",
     },
-    theme: { light: "लाइट", dark: "डार्क", system: "सिस्टम", toggle: "थीम बदलें" },
+    theme: {
+      light: "लाइट",
+      dark: "डार्क",
+      system: "सिस्टम",
+      toggle: "थीम बदलें",
+    },
     language: { label: "भाषा", switch: "भाषा बदलें" },
     lesson: {
       onThisPage: "इस पाठ में",
@@ -294,7 +333,14 @@ export const DICT: Record<Lang, Dict> = {
       statsHours: "घंटे",
       statsProjects: "प्रोजेक्ट",
       roadmapTitle: "पूरा रोडमैप",
-      roadmapSubtitle: "सोलह चरण, ऐसे क्रम में कि कोई चीज़ पढ़ाने से पहले इस्तेमाल न हो।",
+      roadmapSubtitle:
+        "सोलह चरण, ऐसे क्रम में कि कोई चीज़ पढ़ाने से पहले इस्तेमाल न हो।",
+    },
+    quiz: {
+      label: "ख़ुद जाँचिए",
+      correct: "सही",
+      notQuite: "बिलकुल नहीं",
+      tryAgain: "फिर कोशिश कीजिए",
     },
     progress: {
       label: "प्रगति",
@@ -306,8 +352,18 @@ export const DICT: Record<Lang, Dict> = {
       savedLocally: "सिर्फ़ इसी browser में सहेजा गया",
       phaseDone: "चरण पूरा",
     },
-    difficulty: { beginner: "शुरुआती", intermediate: "मध्यम", advanced: "एडवांस" },
-    common: { phase: "चरण", lesson: "पाठ", hours: "घंटे", project: "प्रोजेक्ट", of: "में से" },
+    difficulty: {
+      beginner: "शुरुआती",
+      intermediate: "मध्यम",
+      advanced: "एडवांस",
+    },
+    common: {
+      phase: "चरण",
+      lesson: "पाठ",
+      hours: "घंटे",
+      project: "प्रोजेक्ट",
+      of: "में से",
+    },
   },
 
   "hi-en": {
@@ -321,7 +377,12 @@ export const DICT: Record<Lang, Dict> = {
       menu: "Menu",
       close: "Band karein",
     },
-    theme: { light: "Light", dark: "Dark", system: "System", toggle: "Theme badlein" },
+    theme: {
+      light: "Light",
+      dark: "Dark",
+      system: "System",
+      toggle: "Theme badlein",
+    },
     language: { label: "Bhasha", switch: "Language badlein" },
     lesson: {
       onThisPage: "Is page par",
@@ -366,7 +427,8 @@ export const DICT: Record<Lang, Dict> = {
     },
     home: {
       eyebrow: "Beginner se advanced tak",
-      title: "Kotlin aur Android waise seekhein jaise asli mein banaya jata hai",
+      title:
+        "Kotlin aur Android waise seekhein jaise asli mein banaya jata hai",
       subtitle:
         "Poora, visual, teen bhasha wala course. Har concept diagram se samjhaya gaya, har keyword hover par samjhaya gaya, aur har phase ke end mein ek real app.",
       ctaStart: "Phase 0 se shuru karein",
@@ -376,7 +438,14 @@ export const DICT: Record<Lang, Dict> = {
       statsHours: "Ghante",
       statsProjects: "Projects",
       roadmapTitle: "Poora roadmap",
-      roadmapSubtitle: "Solah phases, aise order mein ki koi cheez padhaye bina use na ho.",
+      roadmapSubtitle:
+        "Solah phases, aise order mein ki koi cheez padhaye bina use na ho.",
+    },
+    quiz: {
+      label: "Khud jaancho",
+      correct: "Sahi",
+      notQuite: "Bilkul nahi",
+      tryAgain: "Phir koshish karo",
     },
     progress: {
       label: "Progress",
@@ -388,8 +457,18 @@ export const DICT: Record<Lang, Dict> = {
       savedLocally: "Sirf isi browser mein save hua",
       phaseDone: "Phase poora",
     },
-    difficulty: { beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced" },
-    common: { phase: "Phase", lesson: "Lesson", hours: "ghante", project: "Project", of: "of" },
+    difficulty: {
+      beginner: "Beginner",
+      intermediate: "Intermediate",
+      advanced: "Advanced",
+    },
+    common: {
+      phase: "Phase",
+      lesson: "Lesson",
+      hours: "ghante",
+      project: "Project",
+      of: "of",
+    },
   },
 };
 
