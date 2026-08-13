@@ -100,7 +100,7 @@ export function ObjectDiagram({
                 initial={{ y: 0, opacity: 0 }}
                 whileInView={{ y: 56, opacity: [0, 1, 1, 0] }}
                 viewport={{ once: true, margin: "-50px" }}
-                transition={{ duration: 0.7, delay: 0.35, ease: "easeOut" }}
+                transition={{ duration: 0.5, delay: 0.12, ease: "easeOut" }}
               />
             )}
             <span className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-violet/40 bg-violet-soft px-2 py-0.5 font-mono text-[10.5px] font-medium text-fg">
@@ -122,9 +122,12 @@ export function ObjectDiagram({
                   reduced ? undefined : { opacity: 1, scale: 1, y: 0 }
                 }
                 viewport={{ once: true, margin: "-50px" }}
+                // The pulse is still travelling when these land. Waiting for it
+                // to finish would leave the reader looking at an empty box for
+                // most of a second, which reads as broken rather than animated.
                 transition={{
-                  duration: 0.4,
-                  delay: reduced ? 0 : 0.75 + index * 0.12,
+                  duration: 0.38,
+                  delay: reduced ? 0 : 0.26 + index * 0.08,
                   ease: [0.22, 1, 0.36, 1],
                 }}
                 className={[
