@@ -1,0 +1,108 @@
+---
+title: Sealed classes — modelling state without mistakes
+description: A sealed type tells the compiler every subtype it will ever have. In return the compiler tells you when you forget one.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`sealed` closes a hierarchy, so `when` over it needs no `else` — and starts failing to compile
+the day someone adds a case you have not handled.
+</KeyIdea>
+
+## The screen state every app has
+
+<ClassDiagram
+  base={{ name: "UiState", kind: "sealed interface", members: [], accent: "violet", highlight: true }}
+  children={[
+    { name: "Loading", kind: "object", members: [], accent: "sky" },
+    { name: "Success", kind: "data class", members: ["val items: List<T>"], accent: "emerald" },
+    { name: "Error", kind: "data class", members: ["val message: String"], accent: "rose" },
+  ]}
+  relation="permitted subtypes"
+  caption="Three states, and the compiler knows there will never be a fourth it has not been told about."
+/>
+
+```kotlin title="UiState.kt" numbered runnable
+sealed interface UiState {
+    object Loading : UiState
+    data class Success(val items: List<String>) : UiState
+    data class Error(val message: String) : UiState
+}
+
+fun render(state: UiState): String = when (state) {
+    UiState.Loading    -> "spinner"
+    is UiState.Success -> "${state.items.size} items"
+    is UiState.Error   -> "error: ${state.message}"
+    // no else — the compiler has checked every case
+}
+
+fun main() {
+    listOf(UiState.Loading, UiState.Success(listOf("a", "b")), UiState.Error("timeout"))
+        .forEach { println(render(it)) }
+}
+```
+
+Notice there is no `else`. That absence is the entire feature.
+
+<Quiz
+  question="What happens when a fourth state, `Empty`, is added to the sealed interface?"
+  options={[
+    "`render` silently falls through and returns nothing",
+    "`render` stops compiling until `Empty` is handled",
+    "`render` throws at run time when it sees `Empty`",
+  ]}
+  answer={1}
+  explanation="Because the `when` is exhaustive and has no `else`, adding a subtype makes it non-exhaustive, which is a compile error. The bug is reported the moment it is introduced rather than the moment a user hits that state. Writing `else -> ...` throws this guarantee away."
+/>
+
+## Sealed versus enum
+
+| | `enum` | `sealed` |
+| --- | --- | --- |
+| Cases | Fixed set of **values** | Fixed set of **types** |
+| Can carry data | The same fields for every case | Different fields per case |
+| Multiple instances | No, one per constant | Yes, `Success` can exist many times |
+| Use for | Tabs, sort order, status flags | Screen state, results, events |
+
+<Tip bare>
+If one case needs data the others do not, you want `sealed`. If every case is just a name, you
+want `enum`.
+</Tip>
+
+<Detail summary="sealed interface or sealed class">
+Prefer `sealed interface`. A subtype can implement several interfaces but extend only one
+class, so the interface form stays composable. Reach for `sealed class` only when the cases
+genuinely share stored state, which is rare.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Two that quietly remove the benefit">
+**Adding `else` to a `when` over a sealed type.** It compiles today and stays compiling
+forever — including on the day a new case appears and falls into the `else` unhandled. Handle
+each case explicitly.
+
+**Using `data class` for a case with no data.** `data class Loading : UiState()` creates a new
+object every time and compares by value for no reason. A stateless case should be `object`.
+</Pitfall>
+
+## Practice
+
+1. Add an `Empty` case to `UiState` without touching `render`. Read the compiler error, then
+   fix it.
+2. Rewrite `render` with `else -> "unknown"`, add another case, and confirm nothing warns you.
+   That is what you are giving up.
+3. Model a payment result as a sealed interface with `Approved(txnId)`, `Declined(reason)` and
+   `Pending`. Which of the three should be an `object`?
+4. Convert an `enum` you have written into a sealed interface. Did any case gain a field that
+   only it needs?
+
+## Recap
+
+| Point | Detail |
+| --- | --- |
+| `sealed` | All subtypes known at compile time, same module |
+| Exhaustive `when` | No `else` needed — and never add one |
+| Adding a case | Becomes a compile error everywhere it matters |
+| Stateless case | `object`, not `data class` |
+| Default choice | `sealed interface` over `sealed class` |

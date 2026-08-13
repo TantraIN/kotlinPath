@@ -1,0 +1,106 @@
+---
+title: Sealed classes — state का model बिना ग़लती के
+description: Sealed type compiler को बता देता है कि उसके subtypes कौन-कौन से होंगे। बदले में compiler आपको बताता है जब आप कोई भूल जाएँ।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`sealed` hierarchy को बंद कर देता है, इसलिए उसपर `when` को `else` चाहिए ही नहीं — और जिस दिन कोई नया
+case जोड़ता है जो आपने handle नहीं किया, उस दिन से compile होना बंद हो जाता है।
+</KeyIdea>
+
+## वह screen state जो हर app में है
+
+<ClassDiagram
+  base={{ name: "UiState", kind: "sealed interface", members: [], accent: "violet", highlight: true }}
+  children={[
+    { name: "Loading", kind: "object", members: [], accent: "sky" },
+    { name: "Success", kind: "data class", members: ["val items: List<T>"], accent: "emerald" },
+    { name: "Error", kind: "data class", members: ["val message: String"], accent: "rose" },
+  ]}
+  relation="जिनकी इजाज़त है"
+  caption="तीन states, और compiler जानता है कि चौथा कोई नहीं होगा जिसका उसे पता न हो।"
+/>
+
+```kotlin title="UiState.kt" numbered runnable
+sealed interface UiState {
+    object Loading : UiState
+    data class Success(val items: List<String>) : UiState
+    data class Error(val message: String) : UiState
+}
+
+fun render(state: UiState): String = when (state) {
+    UiState.Loading    -> "spinner"
+    is UiState.Success -> "${state.items.size} items"
+    is UiState.Error   -> "error: ${state.message}"
+    // कोई else नहीं — compiler हर case जाँच चुका है
+}
+
+fun main() {
+    listOf(UiState.Loading, UiState.Success(listOf("a", "b")), UiState.Error("timeout"))
+        .forEach { println(render(it)) }
+}
+```
+
+ध्यान दीजिए कि `else` है ही नहीं। उसका न होना ही पूरी ख़ूबी है।
+
+<Quiz
+  question="Sealed interface में चौथा state `Empty` जोड़ने पर क्या होगा?"
+  options={[
+    "`render` चुपचाप निकल जाएगा और कुछ नहीं लौटाएगा",
+    "`render` तब तक compile नहीं होगा जब तक `Empty` handle न हो",
+    "`Empty` दिखते ही `render` चलते वक़्त exception फेंकेगा",
+  ]}
+  answer={1}
+  explanation="`when` पूरा है और उसमें `else` नहीं है, इसलिए नया subtype जोड़ते ही वह अधूरा हो जाता है — और यह compile error है। Bug उसी पल बताता है जब वह आया, न कि जब किसी user को वह state मिली। `else -> ...` लिखना इस guarantee को फेंक देना है।"
+/>
+
+## Sealed बनाम enum
+
+| | `enum` | `sealed` |
+| --- | --- | --- |
+| Cases | **Values** का तय set | **Types** का तय set |
+| Data रख सकता है | हर case में वही fields | हर case की अपनी fields |
+| कई instances | नहीं, हर constant का एक | हाँ, `Success` कई बार हो सकता है |
+| किस लिए | Tabs, sort order, status flags | Screen state, results, events |
+
+<Tip bare>
+अगर किसी एक case को ऐसा data चाहिए जो बाक़ियों को नहीं, तो `sealed` चाहिए। अगर हर case सिर्फ़ एक नाम
+है, तो `enum` चाहिए।
+</Tip>
+
+<Detail summary="sealed interface या sealed class">
+`sealed interface` बेहतर है। कोई subtype कई interfaces implement कर सकता है पर class सिर्फ़ एक बढ़ा
+सकता है, इसलिए interface वाला रूप जोड़ने-तोड़ने लायक़ रहता है। `sealed class` तभी उठाइए जब cases सच में
+साझी stored state रखते हों, जो कम ही होता है।
+</Detail>
+
+## आम ग़लतियाँ
+
+<Pitfall title="दो जो चुपचाप पूरा फ़ायदा खा जाती हैं">
+**Sealed type पर `when` में `else` जोड़ना।** आज भी compile होगा और हमेशा होता रहेगा — उस दिन भी जब नया
+case आएगा और बिना handle हुए `else` में गिर जाएगा। हर case अलग से लिखिए।
+
+**बिना data वाले case के लिए `data class`।** `data class Loading : UiState()` हर बार नया object बनाता
+है और बेवजह values मिलाता है। बिना state वाला case `object` होना चाहिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `render` को छुए बिना `UiState` में `Empty` case जोड़िए। Compiler की ग़लती पढ़िए, फिर ठीक कीजिए।
+2. `render` को `else -> "unknown"` के साथ लिखिए, एक और case जोड़िए, और देखिए कि कोई चेतावनी नहीं आती।
+   यही चीज़ आप छोड़ रहे हैं।
+3. Payment result को sealed interface से model कीजिए — `Approved(txnId)`, `Declined(reason)` और
+   `Pending`। तीनों में से कौन सा `object` होना चाहिए?
+4. अपने लिखे किसी `enum` को sealed interface में बदलिए। क्या किसी case को ऐसा field मिला जो सिर्फ़ उसी
+   को चाहिए था?
+
+## सारांश
+
+| बात | विवरण |
+| --- | --- |
+| `sealed` | सारे subtypes compile time पर पता, उसी module में |
+| पूरा `when` | `else` चाहिए नहीं — और कभी जोड़िए मत |
+| नया case जोड़ना | जहाँ-जहाँ मायने रखता है वहाँ compile error |
+| बिना state का case | `object`, `data class` नहीं |
+| Default चुनाव | `sealed class` से बेहतर `sealed interface` |
