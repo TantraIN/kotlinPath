@@ -2,6 +2,8 @@
 
 import { motion, useReducedMotion } from "motion/react";
 
+import { withInlineCode } from "@/components/InlineCode";
+
 export type ClassNode = {
   name: string;
   /** Shown as a small badge: class, interface, sealed, object, data class. */
@@ -150,7 +152,7 @@ export function ClassDiagram({
       </div>
       {caption && (
         <figcaption className="mt-2.5 text-center text-[12.5px] leading-relaxed text-muted">
-          {caption}
+          {withInlineCode(caption)}
         </figcaption>
       )}
     </figure>

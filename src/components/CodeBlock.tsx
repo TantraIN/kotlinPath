@@ -55,7 +55,10 @@ export async function CodeBlock({
   const showHeader = Boolean(title) || lineCount > 3;
 
   return (
-    <figure className="group my-6 overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface-code shadow-sm">
+    // min-w-0 matters when the figure is a grid or flex child: without it the
+    // item's automatic minimum size is the code's full width, and the page —
+    // not the code block — is what ends up scrolling sideways.
+    <figure className="group my-6 min-w-0 overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface-code shadow-sm">
       {showHeader && (
         <figcaption className="flex items-center gap-2 border-b border-line bg-surface-2 py-1.5 pl-3.5 pr-2">
           <span className="flex gap-1.5" aria-hidden="true">

@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { Check, HelpCircle, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 
+import { withInlineCode } from "@/components/InlineCode";
 import { t, type Lang } from "@/lib/i18n";
 
 /**
@@ -55,7 +56,7 @@ export function Quiz({
 
       <div className="px-4 py-3.5">
         <p className="text-[15px] font-medium leading-relaxed text-fg">
-          {question}
+          {withInlineCode(question)}
         </p>
 
         <ul className="mt-3 space-y-1.5">
@@ -112,7 +113,7 @@ export function Quiz({
                       String.fromCharCode(65 + index)
                     )}
                   </span>
-                  <span>{option}</span>
+                  <span>{withInlineCode(option)}</span>
                 </button>
               </li>
             );
@@ -138,7 +139,7 @@ export function Quiz({
             >
               {correct ? copy.correct : copy.notQuite}
             </p>
-            {explanation}
+            {withInlineCode(explanation)}
           </motion.div>
         )}
       </div>

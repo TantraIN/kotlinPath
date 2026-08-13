@@ -9,6 +9,36 @@ Kotlin class अपना data **constructor में** ही declare कर�
 सही object है।
 </KeyIdea>
 
+## Class असल में है क्या
+
+Class आपका data रखता नहीं है। वह बस **ढाँचा** है जो data लेगा — नाम और types, values नहीं।
+
+उससे बना हर object उन ख़ानों की अपनी copy पाता है, अपनी values के साथ भरी हुई।
+
+<ObjectDiagram
+  typeName="User"
+  properties={["val name: String", "var age: Int"]}
+  createLabel={'User("Asha", 30)'}
+  blueprintLabel="class (ढाँचा)"
+  instanceLabel="objects (memory में)"
+  instances={[
+    { name: "asha", values: ['name = "Asha"', "age = 30"] },
+    { name: "ravi", values: ['name = "Ravi"', "age = 41"] },
+  ]}
+  caption="एक class, दो objects. Dashed box में कोई value नहीं है — कभी होती ही नहीं। `asha.age` बदलिए, `ravi.age` हिलता भी नहीं।"
+/>
+
+<Quiz
+  question="`asha.age = 31` के बाद `ravi.age` क्या है?"
+  options={[
+    "31 — age class का है",
+    "41 — हर object के पास अपनी copy है",
+    "जब तक पढ़ें नहीं, तय नहीं",
+  ]}
+  answer={1}
+  explanation="Constructor में declare की properties object में रहती हैं, class में नहीं। दो objects मतलब दो अलग `age` ख़ाने। जो चीज़ हर object में साझी हो, वह `companion object` में declare होती है।"
+/>
+
 ## सबसे छोटी काम की class
 
 ```kotlin title="User.kt" numbered runnable

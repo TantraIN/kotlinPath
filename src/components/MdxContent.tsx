@@ -13,6 +13,7 @@ import { Figure } from "@/components/Figure";
 import { Reveal } from "@/components/Reveal";
 import { Timeline, TimelineItem } from "@/components/Timeline";
 import { ClassDiagram } from "@/components/diagrams/ClassDiagram";
+import { ObjectDiagram } from "@/components/diagrams/ObjectDiagram";
 import { Compare } from "@/components/diagrams/Compare";
 import { MemoryDiagram } from "@/components/diagrams/MemoryDiagram";
 import { FileTree } from "@/components/diagrams/FileTree";
@@ -209,6 +210,7 @@ function components(lang: Lang) {
     GitGraph,
     Compare,
     ClassDiagram,
+    ObjectDiagram,
     MemoryDiagram,
     KeyIdea,
     Detail,

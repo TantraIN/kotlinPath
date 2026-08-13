@@ -111,7 +111,7 @@ compiler help. Reach for it only when the framework guarantees the assignment or
 ## Where properties live
 
 <MemoryDiagram
-  caption="`first` and `last` are stored. `fullName` is not — it is built on each read and thrown away."
+  caption="first and last are stored. fullName is not — it is built on each read and thrown away."
   stack={[{ name: "u", ref: "#1" }]}
   heap={[
     { id: "#1", type: "User", fields: ["first = \"Asha\"", "last = \"Rao\"", "(fullName: no field)"] },

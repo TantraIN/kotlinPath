@@ -1,6 +1,8 @@
 "use client";
 
 import { motion, useReducedMotion } from "motion/react";
+
+import { withInlineCode } from "@/components/InlineCode";
 import { ArrowRight } from "lucide-react";
 
 export type Slot = {
@@ -164,7 +166,7 @@ export function MemoryDiagram({
       </div>
       {caption && (
         <figcaption className="mt-2.5 text-center text-[12.5px] leading-relaxed text-muted">
-          {caption}
+          {withInlineCode(caption)}
         </figcaption>
       )}
     </figure>

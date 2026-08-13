@@ -9,6 +9,35 @@ A Kotlin class declares its data **in the constructor**, so an object that exist
 a valid object.
 </KeyIdea>
 
+## What a class actually is
+
+A class does not hold your data. It is the **shape** the data will take — names and
+types, no values.
+
+Each object stamped out of it gets its own copy of those slots, filled with its own values.
+
+<ObjectDiagram
+  typeName="User"
+  properties={["val name: String", "var age: Int"]}
+  createLabel={'User("Asha", 30)'}
+  instances={[
+    { name: "asha", values: ['name = "Asha"', "age = 30"] },
+    { name: "ravi", values: ['name = "Ravi"', "age = 41"] },
+  ]}
+  caption="One class, two objects. The dashed box has no values in it — it never does. Change `asha.age` and `ravi.age` does not move."
+/>
+
+<Quiz
+  question="After `asha.age = 31`, what is `ravi.age`?"
+  options={[
+    "31 — age belongs to the class",
+    "41 — each object has its own copy",
+    "Undefined until you read it",
+  ]}
+  answer={1}
+  explanation="Properties declared in the constructor live in the object, not the class. Two objects mean two separate `age` slots. The only things shared by every object are declared in a `companion object`."
+/>
+
 ## The shortest useful class
 
 ```kotlin title="User.kt" numbered runnable

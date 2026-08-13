@@ -123,8 +123,8 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
 
       {/* ------------------------------------------------- How it teaches */}
       <section className="mx-auto max-w-6xl px-5 py-20">
-        <div className="grid gap-5 lg:grid-cols-5">
-          <Reveal className="lg:col-span-3">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+          <Reveal className="min-w-0 lg:col-span-3">
             <article className="flex h-full flex-col rounded-2xl border border-line bg-surface p-5">
               <Feature
                 Icon={MousePointerClick}
@@ -156,7 +156,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
             </article>
           </Reveal>
 
-          <div className="flex flex-col gap-5 lg:col-span-2">
+          <div className="flex min-w-0 flex-col gap-5 lg:col-span-2">
             <Reveal delay={0.08}>
               <article className="rounded-2xl border border-line bg-surface p-5">
                 <Feature
@@ -231,7 +231,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
             </h2>
           </Reveal>
 
-          <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {CURRICULUM.map((phase, index) => (
               <Reveal key={phase.slug} delay={Math.min(index * 0.03, 0.3)}>
                 <Link

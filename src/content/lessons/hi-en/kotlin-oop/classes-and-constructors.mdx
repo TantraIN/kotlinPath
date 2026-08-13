@@ -9,6 +9,37 @@ Kotlin class apna data **constructor mein** hi declare karta hai, isliye jo obje
 pehle se sahi object hai.
 </KeyIdea>
 
+## Class asal mein hai kya
+
+Class aapka data rakhta nahi hai. Wo bas **dhaancha** hai jo data lega — naam aur types,
+values nahi.
+
+Usse bana har object un khaanon ki apni copy paata hai, apni values ke saath bhari hui.
+
+<ObjectDiagram
+  typeName="User"
+  properties={["val name: String", "var age: Int"]}
+  createLabel={'User("Asha", 30)'}
+  blueprintLabel="class (dhaancha)"
+  instanceLabel="objects (memory mein)"
+  instances={[
+    { name: "asha", values: ['name = "Asha"', "age = 30"] },
+    { name: "ravi", values: ['name = "Ravi"', "age = 41"] },
+  ]}
+  caption="Ek class, do objects. Dashed box mein koi value nahi hai — kabhi hoti hi nahi. `asha.age` badlo, `ravi.age` hilta bhi nahi."
+/>
+
+<Quiz
+  question="`asha.age = 31` ke baad `ravi.age` kya hai?"
+  options={[
+    "31 — age class ka hai",
+    "41 — har object ke paas apni copy hai",
+    "Jab tak padho nahi, tay nahi",
+  ]}
+  answer={1}
+  explanation="Constructor mein declare ki properties object mein rehti hain, class mein nahi. Do objects matlab do alag `age` khaane. Jo cheez har object mein saanjhi ho, wo `companion object` mein declare hoti hai."
+/>
+
 ## Sabse chhoti kaam ki class
 
 ```kotlin title="User.kt" numbered runnable
