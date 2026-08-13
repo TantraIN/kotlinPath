@@ -1,0 +1,152 @@
+---
+title: Properties, custom accessors, lateinit and lazy
+description: A Kotlin property is not a field. It is a getter, and optionally a setter — which is why it can compute, validate or wait.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Every Kotlin property is a **pair of functions**. That is why `user.fullName` can be computed
+on the spot without the caller ever knowing.
+</KeyIdea>
+
+## Stored versus computed
+
+```kotlin title="Computed.kt" numbered runnable
+class User(val first: String, val last: String) {
+
+    // no storage — recomputed on every read
+    val fullName: String
+        get() = "$first $last"
+
+    // stored, but guarded on write
+    var age: Int = 0
+        set(value) {
+            field = if (value < 0) 0 else value
+        }
+}
+
+fun main() {
+    val u = User("Asha", "Rao")
+    println(u.fullName)
+    u.age = -5
+    println(u.age)      // 0
+}
+```
+
+`field` is the **backing field** — the actual storage. It exists only inside an accessor, and
+only when you use it. `fullName` never mentions it, so no storage is allocated at all.
+
+<Quiz
+  question="How much memory does the `fullName` property above use per object?"
+  options={[
+    "One String reference, like any other property",
+    "None — it is a function, recomputed on every read",
+    "It depends on how long the name is",
+  ]}
+  answer={1}
+  explanation="A property with only a custom getter and no reference to `field` has no backing field. It compiles to a method. That is also the trade-off: no memory, but work on every read."
+/>
+
+## Three ways to delay a value
+
+<Tabs>
+  <Tab label="lateinit">
+
+For a `var` you will assign before first use, typically from a framework callback.
+
+```kotlin title="Lateinit.kt" numbered
+class ProfileScreen {
+    private lateinit var binding: Binding      // assigned in onCreate
+
+    fun onCreate() { binding = Binding() }
+    fun render() = binding.show()              // throws if onCreate never ran
+}
+```
+
+Only for `var`, only for non-null object types — never `Int`, `Boolean` or `String?`.
+
+  </Tab>
+  <Tab label="lazy">
+
+For a `val` that is expensive and might never be needed.
+
+```kotlin title="Lazy.kt" numbered runnable
+class Repo {
+    val database: String by lazy {
+        println("building…")      // runs at most once
+        "connection"
+    }
+}
+
+fun main() {
+    val repo = Repo()
+    println("created")            // nothing built yet
+    println(repo.database)        // builds now
+    println(repo.database)        // cached
+}
+```
+
+Thread-safe by default; pass `LazyThreadSafetyMode.NONE` when only one thread touches it.
+
+  </Tab>
+  <Tab label="nullable">
+
+The honest option when the value genuinely may be absent.
+
+```kotlin title="Nullable.kt" numbered
+class Session {
+    var user: User? = null        // absence is a real state here
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="Why lateinit is not just a nullable with fewer keystrokes">
+`lateinit` removes the null *check*, not the null. Reading it early throws
+`UninitializedPropertyAccessException` — a `NullPointerException` with a longer name and no
+compiler help. Reach for it only when the framework guarantees the assignment order.
+</Detail>
+
+## Where properties live
+
+<MemoryDiagram
+  caption="`first` and `last` are stored. `fullName` is not — it is built on each read and thrown away."
+  stack={[{ name: "u", ref: "#1" }]}
+  heap={[
+    { id: "#1", type: "User", fields: ["first = \"Asha\"", "last = \"Rao\"", "(fullName: no field)"] },
+  ]}
+/>
+
+## Common mistakes
+
+<Pitfall title="Two that bite later, not now">
+**An expensive computed property.** `val total get() = items.sumOf { it.price }` looks free and
+recomputes on every read. Inside a Compose `LazyColumn` that is once per item per frame. Store
+it, or make it a function so the cost is visible at the call site.
+
+**`lateinit` on a Fragment's view binding.** The view is destroyed before the Fragment is, so
+anything touching it after `onDestroyView` throws. Use the nullable-backed pattern instead.
+</Pitfall>
+
+## Practice
+
+1. Add a computed `initials` property to `User` returning `"A.R."`. Confirm it has no backing
+   field by checking that it needs no initialiser.
+2. Write a `var password: String` whose setter rejects anything shorter than eight characters
+   by keeping the previous value.
+3. Wrap an expensive object in `by lazy` and print before and after the first read to prove
+   when it is built.
+4. Turn a `lateinit var` into a nullable `var` and handle absence with `?:`. Which version
+   would you rather debug at 2am?
+
+## Recap
+
+| Tool | Use when |
+| --- | --- |
+| `get() =` | The value can be derived from other properties |
+| `set(value) { field = ... }` | Every write must be validated or normalised |
+| `field` | Inside an accessor, to reach the actual storage |
+| `lateinit var` | A framework assigns it before first use |
+| `by lazy { }` | Expensive, read-only, maybe never needed |
+| `T?` | Absence is a genuine, expected state |

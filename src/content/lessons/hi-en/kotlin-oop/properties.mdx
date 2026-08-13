@@ -1,0 +1,157 @@
+---
+title: Properties, custom accessors, lateinit aur lazy
+description: Kotlin ki property field nahi hai. Wo ek getter hai, aur zarurat par setter — isiliye wo calculate kar sakti hai, jaanch sakti hai, ya intezaar kar sakti hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Kotlin ki har property asal mein **do functions ka joda** hai. Isiliye `user.fullName` mauke
+par bana sakta hai aur bulane wale ko pata bhi nahi chalta.
+</KeyIdea>
+
+## Rakhi hui aur bani hui
+
+```kotlin title="Computed.kt" numbered runnable
+class User(val first: String, val last: String) {
+
+    // koi jagah nahi ghera — har baar padhne par banta hai
+    val fullName: String
+        get() = "$first $last"
+
+    // rakhi hui, par likhte waqt jaanchi jati hai
+    var age: Int = 0
+        set(value) {
+            field = if (value < 0) 0 else value
+        }
+}
+
+fun main() {
+    val u = User("Asha", "Rao")
+    println(u.fullName)
+    u.age = -5
+    println(u.age)      // 0
+}
+```
+
+`field` hi **backing field** hai — asli jagah. Wo sirf accessor ke andar hota hai, aur tabhi
+jab aap use likho. `fullName` uska naam hi nahi leta, isliye uske liye koi jagah banti hi
+nahi.
+
+<Quiz
+  question="Upar wali `fullName` property har object mein kitni memory leti hai?"
+  options={[
+    "Ek String reference, baaki properties jitni",
+    "Bilkul nahi — wo ek function hai, har baar padhne par banta hai",
+    "Naam kitna lamba hai us par nirbhar karta hai",
+  ]}
+  answer={1}
+  explanation="Jis property mein sirf custom getter ho aur `field` ka zikr na ho, uska backing field banta hi nahi. Wo ek method ban jati hai. Sauda yahi hai: memory nahi, par har baar padhne par kaam."
+/>
+
+## Value ko taalne ke teen tarike
+
+<Tabs>
+  <Tab label="lateinit">
+
+Aise `var` ke liye jise aap pehle istemal se pehle bhar doge, aam taur par framework callback se.
+
+```kotlin title="Lateinit.kt" numbered
+class ProfileScreen {
+    private lateinit var binding: Binding      // onCreate mein assign hoga
+
+    fun onCreate() { binding = Binding() }
+    fun render() = binding.show()              // onCreate na chala to fenkta hai
+}
+```
+
+Sirf `var` par, sirf non-null object types par — `Int`, `Boolean` ya `String?` par kabhi nahi.
+
+  </Tab>
+  <Tab label="lazy">
+
+Aise `val` ke liye jo mehnga hai aur shayad kabhi chahiye hi na ho.
+
+```kotlin title="Lazy.kt" numbered runnable
+class Repo {
+    val database: String by lazy {
+        println("building…")      // zyada se zyada ek baar
+        "connection"
+    }
+}
+
+fun main() {
+    val repo = Repo()
+    println("created")            // abhi kuch nahi bana
+    println(repo.database)        // ab bana
+    println(repo.database)        // cache se
+}
+```
+
+Default se thread-safe; ek hi thread chhuta ho to `LazyThreadSafetyMode.NONE` do.
+
+  </Tab>
+  <Tab label="nullable">
+
+Imaandaar chunav, jab value sach mein gayab ho sakti ho.
+
+```kotlin title="Nullable.kt" numbered
+class Session {
+    var user: User? = null        // yahan gayab hona ek asli sthiti hai
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="lateinit sirf kam typing wala nullable kyun nahi hai">
+`lateinit` null ka *check* hatata hai, null nahi. Jaldi padhne par
+`UninitializedPropertyAccessException` aata hai — lambe naam wala `NullPointerException`, aur
+compiler se koi madad nahi. Ise tabhi uthao jab framework assignment ka kram guarantee karta
+ho.
+</Detail>
+
+## Properties rehti kahan hain
+
+<MemoryDiagram
+  caption="`first` aur `last` rakhe hue hain. `fullName` nahi — wo har baar padhne par banta hai aur phenk diya jata hai."
+  stackLabel="Stack"
+  heapLabel="Heap"
+  stack={[{ name: "u", ref: "#1" }]}
+  heap={[
+    { id: "#1", type: "User", fields: ["first = \"Asha\"", "last = \"Rao\"", "(fullName: koi field nahi)"] },
+  ]}
+/>
+
+## Common galtiyan
+
+<Pitfall title="Do jo abhi nahi, baad mein kaatti hain">
+**Mehnga computed property.** `val total get() = items.sumOf { it.price }` muft lagta hai aur
+har baar padhne par dobara chalta hai. Compose ke `LazyColumn` mein wo har item par, har frame
+mein chalega. Ya use store karo, ya function bana do taaki keemat call site par dikhe.
+
+**Fragment ki view binding par `lateinit`.** View, Fragment se pehle mar jati hai, isliye
+`onDestroyView` ke baad use chhune wala kuch bhi fenkta hai. Uski jagah nullable-backed pattern
+use karo.
+</Pitfall>
+
+## Practice
+
+1. `User` mein ek computed `initials` property jodo jo `"A.R."` laute. Sabit karo ki uska
+   backing field nahi hai — dekho ki use initialiser chahiye hi nahi.
+2. Ek `var password: String` likho jiska setter aath se chhoti cheez ko mana kar de aur purani
+   value bachaye rakhe.
+3. Ek mehnge object ko `by lazy` mein lapeto aur pehle padhne se pehle-baad print karke sabit
+   karo ki wo kab bana.
+4. Ek `lateinit var` ko nullable `var` mein badlo aur gayab hone ko `?:` se sambhalo. Raat do
+   baje kis version ko debug karna pasand karoge?
+
+## Recap
+
+| Tool | Kab |
+| --- | --- |
+| `get() =` | Value dusri properties se nikal aati ho |
+| `set(value) { field = ... }` | Har likhai jaanchni ya sudharni ho |
+| `field` | Accessor ke andar, asli jagah tak pahunchne ke liye |
+| `lateinit var` | Framework pehle istemal se pehle bhar deta ho |
+| `by lazy { }` | Mehnga, read-only, shayad kabhi chahiye hi na ho |
+| `T?` | Gayab hona ek asli, apekshit sthiti ho |
