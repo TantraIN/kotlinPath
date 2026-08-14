@@ -1,0 +1,134 @@
+---
+title: Operator overloading aur inline functions
+description: Operators bas tay naam wale function calls hain. Inline functions wo object hata dete hain jo lambda warna banata.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`a + b` compile hokar `a.plus(b)` banta hai. Operator overload karna matlab us naam ka function
+likhna jise Kotlin pehle se dhoondhta hai.
+</KeyIdea>
+
+## Apne type ko built-in jaisa banana
+
+```kotlin title="Money.kt" numbered runnable
+data class Money(val paise: Int) {
+    operator fun plus(other: Money) = Money(paise + other.paise)
+    operator fun times(factor: Int) = Money(paise * factor)
+    operator fun compareTo(other: Money) = paise.compareTo(other.paise)
+
+    override fun toString() = "₹%.2f".format(paise / 100.0)
+}
+
+fun main() {
+    val a = Money(15000)
+    val b = Money(2500)
+    println(a + b)
+    println(b * 3)
+    println(a > b)          // compareTo use karta hai
+}
+```
+
+`operator` keyword zaroori hai. Uske bina function saada reh jata hai aur `+` use dhoondh nahi paata.
+
+| Aap likhte ho | Kotlin bulata hai |
+| --- | --- |
+| `a + b` | `a.plus(b)` |
+| `a - b`, `a * b`, `a / b` | `minus`, `times`, `div` |
+| `a[i]` | `a.get(i)` |
+| `a[i] = v` | `a.set(i, v)` |
+| `a in b` | `b.contains(a)` |
+| `a > b` | `a.compareTo(b) > 0` |
+| `a()` | `a.invoke()` |
+
+<Quiz
+  question="Aap `operator fun compareTo` likhte ho. Kaun se operators chalne lagte hain?"
+  options={[
+    "Sirf `>`",
+    "`<`, `>`, `<=` aur `>=` — chaaron",
+    "Saari tulnaayein, `==` samet",
+  ]}
+  answer={1}
+  explanation="Chaaron relational operators `compareTo(...)` ko zero se milane mein badalte hain, isliye ek function poora set chalu kar deta hai. `==` alag hai — wo `equals` par jata hai, isiliye data class `==` deti hai par `<` nahi."
+/>
+
+## `inline` — lambda ki keemat
+
+Har lambda jo aap paas karte ho, aam taur par ek object hota hai. Tez chalte loop mein wo
+allocation jud-jud kar bhaari ho jata hai.
+
+```kotlin title="Inline.kt" numbered runnable
+inline fun repeatTwice(action: (Int) -> Unit) {
+    action(1); action(2)
+}
+
+fun main() = repeatTwice { println("run $it") }
+```
+
+`inline` function ki body — aur lambda ki body — call site par copy kar deta hai, isliye koi
+function object banta hi nahi.
+
+<Detail summary="Standard library ke collection functions sab inline kyun hain">
+`filter`, `map` aur `forEach` sab `inline` hain. Warna aapke app ka har `list.filter { }` ek
+lambda object banata. Inlining se ye bhi ho jata hai ki aap lambda ke andar `return` likhkar
+bahar wale function se laut sakte ho — asli function object ke saath ye namumkin hai.
+</Detail>
+
+<Tabs>
+  <Tab label="noinline">
+
+Ek parameter ko inline hone se rokta hai, taaki aap use rakh ya aage bhej sako.
+
+```kotlin title="Noinline.kt" numbered
+inline fun run2(a: () -> Unit, noinline b: () -> Unit): () -> Unit {
+    a()
+    return b        // sirf isliye mumkin hai ki b inline nahi hai
+}
+```
+
+  </Tab>
+  <Tab label="crossinline">
+
+Inline rehne deta hai, par non-local `return` mana kar deta hai — jab lambda kisi dusre object
+ke andar chalta ho tab zaroori.
+
+```kotlin title="Crossinline.kt" numbered
+inline fun onBackground(crossinline work: () -> Unit) {
+    Thread { work() }.start()      // baad mein chalega, isliye bulane wale se laut nahi sakte
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Common galtiyan
+
+<Pitfall title="Do jo faayda hi kha jati hain">
+**Bade function ko inline karna.** Body har call site par copy hoti hai, isliye bada `inline`
+function har jagah bytecode badha deta hai. Lambda lene wale functions inline karo; bas
+shaukiya inline mat karo. Bewajah ho to compiler khud chetavni deta hai.
+
+**Operator ka aisa matlab nikalna jo chaunka de.** `operator fun Money.minus` saaf hai.
+`operator fun User.plus(other: User)` nahi — do users ko jodne se hota kya hai, koi anda nahi
+laga sakta. Agar matlab turant saaf na ho, naam wala function likho.
+</Pitfall>
+
+## Practice
+
+1. `operator fun Money.unaryMinus()` jodo taaki `-a` chale, aur `operator fun div(n: Int)` bhi.
+2. `DateRange` class par `operator fun contains` banao taaki `date in range` saaf padhe.
+3. Lambda lene wala ek `inline` function likho, phir `inline` hatakar compiler ki parameter wali
+   chetavni padho.
+4. Kisi class mein `operator fun invoke()` jodo aur instance ko function ki tarah bulao. Ye kab
+   naam wale method se saaf hoga — aur kab bura?
+
+## Recap
+
+| Baat | Vivran |
+| --- | --- |
+| `operator` | Zaroori; tay naam ko chinh se jodta hai |
+| `compareTo` | Ek saath `<`, `>`, `<=`, `>=` chalu karta hai |
+| `equals` | `==` ke peeche; data class pehle se deti hai |
+| `inline` | Body copy karta hai; lambda object hata deta hai |
+| `noinline` / `crossinline` | Ek lambda ko chhod do, ya non-local return roko |
+| Aam niyam | Overload tabhi jab matlab saaf ho |

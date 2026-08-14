@@ -1,0 +1,133 @@
+---
+title: Operator overloading and inline functions
+description: Operators are function calls with a fixed name. Inline functions remove the object a lambda would otherwise allocate.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`a + b` is compiled as `a.plus(b)`. Overloading an operator means writing a function with the
+name Kotlin already looks for.
+</KeyIdea>
+
+## Making a type feel built in
+
+```kotlin title="Money.kt" numbered runnable
+data class Money(val paise: Int) {
+    operator fun plus(other: Money) = Money(paise + other.paise)
+    operator fun times(factor: Int) = Money(paise * factor)
+    operator fun compareTo(other: Money) = paise.compareTo(other.paise)
+
+    override fun toString() = "₹%.2f".format(paise / 100.0)
+}
+
+fun main() {
+    val a = Money(15000)
+    val b = Money(2500)
+    println(a + b)
+    println(b * 3)
+    println(a > b)          // uses compareTo
+}
+```
+
+The `operator` keyword is required. Without it the function is ordinary and `+` will not find it.
+
+| You write | Kotlin calls |
+| --- | --- |
+| `a + b` | `a.plus(b)` |
+| `a - b`, `a * b`, `a / b` | `minus`, `times`, `div` |
+| `a[i]` | `a.get(i)` |
+| `a[i] = v` | `a.set(i, v)` |
+| `a in b` | `b.contains(a)` |
+| `a > b` | `a.compareTo(b) > 0` |
+| `a()` | `a.invoke()` |
+
+<Quiz
+  question="You define `operator fun compareTo`. Which operators start working?"
+  options={[
+    "Only `>` ",
+    "`<`, `>`, `<=` and `>=`, all four",
+    "All comparisons including `==`",
+  ]}
+  answer={1}
+  explanation="All four relational operators are compiled to `compareTo(...)` against zero, so one function enables the set. `==` is separate — it maps to `equals`, which is why a data class gives you `==` but not `<`."
+/>
+
+## `inline` — what the lambda costs
+
+Every lambda you pass is normally an object. In a hot loop that allocation adds up.
+
+```kotlin title="Inline.kt" numbered runnable
+inline fun repeatTwice(action: (Int) -> Unit) {
+    action(1); action(2)
+}
+
+fun main() = repeatTwice { println("run $it") }
+```
+
+`inline` copies the function body — and the lambda body — into the call site, so no function
+object is created.
+
+<Detail summary="Why standard library collection functions are all inline">
+`filter`, `map` and `forEach` are `inline`. Without it, every `list.filter { }` in your app
+would allocate a lambda object. Inlining also lets you write `return` inside the lambda and
+return from the enclosing function, which is impossible with a real function object.
+</Detail>
+
+<Tabs>
+  <Tab label="noinline">
+
+Stops one parameter being inlined, so you can store or pass it on.
+
+```kotlin title="Noinline.kt" numbered
+inline fun run2(a: () -> Unit, noinline b: () -> Unit): () -> Unit {
+    a()
+    return b        // only possible because b is not inlined
+}
+```
+
+  </Tab>
+  <Tab label="crossinline">
+
+Keeps inlining, but forbids a non-local `return` — needed when the lambda runs inside another
+object.
+
+```kotlin title="Crossinline.kt" numbered
+inline fun onBackground(crossinline work: () -> Unit) {
+    Thread { work() }.start()      // runs later, so no returning from the caller
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Common mistakes
+
+<Pitfall title="Two that undo the benefit">
+**Inlining a large function.** The body is copied to every call site, so a big `inline` function
+grows the bytecode at each one. Inline functions that take lambdas; do not inline for its own
+sake. The compiler warns when it is pointless.
+
+**Overloading an operator into a surprising meaning.** `operator fun Money.minus` is obvious.
+`operator fun User.plus(other: User)` is not — nobody can guess what adding two users does.
+If the meaning is not immediately clear, use a named function.
+</Pitfall>
+
+## Practice
+
+1. Add `operator fun Money.unaryMinus()` so `-a` works, and `operator fun div(n: Int)`.
+2. Implement `operator fun contains` on a `DateRange` class so `date in range` reads naturally.
+3. Write an `inline` function taking a lambda, then remove `inline` and read the compiler's
+   warning about the parameter.
+4. Add `operator fun invoke()` to a class and call the instance like a function. When would that
+   be clearer than a named method — and when worse?
+
+## Recap
+
+| Point | Detail |
+| --- | --- |
+| `operator` | Required; maps a fixed name to a symbol |
+| `compareTo` | Enables `<`, `>`, `<=`, `>=` in one go |
+| `equals` | Behind `==`; a data class already provides it |
+| `inline` | Copies the body; removes the lambda object |
+| `noinline` / `crossinline` | Opt one lambda out, or forbid non-local return |
+| Rule of thumb | Overload only when the meaning is obvious |

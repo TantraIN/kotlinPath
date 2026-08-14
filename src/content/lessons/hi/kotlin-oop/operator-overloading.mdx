@@ -1,0 +1,134 @@
+---
+title: Operator overloading और inline functions
+description: Operators बस तय नाम वाले function calls हैं। Inline functions वह object हटा देते हैं जो lambda वरना बनाता।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`a + b` compile होकर `a.plus(b)` बनता है। Operator overload करना मतलब उस नाम का function लिखना जिसे
+Kotlin पहले से ढूँढता है।
+</KeyIdea>
+
+## अपने type को built-in जैसा बनाना
+
+```kotlin title="Money.kt" numbered runnable
+data class Money(val paise: Int) {
+    operator fun plus(other: Money) = Money(paise + other.paise)
+    operator fun times(factor: Int) = Money(paise * factor)
+    operator fun compareTo(other: Money) = paise.compareTo(other.paise)
+
+    override fun toString() = "₹%.2f".format(paise / 100.0)
+}
+
+fun main() {
+    val a = Money(15000)
+    val b = Money(2500)
+    println(a + b)
+    println(b * 3)
+    println(a > b)          // compareTo इस्तेमाल करता है
+}
+```
+
+`operator` keyword ज़रूरी है। उसके बिना function सादा रह जाता है और `+` उसे ढूँढ नहीं पाता।
+
+| आप लिखते हैं | Kotlin बुलाता है |
+| --- | --- |
+| `a + b` | `a.plus(b)` |
+| `a - b`, `a * b`, `a / b` | `minus`, `times`, `div` |
+| `a[i]` | `a.get(i)` |
+| `a[i] = v` | `a.set(i, v)` |
+| `a in b` | `b.contains(a)` |
+| `a > b` | `a.compareTo(b) > 0` |
+| `a()` | `a.invoke()` |
+
+<Quiz
+  question="आप `operator fun compareTo` लिखते हैं। कौन से operators चलने लगते हैं?"
+  options={[
+    "सिर्फ़ `>`",
+    "`<`, `>`, `<=` और `>=` — चारों",
+    "सारी तुलनाएँ, `==` समेत",
+  ]}
+  answer={1}
+  explanation="चारों relational operators `compareTo(...)` को zero से मिलाने में बदलते हैं, इसलिए एक function पूरा set चालू कर देता है। `==` अलग है — वह `equals` पर जाता है, इसीलिए data class `==` देती है पर `<` नहीं।"
+/>
+
+## `inline` — lambda की क़ीमत
+
+हर lambda जो आप pass करते हैं, आम तौर पर एक object होता है। तेज़ चलते loop में वह allocation जुड़-जुड़कर
+भारी हो जाता है।
+
+```kotlin title="Inline.kt" numbered runnable
+inline fun repeatTwice(action: (Int) -> Unit) {
+    action(1); action(2)
+}
+
+fun main() = repeatTwice { println("run $it") }
+```
+
+`inline` function की body — और lambda की body — call site पर copy कर देता है, इसलिए कोई function
+object बनता ही नहीं।
+
+<Detail summary="Standard library के collection functions सब inline क्यों हैं">
+`filter`, `map` और `forEach` सब `inline` हैं। वरना आपके app का हर `list.filter { }` एक lambda object
+बनाता। Inlining से यह भी हो जाता है कि आप lambda के अंदर `return` लिखकर बाहर वाले function से लौट सकते
+हैं — असली function object के साथ यह नामुमकिन है।
+</Detail>
+
+<Tabs>
+  <Tab label="noinline">
+
+एक parameter को inline होने से रोकता है, ताकि आप उसे रख या आगे भेज सकें।
+
+```kotlin title="Noinline.kt" numbered
+inline fun run2(a: () -> Unit, noinline b: () -> Unit): () -> Unit {
+    a()
+    return b        // सिर्फ़ इसलिए मुमकिन है कि b inline नहीं है
+}
+```
+
+  </Tab>
+  <Tab label="crossinline">
+
+Inline रहने देता है, पर non-local `return` मना कर देता है — जब lambda किसी दूसरे object के अंदर चलता
+हो तब ज़रूरी।
+
+```kotlin title="Crossinline.kt" numbered
+inline fun onBackground(crossinline work: () -> Unit) {
+    Thread { work() }.start()      // बाद में चलेगा, इसलिए बुलाने वाले से लौट नहीं सकते
+}
+```
+
+  </Tab>
+</Tabs>
+
+## आम ग़लतियाँ
+
+<Pitfall title="दो जो फ़ायदा ही खा जाती हैं">
+**बड़े function को inline करना।** Body हर call site पर copy होती है, इसलिए बड़ा `inline` function हर
+जगह bytecode बढ़ा देता है। Lambda लेने वाले functions inline कीजिए; बस शौक़िया inline मत कीजिए। बेवजह
+हो तो compiler ख़ुद चेतावनी देता है।
+
+**Operator का ऐसा मतलब निकालना जो चौंका दे।** `operator fun Money.minus` साफ़ है।
+`operator fun User.plus(other: User)` नहीं — दो users को जोड़ने से होता क्या है, कोई अंदाज़ा नहीं लगा
+सकता। अगर मतलब तुरंत साफ़ न हो, नाम वाला function लिखिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `operator fun Money.unaryMinus()` जोड़िए ताकि `-a` चले, और `operator fun div(n: Int)` भी।
+2. `DateRange` class पर `operator fun contains` बनाइए ताकि `date in range` साफ़ पढ़े।
+3. Lambda लेने वाला एक `inline` function लिखिए, फिर `inline` हटाकर compiler की parameter वाली चेतावनी
+   पढ़िए।
+4. किसी class में `operator fun invoke()` जोड़िए और instance को function की तरह बुलाइए। यह कब नाम वाले
+   method से साफ़ होगा — और कब बुरा?
+
+## सारांश
+
+| बात | विवरण |
+| --- | --- |
+| `operator` | ज़रूरी; तय नाम को चिह्न से जोड़ता है |
+| `compareTo` | एक साथ `<`, `>`, `<=`, `>=` चालू करता है |
+| `equals` | `==` के पीछे; data class पहले से देती है |
+| `inline` | Body copy करता है; lambda object हटा देता है |
+| `noinline` / `crossinline` | एक lambda को छोड़ दीजिए, या non-local return रोकिए |
+| आम नियम | Overload तभी जब मतलब साफ़ हो |
