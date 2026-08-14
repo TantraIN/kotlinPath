@@ -1,0 +1,147 @@
+---
+title: CoroutineScope, Job and CoroutineContext
+description: A scope decides how long coroutines live. Getting that boundary right is what stops work from outliving the screen that started it.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Every coroutine belongs to a **scope**. Cancel the scope and every coroutine inside it is
+cancelled too — which is how work stops when a screen goes away.
+</KeyIdea>
+
+## Scope is a lifetime, not a place
+
+```kotlin title="Scope.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val scope = CoroutineScope(Job())
+
+    scope.launch { repeat(5) { println("tick $it"); delay(100) } }
+    delay(250)
+
+    scope.cancel()              // everything inside stops
+    delay(200)
+    println("done")
+}
+```
+
+The coroutine is not asked politely to finish. The whole scope is cancelled, and its children
+with it.
+
+<ClassDiagram
+  base={{ name: "CoroutineScope", kind: "holds a context", members: ["Job", "Dispatcher", "CoroutineName"], accent: "violet", highlight: true }}
+  children={[
+    { name: "launch", kind: "child job", members: [], accent: "emerald" },
+    { name: "launch", kind: "child job", members: [], accent: "emerald" },
+    { name: "async", kind: "child job", members: [], accent: "sky" },
+  ]}
+  relation="parent of"
+  caption="Cancelling the parent cancels every child. A child failing may also cancel the parent — unless the parent is a SupervisorJob."
+/>
+
+## The context is a set of parts
+
+`CoroutineContext` is a map-like set of elements you can combine with `+`.
+
+```kotlin title="Context.kt" numbered
+val scope = CoroutineScope(
+    SupervisorJob() + Dispatchers.Main + CoroutineName("profile")
+)
+```
+
+| Element | Answers |
+| --- | --- |
+| `Job` | How is this cancelled, and who is its parent? |
+| `CoroutineDispatcher` | Which thread does it run on? |
+| `CoroutineName` | What shows up in the debugger? |
+| `CoroutineExceptionHandler` | Where do uncaught failures go? |
+
+<Quiz
+  question="One child of a scope throws. What happens to its siblings under a plain `Job`, and under a `SupervisorJob`?"
+  options={[
+    "Both cases: only the failing child stops",
+    "Plain `Job` cancels the parent and all siblings; `SupervisorJob` isolates the failure",
+    "Both cases: the whole scope is cancelled",
+  ]}
+  answer={1}
+  explanation="With a regular `Job`, failure travels upward: the child cancels its parent, which cancels every sibling. `SupervisorJob` breaks that upward path, so one failed request does not tear down the rest of the screen. That is why UI scopes use it and parallel-decomposition scopes usually do not."
+/>
+
+## Scopes you get for free on Android
+
+<Tabs>
+  <Tab label="viewModelScope">
+
+Cancelled when the ViewModel is cleared. This is the default choice for screen logic.
+
+```kotlin title="ViewModel.kt" numbered
+class ProfileViewModel : ViewModel() {
+    fun load() = viewModelScope.launch {
+        val user = repository.user()      // cancelled if the user leaves
+    }
+}
+```
+
+  </Tab>
+  <Tab label="lifecycleScope">
+
+Tied to an Activity or Fragment lifecycle. Use for work that is genuinely about the view.
+
+```kotlin title="Lifecycle.kt" numbered
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+```
+
+  </Tab>
+  <Tab label="Your own">
+
+For a component with its own lifetime — a repository, a cache.
+
+```kotlin title="Own.kt" numbered
+class SyncEngine {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    fun stop() = scope.cancel()          // you must call this
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="GlobalScope, and why it is effectively banned">
+`GlobalScope` has no lifetime — nothing ever cancels it. Work started there keeps running after
+the screen is gone, holding whatever it captured. It is the coroutine equivalent of a leaked
+thread, and the reason `viewModelScope` exists.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Two that leak">
+**Creating a scope and never cancelling it.** A `CoroutineScope` you build by hand is yours to
+cancel. If the owning object has a lifecycle, cancel in its teardown.
+
+**Using `GlobalScope` because it compiles.** It always compiles. It also survives the screen,
+the ViewModel, and any attempt to cancel it.
+</Pitfall>
+
+## Practice
+
+1. Build a scope with a plain `Job`, launch three children, throw in one, and observe the other
+   two. Swap in `SupervisorJob` and re-run.
+2. Add `CoroutineName` to a scope and print `coroutineContext[CoroutineName]` inside.
+3. Start work in `viewModelScope`, then navigate away and log in a `finally` block to prove the
+   cancellation happened.
+4. Explain in one sentence why `GlobalScope.launch` in a Fragment is a leak.
+
+## Recap
+
+| Piece | Answers |
+| --- | --- |
+| `CoroutineScope` | How long may this work live? |
+| `Job` | Cancellation and parent-child structure |
+| `SupervisorJob` | A child's failure must not kill its siblings |
+| `CoroutineContext` | The set of elements, combined with `+` |
+| `viewModelScope` | The default on Android; cancelled with the ViewModel |

@@ -1,0 +1,148 @@
+---
+title: CoroutineScope, Job aur CoroutineContext
+description: Scope tay karta hai ki coroutines kitna jiyenge. Yahi seema theek rakhna kaam ko us screen se zyada jeene se rokta hai jisne use shuru kiya tha.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Har coroutine kisi **scope** ka hota hai. Scope cancel karo aur uske andar ka har coroutine
+cancel ho jata hai — screen jaate hi kaam isi tarah rukta hai.
+</KeyIdea>
+
+## Scope jagah nahi, umar hai
+
+```kotlin title="Scope.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val scope = CoroutineScope(Job())
+
+    scope.launch { repeat(5) { println("tick $it"); delay(100) } }
+    delay(250)
+
+    scope.cancel()              // andar ka sab ruk jata hai
+    delay(200)
+    println("done")
+}
+```
+
+Coroutine se vinamrata se khatam hone ko nahi kaha jata. Poora scope cancel hota hai, aur uske
+saare bacche uske saath.
+
+<ClassDiagram
+  base={{ name: "CoroutineScope", kind: "context rakhta hai", members: ["Job", "Dispatcher", "CoroutineName"], accent: "violet", highlight: true }}
+  children={[
+    { name: "launch", kind: "child job", members: [], accent: "emerald" },
+    { name: "launch", kind: "child job", members: [], accent: "emerald" },
+    { name: "async", kind: "child job", members: [], accent: "sky" },
+  ]}
+  relation="parent hai"
+  caption="Parent cancel karo to har child cancel. Child fail ho to parent bhi cancel ho sakta hai — jab tak parent SupervisorJob na ho."
+/>
+
+## Context kai hisson ka set hai
+
+`CoroutineContext` ek map jaisa set hai jise aap `+` se jod sakte ho.
+
+```kotlin title="Context.kt" numbered
+val scope = CoroutineScope(
+    SupervisorJob() + Dispatchers.Main + CoroutineName("profile")
+)
+```
+
+| Hissa | Kis sawal ka jawab |
+| --- | --- |
+| `Job` | Ye cancel kaise hoga, aur iska parent kaun hai? |
+| `CoroutineDispatcher` | Ye kis thread par chalega? |
+| `CoroutineName` | Debugger mein kya dikhega? |
+| `CoroutineExceptionHandler` | Bina pakdi galtiyan kahan jayengi? |
+
+<Quiz
+  question="Scope ka ek child exception fenkta hai. Saade `Job` ke saath uske bhai-behnon ka kya hoga, aur `SupervisorJob` ke saath?"
+  options={[
+    "Dono mein: sirf fail hone wala child rukta hai",
+    "Saada `Job` parent aur saare bhai-behnon ko cancel kar deta hai; `SupervisorJob` galti ko wahin rok deta hai",
+    "Dono mein: poora scope cancel ho jata hai",
+  ]}
+  answer={1}
+  explanation="Saade `Job` mein galti upar ki taraf jati hai: child parent ko cancel karta hai, aur parent har bhai-behen ko. `SupervisorJob` us upar wale raste ko tod deta hai, isliye ek fail hui request poori screen nahi giraati. Isiliye UI scopes usi ka istemal karte hain aur parallel kaam baantne wale scopes aam taur par nahi."
+/>
+
+## Android par muft milne wale scopes
+
+<Tabs>
+  <Tab label="viewModelScope">
+
+ViewModel clear hote hi cancel. Screen ke logic ke liye yahi default chunav hai.
+
+```kotlin title="ViewModel.kt" numbered
+class ProfileViewModel : ViewModel() {
+    fun load() = viewModelScope.launch {
+        val user = repository.user()      // user chala jaye to cancel
+    }
+}
+```
+
+  </Tab>
+  <Tab label="lifecycleScope">
+
+Activity ya Fragment ke lifecycle se juda hua. Us kaam ke liye jo sach mein view ka hai.
+
+```kotlin title="Lifecycle.kt" numbered
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+```
+
+  </Tab>
+  <Tab label="Apna">
+
+Aise component ke liye jiski apni umar ho — repository, cache.
+
+```kotlin title="Own.kt" numbered
+class SyncEngine {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    fun stop() = scope.cancel()          // ye aapko khud bulana padega
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="GlobalScope, aur wo lagbhag mana kyun hai">
+`GlobalScope` ki koi umar hi nahi — use kabhi kuch cancel nahi karta. Wahan shuru kiya kaam
+screen jaane ke baad bhi chalta rehta hai, aur jo pakda tha use pakde rehta hai. Ye coroutine
+wala leaked thread hai, aur `viewModelScope` ke hone ki wajah bhi.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Do jo leak karti hain">
+**Scope banakar kabhi cancel na karna.** Jo `CoroutineScope` aapne haath se banaya, use cancel
+karna bhi aapka kaam hai. Agar rakhne wale object ka lifecycle hai, to uske khatam hone par
+cancel karo.
+
+**`GlobalScope` isliye use karna kyunki wo compile ho jata hai.** Wo hamesha compile hota hai.
+Aur screen, ViewModel aur cancel karne ki har koshish — teeno se zyada jeeta hai.
+</Pitfall>
+
+## Practice
+
+1. Saade `Job` se scope banao, teen children launch karo, ek mein exception fenko, aur baaki do
+   ko dekho. Phir `SupervisorJob` daalkar dobara chalao.
+2. Scope mein `CoroutineName` jodo aur andar `coroutineContext[CoroutineName]` print karo.
+3. `viewModelScope` mein kaam shuru karo, phir screen chhodo aur `finally` block mein log karke
+   sabit karo ki cancellation hui.
+4. Ek line mein samjhao ki Fragment mein `GlobalScope.launch` leak kyun hai.
+
+## Recap
+
+| Cheez | Kis sawal ka jawab |
+| --- | --- |
+| `CoroutineScope` | Ye kaam kitna jee sakta hai? |
+| `Job` | Cancellation aur parent-child dhaancha |
+| `SupervisorJob` | Ek child ki galti bhai-behnon ko na maare |
+| `CoroutineContext` | Hisson ka set, `+` se juda hua |
+| `viewModelScope` | Android ka default; ViewModel ke saath cancel |
