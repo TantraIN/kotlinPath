@@ -1,0 +1,172 @@
+---
+title: Resources, localization aur dark theme
+description: res/ files ka folder nahi hai. Wo ek lookup table hai jiski key device ki configuration hai, aur file aap khud kabhi nahi chunte.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Aap resource ka naam lete ho; **file system chunta hai**. Har qualifier — bhasha, night mode,
+screen ki chaudai, density — us lookup ka ek aur column hai, aur bina qualifier wala folder wo
+row hai jo hamesha honi hi chahiye.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Code mein likhi hui string na translate ho sakti hai, na chhoti screen par kisi chhoti string se
+badli ja sakti hai, aur na koi aisa aadmi use dekh sakta hai jo aapka Kotlin nahi padh raha.
+
+Yahi ghumav dark theme aur daayen-se-baayen layouts ko bhi chalata hai. Ek jagah ise chhod do aur
+aapne us screen ko chupchap teeno se bahar kar diya.
+
+## Qualifiers hi poora tarika hain
+
+```text title="app/src/main/res/" no-glossary
+values/strings.xml           <- default; hona hi chahiye
+values-hi/strings.xml        <- Hindi
+values-night/colors.xml      <- dark theme
+values-sw600dp/dimens.xml    <- kam se kam 600dp chaudi screens
+layout/screen.xml
+layout-land/screen.xml       <- landscape
+drawable-xxhdpi/logo.png     <- density bucket
+```
+
+| Qualifier | Kab chuna jata hai |
+| --- | --- |
+| `-hi`, `-fr` | Device ki bhasha mel khaye |
+| `-night` | Dark theme chalu ho |
+| `-land` | Device landscape mein ho |
+| `-sw600dp` | Screen ki sabse chhoti chaudai kam se kam 600dp ho |
+| `-xxhdpi` | Screen ka density bucket mel khaye |
+| `-ldrtl` | Layout daayen se baayen chal raha ho |
+
+<Note>
+Bina qualifier wala folder har cheez ka fallback hai. Agar koi resource sirf `values-hi` mein
+hai, to kisi dusri bhasha wale device ke paas lautne ko kuch nahi bachta aur build fail ho jati
+hai.
+</Note>
+
+## Strings, theek tarike se
+
+```xml title="res/values/strings.xml" numbered
+<resources>
+    <string name="greeting">Hello, %1$s</string>
+    <string name="order_total">Total: %1$s</string>
+
+    <plurals name="item_count">
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
+</resources>
+```
+
+```kotlin title="Strings.kt" numbered
+// Placeholders, jod-jaad nahi — bhashaon mein shabdon ka order alag hota hai
+val hello = getString(R.string.greeting, user.name)
+
+// Plurals: count do baar jata hai, ek baar chunne ko aur ek baar bharne ko
+val label = resources.getQuantityString(R.plurals.item_count, count, count)
+```
+
+<Quiz
+  question="Aapne `values-fr/strings.xml` joda jismein aapki 40 mein se 3 strings hain. French device par kya dikhega?"
+  options={[
+    "Sirf wo 3 strings; baaki khaali",
+    "Wo 3 French mein, baaki 37 default folder se",
+    "Kuch nahi — adhoora translation build error hai",
+  ]}
+  answer={1}
+  explanation="Chunav har resource ke liye alag hota hai, har file ke liye nahi. Har naam ke liye system sabse mel khata qualified version uthata hai aur na mile to bina qualifier wale folder par laut aata hai, isliye adhoore translations poori tarah jayaz hain aur screen mili-juli bhasha mein dikhti hai. Isiliye aadha-adhoora translation chupchap ship ho jata hai, aur isiliye translation poora hai ya nahi ye khud jaanchna padta hai — lint ka MissingTranslation theek yahi karta hai."
+/>
+
+## Dark theme ek qualifier hai, koi feature nahi
+
+```xml title="res/values/colors.xml"
+<color name="surface">#FFFBF7</color>
+```
+
+```xml title="res/values-night/colors.xml"
+<color name="surface">#14161F</color>
+```
+
+`DayNight` theme ke saath poora tarika bas itna hai. Jo kuch `@color/surface` padhta hai wo apne
+aap badal jata hai, aur aapke Kotlin mein dark mode ka zikr tak nahi aata.
+
+<Pitfall bare>
+Layout ya code mein seedhe likha koi bhi rang — `#FFFFFF`, `Color.WHITE` — us view ko is badlav
+se bahar kar deta hai. Dark theme ke bugs lagbhag hamesha koi aisa hi rang hote hain jo
+jaldbaazi mein likh diya gaya.
+</Pitfall>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Build time" meta="resource table">
+    Har resource ka naam `R` mein ek integer constant ban jata hai, aur har qualified roop APK ke
+    andar ek table mein uske saamne darj ho jata hai.
+  </TimelineItem>
+  <TimelineItem title="Run time" meta="sabse mel khata jeetta hai">
+    System device ki configuration ko har roop se milata hai aur sabse kareebi uthata hai, ek tay
+    order ke saath — bhasha density se jeetti hai, density orientation se.
+  </TimelineItem>
+  <TimelineItem title="Configuration change" meta="dobara chunav">
+    Ghumane ya dark mode par jaane se configuration badalti hai, isliye activity dobara banti hai
+    aur har lookup nayi configuration par dobara chalta hai. Yahi dobara banne ki asli wajah hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Language tags, aur `values-in` galat kyun dikhta hai">
+Zyadatar bhashaon ke liye do akshar kaafi hain: `values-hi`, `values-ta`, `values-fr`. Kisi
+region ke liye BCP-47 wala roop chahiye: `values-b+pt+BR`, na ki `values-pt-BR`.
+
+Kuch purane codes logon ko uljha dete hain. Indonesian `in` hai, `id` nahi, kyunki Java ne
+dashkon pehle purana ISO code jama diya tha. Hebrew `iw` hai aur Yiddish `ji`, isi wajah se.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo sirf dusri bhashaon mein saamne aati hain">
+**Jod-jaad se wakya banana.** `getString(R.string.hello) + " " + name` shabdon ka order angrezi
+par jama deta hai. Placeholder use karo taaki translator use hila sake.
+
+**Ek se zyada argument ke saath `%s`.** Do ya zyada placeholders hon to jagah wala roop chahiye —
+`%1$s`, `%2$s` — warna jo translator unhe aage-peechhe karega wo chupchap substitution tod dega.
+
+**Default folder bhool jana.** Jo resource sirf `values-hi` mein hai wo build error hai, aur
+theek hi hai: baaki har device ke paas dikhane ko kuch hota hi nahi.
+
+**Code mein likhe rang, aur `left`/`right`.** Dono chupchap bahar kar dete hain — pehla dark
+theme se, dusra daayen-se-baayen bhashaon se. `start` aur `end` use karo.
+</Pitfall>
+
+## Practice
+
+1. Ek screen ki har hardcoded string `strings.xml` mein le jao. Lint chalao aur dekho ki jo
+   chhoot gayin unke baare mein wo kya kehta hai.
+2. `values-hi/strings.xml` jodo jismein teen strings translate hon. Device ki bhasha badlo aur
+   confirm karo ki baaki strings gayab nahi hotin, fallback par aati hain.
+3. `values-night/colors.xml` jodo aur dark mode chalu karo. Aisa koi view dhundho jo nahi badalta,
+   aur wajah pata karo.
+4. Ek `plurals` entry likho aur use 0, 1 aur 2 ke liye print karo. Phir aisi bhasha par jao jiske
+   plural niyam alag hain, aur wahi teeno dobara print karo.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `res/` | Device configuration ki key wala lookup table |
+| Qualifier | Folder ke peechhe laga suffix, jo batata hai kab wo roop lagega |
+| Bina qualifier wala folder | Zaruri fallback |
+| Chunav | Har resource naam ke liye alag, har file ke liye nahi |
+| Placeholders | `%1$s`, taaki translators order badal sakein |
+| `plurals` | `getQuantityString`, count do baar |
+| `values-night` | `DayNight` theme ke saath poora dark theme |
+| `start` / `end` | `left` / `right` ki jagah |
+
+<Interview title="Har us app ke liye aata hai jo ek desh se bahar jati hai">
+"Android tay kaise karta hai ki kaun si `strings.xml` use ho?"
+
+Batane laayak jawab ye hai ki chunav har resource ke liye hota hai, har file ke liye nahi: system
+har naam ke liye sabse mel khata qualified roop dhundhta hai aur na mile to bina qualifier wale
+folder par laut aata hai. Ye jod dena ki isiliye adhoore translations chupchap ship ho jate hain
+— aur lint ka `MissingTranslation` usi ki jaanch hai — paribhasha ko tajurbe mein badal deta hai.
+</Interview>

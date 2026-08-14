@@ -1,0 +1,171 @@
+---
+title: Resources, localization and dark theme
+description: res/ is not a folder of files. It is a lookup table keyed by the device's configuration, and you never pick the file yourself.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+You name a resource; **the system picks the file**. Every qualifier — language, night mode,
+screen width, density — is another column in that lookup, and the unqualified folder is the row
+that must always exist.
+</KeyIdea>
+
+## Why this matters
+
+A hardcoded string cannot be translated, cannot be swapped for a shorter one on a small screen,
+and cannot be reviewed by anyone who is not reading your Kotlin.
+
+The same indirection powers dark theme and right-to-left layouts. Skip it in one place and you
+have quietly opted that screen out of all three.
+
+## Qualifiers are the whole mechanism
+
+```text title="app/src/main/res/" no-glossary
+values/strings.xml           <- the default; must exist
+values-hi/strings.xml        <- Hindi
+values-night/colors.xml      <- dark theme
+values-sw600dp/dimens.xml    <- screens at least 600dp wide
+layout/screen.xml
+layout-land/screen.xml       <- landscape
+drawable-xxhdpi/logo.png     <- density bucket
+```
+
+| Qualifier | Selected when |
+| --- | --- |
+| `-hi`, `-fr` | The device language matches |
+| `-night` | Dark theme is active |
+| `-land` | The device is in landscape |
+| `-sw600dp` | The smallest screen dimension is at least 600dp |
+| `-xxhdpi` | The screen density bucket matches |
+| `-ldrtl` | The layout direction is right-to-left |
+
+<Note>
+The unqualified folder is the fallback for everything. If a resource exists only in `values-hi`,
+a device in any other language has nothing to fall back to and the build fails.
+</Note>
+
+## Strings, properly
+
+```xml title="res/values/strings.xml" numbered
+<resources>
+    <string name="greeting">Hello, %1$s</string>
+    <string name="order_total">Total: %1$s</string>
+
+    <plurals name="item_count">
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
+</resources>
+```
+
+```kotlin title="Strings.kt" numbered
+// Placeholders, not concatenation — word order differs between languages
+val hello = getString(R.string.greeting, user.name)
+
+// Plurals: the count is passed twice, once to choose and once to substitute
+val label = resources.getQuantityString(R.plurals.item_count, count, count)
+```
+
+<Quiz
+  question="You add `values-fr/strings.xml` containing 3 of your 40 strings. What does a French device show?"
+  options={[
+    "Only those 3 strings; the rest are blank",
+    "Those 3 in French, the other 37 from the default folder",
+    "Nothing — an incomplete translation is a build error",
+  ]}
+  answer={1}
+  explanation="Resolution happens per resource, not per file. For each name the system takes the best-matching qualified version and otherwise falls back to the unqualified folder, so partial translations are perfectly legal and produce a mixed-language screen. That is why a half-finished translation ships silently instead of failing loudly, and why translation completeness is something you have to check for — lint's MissingTranslation does exactly that."
+/>
+
+## Dark theme is a qualifier, not a feature
+
+```xml title="res/values/colors.xml"
+<color name="surface">#FFFBF7</color>
+```
+
+```xml title="res/values-night/colors.xml"
+<color name="surface">#14161F</color>
+```
+
+With a `DayNight` theme, that is the entire mechanism. Everything that reads `@color/surface`
+flips automatically, and nothing in your Kotlin mentions dark mode at all.
+
+<Pitfall bare>
+Any colour written directly in a layout or in code — `#FFFFFF`, `Color.WHITE` — opts that view
+out of the switch. Dark theme bugs are almost always a hardcoded colour someone was in a hurry
+about.
+</Pitfall>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Build time" meta="the resource table">
+    Every resource name becomes an integer constant in `R`, and every qualified variant is
+    recorded against it in a table inside the APK.
+  </TimelineItem>
+  <TimelineItem title="Run time" meta="best match wins">
+    The system compares the device configuration against each variant and picks the closest,
+    with a fixed precedence order — language beats density beats orientation.
+  </TimelineItem>
+  <TimelineItem title="Configuration change" meta="resolve again">
+    Rotating or switching to dark mode changes the configuration, so the activity is recreated
+    and every lookup runs again against the new one. This is why the recreation exists at all.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Language tags, and why `values-in` looks wrong">
+Two-letter codes work for most languages: `values-hi`, `values-ta`, `values-fr`. For a region
+you need the BCP-47 form: `values-b+pt+BR`, not `values-pt-BR`.
+
+A few legacy codes trip people up. Indonesian is `in`, not `id`, because Java froze the old ISO
+code decades ago. Hebrew is `iw` and Yiddish is `ji` for the same reason.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that surface only in other languages">
+**Building sentences by concatenation.** `getString(R.string.hello) + " " + name` fixes the word
+order to English. Use a placeholder so the translator can move it.
+
+**Using `%s` with more than one argument.** With two or more placeholders you need positional
+forms — `%1$s`, `%2$s` — or a translator who reorders them silently breaks the substitution.
+
+**Forgetting the default folder.** A resource that exists only in `values-hi` is a build error,
+and rightly so: every other device would have nothing to show.
+
+**Hardcoded colours and `left`/`right`.** Both quietly opt out — the first from dark theme, the
+second from right-to-left languages. Use `start` and `end`.
+</Pitfall>
+
+## Practice
+
+1. Move every hardcoded string on one screen into `strings.xml`. Run lint and see what it says
+   about the ones you missed.
+2. Add `values-hi/strings.xml` with three strings translated. Switch the device language and
+   confirm the other strings fall back rather than disappearing.
+3. Add `values-night/colors.xml` and toggle dark mode. Find any view that does not change and
+   work out why.
+4. Write a `plurals` entry and print it for 0, 1 and 2. Then switch to a language with different
+   plural rules and print the same three.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `res/` | A lookup table keyed by device configuration |
+| Qualifier | A folder suffix that narrows when a variant applies |
+| Unqualified folder | The mandatory fallback |
+| Resolution | Per resource name, not per file |
+| Placeholders | `%1$s`, so translators can reorder |
+| `plurals` | `getQuantityString`, count passed twice |
+| `values-night` | All of dark theme, with a `DayNight` theme |
+| `start` / `end` | Instead of `left` / `right` |
+
+<Interview title="Comes up for any app that ships outside one country">
+"How does Android decide which `strings.xml` to use?"
+
+The answer worth giving is that resolution is per resource, not per file: the system finds the
+best-matching qualified variant for each name and falls back to the unqualified folder
+otherwise. Adding that this is why partial translations ship silently — and that lint's
+`MissingTranslation` is the check for it — turns a definition into experience.
+</Interview>

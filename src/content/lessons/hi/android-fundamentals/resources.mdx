@@ -1,0 +1,170 @@
+---
+title: Resources, localization और dark theme
+description: res/ files का folder नहीं है। वह एक lookup table है जिसकी key device की configuration है, और file आप खुद कभी नहीं चुनते।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+आप resource का नाम लेते हैं; **file system चुनता है**। हर qualifier — भाषा, night mode, screen
+की चौड़ाई, density — उस lookup का एक और column है, और बिना qualifier वाला folder वह row है जो
+हमेशा होनी ही चाहिए।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Code में लिखी हुई string न translate हो सकती है, न छोटी screen पर किसी छोटी string से बदली जा
+सकती है, और न कोई ऐसा आदमी उसे देख सकता है जो आपका Kotlin नहीं पढ़ रहा।
+
+यही घुमाव dark theme और दाएँ-से-बाएँ layouts को भी चलाता है। एक जगह इसे छोड़ दीजिए और आपने उस
+screen को चुपचाप तीनों से बाहर कर दिया।
+
+## Qualifiers ही पूरा तरीका हैं
+
+```text title="app/src/main/res/" no-glossary
+values/strings.xml           <- default; होना ही चाहिए
+values-hi/strings.xml        <- हिंदी
+values-night/colors.xml      <- dark theme
+values-sw600dp/dimens.xml    <- कम से कम 600dp चौड़ी screens
+layout/screen.xml
+layout-land/screen.xml       <- landscape
+drawable-xxhdpi/logo.png     <- density bucket
+```
+
+| Qualifier | कब चुना जाता है |
+| --- | --- |
+| `-hi`, `-fr` | Device की भाषा मेल खाए |
+| `-night` | Dark theme चालू हो |
+| `-land` | Device landscape में हो |
+| `-sw600dp` | Screen की सबसे छोटी चौड़ाई कम से कम 600dp हो |
+| `-xxhdpi` | Screen का density bucket मेल खाए |
+| `-ldrtl` | Layout दाएँ से बाएँ चल रहा हो |
+
+<Note>
+बिना qualifier वाला folder हर चीज का fallback है। अगर कोई resource सिर्फ `values-hi` में है, तो
+किसी दूसरी भाषा वाले device के पास लौटने को कुछ नहीं बचता और build fail हो जाती है।
+</Note>
+
+## Strings, ठीक तरीके से
+
+```xml title="res/values/strings.xml" numbered
+<resources>
+    <string name="greeting">Hello, %1$s</string>
+    <string name="order_total">Total: %1$s</string>
+
+    <plurals name="item_count">
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
+</resources>
+```
+
+```kotlin title="Strings.kt" numbered
+// Placeholders, जोड़-जाड़ नहीं — भाषाओं में शब्दों का क्रम अलग होता है
+val hello = getString(R.string.greeting, user.name)
+
+// Plurals: count दो बार जाता है, एक बार चुनने को और एक बार भरने को
+val label = resources.getQuantityString(R.plurals.item_count, count, count)
+```
+
+<Quiz
+  question="आपने `values-fr/strings.xml` जोड़ा जिसमें आपकी 40 में से 3 strings हैं। French device पर क्या दिखेगा?"
+  options={[
+    "सिर्फ वे 3 strings; बाकी खाली",
+    "वे 3 French में, बाकी 37 default folder से",
+    "कुछ नहीं — अधूरा translation build error है",
+  ]}
+  answer={1}
+  explanation="चुनाव हर resource के लिए अलग होता है, हर file के लिए नहीं। हर नाम के लिए system सबसे मेल खाता qualified version उठाता है और न मिले तो बिना qualifier वाले folder पर लौट आता है, इसलिए अधूरे translations पूरी तरह जायज हैं और screen मिली-जुली भाषा में दिखती है। इसीलिए आधा-अधूरा translation चुपचाप ship हो जाता है, और इसीलिए translation पूरा है या नहीं यह खुद जाँचना पड़ता है — lint का MissingTranslation ठीक यही करता है।"
+/>
+
+## Dark theme एक qualifier है, कोई feature नहीं
+
+```xml title="res/values/colors.xml"
+<color name="surface">#FFFBF7</color>
+```
+
+```xml title="res/values-night/colors.xml"
+<color name="surface">#14161F</color>
+```
+
+`DayNight` theme के साथ पूरा तरीका बस इतना है। जो कुछ `@color/surface` पढ़ता है वह अपने आप बदल
+जाता है, और आपके Kotlin में dark mode का जिक्र तक नहीं आता।
+
+<Pitfall bare>
+Layout या code में सीधे लिखा कोई भी रंग — `#FFFFFF`, `Color.WHITE` — उस view को इस बदलाव से बाहर
+कर देता है। Dark theme के bugs लगभग हमेशा कोई ऐसा ही रंग होते हैं जो जल्दबाजी में लिख दिया गया।
+</Pitfall>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="Build time" meta="resource table">
+    हर resource का नाम `R` में एक integer constant बन जाता है, और हर qualified रूप APK के अंदर
+    एक table में उसके सामने दर्ज हो जाता है।
+  </TimelineItem>
+  <TimelineItem title="Run time" meta="सबसे मेल खाता जीतता है">
+    System device की configuration को हर रूप से मिलाता है और सबसे करीबी उठाता है, एक तय क्रम के
+    साथ — भाषा density से जीतती है, density orientation से।
+  </TimelineItem>
+  <TimelineItem title="Configuration change" meta="दोबारा चुनाव">
+    घुमाने या dark mode पर जाने से configuration बदलती है, इसलिए activity दोबारा बनती है और हर
+    lookup नई configuration पर दोबारा चलता है। यही दोबारा बनने की असली वजह है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Language tags, और `values-in` गलत क्यों दिखता है">
+ज्यादातर भाषाओं के लिए दो अक्षर काफी हैं: `values-hi`, `values-ta`, `values-fr`। किसी region के
+लिए BCP-47 वाला रूप चाहिए: `values-b+pt+BR`, न कि `values-pt-BR`।
+
+कुछ पुराने codes लोगों को उलझा देते हैं। Indonesian `in` है, `id` नहीं, क्योंकि Java ने दशकों
+पहले पुराना ISO code जमा दिया था। Hebrew `iw` है और Yiddish `ji`, इसी वजह से।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो सिर्फ दूसरी भाषाओं में सामने आती हैं">
+**जोड़-जाड़ से वाक्य बनाना।** `getString(R.string.hello) + " " + name` शब्दों का क्रम अंग्रेजी
+पर जमा देता है। Placeholder इस्तेमाल कीजिए ताकि translator उसे हिला सके।
+
+**एक से ज्यादा argument के साथ `%s`।** दो या ज्यादा placeholders हों तो जगह वाला रूप चाहिए —
+`%1$s`, `%2$s` — वरना जो translator उन्हें आगे-पीछे करेगा वह चुपचाप substitution तोड़ देगा।
+
+**Default folder भूल जाना।** जो resource सिर्फ `values-hi` में है वह build error है, और ठीक ही
+है: बाकी हर device के पास दिखाने को कुछ होता ही नहीं।
+
+**Code में लिखे रंग, और `left`/`right`।** दोनों चुपचाप बाहर कर देते हैं — पहला dark theme से,
+दूसरा दाएँ-से-बाएँ भाषाओं से। `start` और `end` इस्तेमाल कीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. एक screen की हर hardcoded string `strings.xml` में ले जाइए। Lint चलाइए और देखिए कि जो छूट
+   गईं उनके बारे में वह क्या कहता है।
+2. `values-hi/strings.xml` जोड़िए जिसमें तीन strings translate हों। Device की भाषा बदलिए और
+   confirm कीजिए कि बाकी strings गायब नहीं होतीं, fallback पर आती हैं।
+3. `values-night/colors.xml` जोड़िए और dark mode चालू कीजिए। ऐसा कोई view ढूँढ़िए जो नहीं बदलता,
+   और वजह पता कीजिए।
+4. एक `plurals` entry लिखिए और उसे 0, 1 और 2 के लिए print कीजिए। फिर ऐसी भाषा पर जाइए जिसके
+   plural नियम अलग हैं, और वही तीनों दोबारा print कीजिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `res/` | Device configuration की key वाला lookup table |
+| Qualifier | Folder के पीछे लगा suffix, जो बताता है कब वह रूप लगेगा |
+| बिना qualifier वाला folder | जरूरी fallback |
+| चुनाव | हर resource नाम के लिए अलग, हर file के लिए नहीं |
+| Placeholders | `%1$s`, ताकि translators क्रम बदल सकें |
+| `plurals` | `getQuantityString`, count दो बार |
+| `values-night` | `DayNight` theme के साथ पूरा dark theme |
+| `start` / `end` | `left` / `right` की जगह |
+
+<Interview title="हर उस app के लिए आता है जो एक देश से बाहर जाती है">
+"Android तय कैसे करता है कि कौन सी `strings.xml` इस्तेमाल हो?"
+
+बताने लायक जवाब यह है कि चुनाव हर resource के लिए होता है, हर file के लिए नहीं: system हर नाम
+के लिए सबसे मेल खाता qualified रूप ढूँढ़ता है और न मिले तो बिना qualifier वाले folder पर लौट
+आता है। यह जोड़ देना कि इसीलिए अधूरे translations चुपचाप ship हो जाते हैं — और lint का
+`MissingTranslation` उसी की जाँच है — परिभाषा को तजुर्बे में बदल देता है।
+</Interview>
