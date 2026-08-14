@@ -91,13 +91,25 @@ export function extractHeadings(mdx: string): { id: string; text: string; level:
   });
 }
 
-/** Must match rehype-slug's behaviour so anchors line up. */
+/**
+ * Must match rehype-slug's behaviour so anchors line up.
+ *
+ * `\p{M}` is not optional. Devanagari vowel signs and the virama — ा ि ी ु े ो ् —
+ * are Unicode *marks*, not letters, so dropping that class silently strips every
+ * matra: `पुराना-काम` becomes `परन-कम`. rehype-slug keeps them, and the two ids
+ * then disagree, which broke every "on this page" link in Hindi while leaving
+ * the Latin languages fine.
+ *
+ * Each space also becomes its own hyphen rather than collapsing a run, because
+ * that is what github-slugger does: `super — पुराना` loses the dash and keeps
+ * both surrounding spaces, giving `super--पुराना`.
+ */
 export function slugify(text: string): string {
   return text
     .toLowerCase()
     .trim()
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
-    .replace(/\s+/g, "-");
+    .replace(/[^\p{L}\p{M}\p{N}\s-]/gu, "")
+    .replace(/\s/g, "-");
 }
 
 export async function lessonExists(lang: Lang, lessonPath: string): Promise<boolean> {
