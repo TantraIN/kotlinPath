@@ -1,0 +1,130 @@
+---
+title: Generics, variance, in, out aur reified
+description: Generics type ki jaankari compile time par bachate hain. Variance tay karta hai ki kaun sa generic type kiski jagah le sakta hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`List<Dog>` apne aap `List<Animal>` **nahi** hai jab tak aap na kaho. `out` aur `in` kehne ka
+tarika hain, aur har ek sirf ek hi disha mein surakshit hai.
+</KeyIdea>
+
+## Jo baat saaf lagti hai wo mana kyun hai
+
+```kotlin title="Unsafe.kt" numbered
+fun addCat(animals: MutableList<Animal>) {
+    animals.add(Cat())          // jayaz — ye Animal ki list hai
+}
+
+val dogs: MutableList<Dog> = mutableListOf()
+// addCat(dogs)                 // mana kar diya, aur achha hua
+```
+
+Agar wo call compile ho jata, to ek `Cat` `MutableList<Dog>` mein baithi hoti. Isliye default se
+generic type **invariant** hai: `MutableList<Dog>` aur `MutableList<Animal>` ka koi rishta nahi.
+
+<Quiz
+  question="`List<Dog>` wahan chal jata hai jahan `List<Animal>` chahiye, par `MutableList<Dog>` nahi. Kyun?"
+  options={[
+    "`List` chhota hai isliye compiler chalne deta hai",
+    "`List` `List<out E>` hai — wo sirf elements deta hai, isliye galat cheez andar daali hi nahi ja sakti",
+    "`MutableList` class hai aur `List` interface hai",
+  ]}
+  answer={1}
+  explanation="Sirf padhne wali `List` covariant hai: `interface List<out E>`. `out` ka matlab E sirf return ki jagah aata hai, isliye `List<Dog>` se Animal padhna poori tarah surakshit hai. `MutableList` E ko `add` ke parameter ki tarah bhi leta hai, isliye wo `out` ho hi nahi sakta — yahi kutte ki list mein billi wala ched hai."
+/>
+
+## Do keywords
+
+| Keyword | Jagah | Matlab | Yaad rakhne ka tarika |
+| --- | --- | --- | --- |
+| `out T` | Sirf return types | Producer — aap T bahar lete ho | `List<out E>` |
+| `in T` | Sirf parameter types | Consumer — aap T andar dete ho | `Comparable<in T>` |
+| (koi nahi) | Dono | Invariant — koi badla nahi | `MutableList<E>` |
+
+<Tabs>
+  <Tab label="out — producer">
+
+```kotlin title="Out.kt" numbered runnable
+class Box<out T>(private val value: T) {
+    fun get(): T = value        // T sirf bahar aata hai
+}
+
+fun main() {
+    val dogBox: Box<String> = Box("dog")
+    val anyBox: Box<Any> = dogBox      // surakshit: sirf padh sakte ho
+    println(anyBox.get())
+}
+```
+
+  </Tab>
+  <Tab label="in — consumer">
+
+```kotlin title="In.kt" numbered runnable
+fun interface Printer<in T> {
+    fun print(value: T)
+}
+
+fun main() {
+    val anyPrinter = Printer<Any> { println("value: $it") }
+    val stringPrinter: Printer<String> = anyPrinter   // surakshit: wo kuch bhi leta hai
+    stringPrinter.print("hello")
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="Niyam ek line mein">
+Agar koi type class se sirf **bahar** aata hai, use `out` likho. Agar sirf **andar** jata hai,
+`in` likho. Agar dono, to use invariant rehna hi padega — aur ye aapke design ki sacchai hai,
+Kotlin ki kami nahi.
+</Detail>
+
+## `reified` — type ko chalte waqt wapas paana
+
+JVM par generics mit jate hain, isliye `T` aam taur par chalte waqt hota hi nahi. `inline`
+function use bacha sakta hai.
+
+```kotlin title="Reified.kt" numbered runnable
+inline fun <reified T> List<Any>.firstOfType(): T? =
+    firstOrNull { it is T } as T?
+
+fun main() {
+    val mixed = listOf(1, "two", 3.0, "four")
+    println(mixed.firstOfType<String>())    // "two"
+}
+```
+
+Bina `reified` ke `it is T` compile hi nahi hoga — jisse milana hai wo `T` hai hi nahi.
+
+## Common galtiyan
+
+<Pitfall title="Do jo uljhi hui errors deti hain">
+**Aise type ko `out` likhna jo parameter bhi hai.** Compiler kehta hai ki type parameter galat
+jagah hai. Wo sahi kehta hai: ijazat dene par aap object mein galat type ki value likh sakoge.
+
+**`inline` ke bina `reified` use karna.** `reified` isliye chalta hai kyunki function ki body
+call site par copy hoti hai, jahan asli type pata hota hai. `inline` ke bahar uska koi matlab
+nahi.
+</Pitfall>
+
+## Practice
+
+1. `class Producer<out T>` likho aur usme `fun set(value: T)` jodne ki koshish karo. Error padho
+   aur apne shabdon mein samjhao.
+2. Upar wale `Box<out T>` ko `MutableList<T>` rakhne wala banao. Kya wo ab bhi `out` ke saath
+   compile hota hai?
+3. `inline fun <reified T> Any.isTypeOf(): Boolean` likho, phir `reified` hatakar dekho.
+4. Standard library mein ek `List<out E>` dhoondho aur ek aisi class jo jaan-boojh kar invariant
+   hai. Dono faisle kyun liye gaye?
+
+## Recap
+
+| Cheez | Baat |
+| --- | --- |
+| Default | Invariant — `Box<Dog>` `Box<Animal>` nahi hai |
+| `out T` | Covariant; T sirf return ki jagah |
+| `in T` | Contravariant; T sirf parameter ki jagah |
+| `List` aur `MutableList` | `out E` aur invariant `E` |
+| `reified` | T ko chalte waqt bachata hai; `inline` chahiye |

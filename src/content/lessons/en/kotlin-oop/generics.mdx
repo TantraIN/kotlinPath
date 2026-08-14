@@ -1,0 +1,129 @@
+---
+title: Generics, variance, in, out and reified
+description: Generics keep type information at compile time. Variance decides which generic types can stand in for which others.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`List<Dog>` is **not** a `List<Animal>` unless you say so. `out` and `in` are how you say so,
+and each is safe in only one direction.
+</KeyIdea>
+
+## Why the obvious thing is forbidden
+
+```kotlin title="Unsafe.kt" numbered
+fun addCat(animals: MutableList<Animal>) {
+    animals.add(Cat())          // legal — it is a list of Animal
+}
+
+val dogs: MutableList<Dog> = mutableListOf()
+// addCat(dogs)                 // rejected, and thank goodness
+```
+
+If that call compiled, a `Cat` would be sitting in a `MutableList<Dog>`. So by default a
+generic type is **invariant**: `MutableList<Dog>` and `MutableList<Animal>` are unrelated.
+
+<Quiz
+  question="`List<Dog>` *can* be passed where `List<Animal>` is expected, but `MutableList<Dog>` cannot. Why?"
+  options={[
+    "`List` is smaller, so the compiler allows it",
+    "`List` is declared `List<out E>` — it only produces elements, so nothing unsafe can be put in",
+    "`MutableList` is a class and `List` is an interface",
+  ]}
+  answer={1}
+  explanation="Read-only `List` is covariant: `interface List<out E>`. `out` means E appears only in return positions, so you can read an Animal out of a List<Dog> quite safely. `MutableList` also accepts E as a parameter to `add`, so it cannot be `out` — that is exactly the Cat-in-a-dog-list hole."
+/>
+
+## The two keywords
+
+| Keyword | Position | Means | Mnemonic |
+| --- | --- | --- | --- |
+| `out T` | Return types only | Producer — you take T out | `List<out E>` |
+| `in T` | Parameter types only | Consumer — you put T in | `Comparable<in T>` |
+| (neither) | Both | Invariant — no substitution | `MutableList<E>` |
+
+<Tabs>
+  <Tab label="out — producer">
+
+```kotlin title="Out.kt" numbered runnable
+class Box<out T>(private val value: T) {
+    fun get(): T = value        // T only comes out
+}
+
+fun main() {
+    val dogBox: Box<String> = Box("dog")
+    val anyBox: Box<Any> = dogBox      // safe: you can only read
+    println(anyBox.get())
+}
+```
+
+  </Tab>
+  <Tab label="in — consumer">
+
+```kotlin title="In.kt" numbered runnable
+fun interface Printer<in T> {
+    fun print(value: T)
+}
+
+fun main() {
+    val anyPrinter = Printer<Any> { println("value: $it") }
+    val stringPrinter: Printer<String> = anyPrinter   // safe: it accepts anything
+    stringPrinter.print("hello")
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="The rule in one line">
+If a type only ever comes **out** of the class, mark it `out`. If it only ever goes **in**, mark
+it `in`. If both, it must stay invariant — and that is a fact about the design, not a
+limitation of Kotlin.
+</Detail>
+
+## `reified` — getting the type back at run time
+
+Generics are erased on the JVM, so `T` normally does not exist at run time. An `inline` function
+can keep it.
+
+```kotlin title="Reified.kt" numbered runnable
+inline fun <reified T> List<Any>.firstOfType(): T? =
+    firstOrNull { it is T } as T?
+
+fun main() {
+    val mixed = listOf(1, "two", 3.0, "four")
+    println(mixed.firstOfType<String>())    // "two"
+}
+```
+
+Without `reified`, `it is T` will not compile — there is no `T` to test against.
+
+## Common mistakes
+
+<Pitfall title="Two that produce confusing errors">
+**Trying to mark a type `out` when it is also a parameter.** The compiler says the type
+parameter is in the wrong position. It is right: allowing it would let you write a value of the
+wrong type into the object.
+
+**Using `reified` without `inline`.** `reified` only works because the function body is copied
+into the call site, where the real type is known. Outside `inline` it is meaningless.
+</Pitfall>
+
+## Practice
+
+1. Write `class Producer<out T>` and try to add a `fun set(value: T)`. Read the error and
+   explain it in your own words.
+2. Make `Box<out T>` above hold a `MutableList<T>` instead. Does it still compile as `out`?
+3. Write `inline fun <reified T> Any.isTypeOf(): Boolean`, then remove `reified` and observe.
+4. Find a `List<out E>` in the standard library source and one class that is deliberately
+   invariant. Why was each choice made?
+
+## Recap
+
+| Concept | Detail |
+| --- | --- |
+| Default | Invariant — `Box<Dog>` is not a `Box<Animal>` |
+| `out T` | Covariant; T only in return positions |
+| `in T` | Contravariant; T only in parameter positions |
+| `List` versus `MutableList` | `out E` versus invariant `E` |
+| `reified` | Keeps T at run time; requires `inline` |
