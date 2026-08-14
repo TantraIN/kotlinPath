@@ -1,0 +1,127 @@
+---
+title: StateFlow and SharedFlow
+description: Hot streams that exist whether or not anyone is listening — one holds a current value, the other does not.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+A cold `Flow` runs per collector. A **hot** stream runs once and broadcasts. `StateFlow` always
+has a current value; `SharedFlow` has only whatever it is configured to replay.
+</KeyIdea>
+
+## The two, side by side
+
+| | `StateFlow` | `SharedFlow` |
+| --- | --- | --- |
+| Current value | Always has one | None unless replay is set |
+| Initial value | Required | Not allowed |
+| Repeats | Dropped — conflated, distinct until changed | Delivered |
+| New collector gets | The current value immediately | Only `replay` items |
+| Use for | Screen **state** | One-off **events** |
+
+The distinction is state versus events, and picking wrong causes two very specific bugs.
+
+```kotlin title="ViewModel.kt" numbered
+class ProfileViewModel : ViewModel() {
+
+    private val _state = MutableStateFlow<UiState>(UiState.Loading)
+    val state: StateFlow<UiState> = _state.asStateFlow()
+
+    private val _events = MutableSharedFlow<Event>()
+    val events: SharedFlow<Event> = _events.asSharedFlow()
+
+    fun load() = viewModelScope.launch {
+        _state.value = UiState.Loading
+        runCatching { repository.user() }
+            .onSuccess { _state.value = UiState.Success(it) }
+            .onFailure { _events.emit(Event.ShowError(it.message)) }
+    }
+}
+```
+
+<Quiz
+  question="You show a 'Payment failed' snackbar from a `StateFlow`. The user rotates the phone. What happens?"
+  options={[
+    "Nothing — the state was already consumed",
+    "The snackbar shows again, because a new collector immediately receives the current value",
+    "The app crashes on the second collection",
+  ]}
+  answer={1}
+  explanation="A StateFlow replays its current value to every new collector, and rotation creates one. State is meant to be re-read — 'the screen is in an error state' is fine to replay. An event is meant to happen once. Events belong in a SharedFlow, or in state with an explicit 'consumed' step."
+/>
+
+## Turning a cold flow hot
+
+```kotlin title="Convert.kt" numbered
+val state: StateFlow<List<Item>> = repository
+    .itemsFlow()                        // cold — one database query per collector
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+```
+
+`WhileSubscribed(5_000)` keeps the upstream alive for five seconds after the last collector
+leaves. That window is what stops a rotation from re-running the query.
+
+<Tabs>
+  <Tab label="Eagerly">
+
+Starts immediately, never stops. Wastes work when nobody is watching.
+
+  </Tab>
+  <Tab label="Lazily">
+
+Starts on the first collector, never stops afterwards.
+
+  </Tab>
+  <Tab label="WhileSubscribed">
+
+Starts on the first collector, stops after the timeout. **The Android default.**
+
+  </Tab>
+</Tabs>
+
+<Detail summary="Why StateFlow drops repeated values">
+`StateFlow` compares with `equals` and skips emissions that are equal to the current value. This
+is what keeps Compose from recomposing on an identical state — and it is also why a `data class`
+state holder is important: without value equality, every update looks like a change.
+</Detail>
+
+## Collecting safely on Android
+
+```kotlin title="Collect.kt" numbered
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+```
+
+<Pitfall title="Two that cause real bugs">
+**A plain `lifecycleScope.launch { collect }` without `repeatOnLifecycle`.** Collection keeps
+running while the app is in the background, updating views nobody can see.
+
+**Using `StateFlow` for one-off events.** Navigation, snackbars and toasts will fire again on
+every configuration change. Use `SharedFlow`, or model consumption explicitly.
+</Pitfall>
+
+## Practice
+
+1. Emit the same value twice into a `MutableStateFlow` and count the collector's calls.
+2. Do the same with `MutableSharedFlow`. Explain the difference.
+3. Replace `stateIn(...WhileSubscribed(5000))` with `Eagerly` and observe when the upstream runs.
+4. Show an error via `StateFlow`, rotate the device, and watch it reappear. Then move it to
+   `SharedFlow`.
+
+## Recap
+
+| Type | Use when |
+| --- | --- |
+| `Flow` | Cold; each collector needs its own run |
+| `StateFlow` | There is always a current value — screen state |
+| `SharedFlow` | Things that happen once — navigation, messages |
+| `stateIn` / `shareIn` | Turn a cold flow hot inside a scope |
+| `WhileSubscribed(5_000)` | Survive rotation without leaking work |
+| `repeatOnLifecycle` | Stop collecting while the UI is not visible |

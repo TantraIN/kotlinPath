@@ -1,0 +1,130 @@
+---
+title: StateFlow aur SharedFlow
+description: Hot streams jo tab bhi chalte hain jab koi sun na raha ho — ek ke paas hamesha maujooda value hoti hai, dusre ke paas nahi.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Cold `Flow` har collector ke liye chalta hai. **Hot** stream ek baar chalta hai aur sabko bhejta
+hai. `StateFlow` ke paas hamesha ek maujooda value hoti hai; `SharedFlow` ke paas sirf utna jitna
+replay set kiya ho.
+</KeyIdea>
+
+## Dono, aamne-saamne
+
+| | `StateFlow` | `SharedFlow` |
+| --- | --- | --- |
+| Maujooda value | Hamesha hoti hai | Replay set na ho to nahi |
+| Shuruati value | Zaroori | Ijazat nahi |
+| Dohraav | Gira diya jata hai | Bhej diya jata hai |
+| Naye collector ko | Maujooda value turant | Sirf `replay` jitni cheezein |
+| Kis liye | Screen ki **state** | Ek baar hone wale **events** |
+
+Farq state aur events ka hai, aur galat chunav do bilkul tay bugs paida karta hai.
+
+```kotlin title="ViewModel.kt" numbered
+class ProfileViewModel : ViewModel() {
+
+    private val _state = MutableStateFlow<UiState>(UiState.Loading)
+    val state: StateFlow<UiState> = _state.asStateFlow()
+
+    private val _events = MutableSharedFlow<Event>()
+    val events: SharedFlow<Event> = _events.asSharedFlow()
+
+    fun load() = viewModelScope.launch {
+        _state.value = UiState.Loading
+        runCatching { repository.user() }
+            .onSuccess { _state.value = UiState.Success(it) }
+            .onFailure { _events.emit(Event.ShowError(it.message)) }
+    }
+}
+```
+
+<Quiz
+  question="Aap `StateFlow` se 'Payment failed' snackbar dikhate ho. User phone ghumata hai. Kya hoga?"
+  options={[
+    "Kuch nahi — state pehle hi istemal ho chuki thi",
+    "Snackbar dobara dikhega, kyunki naye collector ko maujooda value turant milti hai",
+    "Dusri collection par app crash ho jayegi",
+  ]}
+  answer={1}
+  explanation="StateFlow apni maujooda value har naye collector ko dobara deta hai, aur ghumane par naya collector banta hai. State dobara padhi jaane ke liye hi hoti hai — 'screen error state mein hai' dobara batana theek hai. Event ek hi baar hone ke liye hota hai. Events ki jagah SharedFlow hai, ya state mein saaf-saaf 'istemal ho gaya' wala kadam."
+/>
+
+## Cold flow ko hot banana
+
+```kotlin title="Convert.kt" numbered
+val state: StateFlow<List<Item>> = repository
+    .itemsFlow()                        // cold — har collector par ek database query
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+```
+
+`WhileSubscribed(5_000)` aakhri collector ke jaane ke baad paanch second tak upar wale ko zinda
+rakhta hai. Yahi khidki phone ghumane par query dobara chalne se rokti hai.
+
+<Tabs>
+  <Tab label="Eagerly">
+
+Turant shuru, kabhi band nahi. Jab koi dekh hi nahi raha, tab bhi kaam barbaad karta hai.
+
+  </Tab>
+  <Tab label="Lazily">
+
+Pehle collector par shuru, uske baad kabhi band nahi.
+
+  </Tab>
+  <Tab label="WhileSubscribed">
+
+Pehle collector par shuru, timeout ke baad band. **Android ka default.**
+
+  </Tab>
+</Tabs>
+
+<Detail summary="StateFlow dohri values kyun gira deta hai">
+`StateFlow` `equals` se milata hai aur maujooda value ke barabar emissions chhod deta hai. Isi se
+Compose ek jaisi state par dobara recompose nahi karta — aur isiliye state rakhne wali `data
+class` zaroori hai: value barabari na ho to har update badlav jaisa dikhta hai.
+</Detail>
+
+## Android par surakshit collect karna
+
+```kotlin title="Collect.kt" numbered
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+```
+
+<Pitfall title="Do jo asli bug bunti hain">
+**Bina `repeatOnLifecycle` ke saada `lifecycleScope.launch { collect }`.** App background mein
+chali jaye to bhi collection chalti rehti hai, aur aise views update karti hai jo kisi ko dikh
+hi nahi rahe.
+
+**Ek baar wale events ke liye `StateFlow` use karna.** Navigation, snackbar aur toast har
+configuration change par dobara chalenge. `SharedFlow` use karo, ya istemal ho jaana saaf-saaf
+model karo.
+</Pitfall>
+
+## Practice
+
+1. `MutableStateFlow` mein ek hi value do baar daalo aur collector ke calls gino.
+2. Wahi `MutableSharedFlow` ke saath karo. Farq samjhao.
+3. `stateIn(...WhileSubscribed(5000))` ko `Eagerly` se badlo aur dekho upar wala kab chalta hai.
+4. `StateFlow` se error dikhao, device ghumao, aur use dobara aate dekho. Phir use `SharedFlow`
+   par le jao.
+
+## Recap
+
+| Type | Kab |
+| --- | --- |
+| `Flow` | Cold; har collector ko apna chalna chahiye |
+| `StateFlow` | Hamesha ek maujooda value ho — screen state |
+| `SharedFlow` | Jo ek baar hota hai — navigation, sandesh |
+| `stateIn` / `shareIn` | Scope ke andar cold flow ko hot banao |
+| `WhileSubscribed(5_000)` | Ghumane par bache, par kaam leak na ho |
+| `repeatOnLifecycle` | UI na dikhe to collect karna band |
