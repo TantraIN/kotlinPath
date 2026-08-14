@@ -1,0 +1,216 @@
+---
+title: "AndroidManifest: declaring your app to the system"
+description: The one file Android reads before any of your code runs. What it declares decides whether your app can be launched, what it may ask for, and who else can start it.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+The system reads your manifest at install time, long before `onCreate`. Anything Android must
+know *without* running your code — your components, your permissions, who may start you — is
+declared here or it does not exist.
+</KeyIdea>
+
+## Why this matters
+
+An `Activity` that is not in the manifest cannot be started, no matter how correct the class
+is. The error arrives at runtime as `ActivityNotFoundException`, which points at the caller
+rather than the missing declaration.
+
+The same file decides whether your icon appears in the launcher, whether the Play Store shows
+your app to a tablet, and whether any other app on the phone can start your screens.
+
+## What the system reads
+
+```xml title="app/src/main/AndroidManifest.xml" numbered
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".MyApp"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.MyApp">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".DetailActivity"
+            android:exported="false" />
+    </application>
+</manifest>
+```
+
+| Declaration | Answers |
+| --- | --- |
+| `<application android:name>` | Which `Application` class to instantiate first, if any |
+| `<activity>` | This screen exists and may be started |
+| `<intent-filter>` | The ways the system is allowed to start it |
+| `android:exported` | May *other* apps start it? |
+| `<uses-permission>` | What the app is asking for |
+| `<uses-feature>` | Hardware the app needs, used for Play Store filtering |
+
+<Note>
+There is no `package="..."` attribute any more. The application ID and the `R` namespace both
+come from `namespace` and `applicationId` in `build.gradle.kts`, which you met in Phase 0.
+</Note>
+
+## `intent-filter`: how anything finds you
+
+An intent filter is a standing offer: "if a request looks like this, I can handle it." The
+launcher icon is nothing more special than one particular offer.
+
+<Tabs>
+  <Tab label="Launcher entry">
+
+`MAIN` plus `LAUNCHER` is what puts you in the app drawer. Remove it and the app installs, runs
+when started by other means, and has no icon.
+
+```xml title="Launcher.xml"
+<intent-filter>
+    <action android:name="android.intent.action.MAIN" />
+    <category android:name="android.intent.category.LAUNCHER" />
+</intent-filter>
+```
+
+  </Tab>
+  <Tab label="Deep link">
+
+This claims `https://example.com/order/…` for your app. `autoVerify` asks Android to check
+the site really vouches for you, which is what turns the chooser dialog into a direct open.
+
+```xml title="DeepLink.xml"
+<intent-filter android:autoVerify="true">
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="https" android:host="example.com" android:pathPrefix="/order" />
+</intent-filter>
+```
+
+  </Tab>
+</Tabs>
+
+<Quiz
+  question="Your app targets API 31 or higher. An activity has an `<intent-filter>` but no `android:exported`. What happens?"
+  options={[
+    "It defaults to false, so the activity is private",
+    "It defaults to true, because it has a filter",
+    "The build fails — the attribute is required once there is a filter",
+  ]}
+  answer={2}
+  explanation="Before Android 12 the default was true whenever a component had an intent filter, which quietly exposed a lot of screens nobody meant to expose. Rather than change the default silently, Google made the attribute mandatory in that case: the manifest merger fails the build and tells you to state your intent. A component with no intent filter still defaults to false and needs nothing."
+/>
+
+## `exported` is a security boundary, not a formality
+
+<Compare
+  left={{
+    title: "exported=\"false\"",
+    subtitle: "Your default",
+    accent: "emerald",
+    points: [
+      "+ Only your own app can start it",
+      "+ Right for every internal screen",
+      "+ Removes a whole class of attack surface",
+      "~ Still reachable inside your process, obviously",
+    ],
+  }}
+  right={{
+    title: "exported=\"true\"",
+    subtitle: "A public entry point",
+    accent: "rose",
+    points: [
+      "+ Needed for the launcher, deep links, share targets",
+      "- Any installed app can send you an `Intent`",
+      "- Every extra you read is now untrusted input",
+      "- Guard it with a permission if it is not meant for everyone",
+    ],
+  }}
+/>
+
+<Warning>
+An exported component is a public API of your app. Validate its extras exactly as you would
+validate a network response — assume the caller is hostile, because it might be.
+</Warning>
+
+## Under the hood: your manifest is not the final manifest
+
+Every library you depend on ships a manifest, and all of them merge into one before the build
+finishes. That is how a dependency can add a permission you never typed.
+
+```bash title="Terminal" no-glossary
+# The merged result, and a report of which file contributed what
+./gradlew :app:processDebugMainManifest
+open app/build/outputs/logs/manifest-merger-debug-report.txt
+```
+
+<Detail summary="Removing something a library added">
+The `tools` namespace edits the merge rather than the file. To drop a permission a library
+pulled in:
+
+```xml title="Remove.xml"
+<manifest xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.AD_ID"
+        tools:node="remove" />
+</manifest>
+```
+
+`tools:replace` does the same for a conflicting attribute, and is the usual fix for the
+"attribute is also present at …" merger error. Read the report before reaching for either —
+the library may have needed it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three that reach production">
+**Assuming `<uses-permission>` grants the permission.** For dangerous permissions — camera,
+location, contacts — the manifest only declares that you *may* ask. You still request it at
+runtime and handle the refusal. Without the manifest line the runtime request fails silently.
+
+**Leaving `exported="true"` on an internal screen.** Copied from the launcher activity and
+never revisited. Now any app on the device can start it, with any extras it likes.
+
+**Declaring `<uses-feature>` without `android:required="false"`.** Asking for the camera
+permission implies the camera feature, and the Play Store will then hide your app from every
+device without one. Set `required="false"` unless the app is genuinely useless without it.
+</Pitfall>
+
+## Practice
+
+1. Remove the `LAUNCHER` category from `MainActivity`, install, and find the app. What still
+   works, and what does not?
+2. Add a second activity with `exported="false"` and try to start it from `adb shell am start`.
+   Read the error.
+3. Run the manifest merger report and find one permission that came from a library rather than
+   from you.
+4. Add a deep link for `https://example.com/order/12` and open it with
+   `adb shell am start -a android.intent.action.VIEW -d "https://example.com/order/12"`.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Manifest | Read at install time, before any of your code |
+| `<activity>` | Undeclared means unstartable |
+| `<intent-filter>` | A standing offer to handle a kind of request |
+| `MAIN` + `LAUNCHER` | The offer that produces a launcher icon |
+| `android:exported` | Required with a filter on API 31+; default `false` otherwise |
+| `<uses-permission>` | Declares the ask, never grants it |
+| Merged manifest | Yours plus every library's; check the report |
+
+<Interview title="A quick way to tell whether someone has shipped an app">
+"What does `android:exported` do, and when do you have to set it?"
+
+The full answer has two halves: it decides whether components outside your app can start yours,
+and since API 31 it is mandatory on any component that declares an intent filter. Adding *why*
+the rule appeared — too many accidentally public components under the old default — shows you
+understand it as a security decision rather than a compiler demand.
+</Interview>

@@ -1,0 +1,218 @@
+---
+title: "AndroidManifest: अपनी app का परिचय system को देना"
+description: वह इकलौती file जिसे Android आपके किसी भी code से पहले पढ़ता है। इसमें क्या लिखा है, यही तय करता है कि आपकी app चल सकती है या नहीं, वह क्या माँग सकती है, और उसे और कौन शुरू कर सकता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+System आपका manifest install के वक्त पढ़ता है, `onCreate` से बहुत पहले। जो कुछ Android को आपका
+code चलाए *बिना* पता होना चाहिए — आपके components, permissions, और आपको कौन शुरू कर सकता है —
+वह यहीं लिखा होता है, वरना है ही नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+जो `Activity` manifest में नहीं है वह शुरू ही नहीं हो सकती, class चाहे कितनी भी सही हो। Error
+runtime पर `ActivityNotFoundException` बनकर आती है, जो बुलाने वाले की तरफ इशारा करती है, उस
+छूटी हुई line की तरफ नहीं।
+
+यही file तय करती है कि आपका icon launcher में दिखेगा या नहीं, Play Store आपकी app tablet वालों
+को दिखाएगा या नहीं, और phone की कोई दूसरी app आपकी screens शुरू कर सकती है या नहीं।
+
+## System पढ़ता क्या है
+
+```xml title="app/src/main/AndroidManifest.xml" numbered
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".MyApp"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.MyApp">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".DetailActivity"
+            android:exported="false" />
+    </application>
+</manifest>
+```
+
+| जो लिखा है | किसका जवाब |
+| --- | --- |
+| `<application android:name>` | सबसे पहले कौन सी `Application` class बनेगी, अगर कोई है |
+| `<activity>` | यह screen है, और शुरू की जा सकती है |
+| `<intent-filter>` | System उसे किन-किन तरीकों से शुरू कर सकता है |
+| `android:exported` | क्या *दूसरी* apps इसे शुरू कर सकती हैं? |
+| `<uses-permission>` | App क्या माँग रही है |
+| `<uses-feature>` | कौन सा hardware चाहिए; Play Store इसी से छाँटता है |
+
+<Note>
+अब `package="..."` वाला attribute रहा ही नहीं। Application ID और `R` का namespace, दोनों
+`build.gradle.kts` की `namespace` और `applicationId` से आते हैं, जो आपने Phase 0 में देखी थीं।
+</Note>
+
+## `intent-filter`: आपको कोई ढूँढ़ता कैसे है
+
+Intent filter एक खड़ी हुई पेशकश है: "अगर माँग ऐसी दिखती है, तो मैं सँभाल लूँगा।" Launcher का icon
+इससे ज्यादा कुछ खास नहीं — बस एक खास पेशकश है।
+
+<Tabs>
+  <Tab label="Launcher में जगह">
+
+`MAIN` और `LAUNCHER` मिलकर आपको app drawer में डालते हैं। इसे हटा दीजिए तो app install होगी,
+किसी और तरीके से शुरू होने पर चलेगी भी, पर icon नहीं होगा।
+
+```xml title="Launcher.xml"
+<intent-filter>
+    <action android:name="android.intent.action.MAIN" />
+    <category android:name="android.intent.category.LAUNCHER" />
+</intent-filter>
+```
+
+  </Tab>
+  <Tab label="Deep link">
+
+यह `https://example.com/order/…` पर आपकी app का दावा है। `autoVerify` Android से कहता है कि
+site सच में आपकी जमानत लेती है या नहीं, यह जाँच ले — यही चीज chooser dialog को सीधे खुलने में
+बदल देती है।
+
+```xml title="DeepLink.xml"
+<intent-filter android:autoVerify="true">
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="https" android:host="example.com" android:pathPrefix="/order" />
+</intent-filter>
+```
+
+  </Tab>
+</Tabs>
+
+<Quiz
+  question="आपकी app API 31 या उससे ऊपर target करती है। एक activity में `<intent-filter>` है पर `android:exported` नहीं। क्या होगा?"
+  options={[
+    "Default false रहेगा, तो activity private रहेगी",
+    "Default true रहेगा, क्योंकि उसमें filter है",
+    "Build fail होगी — filter है तो यह attribute लिखना जरूरी है",
+  ]}
+  answer={2}
+  explanation="Android 12 से पहले, जिस component में intent filter होता उसका default true था, जिससे बहुत सी ऐसी screens चुपचाप खुल जाती थीं जिन्हें कोई खोलना नहीं चाहता था। Default चुपचाप बदलने के बजाय Google ने उस हालत में यह attribute लिखना जरूरी कर दिया: manifest merger build गिरा देता है और कहता है कि अपना इरादा साफ लिखिए। जिस component में कोई intent filter नहीं है उसका default आज भी false है और उसमें कुछ लिखने की जरूरत नहीं।"
+/>
+
+## `exported` एक security की हद है, औपचारिकता नहीं
+
+<Compare
+  left={{
+    title: "exported=\"false\"",
+    subtitle: "आपका default",
+    accent: "emerald",
+    points: [
+      "+ सिर्फ आपकी अपनी app उसे शुरू कर सकती है",
+      "+ हर अंदरूनी screen के लिए यही सही है",
+      "+ हमले की एक पूरी सतह ही हट जाती है",
+      "~ अपने process के अंदर तो पहुँच में है ही",
+    ],
+  }}
+  right={{
+    title: "exported=\"true\"",
+    subtitle: "एक सार्वजनिक दरवाजा",
+    accent: "rose",
+    points: [
+      "+ Launcher, deep links और share targets के लिए जरूरी",
+      "- Phone की कोई भी app आपको `Intent` भेज सकती है",
+      "- अब आप जो भी extra पढ़ते हैं वह बाहर का, बिना भरोसे का input है",
+      "- सबके लिए नहीं है तो उस पर permission लगाइए",
+    ],
+  }}
+/>
+
+<Warning>
+Exported component आपकी app का सार्वजनिक API है। उसके extras को ठीक वैसे ही जाँचिए जैसे किसी
+network response को जाँचते हैं — मानकर चलिए कि बुलाने वाला दुश्मन है, क्योंकि हो सकता है।
+</Warning>
+
+## अंदर की बात: आपका manifest आखिरी manifest नहीं है
+
+आप जिस भी library पर निर्भर हैं वह अपना manifest भेजती है, और build खत्म होने से पहले सब मिलकर
+एक बन जाते हैं। इसी तरह कोई dependency ऐसी permission जोड़ देती है जो आपने कभी लिखी ही नहीं।
+
+```bash title="Terminal" no-glossary
+# Merge होने के बाद वाला नतीजा, और किस file ने क्या दिया उसकी report
+./gradlew :app:processDebugMainManifest
+open app/build/outputs/logs/manifest-merger-debug-report.txt
+```
+
+<Detail summary="Library ने जो जोड़ा उसे हटाना">
+`tools` namespace file नहीं, merge को बदलता है। Library की खींची हुई कोई permission हटानी हो
+तो:
+
+```xml title="Remove.xml"
+<manifest xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.AD_ID"
+        tools:node="remove" />
+</manifest>
+```
+
+टकराने वाले attribute के लिए `tools:replace` यही काम करता है, और "attribute is also present
+at …" वाली merger error का आम इलाज वही है। दोनों में से कुछ भी उठाने से पहले report पढ़िए —
+हो सकता है library को उसकी सच में जरूरत हो।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो production तक पहुँच जाती हैं">
+**यह मान लेना कि `<uses-permission>` permission दे देता है।** खतरनाक permissions के लिए —
+camera, location, contacts — manifest सिर्फ यह बताता है कि आप माँग *सकते* हैं। माँगना अब भी
+runtime पर पड़ता है, और मना होने पर सँभालना भी। Manifest वाली line न हो तो runtime की माँग
+चुपचाप fail हो जाती है।
+
+**अंदरूनी screen पर `exported="true"` छोड़ देना।** Launcher activity से copy हुआ और दोबारा
+देखा ही नहीं। अब device की कोई भी app उसे शुरू कर सकती है, जो चाहे extras भेजकर।
+
+**`<uses-feature>` में `android:required="false"` न लिखना।** Camera permission माँगने का मतलब
+camera feature माँगना भी निकलता है, और फिर Play Store आपकी app हर उस device से छुपा देगा
+जिसमें camera नहीं। जब तक app उसके बिना सच में बेकार न हो, `required="false"` रखिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `MainActivity` से `LAUNCHER` category हटाइए, install कीजिए, और app ढूँढ़िए। क्या अब भी चलता
+   है और क्या नहीं?
+2. `exported="false"` वाली दूसरी activity जोड़िए और उसे `adb shell am start` से शुरू करके
+   देखिए। Error पढ़िए।
+3. Manifest merger की report चलाइए और एक ऐसी permission ढूँढ़िए जो library से आई है, आपसे नहीं।
+4. `https://example.com/order/12` के लिए deep link जोड़िए और उसे
+   `adb shell am start -a android.intent.action.VIEW -d "https://example.com/order/12"` से
+   खोलिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Manifest | Install के वक्त पढ़ा जाता है, आपके किसी code से पहले |
+| `<activity>` | बिना लिखे मतलब शुरू ही नहीं हो सकती |
+| `<intent-filter>` | एक तरह की माँग सँभालने की खड़ी पेशकश |
+| `MAIN` + `LAUNCHER` | वह पेशकश जिससे launcher icon बनता है |
+| `android:exported` | API 31+ पर filter हो तो जरूरी; वरना default `false` |
+| `<uses-permission>` | माँग बताता है, देता कभी नहीं |
+| Merged manifest | आपका और हर library का; report पढ़िए |
+
+<Interview title="यह जल्दी पता चल जाता है कि किसी ने app ship की है या नहीं">
+"`android:exported` करता क्या है, और उसे लिखना कब पड़ता है?"
+
+पूरे जवाब के दो हिस्से हैं: यह तय करता है कि आपकी app के बाहर वाले components आपके components
+शुरू कर सकते हैं या नहीं, और API 31 से यह हर उस component पर लिखना जरूरी है जिसमें intent
+filter है। साथ में *क्यों* बताना — पुराने default की वजह से बहुत से components गलती से
+सार्वजनिक हो जाते थे — दिखाता है कि आप इसे compiler की जिद नहीं, security का फैसला मानते हैं।
+</Interview>
