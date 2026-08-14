@@ -14,7 +14,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "The system owns its lifetime, not you. It is destroyed and recreated on rotation, low memory, and language change — so any state kept only in its fields is lost. That is precisely the problem `ViewModel` solves.",
-      hi: "इसकी उम्र system तय करता है, आप नहीं। rotation, कम memory और भाषा बदलने पर यह destroy होकर दोबारा बनती है — इसलिए सिर्फ़ इसके fields में रखा state खो जाता है। यही समस्या `ViewModel` हल करता है।",
+      hi: "इसकी उम्र system तय करता है, आप नहीं। rotation, कम memory और भाषा बदलने पर यह destroy होकर दोबारा बनती है — इसलिए सिर्फ इसके fields में रखा state खो जाता है। यही समस्या `ViewModel` हल करता है।",
       "hi-en": "Iski umar system tay karta hai, aap nahi. Rotation, kam memory aur bhasha badalne par ye destroy hokar dobara banti hai — isliye sirf iske fields mein rakha state kho jata hai. Yahi problem `ViewModel` solve karta hai.",
     },
     docs: "https://developer.android.com/guide/components/activities/intro-activities",
@@ -33,7 +33,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It is required for `setContent`, `by viewModels()` and `registerForActivityResult`. Extending plain `Activity` instead means none of those work.",
-      hi: "`setContent`, `by viewModels()` और `registerForActivityResult` के लिए यह ज़रूरी है। सादी `Activity` extend करेंगे तो इनमें से कुछ नहीं चलेगा।",
+      hi: "`setContent`, `by viewModels()` और `registerForActivityResult` के लिए यह जरूरी है। सादी `Activity` extend करेंगे तो इनमें से कुछ नहीं चलेगा।",
       "hi-en": "`setContent`, `by viewModels()` aur `registerForActivityResult` ke liye ye zaruri hai. Saadi `Activity` extend karoge to inmein se kuch nahi chalega.",
     },
     docs: "https://developer.android.com/reference/androidx/activity/ComponentActivity",
@@ -90,7 +90,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It outlives the `Activity`, so it must never hold a reference to a `View`, an `Activity` or any `Context` other than the application one — doing so leaks the whole screen. It does not survive process death; that is what `SavedStateHandle` is for.",
-      hi: "यह `Activity` से ज़्यादा जीता है, इसलिए इसमें `View`, `Activity` या application के अलावा कोई `Context` कभी नहीं रखना चाहिए — वरना पूरी screen leak हो जाती है। यह process death नहीं झेलता; उसके लिए `SavedStateHandle` है।",
+      hi: "यह `Activity` से ज्यादा जीता है, इसलिए इसमें `View`, `Activity` या application के अलावा कोई `Context` कभी नहीं रखना चाहिए — वरना पूरी screen leak हो जाती है। यह process death नहीं झेलता; उसके लिए `SavedStateHandle` है।",
       "hi-en": "Ye `Activity` se zyada jeeta hai, isliye ismein `View`, `Activity` ya application ke alawa koi `Context` kabhi nahi rakhna chahiye — warna poori screen leak ho jati hai. Ye process death nahi jhelta; uske liye `SavedStateHandle` hai.",
     },
     docs: "https://developer.android.com/topic/libraries/architecture/viewmodel",
@@ -128,7 +128,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "The Compose compiler rewrites it to take a hidden `Composer`, so it can only be called from another composable. It may run many times per frame, in any order, and can be skipped entirely — so it must have no side effects and must not do slow work.",
-      hi: "Compose compiler इसमें एक छिपा हुआ `Composer` जोड़ देता है, इसलिए इसे सिर्फ़ किसी दूसरे composable से बुलाया जा सकता है। यह एक frame में कई बार, किसी भी क्रम में चल सकता है और पूरी तरह skip भी हो सकता है — इसलिए इसमें side effect या धीमा काम नहीं होना चाहिए।",
+      hi: "Compose compiler इसमें एक छिपा हुआ `Composer` जोड़ देता है, इसलिए इसे सिर्फ किसी दूसरे composable से बुलाया जा सकता है। यह एक frame में कई बार, किसी भी क्रम में चल सकता है और पूरी तरह skip भी हो सकता है — इसलिए इसमें side effect या धीमा काम नहीं होना चाहिए।",
       "hi-en": "Compose compiler ismein ek chhipa hua `Composer` jod deta hai, isliye ise sirf kisi dusre composable se bulaya ja sakta hai. Ye ek frame mein kai baar, kisi bhi order mein chal sakta hai aur poori tarah skip bhi ho sakta hai — isliye ismein side effect ya dheema kaam nahi hona chahiye.",
     },
     docs: "https://developer.android.com/develop/ui/compose/mental-model",
@@ -166,7 +166,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Only the composables that actually read the value are recomposed — not the whole screen. Wrap it in `remember`, otherwise a new state object is created on every recomposition and the value never appears to change.",
-      hi: "सिर्फ़ वही composables दोबारा चलते हैं जो value पढ़ते हैं — पूरी screen नहीं। इसे `remember` में लपेटिए, वरना हर recomposition पर नया state object बनेगा और value कभी बदली हुई नहीं दिखेगी।",
+      hi: "सिर्फ वही composables दोबारा चलते हैं जो value पढ़ते हैं — पूरी screen नहीं। इसे `remember` में लपेटिए, वरना हर recomposition पर नया state object बनेगा और value कभी बदली हुई नहीं दिखेगी।",
       "hi-en": "Sirf wahi composables dobara chalte hain jo value padhte hain — poori screen nahi. Ise `remember` mein lapeto, warna har recomposition par naya state object banega aur value kabhi badli hui nahi dikhegi.",
     },
     docs: "https://developer.android.com/develop/ui/compose/state",
@@ -185,7 +185,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Order is not cosmetic, it is the semantics. `padding().background()` paints behind the content only; `background().padding()` paints behind the padding too. The same applies to `clickable` — whatever comes before it is outside the touch area.",
-      hi: "क्रम सजावट नहीं, अर्थ है। `padding().background()` सिर्फ़ content के पीछे रंग भरता है; `background().padding()` padding के पीछे भी। यही `clickable` पर लागू होता है — उससे पहले जो है वह touch area के बाहर रहता है।",
+      hi: "क्रम सजावट नहीं, अर्थ है। `padding().background()` सिर्फ content के पीछे रंग भरता है; `background().padding()` padding के पीछे भी। यही `clickable` पर लागू होता है — उससे पहले जो है वह touch area के बाहर रहता है।",
       "hi-en": "Order sajawat nahi, matlab hai. `padding().background()` sirf content ke peechhe rang bharta hai; `background().padding()` padding ke peechhe bhi. Yahi `clickable` par lagu hota hai — usse pehle jo hai wo touch area ke bahar rehta hai.",
     },
     docs: "https://developer.android.com/develop/ui/compose/modifiers",
@@ -223,7 +223,7 @@ export const ANDROID_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It renders every child immediately, so it must not be used for long lists — use `LazyColumn`, which only composes what is on screen. A `Column` also cannot scroll unless you add `Modifier.verticalScroll`.",
-      hi: "यह हर child तुरंत बनाता है, इसलिए लंबी list के लिए इसका इस्तेमाल न करें — `LazyColumn` लीजिए, जो सिर्फ़ screen पर दिख रहे items बनाता है। `Column` तब तक scroll भी नहीं होता जब तक `Modifier.verticalScroll` न जोड़ें।",
+      hi: "यह हर child तुरंत बनाता है, इसलिए लंबी list के लिए इसका इस्तेमाल न करें — `LazyColumn` लीजिए, जो सिर्फ screen पर दिख रहे items बनाता है। `Column` तब तक scroll भी नहीं होता जब तक `Modifier.verticalScroll` न जोड़ें।",
       "hi-en": "Ye har child turant banata hai, isliye lambi list ke liye iska use na karo — `LazyColumn` lo, jo sirf screen par dikh rahe items banata hai. `Column` tab tak scroll bhi nahi hota jab tak `Modifier.verticalScroll` na jodo.",
     },
     docs: "https://developer.android.com/develop/ui/compose/layouts/basics",
@@ -237,12 +237,12 @@ export const ANDROID_GLOSSARY: Glossary = {
     importLine: "import androidx.compose.foundation.lazy.LazyColumn",
     does: {
       en: "A vertically scrolling list that only composes the items currently visible.",
-      hi: "लंबवत scroll होने वाली list, जो सिर्फ़ अभी दिख रहे items बनाती है।",
+      hi: "लंबवत scroll होने वाली list, जो सिर्फ अभी दिख रहे items बनाती है।",
       "hi-en": "Vertically scroll hone wali list, jo sirf abhi dikh rahe items banati hai.",
     },
     affects: {
       en: "It is the Compose equivalent of `RecyclerView`. Always pass a stable `key` for each item — without one, reordering or deleting causes the wrong item state to be reused, exactly like a missing `DiffUtil` id.",
-      hi: "यह Compose में `RecyclerView` जैसा है। हर item के लिए स्थिर `key` ज़रूर दीजिए — बिना key के reorder या delete पर ग़लत item का state दोबारा इस्तेमाल हो जाता है, ठीक वैसे जैसे `DiffUtil` की id न होने पर।",
+      hi: "यह Compose में `RecyclerView` जैसा है। हर item के लिए स्थिर `key` जरूर दीजिए — बिना key के reorder या delete पर गलत item का state दोबारा इस्तेमाल हो जाता है, ठीक वैसे जैसे `DiffUtil` की id न होने पर।",
       "hi-en": "Ye Compose mein `RecyclerView` jaisa hai. Har item ke liye stable `key` zarur do — bina key ke reorder ya delete par galat item ka state dobara use ho jata hai, theek waise jaise `DiffUtil` ki id na hone par.",
     },
     docs: "https://developer.android.com/develop/ui/compose/lists",

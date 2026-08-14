@@ -19,12 +19,12 @@ export const GRADLE_GLOSSARY: Glossary = {
     importLine: null,
     does: {
       en: "Adds a library to this module, and keeps it private to this module.",
-      hi: "इस module में एक library जोड़ता है, और उसे सिर्फ़ इसी module तक सीमित रखता है।",
+      hi: "इस module में एक library जोड़ता है, और उसे सिर्फ इसी module तक सीमित रखता है।",
       "hi-en": "Is module mein ek library jodta hai, aur use sirf isi module tak seemit rakhta hai.",
     },
     affects: {
       en: "Modules that depend on yours cannot see it. Changing that library therefore recompiles only this module — the single biggest lever on build times in a multi-module project.",
-      hi: "आप पर निर्भर modules उसे नहीं देख पाते। इसलिए उस library को बदलने पर सिर्फ़ यही module दोबारा compile होता है — multi-module project में build time घटाने का सबसे बड़ा तरीक़ा यही है।",
+      hi: "आप पर निर्भर modules उसे नहीं देख पाते। इसलिए उस library को बदलने पर सिर्फ यही module दोबारा compile होता है — multi-module project में build time घटाने का सबसे बड़ा तरीका यही है।",
       "hi-en": "Aap par nirbhar modules use nahi dekh pate. Isliye us library ko badalne par sirf yahi module dobara compile hota hai — multi-module project mein build time ghatane ka sabse bada tarika yahi hai.",
     },
     docs: "https://docs.gradle.org/current/userguide/java_library_plugin.html",
@@ -47,7 +47,7 @@ export const GRADLE_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It puts the library on the compile classpath of every dependent module, so changing its version triggers a far wider recompile. Use it only when your module's public API genuinely returns that library's types.",
-      hi: "यह library को हर निर्भर module के compile classpath पर डाल देता है, इसलिए उसका version बदलने पर कहीं ज़्यादा दोबारा compile होता है। इसे तभी इस्तेमाल कीजिए जब आपके module का public API सच में उसी library के types लौटाता हो।",
+      hi: "यह library को हर निर्भर module के compile classpath पर डाल देता है, इसलिए उसका version बदलने पर कहीं ज्यादा दोबारा compile होता है। इसे तभी इस्तेमाल कीजिए जब आपके module का public API सच में उसी library के types लौटाता हो।",
       "hi-en": "Ye library ko har nirbhar module ke compile classpath par daal deta hai, isliye uska version badalne par kahin zyada dobara compile hota hai. Ise tabhi use karo jab aapke module ka public API sach mein usi library ke types lautata ho.",
     },
     docs: "https://docs.gradle.org/current/userguide/java_library_plugin.html",
@@ -66,7 +66,7 @@ export const GRADLE_GLOSSARY: Glossary = {
     },
     affects: {
       en: "This block belongs in the **module's** build file, not the project root one. Putting it in the root file is the single most common Gradle mistake, and the error message never says so.",
-      hi: "यह block **module** की build file में होता है, project की root वाली में नहीं। इसे root file में डालना Gradle की सबसे आम ग़लती है, और error message यह कभी नहीं बताता।",
+      hi: "यह block **module** की build file में होता है, project की root वाली में नहीं। इसे root file में डालना Gradle की सबसे आम गलती है, और error message यह कभी नहीं बताता।",
       "hi-en": "Ye block **module** ki build file mein hota hai, project ki root wali mein nahi. Ise root file mein daalna Gradle ki sabse common galti hai, aur error message ye kabhi nahi batata.",
     },
     docs: "https://developer.android.com/build/dependencies",
@@ -142,7 +142,7 @@ export const GRADLE_GLOSSARY: Glossary = {
     },
     affects: {
       en: "The system reads it and decides how strictly to treat your app. Raising it silently changes behaviour you never wrote — background limits, permission prompts, storage access — so raise it deliberately and then actually test. Google Play requires it to stay recent.",
-      hi: "System इसे पढ़कर तय करता है कि आपकी app के साथ कितनी सख़्ती करनी है। इसे बढ़ाने पर वह behaviour चुपचाप बदल जाता है जो आपने लिखा ही नहीं — background limits, permission prompts, storage access — इसलिए सोच-समझकर बढ़ाइए और फिर सच में test कीजिए। Google Play इसे recent रखना ज़रूरी करता है।",
+      hi: "System इसे पढ़कर तय करता है कि आपकी app के साथ कितनी सख्ती करनी है। इसे बढ़ाने पर वह behaviour चुपचाप बदल जाता है जो आपने लिखा ही नहीं — background limits, permission prompts, storage access — इसलिए सोच-समझकर बढ़ाइए और फिर सच में test कीजिए। Google Play इसे recent रखना जरूरी करता है।",
       "hi-en": "System ise padhkar tay karta hai ki aapki app ke saath kitni sakhti karni hai. Ise badhane par wo behaviour chupchap badal jata hai jo aapne likha hi nahi — background limits, permission prompts, storage access — isliye soch-samajh kar badhao aur phir sach mein test karo. Google Play ise recent rakhna zaruri karta hai.",
     },
     docs: "https://developer.android.com/google/play/requirements/target-sdk",
@@ -161,7 +161,7 @@ export const GRADLE_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It is a compile-time detail only. It looks identical to `applicationId` in most projects, but changing it is harmless while changing `applicationId` is not.",
-      hi: "यह सिर्फ़ compile-time की बात है। ज़्यादातर projects में यह `applicationId` जैसा ही दिखता है, पर इसे बदलना नुक़सानदेह नहीं है जबकि `applicationId` बदलना है।",
+      hi: "यह सिर्फ compile-time की बात है। ज्यादातर projects में यह `applicationId` जैसा ही दिखता है, पर इसे बदलना नुकसानदेह नहीं है जबकि `applicationId` बदलना है।",
       "hi-en": "Ye sirf compile-time ki baat hai. Zyadatar projects mein ye `applicationId` jaisa hi dikhta hai, par ise badalna nuksaandeh nahi hai jabki `applicationId` badalna hai.",
     },
     docs: "https://developer.android.com/build/configure-app-module",

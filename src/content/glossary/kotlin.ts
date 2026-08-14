@@ -9,7 +9,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     importLine: null,
     does: {
       en: "Declares a read-only reference: it can be assigned exactly once.",
-      hi: "एक read-only reference बनाता है — इसे सिर्फ़ एक बार assign किया जा सकता है।",
+      hi: "एक read-only reference बनाता है — इसे सिर्फ एक बार assign किया जा सकता है।",
       "hi-en": "Ek read-only reference banata hai — ise sirf ek baar assign kiya ja sakta hai.",
     },
     affects: {
@@ -52,7 +52,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "If you omit the return type, Kotlin infers it — but only for single-expression functions. Block bodies default to `Unit`.",
-      hi: "return type न लिखें तो Kotlin खुद पता लगा लेता है — लेकिन सिर्फ़ single-expression functions के लिए। Block body का default `Unit` होता है।",
+      hi: "return type न लिखें तो Kotlin खुद पता लगा लेता है — लेकिन सिर्फ single-expression functions के लिए। Block body का default `Unit` होता है।",
       "hi-en": "Return type na likho to Kotlin khud pata laga leta hai — lekin sirf single-expression functions ke liye. Block body ka default `Unit` hota hai.",
     },
     docs: "https://kotlinlang.org/docs/functions.html",
@@ -108,7 +108,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Triggers a smart cast: inside the branch the compiler already treats the value as that type, so no manual cast is needed.",
-      hi: "Smart cast चालू कर देता है: branch के अंदर compiler उस value को उसी type का मान लेता है, इसलिए manual cast की ज़रूरत नहीं।",
+      hi: "Smart cast चालू कर देता है: branch के अंदर compiler उस value को उसी type का मान लेता है, इसलिए manual cast की जरूरत नहीं।",
       "hi-en": "Smart cast chalu kar deta hai: branch ke andar compiler us value ko usi type ka maan leta hai, isliye manual cast ki zarurat nahi.",
     },
     docs: "https://kotlinlang.org/docs/typecasts.html",
@@ -165,7 +165,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "This is what makes `when` exhaustive. It is the standard way to model UI state — `Loading`, `Success`, `Error` — so an unhandled state becomes a compile error, not a bug.",
-      hi: "यही `when` को exhaustive बनाता है। UI state — `Loading`, `Success`, `Error` — को model करने का यही मानक तरीक़ा है, जिससे छूटा हुआ state bug नहीं, compile error बनता है।",
+      hi: "यही `when` को exhaustive बनाता है। UI state — `Loading`, `Success`, `Error` — को model करने का यही मानक तरीका है, जिससे छूटा हुआ state bug नहीं, compile error बनता है।",
       "hi-en": "Yahi `when` ko exhaustive banata hai. UI state — `Loading`, `Success`, `Error` — model karne ka yahi standard tarika hai, jisse chhuta hua state bug nahi, compile error banta hai.",
     },
     docs: "https://kotlinlang.org/docs/sealed-classes.html",
@@ -217,7 +217,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     importLine: null,
     does: {
       en: "Declares a class that cannot be instantiated, or a member that has no body and must be implemented.",
-      hi: "ऐसी class बनाता है जिसका object नहीं बन सकता, या ऐसा member जिसका body नहीं है और जिसे implement करना ज़रूरी है।",
+      hi: "ऐसी class बनाता है जिसका object नहीं बन सकता, या ऐसा member जिसका body नहीं है और जिसे implement करना जरूरी है।",
       "hi-en": "Aisi class banata hai jiska object nahi ban sakta, ya aisa member jiska body nahi hai aur jise implement karna zaruri hai.",
     },
     affects: {
@@ -260,7 +260,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Moves expensive work out of the constructor, which directly improves startup time. It is thread-safe by default; pass `LazyThreadSafetyMode.NONE` when you know only one thread touches it.",
-      hi: "भारी काम constructor से बाहर ले जाता है, जिससे startup time सीधे बेहतर होता है। Default रूप से thread-safe है; अगर सिर्फ़ एक thread छूता है तो `LazyThreadSafetyMode.NONE` दीजिए।",
+      hi: "भारी काम constructor से बाहर ले जाता है, जिससे startup time सीधे बेहतर होता है। Default रूप से thread-safe है; अगर सिर्फ एक thread छूता है तो `LazyThreadSafetyMode.NONE` दीजिए।",
       "hi-en": "Bhaari kaam constructor se bahar le jata hai, jisse startup time seedha behtar hota hai. Default se thread-safe hai; agar sirf ek thread chhuta hai to `LazyThreadSafetyMode.NONE` do.",
     },
     docs: "https://kotlinlang.org/docs/delegated-properties.html#lazy-properties",
@@ -279,7 +279,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It is how `by lazy`, `by viewModels()` and `by remember { mutableStateOf(...) }` all work. With `by`, reading the property gives you the value directly instead of a wrapper — no `.value` needed.",
-      hi: "`by lazy`, `by viewModels()` और `by remember { mutableStateOf(...) }` सब इसी से चलते हैं। `by` के साथ property पढ़ने पर wrapper नहीं, सीधे value मिलती है — `.value` लिखने की ज़रूरत नहीं।",
+      hi: "`by lazy`, `by viewModels()` और `by remember { mutableStateOf(...) }` सब इसी से चलते हैं। `by` के साथ property पढ़ने पर wrapper नहीं, सीधे value मिलती है — `.value` लिखने की जरूरत नहीं।",
       "hi-en": "`by lazy`, `by viewModels()` aur `by remember { mutableStateOf(...) }` sab isi se chalte hain. `by` ke saath property padhne par wrapper nahi, seedha value milti hai — `.value` likhne ki zarurat nahi.",
     },
     docs: "https://kotlinlang.org/docs/delegated-properties.html",
@@ -298,7 +298,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "This is Kotlin's replacement for `static`. Note that it is a real object living in memory — heavy state in a companion stays alive for the whole process.",
-      hi: "यह Kotlin में `static` की जगह है। ध्यान रखिए यह असली object है जो memory में रहता है — companion में भारी state पूरे process तक ज़िंदा रहता है।",
+      hi: "यह Kotlin में `static` की जगह है। ध्यान रखिए यह असली object है जो memory में रहता है — companion में भारी state पूरे process तक जिंदा रहता है।",
       "hi-en": "Ye Kotlin mein `static` ki jagah hai. Dhyan rakho ye asli object hai jo memory mein rehta hai — companion mein bhaari state poore process tak zinda rehta hai.",
     },
     docs: "https://kotlinlang.org/docs/object-declarations.html#companion-objects",
@@ -317,7 +317,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It is created lazily and thread-safely on first access, and never freed. Holding a `Context` in an `object` is a classic memory leak.",
-      hi: "पहली बार छूने पर lazily और thread-safe तरीक़े से बनता है, और कभी free नहीं होता। `object` में `Context` रखना क्लासिक memory leak है।",
+      hi: "पहली बार छूने पर lazily और thread-safe तरीके से बनता है, और कभी free नहीं होता। `object` में `Context` रखना क्लासिक memory leak है।",
       "hi-en": "Pehli baar chhune par lazily aur thread-safe tarike se banta hai, aur kabhi free nahi hota. `object` mein `Context` rakhna classic memory leak hai.",
     },
     docs: "https://kotlinlang.org/docs/object-declarations.html",
@@ -336,7 +336,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Combined with `?.`, it is the idiomatic way to run code only when a value is non-null. Careful: `?.let { }` returns `null` when the receiver is null, so chaining after it still needs a null check.",
-      hi: "`?.` के साथ मिलकर यह non-null होने पर ही code चलाने का idiomatic तरीक़ा है। सावधानी: receiver null हो तो `?.let { }` खुद `null` लौटाता है, इसलिए आगे chain करने पर फिर null check चाहिए।",
+      hi: "`?.` के साथ मिलकर यह non-null होने पर ही code चलाने का idiomatic तरीका है। सावधानी: receiver null हो तो `?.let { }` खुद `null` लौटाता है, इसलिए आगे chain करने पर फिर null check चाहिए।",
       "hi-en": "`?.` ke saath milkar ye non-null hone par hi code chalane ka idiomatic tarika hai. Savdhani: receiver null ho to `?.let { }` khud `null` lautata hai, isliye aage chain karne par phir null check chahiye.",
     },
     docs: "https://kotlinlang.org/docs/scope-functions.html#let",
@@ -355,7 +355,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Because it returns the receiver, it chains — the standard way to configure an object right where it is created, such as building an `Intent` or a `Paint`.",
-      hi: "Receiver लौटाने की वजह से यह chain होता है — object को वहीं configure करने का मानक तरीक़ा जहाँ वह बना है, जैसे `Intent` या `Paint` बनाते समय।",
+      hi: "Receiver लौटाने की वजह से यह chain होता है — object को वहीं configure करने का मानक तरीका जहाँ वह बना है, जैसे `Intent` या `Paint` बनाते समय।",
       "hi-en": "Receiver lautane ki wajah se ye chain hota hai — object ko wahin configure karne ka standard tarika jahan wo bana hai, jaise `Intent` ya `Paint` banate samay.",
     },
     docs: "https://kotlinlang.org/docs/scope-functions.html#apply",
@@ -393,7 +393,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Removes the lambda object allocation, allows non-local `return`, and enables `reified` type parameters. Inlining a large function bloats the bytecode, so it only pays off for small functions taking lambdas.",
-      hi: "Lambda object की allocation हटाता है, non-local `return` की अनुमति देता है, और `reified` type parameters संभव बनाता है। बड़ी function को inline करने से bytecode फूल जाता है, इसलिए यह सिर्फ़ छोटे lambda-लेने वाले functions पर फ़ायदेमंद है।",
+      hi: "Lambda object की allocation हटाता है, non-local `return` की अनुमति देता है, और `reified` type parameters संभव बनाता है। बड़ी function को inline करने से bytecode फूल जाता है, इसलिए यह सिर्फ छोटे lambda-लेने वाले functions पर फायदेमंद है।",
       "hi-en": "Lambda object ki allocation hatata hai, non-local `return` ki permission deta hai, aur `reified` type parameters possible banata hai. Badi function ko inline karne se bytecode phool jata hai, isliye ye sirf chhote lambda-lene wale functions par faydemand hai.",
     },
     docs: "https://kotlinlang.org/docs/inline-functions.html",
@@ -412,7 +412,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Works around JVM type erasure, so you can write `T::class` or `value is T`. It only works on `inline` functions, because the type is substituted at each call site.",
-      hi: "JVM के type erasure को चकमा देता है, जिससे `T::class` या `value is T` लिखा जा सके। यह सिर्फ़ `inline` functions पर चलता है, क्योंकि type हर call site पर बदल दिया जाता है।",
+      hi: "JVM के type erasure को चकमा देता है, जिससे `T::class` या `value is T` लिखा जा सके। यह सिर्फ `inline` functions पर चलता है, क्योंकि type हर call site पर बदल दिया जाता है।",
       "hi-en": "JVM ke type erasure ko chakma deta hai, jisse `T::class` ya `value is T` likha ja sake. Ye sirf `inline` functions par chalta hai, kyunki type har call site par badal diya jata hai.",
     },
     docs: "https://kotlinlang.org/docs/inline-functions.html#reified-type-parameters",
@@ -445,7 +445,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     importLine: null,
     does: {
       en: "Declares a new type: a blueprint for objects with their own state and behaviour.",
-      hi: "एक नया type बनाता है: ऐसे objects का ख़ाका जिनका अपना state और व्यवहार हो।",
+      hi: "एक नया type बनाता है: ऐसे objects का खाका जिनका अपना state और व्यवहार हो।",
       "hi-en": "Ek naya type banata hai: aise objects ka khaka jinka apna state aur behaviour ho.",
     },
     affects: {
@@ -469,7 +469,7 @@ export const KOTLIN_GLOSSARY: Glossary = {
     },
     affects: {
       en: "No getter is generated, so there is zero runtime cost. It only works for primitives and `String` declared at the top level or inside an `object`.",
-      hi: "कोई getter नहीं बनता, इसलिए runtime cost शून्य है। यह सिर्फ़ primitives और `String` पर चलता है, वह भी top level या `object` के अंदर।",
+      hi: "कोई getter नहीं बनता, इसलिए runtime cost शून्य है। यह सिर्फ primitives और `String` पर चलता है, वह भी top level या `object` के अंदर।",
       "hi-en": "Koi getter nahi banta, isliye runtime cost zero hai. Ye sirf primitives aur `String` par chalta hai, wo bhi top level ya `object` ke andar.",
     },
     docs: "https://kotlinlang.org/docs/properties.html#compile-time-constants",

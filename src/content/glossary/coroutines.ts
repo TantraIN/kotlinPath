@@ -14,7 +14,7 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     affects: {
       en: "A `suspend` function can only be called from another `suspend` function or from a coroutine builder. The compiler rewrites it into a state machine and adds a hidden `Continuation` parameter — which is why Java cannot call it directly.",
-      hi: "`suspend` function को सिर्फ़ दूसरे `suspend` function या coroutine builder से बुलाया जा सकता है। Compiler इसे state machine में बदल देता है और एक छिपा हुआ `Continuation` parameter जोड़ता है — इसीलिए Java इसे सीधे नहीं बुला सकता।",
+      hi: "`suspend` function को सिर्फ दूसरे `suspend` function या coroutine builder से बुलाया जा सकता है। Compiler इसे state machine में बदल देता है और एक छिपा हुआ `Continuation` parameter जोड़ता है — इसीलिए Java इसे सीधे नहीं बुला सकता।",
       "hi-en": "`suspend` function ko sirf dusre `suspend` function ya coroutine builder se bulaya ja sakta hai. Compiler ise state machine mein badal deta hai aur ek chhipa hua `Continuation` parameter jodta hai — isiliye Java ise seedha nahi bula sakta.",
     },
     docs: "https://kotlinlang.org/docs/coroutines-basics.html",
@@ -52,7 +52,7 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     affects: {
       en: "Nothing runs in parallel unless you start both `async` blocks before calling `await` on either. Calling `await` immediately makes it sequential — the single most common coroutine mistake.",
-      hi: "जब तक दोनों `async` block पहले शुरू न करें और बाद में `await` न करें, कुछ भी parallel नहीं चलता। तुरंत `await` करने से यह sequential हो जाता है — coroutines की सबसे आम ग़लती।",
+      hi: "जब तक दोनों `async` block पहले शुरू न करें और बाद में `await` न करें, कुछ भी parallel नहीं चलता। तुरंत `await` करने से यह sequential हो जाता है — coroutines की सबसे आम गलती।",
       "hi-en": "Jab tak dono `async` block pehle shuru na karo aur baad mein `await` na karo, kuch bhi parallel nahi chalta. Turant `await` karne se ye sequential ho jata hai — coroutines ki sabse common galti.",
     },
     docs: "https://kotlinlang.org/docs/composing-suspending-functions.html",
@@ -71,7 +71,7 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     affects: {
       en: "This is how you move blocking work off the main thread. It does not create concurrency — the caller waits. Put it inside the repository, not at the call site, so callers never have to think about threads.",
-      hi: "Blocking काम को main thread से हटाने का यही तरीक़ा है। यह concurrency नहीं बनाता — caller इंतज़ार करता है। इसे repository के अंदर रखिए, call site पर नहीं, ताकि caller को thread की चिंता ही न करनी पड़े।",
+      hi: "Blocking काम को main thread से हटाने का यही तरीका है। यह concurrency नहीं बनाता — caller इंतजार करता है। इसे repository के अंदर रखिए, call site पर नहीं, ताकि caller को thread की चिंता ही न करनी पड़े।",
       "hi-en": "Blocking kaam ko main thread se hatane ka yahi tarika hai. Ye concurrency nahi banata — caller intezaar karta hai. Ise repository ke andar rakho, call site par nahi, taki caller ko thread ki chinta hi na karni pade.",
     },
     docs: "https://kotlinlang.org/docs/coroutine-context-and-dispatchers.html",
@@ -90,7 +90,7 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     affects: {
       en: "`Main` touches the UI, `IO` is for network and disk (many threads, mostly waiting), `Default` is for CPU work (one thread per core). Choosing wrongly either freezes the UI or starves the CPU pool.",
-      hi: "`Main` UI छूता है, `IO` network और disk के लिए है (कई threads, ज़्यादातर इंतज़ार में), `Default` CPU काम के लिए है (हर core पर एक thread)। ग़लत चुनने पर या तो UI जम जाता है या CPU pool भूखा रह जाता है।",
+      hi: "`Main` UI छूता है, `IO` network और disk के लिए है (कई threads, ज्यादातर इंतजार में), `Default` CPU काम के लिए है (हर core पर एक thread)। गलत चुनने पर या तो UI जम जाता है या CPU pool भूखा रह जाता है।",
       "hi-en": "`Main` UI chhuta hai, `IO` network aur disk ke liye hai (kai threads, zyadatar intezaar mein), `Default` CPU kaam ke liye hai (har core par ek thread). Galat chunne par ya to UI jam jata hai ya CPU pool bhookha reh jata hai.",
     },
     docs: "https://kotlinlang.org/docs/coroutine-context-and-dispatchers.html",
@@ -109,7 +109,7 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     affects: {
       en: "This is what structured concurrency means: no coroutine outlives its scope. On Android you almost never create one by hand — use `viewModelScope` or `lifecycleScope`, which cancel automatically.",
-      hi: "यही structured concurrency है: कोई coroutine अपने scope से ज़्यादा नहीं जीता। Android पर इसे हाथ से बनाने की ज़रूरत लगभग कभी नहीं — `viewModelScope` या `lifecycleScope` इस्तेमाल कीजिए, जो अपने आप cancel हो जाते हैं।",
+      hi: "यही structured concurrency है: कोई coroutine अपने scope से ज्यादा नहीं जीता। Android पर इसे हाथ से बनाने की जरूरत लगभग कभी नहीं — `viewModelScope` या `lifecycleScope` इस्तेमाल कीजिए, जो अपने आप cancel हो जाते हैं।",
       "hi-en": "Yahi structured concurrency hai: koi coroutine apne scope se zyada nahi jeeta. Android par ise haath se banane ki zarurat lagbhag kabhi nahi — `viewModelScope` ya `lifecycleScope` use karo, jo apne aap cancel ho jate hain.",
     },
     docs: "https://kotlinlang.org/docs/coroutines-basics.html#structured-concurrency",
@@ -185,7 +185,7 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     affects: {
       en: "It suspends forever until the flow completes or the coroutine is cancelled — so any code written after it will not run for an infinite flow such as a `StateFlow`.",
-      hi: "यह तब तक रुका रहता है जब तक flow ख़त्म न हो या coroutine cancel न हो — इसलिए `StateFlow` जैसे अनंत flow के बाद लिखा कोई भी code कभी नहीं चलेगा।",
+      hi: "यह तब तक रुका रहता है जब तक flow खत्म न हो या coroutine cancel न हो — इसलिए `StateFlow` जैसे अनंत flow के बाद लिखा कोई भी code कभी नहीं चलेगा।",
       "hi-en": "Ye tab tak ruka rehta hai jab tak flow khatam na ho ya coroutine cancel na ho — isliye `StateFlow` jaise anant flow ke baad likha koi bhi code kabhi nahi chalega.",
     },
     docs: "https://kotlinlang.org/docs/flow.html",
