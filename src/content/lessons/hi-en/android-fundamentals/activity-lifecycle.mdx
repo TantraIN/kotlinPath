@@ -1,0 +1,187 @@
+---
+title: Activity lifecycle, gehrai se
+description: Saat callbacks jo checklist jaisi lagti hain par asal mein teen jode hain. Ye joda dikh jaye to leaks aur khoya hua state mystery nahi rehte.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Lifecycle system ka ye batana hai ki **aapki screen abhi kitni asli hai**. Callbacks jodon mein
+aate hain, aur jo aap ek mein lete ho wo uske saathi mein chhodte ho.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Android ka har shuruati bug yahin rehta hai. Rotation par state gayab ho jata hai. Ek baar
+register kiya listener teen baar chalta hai. Screen `Context` pakde rehti hai user ke jaane ke
+baad bhi, aur poora view tree leak kar deti hai.
+
+Inmein se kuch bhi badkismati nahi hai. Har ek ya to bina saathi wala acquisition hai, ya aisa
+kaam jo us callback mein rakha gaya jo likhne wale ki soch se zyada baar chalta hai.
+
+## Teen jode, saat kadam nahi
+
+<Figure caption="Ise teen ek-ke-andar-ek dibbon ki tarah padho. Har khulne wale callback ka theek ek band karne wala saathi hai, aur andar wale jode bahar wale ke andar kai baar chal sakte hain.">
+  <PipelineDiagram
+    title="Aam launch par order"
+    description="onCreate ek baar chalta hai, phir onStart activity ko dikhne laayak banata hai, phir onResume use focus deta hai. Jaate waqt order ulta hota hai: onPause, onStop, onDestroy."
+    stages={[
+      { label: "onCreate", sub: "hai", accent: "violet" },
+      { label: "onStart", sub: "dikh rahi hai", accent: "sky" },
+      { label: "onResume", sub: "focus mein hai", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+| Joda | Kab khulta hai | Kab band hota hai | Yahan rakho |
+| --- | --- | --- | --- |
+| `onCreate` / `onDestroy` | Object banta hai | Phenk diya jata hai | Inflate, jod-tod, ek baar ka setup |
+| `onStart` / `onStop` | Dikhne lagti hai | Poori tarah chhup jati hai | Observers register, location shuru |
+| `onResume` / `onPause` | Focus milta hai | Focus chala jata hai | Camera preview, sensors, animations |
+
+<Tip bare>
+Jab tay na ho ki code kahan jaye to ye poochho: jab user screen *dekh* sakta hai par use *chhoo*
+nahi raha, tab kya hona chahiye? Theek yahi khaali jagah `onStart` aur `onResume` ke beech hai.
+</Tip>
+
+## Asal mein chalta kya hai, aur kab
+
+| User ye karta hai | Callbacks |
+| --- | --- |
+| App kholta hai | `onCreate` → `onStart` → `onResume` |
+| Upar dialog jaisi activity kholta hai | Sirf `onPause` |
+| Upar aam, thos activity kholta hai | `onPause` → `onStop` |
+| Home dabata hai | `onPause` → `onStop` |
+| Home se lautta hai | `onRestart` → `onStart` → `onResume` |
+| Device ghumata hai | `onPause` → `onStop` → `onDestroy` → `onCreate` → … |
+| Back dabata hai | `onPause` → `onStop` → `onDestroy`, aur khatam |
+| System process maar deta hai | Kuch nahi. Koi callback nahi chalta |
+
+<Quiz
+  question="Aapki activity ke upar ek transparent, dialog jaisi activity khulti hai. Kaun se callbacks chalenge?"
+  options={[
+    "onPause, phir onStop",
+    "Sirf onPause — aapki activity peechhe ab bhi dikh rahi hai",
+    "Koi nahi; dialog alag activity hoti hi nahi",
+  ]}
+  answer={1}
+  explanation="onStop ka matlab hai poori tarah chhup jana, aur aapki activity dialog ke kinaron se ab bhi dikh rahi hai. To sirf onPause milta hai, aur kuch nahi. Isiliye camera chhodna ya listener hatana onPause mein rakhna galat ho sakta hai — user kahin gaya hi nahi, aur jo kuch aapne sameta wo dialog band hote hi dobara banana padega. Dikhne se juda kaam onStart/onStop mein rehta hai."
+/>
+
+## Rotation koi alag maamla nahi hai
+
+Configuration change — rotation, bhasha, dark mode, font size, window ka naap — activity ko
+khatam karke nayi banata hai. System ye isliye karta hai taaki nayi configuration ke hisaab se
+naye resources chune jayein.
+
+```kotlin title="Rotation.kt" numbered
+class MainActivity : ComponentActivity() {
+    // Rotation par kho jata hai: object naya hai
+    private var clicks = 0
+
+    // Bacha rehta hai: ViewModel is Activity instance se zyada jeeta hai
+    private val viewModel: CounterViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Rotation aur process death dono jhelta hai, par sirf chhota data
+        clicks = savedInstanceState?.getInt("clicks") ?: 0
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("clicks", clicks)
+    }
+}
+```
+
+| Tarika | Rotation jhelta hai | Process death jhelta hai | Size |
+| --- | --- | --- | --- |
+| `Activity` ka field | Nahi | Nahi | — |
+| `ViewModel` | Haan | Nahi | Jo memory mein aa jaye |
+| `onSaveInstanceState` | Haan | Haan | Chhota — ye Binder se guzarta hai |
+| Disk ya database | Haan | Haan | Kuch bhi |
+
+<Warning>
+`onSaveInstanceState` database nahi hai. Jo kuch aap `Bundle` mein daalte ho wo ek Binder
+transaction se guzarta hai jiski poori had lagbhag 1 MB hai. Wahan koi badi bitmap ya list
+daalne ka result `TransactionTooLargeException` hai — asli users ke phone par, aapki mez par
+nahi.
+</Warning>
+
+## Andar ki baat: `onDestroy` koi waada nahi hai
+
+<Timeline>
+  <TimelineItem title="Aam finish" meta="callbacks chalte hain">
+    Back dabana, ya `finish()`. System activity ko `onPause`, `onStop` aur `onDestroy` se order
+    mein neeche utaar deta hai.
+  </TimelineItem>
+  <TimelineItem title="Configuration change" meta="callbacks chalte hain">
+    Wahi utarna, phir seedhe naye instance mein upar chadhna. `onSaveInstanceState` utarte waqt
+    chalta hai, `onStop` se pehle.
+  </TimelineItem>
+  <TimelineItem title="Process death" meta="kuch nahi chalta">
+    App background mein hai aur system ko memory chahiye. Aapka process seedhe maar diya jata hai
+    — na `onStop`, na `onDestroy`, kuch bachane ka mauka hi nahi.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="To save asal mein kahan karun">
+`onDestroy` ko un cheezon ki safai maano jo sirf process ke zinda rehte maayne rakhti hain — koi
+receiver hatana, koi scope cancel karna. Use save karne ka mauka kabhi mat maano.
+
+Jo kuch khone par user ko dukh hoga wo badalte hi disk par jana chahiye, ya zyada se zyada
+`onStop` mein — jo aam backgrounding se pehle chalta *hai*. Isi Phase ka `config-changes` wala
+lesson `SavedStateHandle` dikhata hai, jo `ViewModel` aur `Bundle` wale dono hisson ko ek kar
+deta hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo asli bugs banati hain">
+**`onCreate` mein register karke `onDestroy` mein hatana.** Joda galat hai: broadcast receiver
+ya location listener tab bhi chalta rehta hai jab app background mein padi hai. Dikhne se judi
+har cheez ke liye `onStart`/`onStop` use karo.
+
+**Dikhne wale kaam ko `onPause` mein chhodna.** Dialog ya permission wala prompt `onPause` chala
+deta hai, to jo camera aapne chhoda wo turant dobara chahiye.
+
+**Ye maanna ki data bachne se pehle `onDestroy` chalega.** Process death use poora chhod deti
+hai.
+
+**`onResume` mein bhaari kaam.** Wo screen par har lautne par chalta hai, har dialog band hone
+ke baad bhi. Cold start wala kaam `onCreate` mein rehta hai.
+</Pitfall>
+
+## Practice
+
+1. Saaton callbacks log karo. Ghumao, Home dabao, lauto, Back dabao, aur jo order sach mein
+   dikhe use likh lo.
+2. Dialog jaisi ek activity jodo aur use apni screen ke upar kholo. Confirm karo ki `onStop`
+   nahi chalta.
+3. Ek counter saade field mein, ek `ViewModel` mein aur ek `onSaveInstanceState` mein rakho.
+   Ghumao, phir Developer Options → "Don't keep activities" se process death banao. Kaun bache?
+4. Ek listener `onCreate`/`onDestroy` mein register karo, app ko ek minute background mein rakho,
+   aur use milne wala har callback log karo. Phir use `onStart`/`onStop` mein le jaakar dohrao.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `onCreate` / `onDestroy` | Object ka hona; ek baar ka setup |
+| `onStart` / `onStop` | Dikhna; register aur unregister yahin |
+| `onResume` / `onPause` | Focus; camera, sensors, animations |
+| `onStop` | Poori tarah chhupi, sirf dhaki hui nahi |
+| Configuration change | Khatam karke dobara banana, jaan-boojh kar |
+| `onSaveInstanceState` | Chhota, process death jhelta hai, Binder se jata hai |
+| `ViewModel` | Rotation jhelta hai, process death nahi |
+| Process death | Ek bhi callback nahi |
+
+<Interview title="Android ka sabse zyada poochha jane wala sawal">
+"Activity lifecycle samjhao."
+
+Order se saat naam gina dena kamzor jawab hai. Mazboot jawab teen jode batata hai, har joda kis
+cheez ki had baandhta hai ye kehta hai, aur phir aisa ek case deta hai jo unhe alag kar de —
+wahi dialog jaisi activity jisse `onPause` to chalta hai par `onStop` nahi. Aakhir mein "aur
+process death par inmein se ek bhi nahi chalta, isiliye `onSaveInstanceState` hai" jod dena wo
+hissa hai jo tajurbe jaisa lagta hai.
+</Interview>

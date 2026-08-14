@@ -1,0 +1,183 @@
+---
+title: The Activity lifecycle, in depth
+description: Seven callbacks that look like a checklist and are really three pairs. Once you see the pairing, leaks and lost state stop being mysterious.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+The lifecycle is the system telling you **how real your screen currently is**. The callbacks
+come in pairs, and whatever you acquire in one you release in its partner.
+</KeyIdea>
+
+## Why this matters
+
+Every beginner Android bug lives here. State vanishes on rotation. A listener registered once
+fires three times. A screen holds a `Context` after the user has left and leaks the whole view
+tree.
+
+None of that is bad luck. Each one is an acquisition without its matching release, or work put
+in a callback that runs more often than the author assumed.
+
+## Three pairs, not seven steps
+
+<Figure caption="Read it as three nested boxes. Each opening callback has exactly one closing partner, and the inner pairs can run many times inside the outer one.">
+  <PipelineDiagram
+    title="The order on a normal launch"
+    description="onCreate runs once, then onStart makes the activity visible, then onResume gives it focus. Leaving reverses the order: onPause, onStop, onDestroy."
+    stages={[
+      { label: "onCreate", sub: "exists", accent: "violet" },
+      { label: "onStart", sub: "visible", accent: "sky" },
+      { label: "onResume", sub: "focused", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+| Pair | Opens when | Closes when | Put here |
+| --- | --- | --- | --- |
+| `onCreate` / `onDestroy` | The object is built | It is thrown away | Inflate, wire up, one-time setup |
+| `onStart` / `onStop` | It becomes visible | It is fully hidden | Register observers, start location |
+| `onResume` / `onPause` | It gains focus | It loses focus | Camera preview, sensors, animations |
+
+<Tip bare>
+A useful test when you are unsure where code goes: ask what should happen while the user can
+*see* the screen but is not *touching* it. That is exactly the gap between `onStart` and
+`onResume`.
+</Tip>
+
+## What actually runs, and when
+
+| The user does this | Callbacks |
+| --- | --- |
+| Launches the app | `onCreate` → `onStart` → `onResume` |
+| Opens a dialog-themed activity on top | `onPause` only |
+| Opens a normal, opaque activity on top | `onPause` → `onStop` |
+| Presses Home | `onPause` → `onStop` |
+| Returns from Home | `onRestart` → `onStart` → `onResume` |
+| Rotates the device | `onPause` → `onStop` → `onDestroy` → `onCreate` → … |
+| Presses Back | `onPause` → `onStop` → `onDestroy`, and it is finished |
+| The system kills the process | Nothing. No callback runs |
+
+<Quiz
+  question="A translucent, dialog-themed activity opens on top of yours. Which callbacks run?"
+  options={[
+    "onPause, then onStop",
+    "onPause only — your activity is still visible behind it",
+    "None; a dialog is not a separate activity",
+  ]}
+  answer={1}
+  explanation="onStop means fully hidden, and your activity is still visible around the edges of the dialog. So you get onPause and nothing more. This is exactly why releasing the camera or unregistering a listener in onPause can be wrong — the user has not gone anywhere, and everything you tear down will need rebuilding the moment they dismiss the dialog. Visible-scoped work belongs in onStart/onStop."
+/>
+
+## Rotation is not a special case
+
+A configuration change — rotation, language, dark mode, font size, window resize — destroys the
+activity and builds a new one. The system does this so the new configuration picks fresh
+resources.
+
+```kotlin title="Rotation.kt" numbered
+class MainActivity : ComponentActivity() {
+    // Lost on rotation: the object is new
+    private var clicks = 0
+
+    // Survives: the ViewModel outlives this Activity instance
+    private val viewModel: CounterViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Survives rotation and process death, but only small data
+        clicks = savedInstanceState?.getInt("clicks") ?: 0
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("clicks", clicks)
+    }
+}
+```
+
+| Mechanism | Survives rotation | Survives process death | Size |
+| --- | --- | --- | --- |
+| A field on the `Activity` | No | No | — |
+| `ViewModel` | Yes | No | Anything in memory |
+| `onSaveInstanceState` | Yes | Yes | Small — it goes through Binder |
+| Disk or database | Yes | Yes | Anything |
+
+<Warning>
+`onSaveInstanceState` is not a database. Everything you put in the `Bundle` crosses a Binder
+transaction with a hard limit around 1 MB for the whole transaction. A large bitmap or list
+there produces `TransactionTooLargeException` in the field, not on your desk.
+</Warning>
+
+## Under the hood: `onDestroy` is not a promise
+
+<Timeline>
+  <TimelineItem title="Ordinary finish" meta="callbacks run">
+    Back press, or `finish()`. The system walks the activity down through `onPause`, `onStop`
+    and `onDestroy` in order.
+  </TimelineItem>
+  <TimelineItem title="Configuration change" meta="callbacks run">
+    Same walk down, then straight back up into a new instance. `onSaveInstanceState` runs on the
+    way down, before `onStop`.
+  </TimelineItem>
+  <TimelineItem title="Process death" meta="nothing runs">
+    The app is in the background and the system needs memory. Your process is killed outright —
+    no `onStop`, no `onDestroy`, no chance to flush anything.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="So where do I actually save?">
+Treat `onDestroy` as cleanup for things that only matter while the process lives — unregister a
+receiver, cancel a scope. Never treat it as your chance to persist.
+
+Anything the user would be upset to lose goes to disk as soon as it changes, or at the latest in
+`onStop`, which *is* called before a normal backgrounding. Phase 4's `config-changes` lesson
+covers `SavedStateHandle`, which unifies the `ViewModel` and `Bundle` halves of this.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that produce real bugs">
+**Registering in `onCreate` and unregistering in `onDestroy`.** The pair is wrong: a broadcast
+receiver or location listener keeps running while the app sits in the background. Use
+`onStart`/`onStop` for anything tied to being visible.
+
+**Releasing visible-scoped work in `onPause`.** A dialog or the permission prompt triggers
+`onPause`, so the camera you release is immediately needed again.
+
+**Expecting `onDestroy` before your data is safe.** Process death skips it entirely.
+
+**Heavy work in `onResume`.** It runs on every return to the screen, including after every
+dialog dismissal. Cold-start work belongs in `onCreate`.
+</Pitfall>
+
+## Practice
+
+1. Log all seven callbacks. Rotate, press Home, return, press Back, and write down the order
+   you actually observe.
+2. Add a dialog-themed activity and launch it over your screen. Confirm `onStop` does not run.
+3. Keep a counter in a plain field, a `ViewModel` and `onSaveInstanceState`. Rotate, then use
+   Developer Options → "Don't keep activities" to simulate process death. Which survive?
+4. Register a listener in `onCreate`/`onDestroy`, background the app for a minute, and log every
+   callback it receives. Move it to `onStart`/`onStop` and repeat.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `onCreate` / `onDestroy` | The object's existence; one-time setup |
+| `onStart` / `onStop` | Visibility; register and unregister here |
+| `onResume` / `onPause` | Focus; camera, sensors, animations |
+| `onStop` | Fully hidden, not merely covered |
+| Configuration change | Destroy and recreate, by design |
+| `onSaveInstanceState` | Small, survives process death, crosses Binder |
+| `ViewModel` | Survives rotation, not process death |
+| Process death | No callbacks at all |
+
+<Interview title="The most common Android interview question there is">
+"Walk me through the Activity lifecycle."
+
+Listing seven names in order is the weak answer. The strong one names the three pairs, says what
+each pair *scopes*, and then gives a case that separates them — the dialog-themed activity that
+causes `onPause` without `onStop`. Finishing with "and none of them run on process death, which
+is why `onSaveInstanceState` exists" is the part that sounds like experience.
+</Interview>

@@ -1,0 +1,183 @@
+---
+title: Activity lifecycle, गहराई से
+description: सात callbacks जो checklist जैसी लगती हैं पर असल में तीन जोड़े हैं। यह जोड़ा दिख जाए तो leaks और खोया हुआ state रहस्य नहीं रहते।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Lifecycle system का यह बताना है कि **आपकी screen अभी कितनी असली है**। Callbacks जोड़ों में आते
+हैं, और जो आप एक में लेते हैं वह उसके साथी में छोड़ते हैं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Android का हर शुरुआती bug यहीं रहता है। Rotation पर state गायब हो जाता है। एक बार register
+किया listener तीन बार चलता है। Screen `Context` पकड़े रहती है user के जाने के बाद भी, और पूरा
+view tree leak कर देती है।
+
+इनमें से कुछ भी बदकिस्मती नहीं है। हर एक या तो बिना साथी वाला acquisition है, या ऐसा काम जो उस
+callback में रखा गया जो लिखने वाले की सोच से ज्यादा बार चलता है।
+
+## तीन जोड़े, सात कदम नहीं
+
+<Figure caption="इसे तीन एक-के-अंदर-एक डिब्बों की तरह पढ़िए। हर खुलने वाले callback का ठीक एक बंद करने वाला साथी है, और अंदर वाले जोड़े बाहर वाले के अंदर कई बार चल सकते हैं।">
+  <PipelineDiagram
+    title="आम launch पर क्रम"
+    description="onCreate एक बार चलता है, फिर onStart activity को दिखने लायक बनाता है, फिर onResume उसे focus देता है। जाते वक्त क्रम उल्टा होता है: onPause, onStop, onDestroy।"
+    stages={[
+      { label: "onCreate", sub: "है", accent: "violet" },
+      { label: "onStart", sub: "दिख रही है", accent: "sky" },
+      { label: "onResume", sub: "focus में है", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+| जोड़ा | कब खुलता है | कब बंद होता है | यहाँ रखिए |
+| --- | --- | --- | --- |
+| `onCreate` / `onDestroy` | Object बनता है | फेंक दिया जाता है | Inflate, जोड़-तोड़, एक बार का setup |
+| `onStart` / `onStop` | दिखने लगती है | पूरी तरह छुप जाती है | Observers register, location शुरू |
+| `onResume` / `onPause` | Focus मिलता है | Focus चला जाता है | Camera preview, sensors, animations |
+
+<Tip bare>
+जब तय न हो कि code कहाँ जाए तो यह पूछिए: जब user screen *देख* सकता है पर उसे *छू* नहीं रहा, तब
+क्या होना चाहिए? ठीक यही खाली जगह `onStart` और `onResume` के बीच है।
+</Tip>
+
+## असल में चलता क्या है, और कब
+
+| User यह करता है | Callbacks |
+| --- | --- |
+| App खोलता है | `onCreate` → `onStart` → `onResume` |
+| ऊपर dialog जैसी activity खोलता है | सिर्फ `onPause` |
+| ऊपर आम, ठोस activity खोलता है | `onPause` → `onStop` |
+| Home दबाता है | `onPause` → `onStop` |
+| Home से लौटता है | `onRestart` → `onStart` → `onResume` |
+| Device घुमाता है | `onPause` → `onStop` → `onDestroy` → `onCreate` → … |
+| Back दबाता है | `onPause` → `onStop` → `onDestroy`, और खत्म |
+| System process मार देता है | कुछ नहीं। कोई callback नहीं चलता |
+
+<Quiz
+  question="आपकी activity के ऊपर एक पारदर्शी, dialog जैसी activity खुलती है। कौन से callbacks चलेंगे?"
+  options={[
+    "onPause, फिर onStop",
+    "सिर्फ onPause — आपकी activity पीछे अब भी दिख रही है",
+    "कोई नहीं; dialog अलग activity होती ही नहीं",
+  ]}
+  answer={1}
+  explanation="onStop का मतलब है पूरी तरह छुप जाना, और आपकी activity dialog के किनारों से अब भी दिख रही है। तो सिर्फ onPause मिलता है, और कुछ नहीं। इसीलिए camera छोड़ना या listener हटाना onPause में रखना गलत हो सकता है — user कहीं गया ही नहीं, और जो कुछ आपने समेटा वह dialog बंद होते ही दोबारा बनाना पड़ेगा। दिखने से जुड़ा काम onStart/onStop में रहता है।"
+/>
+
+## Rotation कोई अलग मामला नहीं है
+
+Configuration change — rotation, भाषा, dark mode, font size, window का नाप — activity को खत्म
+करके नई बनाता है। System यह इसलिए करता है ताकि नई configuration के हिसाब से नए resources चुने
+जाएँ।
+
+```kotlin title="Rotation.kt" numbered
+class MainActivity : ComponentActivity() {
+    // Rotation पर खो जाता है: object नया है
+    private var clicks = 0
+
+    // बचा रहता है: ViewModel इस Activity instance से ज्यादा जीता है
+    private val viewModel: CounterViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Rotation और process death दोनों झेलता है, पर सिर्फ छोटा data
+        clicks = savedInstanceState?.getInt("clicks") ?: 0
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("clicks", clicks)
+    }
+}
+```
+
+| तरीका | Rotation झेलता है | Process death झेलता है | आकार |
+| --- | --- | --- | --- |
+| `Activity` का field | नहीं | नहीं | — |
+| `ViewModel` | हाँ | नहीं | जो memory में आ जाए |
+| `onSaveInstanceState` | हाँ | हाँ | छोटा — यह Binder से गुजरता है |
+| Disk या database | हाँ | हाँ | कुछ भी |
+
+<Warning>
+`onSaveInstanceState` database नहीं है। जो कुछ आप `Bundle` में डालते हैं वह एक Binder
+transaction से गुजरता है जिसकी पूरी हद लगभग 1 MB है। वहाँ कोई बड़ी bitmap या list डालने का
+नतीजा `TransactionTooLargeException` है — असली users के phone पर, आपकी मेज पर नहीं।
+</Warning>
+
+## अंदर की बात: `onDestroy` कोई वादा नहीं है
+
+<Timeline>
+  <TimelineItem title="आम finish" meta="callbacks चलते हैं">
+    Back दबाना, या `finish()`। System activity को `onPause`, `onStop` और `onDestroy` से क्रम में
+    नीचे उतार देता है।
+  </TimelineItem>
+  <TimelineItem title="Configuration change" meta="callbacks चलते हैं">
+    वही उतरना, फिर सीधे नए instance में ऊपर चढ़ना। `onSaveInstanceState` उतरते वक्त चलता है,
+    `onStop` से पहले।
+  </TimelineItem>
+  <TimelineItem title="Process death" meta="कुछ नहीं चलता">
+    App background में है और system को memory चाहिए। आपका process सीधे मार दिया जाता है — न
+    `onStop`, न `onDestroy`, कुछ बचाने का मौका ही नहीं।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="तो save असल में कहाँ करूँ">
+`onDestroy` को उन चीजों की सफाई मानिए जो सिर्फ process के जिंदा रहते मायने रखती हैं — कोई
+receiver हटाना, कोई scope cancel करना। उसे save करने का मौका कभी मत मानिए।
+
+जो कुछ खोने पर user को दुख होगा वह बदलते ही disk पर जाना चाहिए, या ज्यादा से ज्यादा `onStop`
+में — जो आम backgrounding से पहले चलता *है*। इसी Phase का `config-changes` वाला पाठ
+`SavedStateHandle` दिखाता है, जो `ViewModel` और `Bundle` वाले दोनों हिस्सों को एक कर देता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो असली bugs बनाती हैं">
+**`onCreate` में register करके `onDestroy` में हटाना।** जोड़ा गलत है: broadcast receiver या
+location listener तब भी चलता रहता है जब app background में पड़ी है। दिखने से जुड़ी हर चीज के
+लिए `onStart`/`onStop` इस्तेमाल कीजिए।
+
+**दिखने वाले काम को `onPause` में छोड़ना।** Dialog या permission वाला prompt `onPause` चला देता
+है, तो जो camera आपने छोड़ा वह तुरंत दोबारा चाहिए।
+
+**यह मानना कि data बचने से पहले `onDestroy` चलेगा।** Process death उसे पूरा छोड़ देती है।
+
+**`onResume` में भारी काम।** वह screen पर हर लौटने पर चलता है, हर dialog बंद होने के बाद भी।
+Cold start वाला काम `onCreate` में रहता है।
+</Pitfall>
+
+## अभ्यास
+
+1. सातों callbacks log कीजिए। घुमाइए, Home दबाइए, लौटिए, Back दबाइए, और जो क्रम सच में दिखे उसे
+   लिख लीजिए।
+2. Dialog जैसी एक activity जोड़िए और उसे अपनी screen के ऊपर खोलिए। Confirm कीजिए कि `onStop`
+   नहीं चलता।
+3. एक counter सादे field में, एक `ViewModel` में और एक `onSaveInstanceState` में रखिए। घुमाइए,
+   फिर Developer Options → "Don't keep activities" से process death बनाइए। कौन बचे?
+4. एक listener `onCreate`/`onDestroy` में register कीजिए, app को एक मिनट background में रखिए, और
+   उसे मिलने वाला हर callback log कीजिए। फिर उसे `onStart`/`onStop` में ले जाकर दोहराइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `onCreate` / `onDestroy` | Object का होना; एक बार का setup |
+| `onStart` / `onStop` | दिखना; register और unregister यहीं |
+| `onResume` / `onPause` | Focus; camera, sensors, animations |
+| `onStop` | पूरी तरह छुपी, सिर्फ ढकी हुई नहीं |
+| Configuration change | खत्म करके दोबारा बनाना, जान-बूझकर |
+| `onSaveInstanceState` | छोटा, process death झेलता है, Binder से जाता है |
+| `ViewModel` | Rotation झेलता है, process death नहीं |
+| Process death | एक भी callback नहीं |
+
+<Interview title="Android का सबसे ज्यादा पूछा जाने वाला सवाल">
+"Activity lifecycle समझाइए।"
+
+क्रम से सात नाम गिना देना कमजोर जवाब है। मजबूत जवाब तीन जोड़े बताता है, हर जोड़ा किस चीज की हद
+बाँधता है यह कहता है, और फिर ऐसा एक case देता है जो उन्हें अलग कर दे — वही dialog जैसी activity
+जिससे `onPause` तो चलता है पर `onStop` नहीं। आखिर में "और process death पर इनमें से एक भी नहीं
+चलता, इसीलिए `onSaveInstanceState` है" जोड़ देना वह हिस्सा है जो तजुर्बे जैसा लगता है।
+</Interview>
