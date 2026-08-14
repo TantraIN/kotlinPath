@@ -1,0 +1,121 @@
+---
+title: Flow — cold streams aur operators
+description: Suspend function ek value lautata hai. Flow samay ke saath kai lautata hai, aur jab tak koi collect na kare, kuch hota hi nahi.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`Flow` ek **nuskha** hai, chalta hua kaam nahi. Builder block tab tak nahi chalta jab tak koi
+collector na aaye — aur har collector ke liye wo shuru se dobara chalta hai.
+</KeyIdea>
+
+## Ek value aur kai values
+
+| Kya lautata hai | Sync | Async |
+| --- | --- | --- |
+| Ek value | `fun user(): User` | `suspend fun user(): User` |
+| Kai values | `Sequence<User>` | `Flow<User>` |
+
+```kotlin title="Flow.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun ticker(): Flow<Int> = flow {
+    println("builder started")
+    repeat(3) { emit(it); delay(100) }
+}
+
+fun main() = runBlocking {
+    val flow = ticker()
+    println("nothing has run yet")
+    flow.collect { println("got $it") }
+}
+```
+
+`collect` ek `suspend` function hai — wahi terminal operator jo aakhirkar flow ko chalata hai.
+
+<Quiz
+  question="Aap `ticker()` do baar bulate ho aur dono collect karte ho. 'builder started' kitni baar chhapega?"
+  options={[
+    "Ek baar — flow saanjha hota hai",
+    "Do baar — cold flow har collector ke liye apna builder alag chalata hai",
+    "Ek baar bhi nahi, jab tak `start()` na bulao",
+  ]}
+  answer={1}
+  explanation="Cold ka matlab hai ki flow apni koi state rakhta hi nahi; har collector ko shuru se apna chalna milta hai. Do collectors matlab do network calls, do database reads. Jab ek hi chalna kai collectors mein baantna ho, wo hot stream hai — `SharedFlow` ya `StateFlow`, agle lesson mein."
+/>
+
+## Operators sirf nuskhe ko badalte hain
+
+```kotlin title="Operators.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    (1..6).asFlow()
+        .filter { it % 2 == 0 }
+        .map { it * it }
+        .onEach { delay(50) }
+        .collect { println(it) }        // 4, 16, 36
+}
+```
+
+Upar ka har operator ek naya `Flow` lautata hai. Inme se koi kuch chalata nahi. Sirf `collect`
+chalata hai.
+
+| Operator | Karta kya hai |
+| --- | --- |
+| `map`, `filter` | Wahi aam badlav, par suspend hote hue |
+| `onEach` | Har value par ek side effect, bina flow khatam kiye |
+| `take(n)` | n values ke baad ruk jao, aur upar wale ko cancel karo |
+| `catch { }` | Sirf **upar se** aayi galtiyan sambhalta hai |
+| `collect { }` | Terminal — sab kuch shuru karta hai |
+
+<Detail summary="`catch` aapke collect block ki galti kyun nahi dekh paata">
+`catch` chain ka ek operator hai, isliye use sirf wahi dikhta hai jo upar se uske through bahta
+hai. `collect` ke andar fenki gayi exception chain ke baad hoti hai, `catch` se neeche. Ya
+collect ki body ko khud `try` mein lapeto, ya kaam ko `catch` ke upar `onEach` mein le jao.
+</Detail>
+
+## Asli istemal: type karte hi search
+
+```kotlin title="Search.kt" numbered
+queryFlow
+    .debounce(300)                       // typing rukne ka intezaar
+    .filter { it.length >= 2 }
+    .distinctUntilChanged()              // dohraav anadekha karo
+    .map { repository.search(it) }
+    .catch { emit(emptyList()) }
+    .collect { showResults(it) }
+```
+
+Chhe lines ek debounce handler, pichhli query se milaan, aur teen callbacks mein faila
+try/catch — teeno ki jagah le leti hain.
+
+<Pitfall title="Do jo log pakad nahi paate">
+**Do consumers ke liye ek hi cold flow do baar collect karna.** Har collection kaam dobara
+chalati hai. Agar wo network call hai, to aapne do call kar diye.
+
+**Ye maanna ki `catch` collector ko bachayega.** Wo sirf upar wale hisse ki hifazat karta hai.
+Aapke `collect` lambda ki galtiyan usse poori tarah bach nikalti hain.
+</Pitfall>
+
+## Practice
+
+1. `flow { }` builder ke andar print karo, use do baar collect karo, aur confirm karo ki builder
+   do baar chala.
+2. `map` aur `filter` jodo par collect kabhi mat karo. Dekho ki kuch bhi print nahi hota.
+3. Paanch values dene wale flow mein `take(2)` jodo aur upar wale ko cancel hote dekho.
+4. `collect` lambda ke andar exception fenko jiske upar `catch` ho. Samjhao ki catch kyun nahi
+   chala.
+
+## Recap
+
+| Baat | Vivran |
+| --- | --- |
+| Cold | Collect hone tak kuch nahi chalta; har collector dobara chalata hai |
+| `emit` | Ek value neeche bhejta hai; suspend ho sakta hai |
+| Operators | Naya Flow lautate hain; khud kuch nahi chalate |
+| `collect` | Terminal, suspending, poori chain shuru karta hai |
+| `catch` | Sirf upar se aayi galtiyan |
+| `debounce` / `distinctUntilChanged` | Yahi jodi search-as-you-type aasan banati hai |

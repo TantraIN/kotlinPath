@@ -1,0 +1,119 @@
+---
+title: Flow — cold streams और operators
+description: Suspend function एक value लौटाता है। Flow समय के साथ कई लौटाता है, और जब तक कोई collect न करे, कुछ होता ही नहीं।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`Flow` एक **नुस्ख़ा** है, चलता हुआ काम नहीं। Builder block तब तक नहीं चलता जब तक कोई collector न आए —
+और हर collector के लिए वह शुरू से दोबारा चलता है।
+</KeyIdea>
+
+## एक value और कई values
+
+| क्या लौटाता है | Sync | Async |
+| --- | --- | --- |
+| एक value | `fun user(): User` | `suspend fun user(): User` |
+| कई values | `Sequence<User>` | `Flow<User>` |
+
+```kotlin title="Flow.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun ticker(): Flow<Int> = flow {
+    println("builder started")
+    repeat(3) { emit(it); delay(100) }
+}
+
+fun main() = runBlocking {
+    val flow = ticker()
+    println("nothing has run yet")
+    flow.collect { println("got $it") }
+}
+```
+
+`collect` एक `suspend` function है — वही terminal operator जो आख़िरकार flow को चलाता है।
+
+<Quiz
+  question="आप `ticker()` दो बार बुलाते हैं और दोनों collect करते हैं। 'builder started' कितनी बार छपेगा?"
+  options={[
+    "एक बार — flow साझा होता है",
+    "दो बार — cold flow हर collector के लिए अपना builder अलग चलाता है",
+    "एक बार भी नहीं, जब तक `start()` न बुलाएँ",
+  ]}
+  answer={1}
+  explanation="Cold का मतलब है कि flow अपनी कोई state रखता ही नहीं; हर collector को शुरू से अपना चलना मिलता है। दो collectors मतलब दो network calls, दो database reads। जब एक ही चलना कई collectors में बाँटना हो, वह hot stream है — `SharedFlow` या `StateFlow`, अगले lesson में।"
+/>
+
+## Operators सिर्फ़ नुस्ख़े को बदलते हैं
+
+```kotlin title="Operators.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    (1..6).asFlow()
+        .filter { it % 2 == 0 }
+        .map { it * it }
+        .onEach { delay(50) }
+        .collect { println(it) }        // 4, 16, 36
+}
+```
+
+ऊपर का हर operator एक नया `Flow` लौटाता है। इनमें से कोई कुछ चलाता नहीं। सिर्फ़ `collect` चलाता है।
+
+| Operator | करता क्या है |
+| --- | --- |
+| `map`, `filter` | वही आम बदलाव, पर suspend होते हुए |
+| `onEach` | हर value पर एक side effect, बिना flow ख़त्म किए |
+| `take(n)` | n values के बाद रुक जाइए, और ऊपर वाले को cancel कीजिए |
+| `catch { }` | सिर्फ़ **ऊपर से** आई ग़लतियाँ सँभालता है |
+| `collect { }` | Terminal — सब कुछ शुरू करता है |
+
+<Detail summary="`catch` आपके collect block की ग़लती क्यों नहीं देख पाता">
+`catch` chain का एक operator है, इसलिए उसे सिर्फ़ वही दिखता है जो ऊपर से उसके through बहता है।
+`collect` के अंदर फेंकी गई exception chain के बाद होती है, `catch` से नीचे। या collect की body को ख़ुद
+`try` में लपेटिए, या काम को `catch` के ऊपर `onEach` में ले जाइए।
+</Detail>
+
+## असली इस्तेमाल: type करते ही search
+
+```kotlin title="Search.kt" numbered
+queryFlow
+    .debounce(300)                       // typing रुकने का इंतज़ार
+    .filter { it.length >= 2 }
+    .distinctUntilChanged()              // दोहराव अनदेखा कीजिए
+    .map { repository.search(it) }
+    .catch { emit(emptyList()) }
+    .collect { showResults(it) }
+```
+
+छह lines एक debounce handler, पिछली query से मिलान, और तीन callbacks में फैला try/catch — तीनों की
+जगह ले लेती हैं।
+
+<Pitfall title="दो जो लोग पकड़ नहीं पाते">
+**दो consumers के लिए एक ही cold flow दो बार collect करना।** हर collection काम दोबारा चलाती है। अगर वह
+network call है, तो आपने दो call कर दिए।
+
+**यह मानना कि `catch` collector को बचाएगा।** वह सिर्फ़ ऊपर वाले हिस्से की हिफ़ाज़त करता है। आपके
+`collect` lambda की ग़लतियाँ उससे पूरी तरह बच निकलती हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. `flow { }` builder के अंदर print कीजिए, उसे दो बार collect कीजिए, और confirm कीजिए कि builder दो बार
+   चला।
+2. `map` और `filter` जोड़िए पर collect कभी मत कीजिए। देखिए कि कुछ भी print नहीं होता।
+3. पाँच values देने वाले flow में `take(2)` जोड़िए और ऊपर वाले को cancel होते देखिए।
+4. `collect` lambda के अंदर exception फेंकिए जिसके ऊपर `catch` हो। समझाइए कि catch क्यों नहीं चला।
+
+## सारांश
+
+| बात | विवरण |
+| --- | --- |
+| Cold | Collect होने तक कुछ नहीं चलता; हर collector दोबारा चलाता है |
+| `emit` | एक value नीचे भेजता है; suspend हो सकता है |
+| Operators | नया Flow लौटाते हैं; ख़ुद कुछ नहीं चलाते |
+| `collect` | Terminal, suspending, पूरी chain शुरू करता है |
+| `catch` | सिर्फ़ ऊपर से आई ग़लतियाँ |
+| `debounce` / `distinctUntilChanged` | यही जोड़ी search-as-you-type आसान बनाती है |

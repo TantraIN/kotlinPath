@@ -1,0 +1,118 @@
+---
+title: Flow — cold streams and operators
+description: A suspend function returns one value. A Flow returns many, over time, and nothing happens until someone collects it.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+A `Flow` is a **recipe**, not a running process. The builder block does not execute until a
+collector arrives — and it runs again, from the start, for every collector.
+</KeyIdea>
+
+## One value versus many
+
+| Returns | Sync | Async |
+| --- | --- | --- |
+| A single value | `fun user(): User` | `suspend fun user(): User` |
+| Many values | `Sequence<User>` | `Flow<User>` |
+
+```kotlin title="Flow.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun ticker(): Flow<Int> = flow {
+    println("builder started")
+    repeat(3) { emit(it); delay(100) }
+}
+
+fun main() = runBlocking {
+    val flow = ticker()
+    println("nothing has run yet")
+    flow.collect { println("got $it") }
+}
+```
+
+`collect` is a `suspend` function — the terminal operator that finally makes the flow run.
+
+<Quiz
+  question="You call `ticker()` twice and collect both. How many times does 'builder started' print?"
+  options={[
+    "Once — the flow is shared",
+    "Twice — a cold flow runs its builder separately for every collector",
+    "Zero times unless you call `start()`",
+  ]}
+  answer={1}
+  explanation="Cold means the flow carries no state of its own; each collector gets its own execution from the beginning. Two collectors means two network calls, two database reads. When you want one execution shared by many collectors, that is a hot stream — `SharedFlow` or `StateFlow`, in the next lesson."
+/>
+
+## Operators are just transformations of the recipe
+
+```kotlin title="Operators.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    (1..6).asFlow()
+        .filter { it % 2 == 0 }
+        .map { it * it }
+        .onEach { delay(50) }
+        .collect { println(it) }        // 4, 16, 36
+}
+```
+
+Every operator above returns a new `Flow`. None of them run anything. Only `collect` does.
+
+| Operator | Does |
+| --- | --- |
+| `map`, `filter` | The usual transformations, but suspending |
+| `onEach` | A side effect per value, without consuming the flow |
+| `take(n)` | Stop after n values, and cancel upstream |
+| `catch { }` | Handle failures from **upstream** only |
+| `collect { }` | Terminal — starts everything |
+
+<Detail summary="Why `catch` cannot see errors in your collect block">
+`catch` is an operator in the chain, so it only sees what flows through it from above. An
+exception thrown inside `collect` happens after the chain, downstream of `catch`. Wrap the
+collect body in `try` yourself, or move the work into `onEach` above the `catch`.
+</Detail>
+
+## A realistic use: search as you type
+
+```kotlin title="Search.kt" numbered
+queryFlow
+    .debounce(300)                       // wait for typing to pause
+    .filter { it.length >= 2 }
+    .distinctUntilChanged()              // ignore repeats
+    .map { repository.search(it) }
+    .catch { emit(emptyList()) }
+    .collect { showResults(it) }
+```
+
+Six lines replace a debounce handler, a comparison against the last query, and a try/catch
+spread over three callbacks.
+
+<Pitfall title="Two that catch people out">
+**Collecting the same cold flow twice for two consumers.** Each collection re-runs the work.
+If it is a network call, you just made two.
+
+**Expecting `catch` to protect the collector.** It only guards upstream. Failures in your
+`collect` lambda escape it entirely.
+</Pitfall>
+
+## Practice
+
+1. Print inside a `flow { }` builder, collect it twice, and confirm the builder runs twice.
+2. Chain `map` and `filter` but never collect. Verify that nothing prints.
+3. Add `take(2)` to a flow that emits five values and observe upstream being cancelled.
+4. Throw inside a `collect` lambda with a `catch` above it. Explain why the catch does not fire.
+
+## Recap
+
+| Point | Detail |
+| --- | --- |
+| Cold | Nothing runs until collected; each collector re-runs it |
+| `emit` | Sends one value downstream; may suspend |
+| Operators | Return a new Flow; run nothing on their own |
+| `collect` | Terminal, suspending, starts the whole chain |
+| `catch` | Upstream failures only |
+| `debounce` / `distinctUntilChanged` | The pair that makes search-as-you-type simple |
