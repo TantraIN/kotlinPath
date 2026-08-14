@@ -1,0 +1,173 @@
+---
+title: Logcat, breakpoints और stack trace पढ़ना
+description: Stack trace में जवाब पहले से मौजूद है। ज्यादातर लोग उसे बस गलत क्रम में पढ़ते हैं, और फिर अंदाजा लगाने लगते हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Stack trace तीन कदमों में पढ़ी जाती है: **सबसे ऊपर वाली line** बताती है क्या गलत हुआ,
+**आखिरी `Caused by`** बताता है क्यों, और **आपके अपने package की पहली frame** बताती है कि आप कहाँ
+कुछ कर सकते हैं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+लाल दीवार जैसा text देखते ही मन करता है कि पहली line search कर लो और जो मिले वह paste कर दो। यह
+मशहूर exceptions पर चल जाता है और बाकी सब पर नहीं।
+
+Trace में file और line पहले से लिखी है। उसे ढूँढ़ना आ जाए तो ज्यादातर crashes दो मिनट का काम बन
+जाते हैं, और इस phase में सीखने लायक यह सबसे तेज हुनर है।
+
+## एक को पढ़कर देखिए
+
+```text title="Logcat" no-glossary
+FATAL EXCEPTION: main
+Process: com.example.myapp, PID: 12043
+java.lang.RuntimeException: Unable to start activity ComponentInfo{...MainActivity}
+    at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3782)
+    at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3960)
+    ...
+Caused by: java.lang.NullPointerException: Attempt to invoke virtual method
+        'int java.lang.String.length()' on a null object reference
+    at com.example.myapp.OrderFormatter.format(OrderFormatter.kt:24)
+    at com.example.myapp.MainActivity.onCreate(MainActivity.kt:31)
+    ...
+```
+
+| यहाँ देखिए | यह पता चलता है |
+| --- | --- |
+| सबसे पहली line | Exception का type और उसका message |
+| **आखिरी** `Caused by` | असली जड़ |
+| आपके package की पहली frame | वह line जिसे आप सच में बदल सकते हैं |
+| आपके ऊपर वाली frames | किसने बुलाया — आम तौर पर framework, आम तौर पर शोर |
+
+<Quiz
+  question="किसी trace में तीन `Caused by:` blocks हैं। असली समस्या कौन सा है?"
+  options={[
+    "पहला, क्योंकि वह सबसे ऊपर के पास है",
+    "आखिरी, क्योंकि हर Caused by एक परत और नीचे खोलता है",
+    "वे विकल्प हैं; उनमें से सिर्फ एक असली है",
+  ]}
+  answer={1}
+  explanation="हर Caused by एक लपेट उतारता है, तो यह कड़ी सबसे बाहरी लक्षण से सबसे अंदरूनी वजह तक जाती है। आखिरी block वही exception है जिससे सब शुरू हुआ, और उसमें आपके package की पहली frame ही देखने की जगह है। सिर्फ trace का ऊपरी हिस्सा पढ़ने की वजह से ही लोग 'Unable to start activity' पर एक घंटा लगा देते हैं — वह message कभी कुछ बताता ही नहीं, क्योंकि वह सिर्फ लपेट है।"
+/>
+
+## Logcat, ठीक तरीके से
+
+```kotlin title="Logging.kt" numbered
+private const val TAG = "OrderScreen"
+
+Log.d(TAG, "loading order $orderId")      // development वाली बात
+Log.w(TAG, "retrying after timeout")      // शक वाली, पर सँभाल ली गई
+Log.e(TAG, "order load failed", throwable) // throwable भेजिए, throwable.message नहीं
+```
+
+| Level | मतलब |
+| --- | --- |
+| `v` / `d` | Development की बात; release में हटाइए या रोकिए |
+| `i` | जो किसी support engineer के काम आए |
+| `w` | उम्मीद से बाहर, पर सँभाल ली गई |
+| `e` | कुछ टूटा हुआ है |
+
+<Tip bare>
+`e.message` log करने के बजाय तीसरे argument में हमेशा `Throwable` भेजिए। अकेला message पूरी
+stack खो देता है, और वही हिस्सा बताता है कि हुआ कहाँ।
+</Tip>
+
+## Breakpoints, लाल बिंदु से आगे
+
+<Tabs>
+  <Tab label="Conditional">
+
+Breakpoint पर right-click कीजिए और उसे एक शर्त दीजिए। हजार orders वाले loop में यही फर्क है एक
+बार रुकने और हजार बार रुकने के बीच।
+
+```kotlin title="Condition"
+order.id == "A-1042"
+```
+
+  </Tab>
+  <Tab label="रोकने के बजाय log">
+
+उसी dialog में **Suspend** हटा दीजिए और **Evaluate and log** लगा दीजिए। File बदले बिना printf
+वाली debugging मिल जाती है, और कोई आवारा `Log.d` ship भी नहीं होता।
+
+  </Tab>
+  <Tab label="Exception breakpoint">
+
+Breakpoints → **Add** → Java Exception Breakpoint। Debugger ठीक उसी पल रुकता है जब exception
+बनता है, पूरी stack अब भी जिंदा — बाद में पढ़ने से कहीं बेहतर।
+
+  </Tab>
+</Tabs>
+
+## अंदर की बात: release की traces बेतुकी क्यों दिखती हैं
+
+<Timeline>
+  <TimelineItem title="R8 सब कुछ बदल देता है" meta="release builds में">
+    Classes और methods `a.b.c` बन जाते हैं, तो trace में कोई पहचाना हुआ नाम बचता ही नहीं।
+  </TimelineItem>
+  <TimelineItem title="Mapping file ही चाबी है" meta="उसे सँभालिए">
+    हर release `app/build/outputs/mapping/release/mapping.txt` लिखती है, जो छोटे नामों को वापस
+    असली नामों से जोड़ती है। वह खो गई तो उस version के crashes हमेशा के लिए अनपढ़ हैं।
+  </TimelineItem>
+  <TimelineItem title="वापस खोलिए" meta="retrace, या upload कीजिए">
+    `retrace` उलझी हुई trace को दोबारा पढ़ने लायक बना देता है। Play Console और crash reporters यह
+    खुद कर देते हैं, बशर्ते आपने build के साथ mapping file भेजी हो।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="ऐसी trace जिसमें आपका code है ही नहीं">
+कभी-कभी हर frame framework की होती है। इसका आम तौर पर मतलब है कि गड़बड़ ऐसे callback में हुई जो
+आपने लिखा ही नहीं — कोई layout inflation, `RecyclerView` का measure, कोई Binder call।
+
+Exception के message में कोई resource id या class नाम ढूँढ़िए, और `Caused by` की कड़ी देखिए। अगर
+सच में सब framework ही है, तो वजह लगभग हमेशा वह data है जो आपने पहले framework को थमाया था: कोई
+गलत layout attribute, adapter में कोई null, किसी एक configuration में गायब resource।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो debugging का समय खा जाती हैं">
+**सिर्फ trace का ऊपरी हिस्सा पढ़ना।** ऊपर लपेट है। नीचे वाला `Caused by` जवाब है।
+
+**`Log.e` की जगह `printStackTrace()`।** वह `System.err` में लिखता है, जो Logcat में आसानी से छूट
+जाता है, और उसमें न tag होता है न level।
+
+**User का data log करना।** नाम, email, tokens और order का सामान ऐसे log में पहुँच जाते हैं जिसे
+सही permission वाली कोई भी app या कोई भी support bundle पढ़ सकता है। Ids log कीजिए, सामान नहीं।
+
+**Mapping file खो देना।** उसके बिना release का crash report एक-एक अक्षर वाले class नामों की list
+है, और असली नाम वापस पाने का कोई रास्ता नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. दो call गहराई में एक `NullPointerException` करवाइए। Framework के शोर से आगे scroll किए बिना
+   अपने package की पहली frame ढूँढ़िए।
+2. अब उसे ऐसे लपेटिए कि trace में `Caused by` आ जाए। Confirm कीजिए कि असली line number किस block
+   में है।
+3. किसी loop के अंदर conditional breakpoint लगाइए ताकि वह सिर्फ दसवें item पर रुके।
+4. Minification चालू करके release APK बनाइए, उसे crash कराइए, और trace पढ़िए। फिर उसे mapping
+   file के साथ `retrace` से गुजारिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| पहली line | Exception का type और message |
+| आखिरी `Caused by` | असली जड़ |
+| आपकी पहली frame | वह line जिसे आप बदल सकते हैं |
+| `Log.e(tag, msg, throwable)` | Throwable भेजिए, सिर्फ उसका message कभी नहीं |
+| Conditional breakpoint | सिर्फ उसी एक चक्कर पर रुकिए जो मायने रखता है |
+| बिना रोकने वाला breakpoint | Code बदले बिना logging |
+| `mapping.txt` | उलझी हुई release trace पढ़ने का इकलौता रास्ता |
+| कभी log मत कीजिए | नाम, email, tokens, सामान |
+
+<Interview title="अक्सर screen पर trace रखकर, सामने ही करवाया जाता है">
+"इस crash को debug करके दिखाइए।"
+
+क्रम बोलकर बताइए: exception का type, फिर सीधे आखिरी `Caused by` पर जाना, फिर app के अपने package
+की पहली frame ढूँढ़ना — और तभी कोई अंदाजा बनाना। जो पहली line से ही सोचने लगते हैं, वही "Unable
+to start activity" पर एक घंटा लगाते हैं।
+</Interview>

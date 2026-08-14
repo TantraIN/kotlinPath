@@ -1,0 +1,178 @@
+---
+title: Logcat, breakpoints aur stack trace padhna
+description: Stack trace mein jawab pehle se maujood hai. Zyadatar log use bas galat order mein padhte hain, aur phir andaza lagane lagte hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Stack trace teen kadmon mein padhi jati hai: **sabse upar wali line** batati hai kya galat hua,
+**aakhri `Caused by`** batata hai kyun, aur **aapke apne package ki pehli frame** batati hai ki
+aap kahan kuch kar sakte ho.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Laal deewar jaisa text dekhte hi man karta hai ki pehli line search kar lo aur jo mile wo paste
+kar do. Ye mashhoor exceptions par chal jata hai aur baaki sab par nahi.
+
+Trace mein file aur line pehle se likhi hai. Use dhundhna aa jaye to zyadatar crashes do minute
+ka kaam ban jate hain, aur is phase mein seekhne laayak ye sabse tez hunar hai.
+
+## Ek ko padhkar dekho
+
+```text title="Logcat" no-glossary
+FATAL EXCEPTION: main
+Process: com.example.myapp, PID: 12043
+java.lang.RuntimeException: Unable to start activity ComponentInfo{...MainActivity}
+    at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3782)
+    at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3960)
+    ...
+Caused by: java.lang.NullPointerException: Attempt to invoke virtual method
+        'int java.lang.String.length()' on a null object reference
+    at com.example.myapp.OrderFormatter.format(OrderFormatter.kt:24)
+    at com.example.myapp.MainActivity.onCreate(MainActivity.kt:31)
+    ...
+```
+
+| Yahan dekho | Ye pata chalta hai |
+| --- | --- |
+| Sabse pehli line | Exception ka type aur uska message |
+| **Aakhri** `Caused by` | Asli jad |
+| Aapke package ki pehli frame | Wo line jise aap sach mein badal sakte ho |
+| Aapke upar wali frames | Kisne bulaya — aam taur par framework, aam taur par shor |
+
+<Quiz
+  question="Kisi trace mein teen `Caused by:` blocks hain. Asli problem kaun sa hai?"
+  options={[
+    "Pehla, kyunki wo sabse upar ke paas hai",
+    "Aakhri, kyunki har Caused by ek layer aur neeche kholta hai",
+    "Wo options hain; unmein se sirf ek asli hai",
+  ]}
+  answer={1}
+  explanation="Har Caused by ek lapet utarta hai, to ye kadi sabse bahri lakshan se sabse andaruni wajah tak jati hai. Aakhri block wahi exception hai jisse sab shuru hua, aur usmein aapke package ki pehli frame hi dekhne ki jagah hai. Sirf trace ka upari hissa padhne ki wajah se hi log 'Unable to start activity' par ek ghanta laga dete hain — wo message kabhi kuch batata hi nahi, kyunki wo sirf lapet hai."
+/>
+
+## Logcat, theek tarike se
+
+```kotlin title="Logging.kt" numbered
+private const val TAG = "OrderScreen"
+
+Log.d(TAG, "loading order $orderId")      // development wali baat
+Log.w(TAG, "retrying after timeout")      // shak wali, par sambhal li gayi
+Log.e(TAG, "order load failed", throwable) // throwable bhejo, throwable.message nahi
+```
+
+| Level | Matlab |
+| --- | --- |
+| `v` / `d` | Development ki baat; release mein hatao ya roko |
+| `i` | Jo kisi support engineer ke kaam aaye |
+| `w` | Ummeed se bahar, par sambhal li gayi |
+| `e` | Kuch toota hua hai |
+
+<Tip bare>
+`e.message` log karne ke bajaye teesre argument mein hamesha `Throwable` bhejo. Akela message
+poori stack kho deta hai, aur wahi hissa batata hai ki hua kahan.
+</Tip>
+
+## Breakpoints, laal bindu se aage
+
+<Tabs>
+  <Tab label="Conditional">
+
+Breakpoint par right-click karo aur use ek shart do. Hazaar orders wale loop mein yahi farak hai
+ek baar rukne aur hazaar baar rukne ke beech.
+
+```kotlin title="Condition"
+order.id == "A-1042"
+```
+
+  </Tab>
+  <Tab label="Rokne ke bajaye log">
+
+Usi dialog mein **Suspend** hata do aur **Evaluate and log** laga do. File badle bina printf wali
+debugging mil jati hai, aur koi aawara `Log.d` ship bhi nahi hota.
+
+  </Tab>
+  <Tab label="Exception breakpoint">
+
+Breakpoints → **Add** → Java Exception Breakpoint. Debugger theek usi pal rukta hai jab exception
+banta hai, poori stack ab bhi zinda — baad mein padhne se kahin behtar.
+
+  </Tab>
+</Tabs>
+
+## Andar ki baat: release ki traces betuki kyun dikhti hain
+
+<Timeline>
+  <TimelineItem title="R8 sab kuch badal deta hai" meta="release builds mein">
+    Classes aur methods `a.b.c` ban jate hain, to trace mein koi pehchana hua naam bachta hi
+    nahi.
+  </TimelineItem>
+  <TimelineItem title="Mapping file hi chaabi hai" meta="use sambhalo">
+    Har release `app/build/outputs/mapping/release/mapping.txt` likhti hai, jo chhote naamon ko
+    wapas asli naamon se jodti hai. Wo kho gayi to us version ke crashes hamesha ke liye anpadh
+    hain.
+  </TimelineItem>
+  <TimelineItem title="Wapas kholo" meta="retrace, ya upload karo">
+    `retrace` uljhi hui trace ko dobara padhne laayak bana deta hai. Play Console aur crash
+    reporters ye khud kar dete hain, bashart aapne build ke saath mapping file bheji ho.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Aisi trace jismein aapka code hai hi nahi">
+Kabhi-kabhi har frame framework ki hoti hai. Iska aam taur par matlab hai ki gadbad aise callback
+mein hui jo aapne likha hi nahi — koi layout inflation, `RecyclerView` ka measure, koi Binder
+call.
+
+Exception ke message mein koi resource id ya class naam dhundho, aur `Caused by` ki kadi dekho.
+Agar sach mein sab framework hi hai, to wajah lagbhag hamesha wo data hai jo aapne pehle framework
+ko thamaya tha: koi galat layout attribute, adapter mein koi null, kisi ek configuration mein
+gayab resource.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo debugging ka samay kha jati hain">
+**Sirf trace ka upari hissa padhna.** Upar lapet hai. Neeche wala `Caused by` jawab hai.
+
+**`Log.e` ki jagah `printStackTrace()`.** Wo `System.err` mein likhta hai, jo Logcat mein aasani
+se chhoot jata hai, aur usmein na tag hota hai na level.
+
+**User ka data log karna.** Naam, email, tokens aur order ka saamaan aise log mein pahunch jate
+hain jise sahi permission wali koi bhi app ya koi bhi support bundle padh sakta hai. Ids log karo,
+saamaan nahi.
+
+**Mapping file kho dena.** Uske bina release ka crash report ek-ek akshar wale class naamon ki
+list hai, aur asli naam wapas paane ka koi rasta nahi.
+</Pitfall>
+
+## Practice
+
+1. Do call gehrai mein ek `NullPointerException` karwao. Framework ke shor se aage scroll kiye
+   bina apne package ki pehli frame dhundho.
+2. Ab use aise lapeto ki trace mein `Caused by` aa jaye. Confirm karo ki asli line number kis
+   block mein hai.
+3. Kisi loop ke andar conditional breakpoint lagao taaki wo sirf daswe item par ruke.
+4. Minification chalu karke release APK banao, use crash karao, aur trace padho. Phir use mapping
+   file ke saath `retrace` se guzaro.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Pehli line | Exception ka type aur message |
+| Aakhri `Caused by` | Asli jad |
+| Aapki pehli frame | Wo line jise aap badal sakte ho |
+| `Log.e(tag, msg, throwable)` | Throwable bhejo, sirf uska message kabhi nahi |
+| Conditional breakpoint | Sirf usi ek chakkar par ruko jo maayne rakhta hai |
+| Bina rokne wala breakpoint | Code badle bina logging |
+| `mapping.txt` | Uljhi hui release trace padhne ka iklauta rasta |
+| Kabhi log mat karo | Naam, email, tokens, saamaan |
+
+<Interview title="Aksar screen par trace rakhkar, saamne hi karwaya jata hai">
+"Is crash ko debug karke dikhao."
+
+Order bolkar batao: exception ka type, phir seedhe aakhri `Caused by` par jana, phir app ke apne
+package ki pehli frame dhundhna — aur tabhi koi andaza banana. Jo pehli line se hi sochne lagte
+hain, wahi "Unable to start activity" par ek ghanta lagate hain.
+</Interview>

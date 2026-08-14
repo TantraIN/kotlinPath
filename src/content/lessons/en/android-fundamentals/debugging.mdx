@@ -1,0 +1,174 @@
+---
+title: Logcat, breakpoints and reading a stack trace
+description: A stack trace already contains the answer. Most people just read it in the wrong order, and then guess instead.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A stack trace is read in three moves: the **top line** says what went wrong, the **last
+`Caused by`** says why, and the **first frame in your own package** says where you can do
+something about it.
+</KeyIdea>
+
+## Why this matters
+
+The instinct on seeing a red wall of text is to search the first line and paste the result. That
+works for famous exceptions and fails for everything else.
+
+The trace already names the file and the line. Learning to find it turns most crashes into a
+two-minute fix, and it is the single fastest skill to acquire in this phase.
+
+## Reading one
+
+```text title="Logcat" no-glossary
+FATAL EXCEPTION: main
+Process: com.example.myapp, PID: 12043
+java.lang.RuntimeException: Unable to start activity ComponentInfo{...MainActivity}
+    at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3782)
+    at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3960)
+    ...
+Caused by: java.lang.NullPointerException: Attempt to invoke virtual method
+        'int java.lang.String.length()' on a null object reference
+    at com.example.myapp.OrderFormatter.format(OrderFormatter.kt:24)
+    at com.example.myapp.MainActivity.onCreate(MainActivity.kt:31)
+    ...
+```
+
+| Look at | To learn |
+| --- | --- |
+| The first line | The exception type and its message |
+| The **last** `Caused by` | The real root cause |
+| The first frame in your package | The line you can actually change |
+| Frames above yours | Who called you — usually framework, usually noise |
+
+<Quiz
+  question="A trace has three `Caused by:` blocks. Which one is the original problem?"
+  options={[
+    "The first, because it appears nearest the top",
+    "The last, because each Caused by unwraps one layer further down",
+    "They are alternatives; only one is real",
+  ]}
+  answer={1}
+  explanation="Each Caused by peels off one wrapper, so the chain runs from the outermost symptom to the innermost cause. The last block is the exception that actually started it, and its first frame in your package is where to look. Reading only the top of the trace is why people spend an hour on 'Unable to start activity' — a message that never tells you anything, because it is only the wrapper."
+/>
+
+## Logcat, used properly
+
+```kotlin title="Logging.kt" numbered
+private const val TAG = "OrderScreen"
+
+Log.d(TAG, "loading order $orderId")      // development detail
+Log.w(TAG, "retrying after timeout")      // suspicious but handled
+Log.e(TAG, "order load failed", throwable) // pass the throwable, not throwable.message
+```
+
+| Level | Means |
+| --- | --- |
+| `v` / `d` | Development detail; strip or gate for release |
+| `i` | Something a support engineer would want |
+| `w` | Unexpected but handled |
+| `e` | Something is broken |
+
+<Tip bare>
+Always pass the `Throwable` as the third argument rather than logging `e.message`. The message
+alone loses the entire stack, which is the part that tells you where it happened.
+</Tip>
+
+## Breakpoints beyond the red dot
+
+<Tabs>
+  <Tab label="Conditional">
+
+Right-click a breakpoint and give it a condition. In a loop over a thousand orders, this is the
+difference between one stop and a thousand.
+
+```kotlin title="Condition"
+order.id == "A-1042"
+```
+
+  </Tab>
+  <Tab label="Log instead of suspend">
+
+In the same dialog, untick **Suspend** and tick **Evaluate and log**. You get printf debugging
+without editing the file, and without shipping a stray `Log.d`.
+
+  </Tab>
+  <Tab label="Exception breakpoint">
+
+Breakpoints → **Add** → Java Exception Breakpoint. The debugger stops at the moment the
+exception is constructed, with the whole stack still live — far better than reading it after the
+fact.
+
+  </Tab>
+</Tabs>
+
+## Under the hood: why release traces look like nonsense
+
+<Timeline>
+  <TimelineItem title="R8 renames everything" meta="in release builds">
+    Classes and methods become `a.b.c`, so the trace no longer names anything you recognise.
+  </TimelineItem>
+  <TimelineItem title="The mapping file is the key" meta="keep it">
+    Every release writes `app/build/outputs/mapping/release/mapping.txt`, which maps the short
+    names back. Lose it and that version's crashes are unreadable forever.
+  </TimelineItem>
+  <TimelineItem title="Deobfuscate" meta="retrace, or upload it">
+    `retrace` turns an obfuscated trace back into a readable one. Play Console and crash
+    reporters do it automatically if you upload the mapping file with the build.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="A trace with none of your code in it">
+Sometimes every frame is framework code. That usually means the failure happened on a callback
+you did not write — a layout inflation, a `RecyclerView` measure pass, a Binder call.
+
+Look at the exception message for a resource id or class name, and check the `Caused by` chain.
+If it is genuinely all framework, the cause is nearly always data you handed the framework
+earlier: a bad layout attribute, a null in an adapter, a resource missing in one configuration.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that waste debugging time">
+**Reading only the top of the trace.** The top is the wrapper. The bottom `Caused by` is the
+answer.
+
+**`printStackTrace()` instead of `Log.e`.** It writes to `System.err`, which is easy to miss in
+Logcat and carries no tag or level.
+
+**Logging user data.** Names, emails, tokens and order contents end up in a log any app with the
+right permission or any support bundle can read. Log ids, not contents.
+
+**Losing the mapping file.** Without it a release crash report is a list of one-letter class
+names, and there is no way to recover the original.
+</Pitfall>
+
+## Practice
+
+1. Force a `NullPointerException` two calls deep. Find the first frame in your own package
+   without scrolling past the framework noise.
+2. Wrap it so the trace gains a `Caused by`. Confirm which block holds the real line number.
+3. Set a conditional breakpoint inside a loop so it stops only on the tenth item.
+4. Build a release APK with minification on, crash it, and read the trace. Then run it through
+   `retrace` with the mapping file.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| First line | Exception type and message |
+| Last `Caused by` | The root cause |
+| Your first frame | The line you can change |
+| `Log.e(tag, msg, throwable)` | Pass the throwable, never just its message |
+| Conditional breakpoint | Stop on the one iteration that matters |
+| Non-suspending breakpoint | Logging without editing code |
+| `mapping.txt` | The only way to read an obfuscated release trace |
+| Never log | Names, emails, tokens, contents |
+
+<Interview title="Often asked as a live exercise with a trace on screen">
+"Walk me through debugging this crash."
+
+Say the order out loud: exception type, then jump to the last `Caused by`, then find the first
+frame in the app's own package — and only then form a theory. Candidates who start theorising
+from the first line are the ones who spend an hour on "Unable to start activity".
+</Interview>
