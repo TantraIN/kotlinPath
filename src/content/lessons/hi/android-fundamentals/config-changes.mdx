@@ -1,0 +1,161 @@
+---
+title: Configuration changes, process death और SavedStateHandle
+description: आपकी screen दो अलग तरीकों से गायब होती है, और आप सिर्फ एक को test करते हैं। दोनों का इलाज अलग है, और इन्हें मिला देना ही वजह है कि खोया हुआ state production तक पहुँच जाता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Rotation **object** को खत्म करता है। Process death **process** को। `ViewModel` पहले वाले को
+झेलता है और बस; `SavedStateHandle` दोनों को झेलता है, बदले में छोटा रहने की शर्त पर।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Rotation आप इसलिए test करते हैं कि उसमें दो second लगते हैं। दूसरा रास्ता आप लगभग कभी test नहीं
+करते: app को background में डालिए, बीस मिनट phone चलाइए, फिर लौटिए।
+
+कम memory वाले device पर वह दूसरा रास्ता आपका process मार देता है। User उसी screen पर लौटता है —
+Android back stack दोबारा बना देता है — पर हर object नया होता है। आधे भरे forms खुद खाली हो जाते
+हैं, और bug report में लिखा आता है "कभी-कभी अपने आप reset हो जाता है"।
+
+## बचने के तीन दर्जे
+
+| कहाँ रखा है | Rotation | Process death | आकार | कीमत |
+| --- | --- | --- | --- | --- |
+| `Activity` का field | नहीं | नहीं | — | — |
+| `ViewModel` | हाँ | नहीं | जो RAM में आ जाए | मुफ्त |
+| `SavedStateHandle` | हाँ | हाँ | छोटा | Binder transaction |
+| Disk, `DataStore`, database | हाँ | हाँ | कुछ भी | I/O |
+
+इससे जो नियम निकलता है: **रोज के काम वाला data `ViewModel` में, वे थोड़ी सी values जिन्हें खोने
+पर शर्म आए `SavedStateHandle` में, और जो हमेशा रहना चाहिए वह disk पर।**
+
+## `SavedStateHandle` असल में
+
+```kotlin title="SearchViewModel.kt" numbered
+class SearchViewModel(
+    private val state: SavedStateHandle,
+) : ViewModel() {
+
+    // Rotation और process death दोनों झेलता है; saved Bundle पर टिका है
+    val query: StateFlow<String> = state.getStateFlow(KEY_QUERY, "")
+
+    // सिर्फ rotation झेलता है — दोबारा बनाना सस्ता है, तो ठीक है
+    private val _results = MutableStateFlow<List<Hit>>(emptyList())
+    val results: StateFlow<List<Hit>> = _results.asStateFlow()
+
+    fun onQueryChanged(value: String) {
+        state[KEY_QUERY] = value          // सीधे saved state में लिखा जाता है
+    }
+
+    private companion object { const val KEY_QUERY = "query" }
+}
+```
+
+बँटवारा ही असली बात है। User की टाइप की हुई query दोबारा नहीं मिल सकती, इसलिए वह saved state
+में जाती है। Search के नतीजे दोबारा लाए जा सकते हैं, इसलिए वे नहीं जाते।
+
+<Quiz
+  question="एक tester आधा भरा form `ViewModel` में रखता है। घुमाने पर सब ठीक। वह app एक घंटे background में रखकर लौटता है, और form खाली है। हुआ क्या?"
+  options={[
+    "ViewModel leak हो गया और garbage collect हो गया",
+    "Process मार दिया गया; ViewModel उसे नहीं झेलते",
+    "onSaveInstanceState कभी चला ही नहीं",
+  ]}
+  answer={1}
+  explanation="ViewModel एक ViewModelStore में रहता है जिसे system जान-बूझकर configuration change के पार ले जाता है — पर वह आपके process का ही एक object है। जब system को memory चाहिए होती है तो वह पूरा process मार देता है, और हर object उसके साथ जाता है। फिर Android saved instance state से back stack दोबारा बनाता है, तो user उसी screen पर पहुँचता है, बिलकुल नए objects के साथ। सिर्फ वही लौटता है जो Bundle से होकर गया — onSaveInstanceState या SavedStateHandle।"
+/>
+
+## अंदर की बात: हर एक बचता कैसे है
+
+<Timeline>
+  <TimelineItem title="Rotation पर ViewModel" meta="process में रोक लिया जाता है">
+    Configuration change पर system मरती हुई activity का `ViewModelStore` नई को सौंप देता है।
+    `ViewModel` दोबारा बनता ही नहीं, इसीलिए वह कुछ भी रख सकता है।
+  </TimelineItem>
+  <TimelineItem title="SavedStateHandle" meta="Bundle में लिखा जाता है">
+    यह उसी saved instance state पर टिका है जिस पर `onSaveInstanceState`, इसलिए process के जाने
+    को झेल जाता है — और वही आकार की हद भी साथ लाता है।
+  </TimelineItem>
+  <TimelineItem title="Process death और वापसी" meta="objects गए, stack दोबारा बना">
+    System को याद रहता है कि कौन सी activities एक के ऊपर एक थीं और उनके `Bundle` क्या थे। लौटने
+    पर वह उन्हें दोबारा बना देता है। आपके objects उसका हिस्सा नहीं हैं।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`android:configChanges` असल में करता क्या है">
+`android:configChanges="orientation|screenSize"` जोड़ने से दोबारा बनना रुक जाता है। Activity बची
+रहती है, और उसकी जगह `onConfigurationChanged` चलता है।
+
+सुनने में यह इलाज लगता है और आम तौर पर जाल है। अब हर नतीजा आपका है: नए नाप के लिए layouts
+दोबारा पढ़ना, `values-land` वाले resources बदलना, दोबारा measure करना। एक भी छूटा तो ईमानदार
+reset की जगह चुपचाप गलत layout मिलता है।
+
+और process death के लिए यह कुछ भी नहीं करता, जबकि user का data वहीं खोता है। इसे तब इस्तेमाल
+कीजिए जब सच में कोई महँगी, अपने आप सँभलने वाली चीज हो — video player, camera preview, कोई game
+— न कि state सँभालने से बचने के लिए।
+</Detail>
+
+## उस हालत को test करना जो आपको कभी नहीं मिलती
+
+```bash title="Terminal" no-glossary
+# असली process death: पहले app को background में डालिए, फिर
+adb shell am kill com.example.myapp
+
+# अब Recents से दोबारा खोलिए — back stack saved state से बनता है
+```
+
+<Tip bare>
+Developer Options → **Don't keep activities** जल्दी वाला करीबी तरीका है: background जाते ही
+activity खत्म होती है और `ViewModel` साफ हो जाता है, तो जो saved state में नहीं है वह गया।
+`am kill` ईमानदार वाला है। Toggle रोज इस्तेमाल कीजिए, kill release से पहले।
+</Tip>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जिनसे कभी-कभी अपने आप reset होने वाला bug बनता है">
+**`ViewModel` को टिकाऊ मान लेना।** वह ठीक एक चीज झेलता है। User ने जो कुछ टाइप किया वह
+`SavedStateHandle` में भी होना चाहिए।
+
+**Rotation की खटपट रोकने के लिए `configChanges` उठाना।** वह आपकी मेज पर लक्षण छुपा देता है और
+process death के बारे में कुछ नहीं बदलता।
+
+**Saved state में list या bitmap रखना।** वही Binder वाली हद जो `onSaveInstanceState` की है, पूरे
+transaction के लिए लगभग 1 MB। Id या query save कीजिए, नतीजा नहीं।
+
+**कभी test ही न करना।** Rotation उसकी जगह नहीं ले सकता। "Don't keep activities" चालू कीजिए और
+काम करते वक्त चालू ही रहने दीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. एक counter `ViewModel` में और दूसरा `SavedStateHandle` में रखिए। घुमाइए — दोनों बचेंगे। अब
+   process `am kill` कीजिए और दोबारा खोलिए। कौन सा अब भी है?
+2. "Don't keep activities" चालू कीजिए, फिर अपनी app की हर screen पर background जाकर लौटिए। हर वह
+   जगह लिखिए जहाँ state खोता है।
+3. जिस activity का `values-land` layout है उसमें `android:configChanges="orientation|screenSize"`
+   जोड़िए। घुमाइए और ठीक-ठीक बताइए कि अब क्या गलत है।
+4. `SavedStateHandle` में 2 MB की string रखिए और app को background में डालिए। Exception पढ़िए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Configuration change | Object खत्म, process जिंदा |
+| Process death | Process खत्म, back stack याद |
+| `ViewModel` | पहले वाले को झेलता है, दूसरे को नहीं |
+| `SavedStateHandle` | दोनों को झेलता है; `Bundle` से जाता है |
+| बँटवारे का नियम | जो दोबारा न मिले वह save, जो बन जाए वह दोबारा बनाइए |
+| `configChanges` | दोबारा बनने से छूट, और सारे नतीजे आपके सिर |
+| "Don't keep activities" | रोज वाला test |
+| `adb shell am kill` | ईमानदार वाला test |
+
+<Interview title="यह सवाल चुपचाप Android के दो अलग तजुर्बों को अलग कर देता है">
+"Configuration change और process death में फर्क क्या है, और हर एक को कैसे सँभालते हैं?"
+
+कमजोर जवाब दोनों को एक ही समस्या मानकर कहता है "ViewModel इस्तेमाल कीजिए"। मजबूत जवाब उन्हें
+अलग करता है: `ViewModel` configuration change सँभालता है क्योंकि store process में रोक लिया
+जाता है, और process के मारे जाने को सिर्फ saved `Bundle` झेलता है — `onSaveInstanceState` या
+`SavedStateHandle` से। यह जोड़ देना कि आप "Don't keep activities" चालू रखकर काम करते हैं, वही
+बात है जो असली नौकरी जैसी लगती है।
+</Interview>

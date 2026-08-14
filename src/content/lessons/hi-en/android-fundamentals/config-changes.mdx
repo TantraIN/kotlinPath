@@ -1,0 +1,162 @@
+---
+title: Configuration changes, process death aur SavedStateHandle
+description: Aapki screen do alag tarikon se gayab hoti hai, aur aap sirf ek ko test karte ho. Dono ka ilaaj alag hai, aur inhe mila dena hi wajah hai ki khoya hua state production tak pahunch jata hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Rotation **object** ko khatam karta hai. Process death **process** ko. `ViewModel` pehle wale ko
+jhelta hai aur bas; `SavedStateHandle` dono ko jhelta hai, badle mein chhota rehne ki shart par.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Rotation aap isliye test karte ho ki usmein do second lagte hain. Dusra rasta aap lagbhag kabhi
+test nahi karte: app ko background mein daalo, bees minute phone chalao, phir lauto.
+
+Kam memory wale device par wo dusra rasta aapka process maar deta hai. User usi screen par
+lautta hai — Android back stack dobara bana deta hai — par har object naya hota hai. Aadhe bhare
+forms khud khaali ho jate hain, aur bug report mein likha aata hai "kabhi-kabhi apne aap reset
+ho jata hai".
+
+## Bachne ke teen darje
+
+| Kahan rakha hai | Rotation | Process death | Size | Keemat |
+| --- | --- | --- | --- | --- |
+| `Activity` ka field | Nahi | Nahi | — | — |
+| `ViewModel` | Haan | Nahi | Jo RAM mein aa jaye | Muft |
+| `SavedStateHandle` | Haan | Haan | Chhota | Binder transaction |
+| Disk, `DataStore`, database | Haan | Haan | Kuch bhi | I/O |
+
+Isse jo niyam nikalta hai: **roz ke kaam wala data `ViewModel` mein, wo thodi si values jinhe
+khone par sharm aaye `SavedStateHandle` mein, aur jo hamesha rehna chahiye wo disk par.**
+
+## `SavedStateHandle` asal mein
+
+```kotlin title="SearchViewModel.kt" numbered
+class SearchViewModel(
+    private val state: SavedStateHandle,
+) : ViewModel() {
+
+    // Rotation aur process death dono jhelta hai; saved Bundle par tika hai
+    val query: StateFlow<String> = state.getStateFlow(KEY_QUERY, "")
+
+    // Sirf rotation jhelta hai — dobara banana sasta hai, to theek hai
+    private val _results = MutableStateFlow<List<Hit>>(emptyList())
+    val results: StateFlow<List<Hit>> = _results.asStateFlow()
+
+    fun onQueryChanged(value: String) {
+        state[KEY_QUERY] = value          // seedhe saved state mein likha jata hai
+    }
+
+    private companion object { const val KEY_QUERY = "query" }
+}
+```
+
+Bantwara hi asli baat hai. User ki type ki hui query dobara nahi mil sakti, isliye wo saved state
+mein jati hai. Search ke results dobara laye ja sakte hain, isliye wo nahi jate.
+
+<Quiz
+  question="Ek tester aadha bhara form `ViewModel` mein rakhta hai. Ghumane par sab theek. Wo app ek ghante background mein rakhkar lautta hai, aur form khaali hai. Hua kya?"
+  options={[
+    "ViewModel leak ho gaya aur garbage collect ho gaya",
+    "Process maar diya gaya; ViewModel use nahi jhelte",
+    "onSaveInstanceState kabhi chala hi nahi",
+  ]}
+  answer={1}
+  explanation="ViewModel ek ViewModelStore mein rehta hai jise system jaan-boojh kar configuration change ke paar le jata hai — par wo aapke process ka hi ek object hai. Jab system ko memory chahiye hoti hai to wo poora process maar deta hai, aur har object uske saath jata hai. Phir Android saved instance state se back stack dobara banata hai, to user usi screen par pahunchta hai, bilkul naye objects ke saath. Sirf wahi lautta hai jo Bundle se hokar gaya — onSaveInstanceState ya SavedStateHandle."
+/>
+
+## Andar ki baat: har ek bachta kaise hai
+
+<Timeline>
+  <TimelineItem title="Rotation par ViewModel" meta="process mein rok liya jata hai">
+    Configuration change par system marti hui activity ka `ViewModelStore` nayi ko saunp deta
+    hai. `ViewModel` dobara banta hi nahi, isiliye wo kuch bhi rakh sakta hai.
+  </TimelineItem>
+  <TimelineItem title="SavedStateHandle" meta="Bundle mein likha jata hai">
+    Ye usi saved instance state par tika hai jis par `onSaveInstanceState`, isliye process ke
+    jaane ko jhel jata hai — aur wahi size ki had bhi saath laata hai.
+  </TimelineItem>
+  <TimelineItem title="Process death aur wapasi" meta="objects gaye, stack dobara bana">
+    System ko yaad rehta hai ki kaun si activities ek ke upar ek theen aur unke `Bundle` kya the.
+    Lautne par wo unhe dobara bana deta hai. Aapke objects uska hissa nahi hain.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`android:configChanges` asal mein karta kya hai">
+`android:configChanges="orientation|screenSize"` jodne se dobara banna ruk jata hai. Activity
+bachi rehti hai, aur uski jagah `onConfigurationChanged` chalta hai.
+
+Sunne mein ye ilaaj lagta hai aur aam taur par jaal hai. Ab har result aapka hai: naye naap ke
+liye layouts dobara padhna, `values-land` wale resources badalna, dobara measure karna. Ek bhi
+chhoota to imaandaar reset ki jagah chupchap galat layout milta hai.
+
+Aur process death ke liye ye kuch bhi nahi karta, jabki user ka data wahin khota hai. Ise tab use
+karo jab sach mein koi mehngi, apne aap sambhalne wali cheez ho — video player, camera preview,
+koi game — na ki state sambhalne se bachne ke liye.
+</Detail>
+
+## Us haalat ko test karna jo aapko kabhi nahi milti
+
+```bash title="Terminal" no-glossary
+# Asli process death: pehle app ko background mein daalo, phir
+adb shell am kill com.example.myapp
+
+# Ab Recents se dobara kholo — back stack saved state se banta hai
+```
+
+<Tip bare>
+Developer Options → **Don't keep activities** jaldi wala kareebi tarika hai: background jaate hi
+activity khatam hoti hai aur `ViewModel` saaf ho jata hai, to jo saved state mein nahi hai wo
+gaya. `am kill` imaandaar wala hai. Toggle roz use karo, kill release se pehle.
+</Tip>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jinse kabhi-kabhi apne aap reset hone wala bug banta hai">
+**`ViewModel` ko tikau maan lena.** Wo theek ek cheez jhelta hai. User ne jo kuch type kiya wo
+`SavedStateHandle` mein bhi hona chahiye.
+
+**Rotation ki khatpat rokne ke liye `configChanges` uthana.** Wo aapki mez par lakshan chhupa
+deta hai aur process death ke baare mein kuch nahi badalta.
+
+**Saved state mein list ya bitmap rakhna.** Wahi Binder wali had jo `onSaveInstanceState` ki hai,
+poore transaction ke liye lagbhag 1 MB. Id ya query save karo, result nahi.
+
+**Kabhi test hi na karna.** Rotation uski jagah nahi le sakta. "Don't keep activities" chalu karo
+aur kaam karte waqt chalu hi rehne do.
+</Pitfall>
+
+## Practice
+
+1. Ek counter `ViewModel` mein aur dusra `SavedStateHandle` mein rakho. Ghumao — dono bachenge.
+   Ab process `am kill` karo aur dobara kholo. Kaun sa ab bhi hai?
+2. "Don't keep activities" chalu karo, phir apni app ki har screen par background jaakar lauto.
+   Har wo jagah likho jahan state khota hai.
+3. Jis activity ka `values-land` layout hai usmein `android:configChanges="orientation|screenSize"`
+   jodo. Ghumao aur theek-theek batao ki ab kya galat hai.
+4. `SavedStateHandle` mein 2 MB ki string rakho aur app ko background mein daalo. Exception padho.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Configuration change | Object khatam, process zinda |
+| Process death | Process khatam, back stack yaad |
+| `ViewModel` | Pehle wale ko jhelta hai, dusre ko nahi |
+| `SavedStateHandle` | Dono ko jhelta hai; `Bundle` se jata hai |
+| Bantware ka niyam | Jo dobara na mile wo save, jo ban jaye wo dobara banao |
+| `configChanges` | Dobara banne se chhoot, aur saare result aapke sir |
+| "Don't keep activities" | Roz wala test |
+| `adb shell am kill` | Imaandaar wala test |
+
+<Interview title="Ye sawal chupchap Android ke do alag tajurbon ko alag kar deta hai">
+"Configuration change aur process death mein farak kya hai, aur har ek ko kaise sambhalte ho?"
+
+Kamzor jawab dono ko ek hi problem maankar kehta hai "ViewModel use karo". Mazboot jawab unhe
+alag karta hai: `ViewModel` configuration change sambhalta hai kyunki store process mein rok liya
+jata hai, aur process ke maare jaane ko sirf saved `Bundle` jhelta hai — `onSaveInstanceState` ya
+`SavedStateHandle` se. Ye jod dena ki aap "Don't keep activities" chalu rakhkar kaam karte ho,
+wahi baat hai jo asli naukri jaisi lagti hai.
+</Interview>
