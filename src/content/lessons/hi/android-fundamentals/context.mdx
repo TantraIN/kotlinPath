@@ -1,0 +1,175 @@
+---
+title: Context, और उससे होने वाले leaks
+description: Context आपकी app तक वह पकड़ है जैसी उसे system देखता है। इसके कई रूप हैं, उनकी उम्र बहुत अलग है, और उन्हें मिला देना Android का सबसे आम memory leak है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+हर `Context` आपको एक जैसी ताकत देता है — resources, preferences, components शुरू करना — पर वे
+इसमें अलग हैं कि **कितना जीते हैं**। लंबी उम्र वाले object को छोटी उम्र वाला `Context` थमाइए और
+उसके पीछे की हर चीज leak हो गई।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+`Context` Android में सबसे ज्यादा भेजा जाने वाला parameter है, और type system यह नहीं बता सकता कि
+यहाँ कौन सा safe है। `Activity` खुद एक `Context` *है*, इसलिए `this` भेजना हमेशा compile हो जाता
+है।
+
+जब वही `this` किसी singleton तक पहुँच जाता है, तो activity कभी collect नहीं हो पाती — और activity
+अपने साथ पूरा view hierarchy, उसमें पड़ी हर bitmap, और आपके adapters जो कुछ cache कर रहे थे, सब
+पकड़े रहती है।
+
+## कौन-कौन से, और हर एक कितना जीता है
+
+| Context | कितना जीता है | किसके लिए |
+| --- | --- | --- |
+| `Application` | पूरे process जितना | जो कुछ एक screen से आगे रखा जाए |
+| `Activity` | एक screen instance जितना | Views inflate करना, dialogs, theme वाली चीजें |
+| `Service` | उस service जितना | उस service के अंदर का काम |
+| `ContextWrapper` | जिसे लपेटा है उतना | ऊपर वालों में से किसी को सजाना |
+
+```kotlin title="WhichOne.kt" numbered
+class AnalyticsClient private constructor(context: Context) {
+
+    // applicationContext, क्योंकि यह object हर screen से ज्यादा जीता है
+    private val appContext = context.applicationContext
+
+    companion object {
+        @Volatile private var instance: AnalyticsClient? = null
+        fun get(context: Context): AnalyticsClient =
+            instance ?: synchronized(this) {
+                instance ?: AnalyticsClient(context).also { instance = it }
+            }
+    }
+}
+```
+
+<Quiz
+  question="कोई singleton पहली बार मिला `Context` रख लेता है, और वह पहली बार `MainActivity` से बना था। क्या पकड़ा रह जाता है?"
+  options={[
+    "कुछ नहीं — activity आम तरीके से garbage collect हो जाती है",
+    "Activity, उसका पूरा view tree और उसमें पड़ी हर bitmap, हमेशा के लिए",
+    "सिर्फ Context object, जो छोटा होता है",
+  ]}
+  answer={1}
+  explanation="Singleton process की उम्र भर किसी GC root से पहुँच में रहता है, इसलिए जो कुछ वह पकड़े है वह भी। Activity कोई छोटा object नहीं है: वह window, पूरा inflate किया हुआ view hierarchy, उन views की हर drawable और bitmap, और उन पर लगे सारे listeners पकड़े रहती है। एक भूला हुआ reference यह सब रोक लेता है, और हालत सुधरती नहीं — हर rotation एक और leak हुई activity जोड़ देता है। Constructor में context.applicationContext लिख देना ही पूरा इलाज है।"
+/>
+
+## पेच theme का है
+
+`applicationContext` सीधे बदलकर रख देने वाली चीज नहीं है। उसके पास कोई theme नहीं होती, इसलिए
+उससे निकाली गई हर दिखने वाली चीज या तो गलत आती है या crash कर देती है।
+
+<Compare
+  left={{
+    title: "Activity इस्तेमाल कीजिए",
+    subtitle: "छोटी उम्र, theme वाला",
+    accent: "violet",
+    points: [
+      "+ Layouts inflate करना और views बनाना",
+      "+ `Dialog` दिखाना — उसे window token चाहिए",
+      "+ Theme के attributes और styled रंग पढ़ना",
+      "- Screen से ज्यादा जीने वाली किसी जगह कभी मत रखिए",
+    ],
+  }}
+  right={{
+    title: "applicationContext इस्तेमाल कीजिए",
+    subtitle: "Process जितनी उम्र, बिना theme",
+    accent: "emerald",
+    points: [
+      "+ Singletons, repositories, database और preference वाले handles",
+      "+ जो कुछ आप एक screen से आगे किसी field में रखते हैं",
+      "- उससे inflate करने पर theme चुपचाप चली जाती है",
+      "- उससे dialog दिखाने पर फेंकता है",
+    ],
+  }}
+/>
+
+## अंदर की बात: leak असल में है क्या
+
+<Timeline>
+  <TimelineItem title="कोई GC root जिंदा रहता है" meta="static, singleton, चलता thread">
+    Garbage collection वही छोड़ता है जिस तक पहुँचा नहीं जा सकता। Static field, singleton में पड़ा
+    object, या चलता हुआ thread — तीनों तक परिभाषा से ही पहुँचा जा सकता है।
+  </TimelineItem>
+  <TimelineItem title="वह आपकी Activity पकड़े है" meta="सीधे या घुमाकर">
+    सीधे, या किसी non-static inner class से, या ऐसे lambda से जिसने `this` पकड़ लिया, या ऐसे
+    listener से जो आपने लगाया और कभी हटाया नहीं।
+  </TimelineItem>
+  <TimelineItem title="Activity सब कुछ पकड़े है" meta="महँगा हिस्सा यही है">
+    Window, view hierarchy, drawables, adapters, fragment manager। इसीलिए एक भी leak हुई activity
+    memory के graph में इतनी साफ दिखती है।
+  </TimelineItem>
+  <TimelineItem title="Rotation उसे गुणा कर देता है" meta="हर configuration change पर एक">
+    हर rotation नई activity बनाता है और पुरानी leak कर देता है। दस rotation, memory में दस view
+    trees।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="वह lambda जो बिना कहे `this` पकड़ लेता है">
+```kotlin title="Capture.kt"
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Leak: lambda MainActivity को पकड़े है, और manager lambda को
+        LocationManager.register { showLocation(it) }
+    }
+}
+```
+
+`showLocation` एक member function है, इसलिए lambda उसे बुलाने के लिए `this` पकड़ लेता है। Code
+में कहीं `MainActivity` लिखा ही नहीं है, और इसीलिए यह review में पकड़ना मुश्किल है।
+
+उसे उसके साथी lifecycle callback में हटाइए, या ऐसा scope इस्तेमाल कीजिए जो cancel हो जाए — वही
+जोड़े वाला नियम जो lifecycle के पाठ में था।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो एक screen को memory में रोक लेती हैं">
+**`Activity` को singleton या static field में रखना।** किताबी leak। Constructor में
+`applicationContext` लीजिए।
+
+**Listener लगाकर हटाना नहीं।** System का object आपकी screen से ज्यादा जीता है, और अब उसे पकड़े
+है। हर register के साथ उसके साथी callback में unregister रखिए।
+
+**Non-static inner class या ऐसा anonymous `Handler` जो activity से ज्यादा जीता हो।** दोनों बाहर
+वाले instance का छुपा हुआ reference रखते हैं।
+
+**दिखने वाली किसी भी चीज के लिए `applicationContext`।** Compile हो जाता है, फिर या तो गलत theme
+दिखाता है या dialog दिखाने पर फेंक देता है।
+</Pitfall>
+
+## अभ्यास
+
+1. LeakCanary जोड़िए, किसी activity से `this` को singleton में रखिए, पाँच बार घुमाइए, और उसकी दी
+   हुई leak trace पढ़िए।
+2. उसे `applicationContext` से ठीक कीजिए और confirm कीजिए कि trace गायब हो गई।
+3. Activity की जगह `applicationContext` से कोई theme वाला layout inflate कीजिए। ठीक-ठीक बताइए कि
+   दिखने में क्या बदला।
+4. `onCreate` में बिना साथी unregister के एक listener लगाइए। Memory profiler में रुकी हुई
+   activity ढूँढ़िए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `Context` | आपकी app तक वह पकड़ जैसी उसे system देखता है |
+| `applicationContext` | Process जितना जीता है; रखना safe है |
+| `Activity` वाला context | एक screen जितना जीता है; theme वाला |
+| Activity रख लेना | उसका पूरा view tree रोक लेता है |
+| Theme | सिर्फ activity वाले context के पास होती है |
+| Dialogs | Activity वाला context चाहिए, application वाला नहीं |
+| Rotation | एक leak को हर rotation पर एक leak बना देता है |
+| LeakCanary | Development में यह सब पकड़ लेता है |
+
+<Interview title="जो भी Android का तजुर्बा बताए, उससे यह पूछा ही जाता है">
+"Android का सबसे आम memory leak कौन सा है, और उससे कैसे बचते हैं?"
+
+कोई एक उदाहरण गिनाने के बजाय उसका आकार बताइए: लंबी उम्र वाली कोई चीज छोटी उम्र वाली चीज को
+पकड़े हुए — आम तौर पर singleton, static field या न हटाया गया listener किसी `Activity` को। फिर
+इलाज और उसका पेच दोनों बताइए: जो कुछ रखना है उसके लिए `applicationContext` लीजिए, पर inflate और
+dialogs के लिए activity वाला context रखिए, क्योंकि theme सिर्फ उसी के पास है।
+</Interview>

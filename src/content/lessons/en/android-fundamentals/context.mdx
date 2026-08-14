@@ -1,0 +1,173 @@
+---
+title: Context, and the leaks it causes
+description: Context is a handle to your app as the system sees it. There are several kinds, they have very different lifetimes, and mixing them up is the most common memory leak on Android.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Every `Context` gives you the same abilities — resources, preferences, starting components — but
+they differ in **how long they live**. Hand a long-lived object a short-lived `Context` and you
+have leaked everything behind it.
+</KeyIdea>
+
+## Why this matters
+
+`Context` is the most-passed parameter in Android, and the type system cannot tell you which one
+is safe here. An `Activity` *is* a `Context`, so passing `this` always compiles.
+
+When that `this` ends up in a singleton, the activity can never be collected — and an activity
+holds its entire view hierarchy, every bitmap in it, and whatever your adapters were caching.
+
+## The kinds, and how long each lives
+
+| Context | Lives as long as | Use it for |
+| --- | --- | --- |
+| `Application` | The process | Anything stored beyond one screen |
+| `Activity` | One screen instance | Inflating views, dialogs, themed lookups |
+| `Service` | That service | Work inside the service |
+| `ContextWrapper` | Whatever it wraps | Decorating one of the above |
+
+```kotlin title="WhichOne.kt" numbered
+class AnalyticsClient private constructor(context: Context) {
+
+    // applicationContext, because this object outlives every screen
+    private val appContext = context.applicationContext
+
+    companion object {
+        @Volatile private var instance: AnalyticsClient? = null
+        fun get(context: Context): AnalyticsClient =
+            instance ?: synchronized(this) {
+                instance ?: AnalyticsClient(context).also { instance = it }
+            }
+    }
+}
+```
+
+<Quiz
+  question="A singleton stores the `Context` it was first given, and it was first created from `MainActivity`. What is retained?"
+  options={[
+    "Nothing — the activity is still garbage collected normally",
+    "The activity, its whole view tree and every bitmap in it, forever",
+    "Only the Context object itself, which is small",
+  ]}
+  answer={1}
+  explanation="A singleton is reachable from a GC root for the life of the process, so anything it holds is too. An Activity is not a small object: it holds the window, the entire inflated view hierarchy, every drawable and bitmap in those views, and any listeners registered on them. One forgotten reference retains all of it, and it never gets better — every rotation adds another leaked activity. Calling context.applicationContext in the constructor is the entire fix."
+/>
+
+## The theme is the catch
+
+`applicationContext` is not a drop-in replacement. It carries no theme, so anything visual
+resolved through it comes out wrong or crashes.
+
+<Compare
+  left={{
+    title: "Use the Activity",
+    subtitle: "Short-lived, themed",
+    accent: "violet",
+    points: [
+      "+ Inflating layouts and creating views",
+      "+ Showing a `Dialog` — it needs a window token",
+      "+ Reading theme attributes and styled colours",
+      "- Never store it anywhere that outlives the screen",
+    ],
+  }}
+  right={{
+    title: "Use applicationContext",
+    subtitle: "Process-lived, unthemed",
+    accent: "emerald",
+    points: [
+      "+ Singletons, repositories, database and preference handles",
+      "+ Anything you keep in a field beyond one screen",
+      "- Inflating with it silently loses your theme",
+      "- Showing a dialog with it throws",
+    ],
+  }}
+/>
+
+## Under the hood: what a leak actually is
+
+<Timeline>
+  <TimelineItem title="A GC root stays alive" meta="static, singleton, running thread">
+    Garbage collection frees whatever is unreachable. A static field, an object in a singleton,
+    or a live thread is reachable by definition.
+  </TimelineItem>
+  <TimelineItem title="It holds your Activity" meta="directly or not">
+    Directly, or through a non-static inner class, a lambda that captured `this`, or a listener
+    you registered and never removed.
+  </TimelineItem>
+  <TimelineItem title="The Activity holds everything" meta="the expensive part">
+    Window, view hierarchy, drawables, adapters, fragment manager. That is why a single leaked
+    activity shows up in a memory graph so clearly.
+  </TimelineItem>
+  <TimelineItem title="Rotation multiplies it" meta="one per configuration change">
+    Each rotation creates a new activity and leaks the old one. Ten rotations, ten view trees in
+    memory.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="The lambda that captures `this` without saying so">
+```kotlin title="Capture.kt"
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Leaks: the lambda holds MainActivity, and the manager holds the lambda
+        LocationManager.register { showLocation(it) }
+    }
+}
+```
+
+`showLocation` is a member function, so the lambda captures `this` to call it. Nothing in the
+code says `MainActivity`, which is what makes this one hard to spot in review.
+
+Unregister in the matching lifecycle callback, or use a scope that cancels — the same pairing
+rule from the lifecycle lesson.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that hold a screen in memory">
+**Storing an `Activity` in a singleton or a static field.** The textbook leak. Take
+`applicationContext` in the constructor.
+
+**Registering a listener without unregistering it.** The system object outlives your screen, and
+now holds it. Pair every register with an unregister in the partner callback.
+
+**A non-static inner class or an anonymous `Handler` that outlives the activity.** Both hold an
+implicit reference to the outer instance.
+
+**Using `applicationContext` for anything visual.** It compiles, then either shows the wrong
+theme or throws when you try to display a dialog.
+</Pitfall>
+
+## Practice
+
+1. Add LeakCanary, store `this` in a singleton from an activity, rotate five times, and read the
+   leak trace it produces.
+2. Fix it with `applicationContext` and confirm the trace disappears.
+3. Inflate a themed layout with `applicationContext` instead of the activity. Describe exactly
+   what changed visually.
+4. Register a listener in `onCreate` with no matching unregister. Find the retained activity in
+   the memory profiler.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `Context` | A handle to your app as the system sees it |
+| `applicationContext` | Lives for the process; safe to store |
+| `Activity` context | Lives for one screen; themed |
+| Storing an Activity | Retains its whole view tree |
+| Theme | Only the activity context has one |
+| Dialogs | Need an activity context, not the application one |
+| Rotation | Turns one leak into one leak per rotation |
+| LeakCanary | Finds all of the above in development |
+
+<Interview title="A standard question for anyone claiming Android experience">
+"What is the most common memory leak in Android, and how do you avoid it?"
+
+Name the shape rather than an example: something with a long life holding something with a short
+life — usually a singleton, a static field or an unregistered listener holding an `Activity`.
+Then give the fix and the catch: take `applicationContext` for anything stored, but keep the
+activity context for inflation and dialogs, because only it carries the theme.
+</Interview>
