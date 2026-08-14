@@ -1,0 +1,127 @@
+---
+title: Threads, blocking और callbacks क्यों दुखते हैं
+description: Coroutines समझ में आने से पहले यह देखना ज़रूरी है कि blocked thread की क़ीमत क्या है — और पहला इलाज code को पढ़ने लायक़ क्यों नहीं छोड़ता।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Blocked thread आराम नहीं कर रहा होता। वह **पकड़ा हुआ** है, कुछ नहीं कर रहा, और किसी और के काम का नहीं —
+और Android पर screen छूने की इजाज़त सिर्फ़ एक ही thread को है।
+</KeyIdea>
+
+## Blocking दिखती कैसी है
+
+<ThreadTimeline
+  lanes={[
+    { name: "main (UI thread)", segments: [
+      { label: "draw frame", weight: 1, kind: "work" },
+      { label: "network call — 2s", weight: 5, kind: "blocked" },
+      { label: "draw frame", weight: 1, kind: "work" },
+    ]},
+  ]}
+  labels={{ work: "आपका code चल रहा है", blocked: "Blocked — thread पकड़ा हुआ, कुछ नहीं कर रहा" }}
+  caption="उन दो second में app कुछ बनाता नहीं और किसी tap का जवाब नहीं देता। लगभग पाँच second के बाद Android 'Application Not Responding' दिखा देता है।"
+/>
+
+Android एक thread — **main thread** — सिर्फ़ drawing और input के लिए रखता है। 60fps के लिए हर frame
+लगभग 16ms में बनना चाहिए।
+
+उस thread पर कोई भी धीमी चीज़ मतलब जमा हुआ app।
+
+<Quiz
+  question="Main thread पर एक network call 2 second लेता है। उस दौरान thread कर क्या रहा है?"
+  options={[
+    "कम रफ़्तार से frames बना रहा है",
+    "कुछ भी नहीं — उसे call ने पकड़ रखा है और कोई दूसरा काम नहीं कर सकता",
+    "अपने आप background thread पर चला जाता है",
+  ]}
+  answer={1}
+  explanation="Blocking call thread को तब तक रोक देती है जब तक वह लौट न आए। Thread न draw कर सकता है, न tap सँभाल सकता है, न कोई और काम। यही क़ीमत है जिसे हटाने के लिए पूरा Phase 3 है — इंतज़ार तो करना ही होगा, पर इंतज़ार करते वक़्त thread पकड़ना ज़रूरी नहीं।"
+/>
+
+## पहला इलाज: दूसरा thread
+
+```kotlin title="Threads.kt" numbered
+fun loadUser() {
+    Thread {
+        val user = api.fetchUser()          // धीमा, पर अब main पर नहीं
+        runOnUiThread { showUser(user) }    // draw करने के लिए वापस आना पड़ता है
+    }.start()
+}
+```
+
+यह चलता है, और इसीलिए 2019 से पहले हर Android app ऐसी ही दिखती थी। इसमें तीन असली दिक़्क़तें हैं।
+
+| दिक़्क़त | क्यों मायने रखती है |
+| --- | --- |
+| Threads महँगे हैं | हर एक का लगभग 1MB stack; हज़ारों नहीं रख सकते |
+| Cancel करने का तरीक़ा नहीं | User screen छोड़ देता है; thread चलता रहता है |
+| नतीजा वापस लाना पड़ता है | Main के बाहर View छुएँ तो exception आता है |
+
+## दूसरा इलाज: callbacks, और वे बिगड़ते कहाँ हैं
+
+```kotlin title="Callbacks.kt" numbered
+fun loadScreen() {
+    api.fetchUser { user ->
+        api.fetchOrders(user.id) { orders ->
+            api.fetchAddress(user.id) { address ->
+                showScreen(user, orders, address)
+                // और अब तीनों में error handling भी जोड़िए
+            }
+        }
+    }
+}
+```
+
+हर क़दम ठीक है। एक के अंदर एक रखने पर ऐसा code बनता है जहाँ चलने का क्रम और लिखे हुए का क्रम एक नहीं
+रहते।
+
+<Pitfall bare>
+ऊपर वाले में error handling जोड़िए और हर स्तर को अपनी अलग failure branch चाहिए। ऐसा कोई `try` है ही
+नहीं जो तीनों को लपेट ले, क्योंकि तीनों एक ही stack पर हैं ही नहीं।
+</Pitfall>
+
+## चाहिए असल में क्या
+
+<ThreadTimeline
+  lanes={[
+    { name: "main — blocking", segments: [
+      { label: "काम", weight: 1, kind: "work" },
+      { label: "इंतज़ार (thread पकड़ा हुआ)", weight: 4, kind: "blocked" },
+      { label: "काम", weight: 1, kind: "work" },
+    ]},
+    { name: "main — suspending", segments: [
+      { label: "काम", weight: 1, kind: "work" },
+      { label: "ख़ाली — दूसरे frames बनाता है", weight: 4, kind: "free" },
+      { label: "काम", weight: 1, kind: "work" },
+    ]},
+  ]}
+  labels={{ work: "आपका code चल रहा है", blocked: "Blocked — thread पकड़ा हुआ", free: "ख़ाली, दूसरे काम के लिए" }}
+  timeLabel="समय"
+  caption="दोनों उतने ही दो second रुकते हैं। सिर्फ़ दूसरा इंतज़ार के दौरान thread वापस दे देता है। Coroutine का पूरा idea यही है।"
+/>
+
+<Detail summary="बस और threads क्यों न बना लें">
+एक thread लगभग एक megabyte stack लेता है और उसे schedule करने में kernel-level context switch लगता
+है। दस हज़ार threads मुमकिन ही नहीं। दस हज़ार coroutines आम बात है, क्योंकि suspended coroutine बस heap
+पर पड़ा एक object है — इंतज़ार के दौरान वह कोई thread पकड़ता ही नहीं।
+</Detail>
+
+## अभ्यास
+
+1. लिखिए कि main thread पर 3 second की image upload के दौरान आपका app कर क्या रहा है। उन secondों में
+   क्या किया जा सकता था?
+2. ऊपर वाले nested callback example में हर स्तर पर error handling जोड़िए। Branches गिनिए।
+3. अपने project के लिए 60fps और 120fps का frame budget milliseconds में देखिए।
+4. जो app आप इस्तेमाल करते हैं उसमें एक ऐसा काम बताइए जो साफ़ तौर पर background thread पर चलता है। बाहर
+   से यह कैसे पता चलता है?
+
+## सारांश
+
+| शब्द | मतलब |
+| --- | --- |
+| Main thread | अकेला thread जिसे draw और input की इजाज़त है |
+| Blocking | इंतज़ार के दौरान thread पकड़ना — यही क़ीमत हटानी है |
+| Frame budget | 60fps पर ~16ms, 120fps पर ~8ms |
+| ANR | Android का "Application Not Responding" dialog |
+| Callback hell | Nested callbacks जहाँ चलने का क्रम पढ़ने के क्रम से अलग हो जाता है |

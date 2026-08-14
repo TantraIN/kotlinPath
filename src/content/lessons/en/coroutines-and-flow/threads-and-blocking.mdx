@@ -1,0 +1,125 @@
+---
+title: Threads, blocking and why callbacks hurt
+description: Before coroutines make sense, you need to see exactly what a blocked thread costs — and why the fix people reached for first made code unreadable.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+A blocked thread is not resting. It is **held**, doing nothing, unavailable to anyone else —
+and on Android there is only one thread allowed to touch the screen.
+</KeyIdea>
+
+## What blocking actually looks like
+
+<ThreadTimeline
+  lanes={[
+    { name: "main (UI thread)", segments: [
+      { label: "draw frame", weight: 1, kind: "work" },
+      { label: "network call — 2s", weight: 5, kind: "blocked" },
+      { label: "draw frame", weight: 1, kind: "work" },
+    ]},
+  ]}
+  caption="For those two seconds the app draws nothing and answers no taps. Past about five seconds Android shows the Application Not Responding dialog."
+/>
+
+Android reserves one thread — the **main thread** — for drawing and input. Every frame must be
+produced in about 16ms to hit 60fps.
+
+Anything slow on that thread is a frozen app.
+
+<Quiz
+  question="A network call takes 2 seconds on the main thread. What is the thread doing during it?"
+  options={[
+    "Drawing frames at a lower rate",
+    "Nothing at all — it is held by the call and cannot run any other work",
+    "Switching automatically to a background thread",
+  ]}
+  answer={1}
+  explanation="A blocking call parks the thread until it returns. The thread is not free to draw, not free to handle taps, and not free for any other task. That is the cost the whole of Phase 3 exists to remove — the waiting is unavoidable, but holding a thread while you wait is not."
+/>
+
+## The first fix: another thread
+
+```kotlin title="Threads.kt" numbered
+fun loadUser() {
+    Thread {
+        val user = api.fetchUser()          // slow, but not on main now
+        runOnUiThread { showUser(user) }    // must hop back to draw
+    }.start()
+}
+```
+
+This works, and it is why every Android app before 2019 looked like this. It has three real
+problems.
+
+| Problem | Why it matters |
+| --- | --- |
+| Threads are expensive | About 1MB of stack each; you cannot have thousands |
+| No cancellation | The user leaves the screen; the thread keeps going |
+| Results must hop back | Touching a View off the main thread throws |
+
+## The second fix: callbacks, and where they go wrong
+
+```kotlin title="Callbacks.kt" numbered
+fun loadScreen() {
+    api.fetchUser { user ->
+        api.fetchOrders(user.id) { orders ->
+            api.fetchAddress(user.id) { address ->
+                showScreen(user, orders, address)
+                // and now add error handling to all three
+            }
+        }
+    }
+}
+```
+
+Each step is fine. Nested, they produce code where the order of execution and the order of the
+text no longer match.
+
+<Pitfall bare>
+Add error handling to the above and every level needs its own failure branch. There is no
+`try` that wraps all three, because none of them are on the same stack.
+</Pitfall>
+
+## What we actually want
+
+<ThreadTimeline
+  lanes={[
+    { name: "main — blocking", segments: [
+      { label: "work", weight: 1, kind: "work" },
+      { label: "wait (thread held)", weight: 4, kind: "blocked" },
+      { label: "work", weight: 1, kind: "work" },
+    ]},
+    { name: "main — suspending", segments: [
+      { label: "work", weight: 1, kind: "work" },
+      { label: "free — draws other frames", weight: 4, kind: "free" },
+      { label: "work", weight: 1, kind: "work" },
+    ]},
+  ]}
+  caption="Both wait the same two seconds. Only the second one gives the thread back while waiting. That is the whole idea of a coroutine."
+/>
+
+<Detail summary="Why not just use more threads">
+A thread costs about a megabyte of stack and a kernel-level context switch to schedule. Ten
+thousand threads is not possible. Ten thousand coroutines is routine, because a suspended
+coroutine is just an object on the heap — it holds no thread at all while it waits.
+</Detail>
+
+## Practice
+
+1. Write down what your app is doing during a 3-second image upload on the main thread. Which
+   of those two seconds could have been used?
+2. Take the nested callback example and add error handling to each level. Count the branches.
+3. Look up your project's minimum frame budget for 60fps and for 120fps in milliseconds.
+4. Name one operation in an app you use that clearly runs on a background thread. How can you
+   tell from the outside?
+
+## Recap
+
+| Term | Meaning |
+| --- | --- |
+| Main thread | The only thread allowed to draw or handle input |
+| Blocking | Holding a thread while waiting — the cost we remove |
+| Frame budget | ~16ms at 60fps, ~8ms at 120fps |
+| ANR | Android's "Application Not Responding" dialog |
+| Callback hell | Nested callbacks where execution order stops matching reading order |

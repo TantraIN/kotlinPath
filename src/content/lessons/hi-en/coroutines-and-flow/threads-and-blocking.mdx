@@ -1,0 +1,129 @@
+---
+title: Threads, blocking aur callbacks kyun dukhte hain
+description: Coroutines samajh mein aane se pehle ye dekhna zaroori hai ki blocked thread ki keemat kya hai — aur pehla ilaaj code ko padhne laayak kyun nahi chhodta.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Blocked thread aaram nahi kar raha hota. Wo **pakda hua** hai, kuch nahi kar raha, aur kisi aur
+ke kaam ka nahi — aur Android par screen chhune ki ijazat sirf ek hi thread ko hai.
+</KeyIdea>
+
+## Blocking dikhti kaisi hai
+
+<ThreadTimeline
+  lanes={[
+    { name: "main (UI thread)", segments: [
+      { label: "draw frame", weight: 1, kind: "work" },
+      { label: "network call — 2s", weight: 5, kind: "blocked" },
+      { label: "draw frame", weight: 1, kind: "work" },
+    ]},
+  ]}
+  labels={{ work: "Aapka code chal raha hai", blocked: "Blocked — thread pakda hua, kuch nahi kar raha" }}
+  caption="Un do second mein app kuch banata nahi aur kisi tap ka jawab nahi deta. Lagbhag paanch second ke baad Android 'Application Not Responding' dikha deta hai."
+/>
+
+Android ek thread — **main thread** — sirf drawing aur input ke liye rakhta hai. 60fps ke liye
+har frame lagbhag 16ms mein banna chahiye.
+
+Us thread par koi bhi dheemi cheez matlab jama hua app.
+
+<Quiz
+  question="Main thread par ek network call 2 second leta hai. Us dauraan thread kar kya raha hai?"
+  options={[
+    "Kam raftaar se frames bana raha hai",
+    "Kuch bhi nahi — wo call ne pakad rakha hai aur koi dusra kaam nahi kar sakta",
+    "Apne aap background thread par chala jata hai",
+  ]}
+  answer={1}
+  explanation="Blocking call thread ko tab tak rok deti hai jab tak wo laut na aaye. Thread na draw kar sakta hai, na tap sambhal sakta hai, na koi aur kaam. Yahi keemat hai jise hataane ke liye poora Phase 3 hai — intezaar to karna hi hoga, par intezaar karte waqt thread pakadna zaroori nahi."
+/>
+
+## Pehla ilaaj: doosra thread
+
+```kotlin title="Threads.kt" numbered
+fun loadUser() {
+    Thread {
+        val user = api.fetchUser()          // dheema, par ab main par nahi
+        runOnUiThread { showUser(user) }    // draw karne ke liye wapas aana padta hai
+    }.start()
+}
+```
+
+Ye chalta hai, aur isiliye 2019 se pehle har Android app aisi hi dikhti thi. Isme teen asli
+dikkatein hain.
+
+| Dikkat | Kyun maayne rakhti hai |
+| --- | --- |
+| Threads mehnge hain | Har ek ka lagbhag 1MB stack; hazaron nahi rakh sakte |
+| Cancel karne ka tarika nahi | User screen chhod deta hai; thread chalta rehta hai |
+| Natija wapas laana padta hai | Main ke bahar View chhuo to exception aata hai |
+
+## Doosra ilaaj: callbacks, aur wo bigadte kahan hain
+
+```kotlin title="Callbacks.kt" numbered
+fun loadScreen() {
+    api.fetchUser { user ->
+        api.fetchOrders(user.id) { orders ->
+            api.fetchAddress(user.id) { address ->
+                showScreen(user, orders, address)
+                // aur ab teeno mein error handling bhi jodo
+            }
+        }
+    }
+}
+```
+
+Har kadam theek hai. Ek ke andar ek rakhne par aisa code banta hai jahan chalne ka kram aur
+likhe hue ka kram ek nahi rehte.
+
+<Pitfall bare>
+Upar wale mein error handling jodo aur har star ko apni alag failure branch chahiye. Aisa koi
+`try` hai hi nahi jo teeno ko lapet le, kyunki teeno ek hi stack par hain hi nahi.
+</Pitfall>
+
+## Chahiye asal mein kya
+
+<ThreadTimeline
+  lanes={[
+    { name: "main — blocking", segments: [
+      { label: "kaam", weight: 1, kind: "work" },
+      { label: "intezaar (thread pakda hua)", weight: 4, kind: "blocked" },
+      { label: "kaam", weight: 1, kind: "work" },
+    ]},
+    { name: "main — suspending", segments: [
+      { label: "kaam", weight: 1, kind: "work" },
+      { label: "khaali — dusre frames banata hai", weight: 4, kind: "free" },
+      { label: "kaam", weight: 1, kind: "work" },
+    ]},
+  ]}
+  labels={{ work: "Aapka code chal raha hai", blocked: "Blocked — thread pakda hua", free: "Khaali, dusre kaam ke liye" }}
+  timeLabel="samay"
+  caption="Dono utne hi do second rukte hain. Sirf doosra intezaar ke dauraan thread wapas de deta hai. Coroutine ka poora idea yahi hai."
+/>
+
+<Detail summary="Bas aur threads kyun na bana lein">
+Ek thread lagbhag ek megabyte stack leta hai aur use schedule karne mein kernel-level context
+switch lagta hai. Das hazaar threads mumkin hi nahi. Das hazaar coroutines aam baat hai, kyunki
+suspended coroutine bas heap par pada ek object hai — intezaar ke dauraan wo koi thread pakadta
+hi nahi.
+</Detail>
+
+## Practice
+
+1. Likho ki main thread par 3 second ki image upload ke dauraan aapka app kar kya raha hai. Un
+   secondon mein kya kiya ja sakta tha?
+2. Upar wale nested callback example mein har star par error handling jodo. Branches gino.
+3. Apne project ke liye 60fps aur 120fps ka frame budget milliseconds mein dekho.
+4. Jo app aap use karte ho usme ek aisa kaam batao jo saaf taur par background thread par chalta
+   hai. Bahar se ye kaise pata chalta hai?
+
+## Recap
+
+| Shabd | Matlab |
+| --- | --- |
+| Main thread | Akela thread jise draw aur input ki ijazat hai |
+| Blocking | Intezaar ke dauraan thread pakadna — yahi keemat hataani hai |
+| Frame budget | 60fps par ~16ms, 120fps par ~8ms |
+| ANR | Android ka "Application Not Responding" dialog |
+| Callback hell | Nested callbacks jahan chalne ka kram padhne ke kram se alag ho jata hai |

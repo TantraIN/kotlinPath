@@ -14,6 +14,7 @@ import { Reveal } from "@/components/Reveal";
 import { Timeline, TimelineItem } from "@/components/Timeline";
 import { ClassDiagram } from "@/components/diagrams/ClassDiagram";
 import { ObjectDiagram } from "@/components/diagrams/ObjectDiagram";
+import { ThreadTimeline } from "@/components/diagrams/ThreadTimeline";
 import { Compare } from "@/components/diagrams/Compare";
 import { MemoryDiagram } from "@/components/diagrams/MemoryDiagram";
 import { FileTree } from "@/components/diagrams/FileTree";
@@ -211,6 +212,7 @@ function components(lang: Lang) {
     Compare,
     ClassDiagram,
     ObjectDiagram,
+    ThreadTimeline,
     MemoryDiagram,
     KeyIdea,
     Detail,
