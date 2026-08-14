@@ -1,0 +1,145 @@
+---
+title: Delegation with by, और delegated properties
+description: एक keyword दो तरह की boilerplate हटा देता है — interface आगे बढ़ाने वाली, और accessor लिखने वाली।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`by` का मतलब है "यह काम कोई और सँभालेगा"। यह दो स्तर पर चलता है — पूरा interface, या एक अकेली
+property — और दोनों में forwarding code compiler लिखता है।
+</KeyIdea>
+
+## Class delegation: composition, बिना type किए
+
+आपको ऐसी `List` चाहिए जो हर read log करे। `ArrayList` से inherit करना कमज़ोर रास्ता है। उसे लपेटना
+मतलब हर method हाथ से लिखना — जब तक आप delegate न करें।
+
+```kotlin title="Delegate.kt" numbered runnable
+class LoggingList<T>(
+    private val inner: MutableList<T> = mutableListOf(),
+) : MutableList<T> by inner {
+
+    // सिर्फ़ वही behaviour लिखा है जो अलग है
+    override fun get(index: Int): T {
+        println("read $index")
+        return inner[index]
+    }
+}
+
+fun main() {
+    val list = LoggingList<String>()
+    list.add("a"); list.add("b")
+    println(list[1])
+    println(list.size)         // आगे बढ़ा दिया, कोई code नहीं लिखा
+}
+```
+
+`by inner` `MutableList` के हर method का forwarding बनाता है। आप सिर्फ़ वही लिखते हैं जो सच में बदल
+रहे हैं।
+
+<Quiz
+  question="`LoggingList` ने `get` override किया है। अगर `inner` का कोई method अंदर ही `get` बुलाए, तो क्या 'read' छपेगा?"
+  options={[
+    "हाँ — override हर जगह लगता है",
+    "नहीं — `inner` अपना `get` बुलाता है, wrapper का नहीं",
+    "तभी जब `inner` `open` हो",
+  ]}
+  answer={1}
+  explanation="Delegation composition है, inheritance नहीं। `inner` एक अलग object है जिसे wrapper का पता ही नहीं, इसलिए उसके अंदर के calls उसी के अंदर रहते हैं। आम तौर पर यही चाहिए होता है — यही self-call वाली दिक़्क़त collection को subclass करना कमज़ोर बनाती है — पर लोग चौंक ज़रूर जाते हैं।"
+/>
+
+## Property delegation: एक value पर `by`
+
+Compiler `val x by Thing()` को `Thing.getValue()` के calls में बदल देता है।
+
+<Tabs>
+  <Tab label="lazy">
+
+ज़्यादा से ज़्यादा एक बार, पहली read पर।
+
+```kotlin title="Lazy.kt" numbered runnable
+val config: String by lazy { "built once" }
+
+fun main() { println(config); println(config) }
+```
+
+  </Tab>
+  <Tab label="observable">
+
+हर assignment के बाद callback चलता है।
+
+```kotlin title="Observable.kt" numbered runnable
+import kotlin.properties.Delegates
+
+class Form {
+    var email: String by Delegates.observable("") { _, old, new ->
+        println("$old -> $new")
+    }
+}
+
+fun main() { Form().email = "a@b.com" }
+```
+
+`Delegates.vetoable` बिलकुल ऐसा ही है, बस `false` लौटाने पर बदलाव रुक जाता है।
+
+  </Tab>
+  <Tab label="अपना बनाइए">
+
+`getValue` और `setValue` वाला कोई भी object delegate बन सकता है।
+
+```kotlin title="Custom.kt" numbered runnable
+import kotlin.reflect.KProperty
+
+class Trimmed {
+    private var value = ""
+    operator fun getValue(thisRef: Any?, property: KProperty<*>) = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, newValue: String) {
+        value = newValue.trim()
+    }
+}
+
+class Note { var title: String by Trimmed() }
+
+fun main() {
+    val note = Note()
+    note.title = "   hello   "
+    println("[${note.title}]")
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="`by viewModels()` और `by remember` एक जैसे क्यों दिखते हैं">
+वे हैं ही एक ही चीज़। Android का `by viewModels()` और Compose का `by remember` बस ऐसे delegates हैं
+जिनका `getValue` आपके लिए ढूँढ लाता है। जब एक बार समझ आ जाए कि `by` मतलब `getValue` का call, वे APIs
+जादू लगना बंद कर देती हैं।
+</Detail>
+
+## आम ग़लतियाँ
+
+<Pitfall title="दो जानने लायक़">
+**यह सोचना कि override delegate के अंदर के calls पर भी लगेगा।** जैसा quiz में था: delegate एक अलग
+object है। अगर वह चाहिए, तो inheritance चाहिए, अपनी सारी क़ीमत के साथ।
+
+**ऐसी `by lazy` property जो बाद में भरने वाली चीज़ पर टिकी हो।** Block पहली read पर जो scope में मिला
+वही पकड़ लेता है, और फिर हमेशा के लिए cache कर लेता है — उस `null` समेत जिसे आप बाद में भरने वाले थे।
+</Pitfall>
+
+## अभ्यास
+
+1. `LoggingList` से `add` भी log करवाइए। ध्यान दीजिए कि `MutableList` ख़ुद implement करने के मुक़ाबले
+   कितनी कम lines लिखनी पड़ीं।
+2. `Delegates.vetoable` से ऋणात्मक quantity रोकिए, और देखिए कि पुरानी value बची रहती है।
+3. एक `NonBlank` delegate लिखिए जो ख़ाली string मिलने पर पुरानी value रखे।
+4. अपने custom delegate के `getValue` में `property.name` print कीजिए। इससे क्या किया जा सकता है?
+
+## सारांश
+
+| रूप | मतलब |
+| --- | --- |
+| `class A : B by b` | `B` का हर method `b` को भेज दीजिए |
+| `val x by lazy { }` | एक बार, पहली read पर |
+| `var x by Delegates.observable(v) { }` | हर assignment के बाद callback |
+| `var x by Delegates.vetoable(v) { }` | Callback जो assignment रोक भी सकता है |
+| `by MyDelegate()` | `getValue` / `setValue` वाला कोई भी object |

@@ -1,0 +1,146 @@
+---
+title: Delegation with by, and delegated properties
+description: One keyword replaces both the boilerplate of forwarding an interface and the boilerplate of writing an accessor.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`by` means "someone else handles this". It works at two levels — a whole interface, or a single
+property — and the compiler writes the forwarding code either way.
+</KeyIdea>
+
+## Class delegation: composition without the typing
+
+You want a `List` that logs every read. Inheriting from `ArrayList` is fragile. Wrapping it
+means writing every method by hand — unless you delegate.
+
+```kotlin title="Delegate.kt" numbered runnable
+class LoggingList<T>(
+    private val inner: MutableList<T> = mutableListOf(),
+) : MutableList<T> by inner {
+
+    // only the behaviour that differs is written out
+    override fun get(index: Int): T {
+        println("read $index")
+        return inner[index]
+    }
+}
+
+fun main() {
+    val list = LoggingList<String>()
+    list.add("a"); list.add("b")
+    println(list[1])
+    println(list.size)         // forwarded, no code written
+}
+```
+
+`by inner` generates a forwarding implementation of every `MutableList` method. You override
+only what you actually change.
+
+<Quiz
+  question="`LoggingList` overrides `get`. If `inner` had a method that calls `get` internally, would it print 'read'?"
+  options={[
+    "Yes — the override applies everywhere",
+    "No — `inner` calls its own `get`, not the wrapper's",
+    "Only if `inner` is declared `open`",
+  ]}
+  answer={1}
+  explanation="Delegation is composition, not inheritance. `inner` is a separate object that knows nothing about the wrapper, so its internal calls stay inside itself. This is usually what you want — it is exactly the self-call problem that makes subclassing a collection fragile — but it does surprise people."
+/>
+
+## Property delegation: `by` on a single value
+
+The compiler rewrites `val x by Thing()` into calls to `Thing.getValue()`.
+
+<Tabs>
+  <Tab label="lazy">
+
+Computed at most once, on first read.
+
+```kotlin title="Lazy.kt" numbered runnable
+val config: String by lazy { "built once" }
+
+fun main() { println(config); println(config) }
+```
+
+  </Tab>
+  <Tab label="observable">
+
+Fires a callback after every assignment.
+
+```kotlin title="Observable.kt" numbered runnable
+import kotlin.properties.Delegates
+
+class Form {
+    var email: String by Delegates.observable("") { _, old, new ->
+        println("$old -> $new")
+    }
+}
+
+fun main() { Form().email = "a@b.com" }
+```
+
+`Delegates.vetoable` is the same shape, but returning `false` rejects the change.
+
+  </Tab>
+  <Tab label="your own">
+
+Any object with `getValue` and `setValue` can be a delegate.
+
+```kotlin title="Custom.kt" numbered runnable
+import kotlin.reflect.KProperty
+
+class Trimmed {
+    private var value = ""
+    operator fun getValue(thisRef: Any?, property: KProperty<*>) = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, newValue: String) {
+        value = newValue.trim()
+    }
+}
+
+class Note { var title: String by Trimmed() }
+
+fun main() {
+    val note = Note()
+    note.title = "   hello   "
+    println("[${note.title}]")
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="Why `by viewModels()` and `by remember` look the same">
+They are the same mechanism. Android's `by viewModels()` and Compose's `by remember` are just
+delegates whose `getValue` does the lookup for you. Once you know `by` is a call to `getValue`,
+those APIs stop looking like magic.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Two worth knowing">
+**Expecting overrides to affect the delegate's internal calls.** As in the quiz: the delegate
+is a separate object. If you need that, you need inheritance, with all its costs.
+
+**A `by lazy` property that depends on something assigned later.** The block captures whatever
+is in scope at first read, and it is then cached forever — including a `null` you meant to fill
+in later.
+</Pitfall>
+
+## Practice
+
+1. Make `LoggingList` also log `add`. Note how few lines you write compared with implementing
+   `MutableList` yourself.
+2. Use `Delegates.vetoable` to reject a negative quantity, and confirm the old value survives.
+3. Write a `NonBlank` delegate that keeps the previous value when assigned a blank string.
+4. Print `property.name` inside a custom delegate's `getValue`. What could that enable?
+
+## Recap
+
+| Form | Meaning |
+| --- | --- |
+| `class A : B by b` | Forward every `B` method to `b` |
+| `val x by lazy { }` | Compute once, on first read |
+| `var x by Delegates.observable(v) { }` | Callback after each assignment |
+| `var x by Delegates.vetoable(v) { }` | Callback that can reject the assignment |
+| `by MyDelegate()` | Any object with `getValue` / `setValue` |

@@ -1,0 +1,146 @@
+---
+title: Delegation with by, aur delegated properties
+description: Ek keyword do tarah ki boilerplate hata deta hai — interface aage badhane wali, aur accessor likhne wali.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`by` ka matlab hai "ye kaam koi aur sambhalega". Ye do star par chalta hai — poora interface, ya
+ek akeli property — aur dono mein forwarding code compiler likhta hai.
+</KeyIdea>
+
+## Class delegation: composition, bina type kiye
+
+Aapko aisi `List` chahiye jo har read log kare. `ArrayList` se inherit karna kamzor rasta hai.
+Use lapetna matlab har method haath se likhna — jab tak aap delegate na karo.
+
+```kotlin title="Delegate.kt" numbered runnable
+class LoggingList<T>(
+    private val inner: MutableList<T> = mutableListOf(),
+) : MutableList<T> by inner {
+
+    // sirf wahi behaviour likha hai jo alag hai
+    override fun get(index: Int): T {
+        println("read $index")
+        return inner[index]
+    }
+}
+
+fun main() {
+    val list = LoggingList<String>()
+    list.add("a"); list.add("b")
+    println(list[1])
+    println(list.size)         // aage badha diya, koi code nahi likha
+}
+```
+
+`by inner` `MutableList` ke har method ka forwarding banata hai. Aap sirf wahi likhte ho jo sach
+mein badal rahe ho.
+
+<Quiz
+  question="`LoggingList` ne `get` override kiya hai. Agar `inner` ka koi method andar hi `get` bulaye, to kya 'read' chhapega?"
+  options={[
+    "Haan — override har jagah lagta hai",
+    "Nahi — `inner` apna `get` bulata hai, wrapper ka nahi",
+    "Tabhi jab `inner` `open` ho",
+  ]}
+  answer={1}
+  explanation="Delegation composition hai, inheritance nahi. `inner` ek alag object hai jise wrapper ka pata hi nahi, isliye uske andar ke calls usi ke andar rehte hain. Aam taur par yahi chahiye hota hai — yahi self-call wali dikkat collection ko subclass karna kamzor banati hai — par log chaunk zaroor jate hain."
+/>
+
+## Property delegation: ek value par `by`
+
+Compiler `val x by Thing()` ko `Thing.getValue()` ke calls mein badal deta hai.
+
+<Tabs>
+  <Tab label="lazy">
+
+Zyada se zyada ek baar, pehli read par.
+
+```kotlin title="Lazy.kt" numbered runnable
+val config: String by lazy { "built once" }
+
+fun main() { println(config); println(config) }
+```
+
+  </Tab>
+  <Tab label="observable">
+
+Har assignment ke baad callback chalta hai.
+
+```kotlin title="Observable.kt" numbered runnable
+import kotlin.properties.Delegates
+
+class Form {
+    var email: String by Delegates.observable("") { _, old, new ->
+        println("$old -> $new")
+    }
+}
+
+fun main() { Form().email = "a@b.com" }
+```
+
+`Delegates.vetoable` bilkul aisa hi hai, bas `false` lautane par badlav ruk jata hai.
+
+  </Tab>
+  <Tab label="apna banao">
+
+`getValue` aur `setValue` wala koi bhi object delegate ban sakta hai.
+
+```kotlin title="Custom.kt" numbered runnable
+import kotlin.reflect.KProperty
+
+class Trimmed {
+    private var value = ""
+    operator fun getValue(thisRef: Any?, property: KProperty<*>) = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, newValue: String) {
+        value = newValue.trim()
+    }
+}
+
+class Note { var title: String by Trimmed() }
+
+fun main() {
+    val note = Note()
+    note.title = "   hello   "
+    println("[${note.title}]")
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="`by viewModels()` aur `by remember` ek jaise kyun dikhte hain">
+Wo hain hi ek hi cheez. Android ka `by viewModels()` aur Compose ka `by remember` bas aise
+delegates hain jinka `getValue` aapke liye dhoondh laata hai. Jab ek baar samajh aa jaye ki `by`
+matlab `getValue` ka call, wo APIs jaadu lagna band kar deti hain.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Do jaanne laayak">
+**Ye sochna ki override delegate ke andar ke calls par bhi lagega.** Jaisa quiz mein tha:
+delegate ek alag object hai. Agar wo chahiye, to inheritance chahiye, apni saari keemat ke saath.
+
+**Aisi `by lazy` property jo baad mein bharne wali cheez par tiki ho.** Block pehli read par jo
+scope mein mila wahi pakad leta hai, aur phir hamesha ke liye cache kar leta hai — us `null`
+samet jise aap baad mein bharne wale the.
+</Pitfall>
+
+## Practice
+
+1. `LoggingList` se `add` bhi log karwao. Dhyan do ki `MutableList` khud implement karne ke
+   muqable kitni kam lines likhni padin.
+2. `Delegates.vetoable` se rinatmak quantity roko, aur dekho ki purani value bachi rehti hai.
+3. Ek `NonBlank` delegate likho jo khaali string milne par purani value rakhe.
+4. Apne custom delegate ke `getValue` mein `property.name` print karo. Isse kya kiya ja sakta hai?
+
+## Recap
+
+| Roop | Matlab |
+| --- | --- |
+| `class A : B by b` | `B` ka har method `b` ko bhej do |
+| `val x by lazy { }` | Ek baar, pehli read par |
+| `var x by Delegates.observable(v) { }` | Har assignment ke baad callback |
+| `var x by Delegates.vetoable(v) { }` | Callback jo assignment rok bhi sakta hai |
+| `by MyDelegate()` | `getValue` / `setValue` wala koi bhi object |
