@@ -1,0 +1,134 @@
+---
+title: flatMapLatest, combine, flowOn और buffering
+description: वे operators जो तय करते हैं कि जब values आपके सँभालने से तेज़ आएँ तब क्या हो।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+जब काम के बीच नई value आ जाए, तीन ही चुनाव हैं: पुराना काम cancel कीजिए, उसे क़तार में लगाइए, या कुछ
+गिरा दीजिए। इन operators में से हर एक इन्हीं तीन में से एक चुनाव है।
+</KeyIdea>
+
+## पुराना काम cancel कीजिए: `flatMapLatest`
+
+Type करते ही search: जिस पल नई query आती है, पिछली request बेकार हो जाती है।
+
+```kotlin title="Latest.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    flowOf("a", "ab", "abc")
+        .onEach { delay(50) }
+        .flatMapLatest { query ->
+            flow { delay(100); emit("results for $query") }   // धीमा
+        }
+        .collect { println(it) }        // सिर्फ़ आख़िरी बचता है
+}
+```
+
+| Operator | नई value आने पर |
+| --- | --- |
+| `flatMapLatest` | चल रहा काम cancel कीजिए, दोबारा शुरू |
+| `flatMapConcat` | मौजूदा ख़त्म होने का इंतज़ार, फिर शुरू |
+| `flatMapMerge` | सबको एक साथ चलाइए, नतीजे मिल-जुल कर आते हैं |
+
+<Quiz
+  question="User जल्दी-जल्दी चार अक्षर type करता है, हर एक से 1 second का search चलता है। `flatMapLatest` के साथ कितनी network requests पूरी होती हैं?"
+  options={[
+    "चार — हर keystroke पर एक",
+    "एक — अगला अक्षर आते ही पहली तीन cancel हो जाती हैं",
+    "एक भी नहीं — सब एक दूसरे को cancel कर देती हैं",
+  ]}
+  answer={1}
+  explanation="हर नई value पिछले inner flow को चला रहा coroutine cancel कर देती है, इसलिए सिर्फ़ आख़िरी search पूरा चलता है। वह cancellation असली है — HTTP call रोक दी जाती है, सिर्फ़ अनदेखी नहीं होती। उसके पहले `debounce` जोड़िए तो पहली तीन requests शुरू ही नहीं होंगी।"
+/>
+
+## कई sources को जोड़ना
+
+```kotlin title="Combine.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    val user = flowOf("Asha").onEach { delay(50) }
+    val settings = flowOf("dark", "light").onEach { delay(80) }
+
+    combine(user, settings) { u, s -> "$u prefers $s" }
+        .collect { println(it) }
+}
+```
+
+`combine` तब emit करता है जब **कोई भी** source emit करे, और हर एक से आख़िरी value लेता है। `zip`
+उसके उलट **दोनों** से नई value का इंतज़ार करता है — जोड़ी बनाने के लिए ठीक, UI state के लिए ग़लत।
+
+## काम चलता कहाँ है: `flowOn`
+
+```kotlin title="FlowOn.kt" numbered
+repository.itemsFlow()
+    .map { expensiveParse(it) }
+    .flowOn(Dispatchers.Default)     // इसके ऊपर वाले सब पर लगता है
+    .collect { render(it) }          // बुलाने वाले के dispatcher पर ही रहता है
+```
+
+<Pitfall bare>
+`flowOn` सिर्फ़ **ऊपर** वाले हिस्से पर लगता है। उसे chain के अंत में रखना आम ग़लती है — फिर वह उस चीज़ पर
+लगता ही नहीं जिसके लिए आपने रखा था।
+</Pitfall>
+
+## जब बनाने की रफ़्तार खपत से तेज़ हो
+
+<Tabs>
+  <Tab label="buffer">
+
+सब रखिए; बनाने वाले को आगे भागने दीजिए।
+
+```kotlin title="Buffer.kt" numbered
+flow.buffer(capacity = 64).collect { slowRender(it) }
+```
+
+  </Tab>
+  <Tab label="conflate">
+
+सिर्फ़ सबसे नया रखिए। UI state के लिए बिलकुल ठीक — पुराने frames बेकार हैं।
+
+```kotlin title="Conflate.kt" numbered
+flow.conflate().collect { render(it) }
+```
+
+  </Tab>
+  <Tab label="collectLatest">
+
+नई value आते ही collector को ही cancel कर दीजिए।
+
+```kotlin title="CollectLatest.kt" numbered
+flow.collectLatest { renderWithAnimation(it) }
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="बिना buffer के emit suspend करता है">
+Flow default से एक-के-बाद-एक चलता है: `emit` तब तक नहीं लौटता जब तक collector उस value का काम ख़त्म न
+कर ले। यही back-pressure है, और आम तौर पर यही सही है। `buffer` इस जोड़ी को तोड़ता है ताकि बनाने वाला और
+खपाने वाला साथ चलें — memory की क़ीमत पर, और values क़तार में लगने की क़ीमत पर।
+</Detail>
+
+## अभ्यास
+
+1. Search वाले example में `flatMapLatest` की जगह `flatMapConcat` डालिए और output मिलाइए।
+2. तीन flows से `combine` करके UI state बनाइए, फिर `zip` पर जाइए और बताइए क्या टूटता है।
+3. `flowOn` को chain के अंत में ले जाइए और साबित कीजिए कि अब वह ऊपर वाले `map` पर नहीं लगता।
+4. एक धीमे collector में 1000 values डालिए — `buffer` के साथ और बिना। दोनों का समय नापिए।
+
+## सारांश
+
+| Operator | कौन सा चुनाव |
+| --- | --- |
+| `flatMapLatest` | चल रहा काम cancel — search, filters |
+| `flatMapConcat` | क्रम बचाइए, एक बार में एक |
+| `flatMapMerge` | ज़्यादा से ज़्यादा साथ, क्रम की guarantee नहीं |
+| `combine` | किसी भी बदलाव पर emit, हर एक से आख़िरी value |
+| `zip` | दोनों का इंतज़ार — जोड़ी बनाने के लिए, UI state के लिए नहीं |
+| `flowOn` | अपने ऊपर वाले सब का dispatcher तय करता है |
+| `buffer` / `conflate` | सब क़तार में, या सिर्फ़ सबसे नया |

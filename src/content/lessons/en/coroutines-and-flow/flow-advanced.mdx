@@ -1,0 +1,135 @@
+---
+title: flatMapLatest, combine, flowOn and buffering
+description: The operators that decide what happens when values arrive faster than you can handle them.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+When a new value arrives mid-work, you have three choices: cancel the old work, queue it, or
+drop something. Each of these operators is one of those choices made explicit.
+</KeyIdea>
+
+## Cancel the old work: `flatMapLatest`
+
+Search-as-you-type: the moment a new query arrives, the previous request is worthless.
+
+```kotlin title="Latest.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    flowOf("a", "ab", "abc")
+        .onEach { delay(50) }
+        .flatMapLatest { query ->
+            flow { delay(100); emit("results for $query") }   // slow
+        }
+        .collect { println(it) }        // only the last one survives
+}
+```
+
+| Operator | When a new value arrives |
+| --- | --- |
+| `flatMapLatest` | Cancel the in-flight work, start again |
+| `flatMapConcat` | Wait for the current one to finish, then start |
+| `flatMapMerge` | Run them all at once, results interleave |
+
+<Quiz
+  question="A user types four characters quickly, each triggering a 1-second search. With `flatMapLatest`, how many network requests complete?"
+  options={[
+    "Four — one per keystroke",
+    "One — the first three are cancelled as soon as the next character arrives",
+    "None — they all cancel each other",
+  ]}
+  answer={1}
+  explanation="Each new value cancels the coroutine running the previous inner flow, so only the final search runs to completion. That cancellation is real — the HTTP call is aborted, not just ignored. Adding `debounce` before it means the first three requests are never even started."
+/>
+
+## Combine several sources
+
+```kotlin title="Combine.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    val user = flowOf("Asha").onEach { delay(50) }
+    val settings = flowOf("dark", "light").onEach { delay(80) }
+
+    combine(user, settings) { u, s -> "$u prefers $s" }
+        .collect { println(it) }
+}
+```
+
+`combine` emits whenever **any** source emits, using the latest from each. `zip` instead waits
+for a new value from **both** — useful for pairing, wrong for UI state.
+
+## Where the work runs: `flowOn`
+
+```kotlin title="FlowOn.kt" numbered
+repository.itemsFlow()
+    .map { expensiveParse(it) }
+    .flowOn(Dispatchers.Default)     // affects everything ABOVE it
+    .collect { render(it) }          // stays on the caller's dispatcher
+```
+
+<Pitfall bare>
+`flowOn` applies **upstream** only. Putting it at the end of the chain is a common mistake — it
+then affects nothing you meant it to.
+</Pitfall>
+
+## When production outpaces consumption
+
+<Tabs>
+  <Tab label="buffer">
+
+Keep everything; let the producer run ahead.
+
+```kotlin title="Buffer.kt" numbered
+flow.buffer(capacity = 64).collect { slowRender(it) }
+```
+
+  </Tab>
+  <Tab label="conflate">
+
+Keep only the newest. Perfect for UI state — old frames are worthless.
+
+```kotlin title="Conflate.kt" numbered
+flow.conflate().collect { render(it) }
+```
+
+  </Tab>
+  <Tab label="collectLatest">
+
+Cancel the collector itself when a new value arrives.
+
+```kotlin title="CollectLatest.kt" numbered
+flow.collectLatest { renderWithAnimation(it) }
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="Without a buffer, emit suspends">
+A flow is sequential by default: `emit` does not return until the collector has finished with
+that value. That is back-pressure, and it is usually correct. `buffer` breaks the coupling so
+producer and consumer run concurrently — at the cost of memory and of values queuing up.
+</Detail>
+
+## Practice
+
+1. Replace `flatMapLatest` with `flatMapConcat` in the search example and compare the output.
+2. Build a UI state from three flows with `combine`, then switch to `zip` and explain what
+   breaks.
+3. Move `flowOn` to the end of a chain and prove it no longer affects the `map` above it.
+4. Emit 1000 values into a slow collector with and without `buffer`. Time both.
+
+## Recap
+
+| Operator | Choice it makes |
+| --- | --- |
+| `flatMapLatest` | Cancel in-flight work — search, filters |
+| `flatMapConcat` | Preserve order, run one at a time |
+| `flatMapMerge` | Maximum concurrency, order not guaranteed |
+| `combine` | Emit on any change, using the latest of each |
+| `zip` | Wait for both — pairing, not UI state |
+| `flowOn` | Sets the dispatcher for everything upstream |
+| `buffer` / `conflate` | Queue everything, or keep only the newest |

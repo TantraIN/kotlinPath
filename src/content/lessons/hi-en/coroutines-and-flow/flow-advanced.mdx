@@ -1,0 +1,136 @@
+---
+title: flatMapLatest, combine, flowOn aur buffering
+description: Wo operators jo tay karte hain ki jab values aapke sambhalne se tez aayein tab kya ho.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Jab kaam ke beech nayi value aa jaye, teen hi chunav hain: purana kaam cancel karo, use qatar
+mein lagao, ya kuch gira do. In operators mein se har ek inhi teen mein se ek chunav hai.
+</KeyIdea>
+
+## Purana kaam cancel karo: `flatMapLatest`
+
+Type karte hi search: jis pal nayi query aati hai, pichhli request bekaar ho jati hai.
+
+```kotlin title="Latest.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    flowOf("a", "ab", "abc")
+        .onEach { delay(50) }
+        .flatMapLatest { query ->
+            flow { delay(100); emit("results for $query") }   // dheema
+        }
+        .collect { println(it) }        // sirf aakhri bachta hai
+}
+```
+
+| Operator | Nayi value aane par |
+| --- | --- |
+| `flatMapLatest` | Chal raha kaam cancel karo, dobara shuru |
+| `flatMapConcat` | Maujooda khatam hone ka intezaar, phir shuru |
+| `flatMapMerge` | Sabko ek saath chalao, natije mil-jul kar aate hain |
+
+<Quiz
+  question="User jaldi-jaldi chaar akshar type karta hai, har ek se 1 second ka search chalta hai. `flatMapLatest` ke saath kitni network requests poori hoti hain?"
+  options={[
+    "Chaar — har keystroke par ek",
+    "Ek — agla akshar aate hi pehli teen cancel ho jati hain",
+    "Ek bhi nahi — sab ek dusre ko cancel kar deti hain",
+  ]}
+  answer={1}
+  explanation="Har nayi value pichhle inner flow ko chala raha coroutine cancel kar deti hai, isliye sirf aakhri search poora chalta hai. Wo cancellation asli hai — HTTP call rok di jati hai, sirf anadekhi nahi hoti. Uske pehle `debounce` jodo to pehli teen requests shuru hi nahi hongi."
+/>
+
+## Kai sources ko jodna
+
+```kotlin title="Combine.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    val user = flowOf("Asha").onEach { delay(50) }
+    val settings = flowOf("dark", "light").onEach { delay(80) }
+
+    combine(user, settings) { u, s -> "$u prefers $s" }
+        .collect { println(it) }
+}
+```
+
+`combine` tab emit karta hai jab **koi bhi** source emit kare, aur har ek se aakhri value leta
+hai. `zip` uske ulat **dono** se nayi value ka intezaar karta hai — jodi banane ke liye theek,
+UI state ke liye galat.
+
+## Kaam chalta kahan hai: `flowOn`
+
+```kotlin title="FlowOn.kt" numbered
+repository.itemsFlow()
+    .map { expensiveParse(it) }
+    .flowOn(Dispatchers.Default)     // iske UPAR wale sab par lagta hai
+    .collect { render(it) }          // bulane wale ke dispatcher par hi rehta hai
+```
+
+<Pitfall bare>
+`flowOn` sirf **upar** wale hisse par lagta hai. Use chain ke ant mein rakhna aam galti hai —
+phir wo us cheez par lagta hi nahi jiske liye aapne rakha tha.
+</Pitfall>
+
+## Jab banane ki raftaar khapat se tez ho
+
+<Tabs>
+  <Tab label="buffer">
+
+Sab rakho; banane wale ko aage bhaagne do.
+
+```kotlin title="Buffer.kt" numbered
+flow.buffer(capacity = 64).collect { slowRender(it) }
+```
+
+  </Tab>
+  <Tab label="conflate">
+
+Sirf sabse naya rakho. UI state ke liye bilkul theek — purane frames bekaar hain.
+
+```kotlin title="Conflate.kt" numbered
+flow.conflate().collect { render(it) }
+```
+
+  </Tab>
+  <Tab label="collectLatest">
+
+Nayi value aate hi collector ko hi cancel kar do.
+
+```kotlin title="CollectLatest.kt" numbered
+flow.collectLatest { renderWithAnimation(it) }
+```
+
+  </Tab>
+</Tabs>
+
+<Detail summary="Bina buffer ke emit suspend karta hai">
+Flow default se ek-ke-baad-ek chalta hai: `emit` tab tak nahi lautta jab tak collector us value
+ka kaam khatam na kar le. Yahi back-pressure hai, aur aam taur par yahi sahi hai. `buffer` is
+jodi ko todta hai taaki banane wala aur khapane wala saath chalein — memory ki keemat par, aur
+values qatar mein lagne ki keemat par.
+</Detail>
+
+## Practice
+
+1. Search wale example mein `flatMapLatest` ki jagah `flatMapConcat` daalo aur output milao.
+2. Teen flows se `combine` karke UI state banao, phir `zip` par jao aur batao kya tootta hai.
+3. `flowOn` ko chain ke ant mein le jao aur sabit karo ki ab wo upar wale `map` par nahi lagta.
+4. Ek dheeme collector mein 1000 values daalo — `buffer` ke saath aur bina. Dono ka samay naapo.
+
+## Recap
+
+| Operator | Kaun sa chunav |
+| --- | --- |
+| `flatMapLatest` | Chal raha kaam cancel — search, filters |
+| `flatMapConcat` | Kram bachao, ek baar mein ek |
+| `flatMapMerge` | Zyada se zyada saath, kram ki guarantee nahi |
+| `combine` | Kisi bhi badlav par emit, har ek se aakhri value |
+| `zip` | Dono ka intezaar — jodi banane ke liye, UI state ke liye nahi |
+| `flowOn` | Apne upar wale sab ka dispatcher tay karta hai |
+| `buffer` / `conflate` | Sab qatar mein, ya sirf sabse naya |
