@@ -1,0 +1,128 @@
+---
+title: suspend, launch aur async
+description: Suspending function bina thread pakde intezaar karta hai. Teen keywords har us callback ki jagah le lete hain jo aapne likha hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`suspend` us function par lagta hai jo ruk kar baad mein chalu ho sakta hai. Wo padhne mein
+blocking code jaisa upar se neeche chalta hai, par intezaar ke dauraan thread wapas de deta hai.
+</KeyIdea>
+
+## Wahi logic, bina ek-ke-andar-ek ke
+
+```kotlin title="Sequential.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun fetchUser(): String {
+    delay(300)                 // suspend karta hai — block nahi
+    return "Asha"
+}
+
+suspend fun fetchOrders(user: String): Int {
+    delay(200)
+    return 3
+}
+
+fun main() = runBlocking {
+    val user = fetchUser()
+    val orders = fetchOrders(user)
+    println("$user has $orders orders")
+}
+```
+
+Ise pichle lesson wale nested callbacks se milao. Kaam wahi hai, aur ab chalne ka kram likhe
+hue ke kram se mil gaya.
+
+<Tip bare>
+`delay` suspend karta hai. `Thread.sleep` block karta hai. Coroutine ke andar hamesha pehla wala.
+</Tip>
+
+## Suspending function bulaya kahan ja sakta hai
+
+`suspend` function sirf kisi dusre `suspend` function se, ya kisi coroutine builder se bulaya
+ja sakta hai. Ye rok compiler ka aapko imaandaar rakhna hai.
+
+| Builder | Kya lautata hai | Kis liye |
+| --- | --- | --- |
+| `launch` | `Job` | Chalu karo aur bhool jao; bas kaam hona chahiye |
+| `async` | `Deferred<T>` | Aapko **natija** chahiye |
+| `runBlocking` | Block ki value | Sirf tests aur `main` — ye block karta hai |
+
+<Pitfall bare>
+Android app code mein `runBlocking` kabhi mat bulao. Wo theek wahi karta hai jisse bachne ke
+liye coroutines bane hain: block khatam hone tak thread pakde rakhta hai.
+</Pitfall>
+
+## Concurrency: overlap `async` karwata hai
+
+```kotlin title="Parallel.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun slow(name: String, ms: Long): String {
+    delay(ms); return name
+}
+
+fun main() = runBlocking {
+    val time = System.currentTimeMillis()
+
+    val a = async { slow("orders", 300) }     // abhi shuru
+    val b = async { slow("address", 300) }    // ye bhi abhi shuru
+
+    println("${a.await()} + ${b.await()}")
+    println("took ${System.currentTimeMillis() - time}ms")   // ~300, 600 nahi
+}
+```
+
+<ThreadTimeline
+  lanes={[
+    { name: "sequential", segments: [
+      { label: "orders 300ms", weight: 3, kind: "work" },
+      { label: "address 300ms", weight: 3, kind: "work" },
+    ]},
+    { name: "async + await", segments: [
+      { label: "orders aur address saath — 300ms", weight: 3, kind: "work" },
+      { label: "ho gaya", weight: 3, kind: "free" },
+    ]},
+  ]}
+  labels={{ work: "Aapka code chal raha hai", free: "Khaali, dusre kaam ke liye" }}
+  timeLabel="samay"
+  caption="Do alag calls. Ek ke baad ek likho to jud jate hain; `async` se shuru karo to saath chalte hain aur sirf lambe wale jitna samay lagta hai."
+/>
+
+<Quiz
+  question="Agar aap dono calls ko ek hi line mein `async { }.await()` likh do to kya hoga?"
+  options={[
+    "Phir bhi saath chalenge — `async` hamesha overlap karta hai",
+    "Ek ke baad ek chalenge, kyunki `await` dusre `async` ke shuru hone se pehle hi ruk jata hai",
+    "Compile hi nahi hoga",
+  ]}
+  answer={1}
+  explanation="`async` kaam shuru karta hai; `await` uska intezaar karta hai. Turant await karne ka matlab hai ki pehla khatam hone tak dusra `async` aata hi nahi, to samay sequential hi rehta hai, bas dikhawa zyada. Pehle saare `async` shuru karo, phir await karo — concurrency usi khaali jagah mein rehti hai."
+/>
+
+<Detail summary="Compiler suspend function ka karta kya hai">
+Wo use ek state machine mein badal deta hai. Har suspension point ek label wala state ban jata
+hai, aur function ke local variables ek aise object mein chale jate hain jo rukne ke baad bhi
+bacha rehta hai. Dobara chalu hona matlab usi function ko us object ke saath bulana aur sahi
+label par jaana. Isiliye suspend hone mein koi thread nahi lagta — koi stack zinda nahi rakhni
+padti, bas heap par ek object.
+</Detail>
+
+## Practice
+
+1. `fetchUser`/`fetchOrders` ko `async` se saath chalao, phir dono tarikon ka samay print karo.
+2. Ek `delay` ko `Thread.sleep` se badlo aur parallel wale ka samay naapo. Natija samjhao.
+3. Saade `fun` se ek `suspend` function bulao aur compiler ki galti padho.
+4. Jahan `async` chahiye tha wahan `launch` use karo aur dekho ki natije ke saath kya nahi kar
+   sakte.
+
+## Recap
+
+| Keyword | Matlab |
+| --- | --- |
+| `suspend` | Ruk kar chalu ho sakta hai; intezaar mein thread chhod deta hai |
+| `delay(ms)` | Suspend karta hai — sone ka coroutine wala roop |
+| `launch` | Kaam shuru karo, `Job` milta hai, natija nahi |
+| `async` / `await` | Kaam shuru karo, `Deferred<T>` milta hai, natija le lo |
+| `runBlocking` | Blocking aur suspending ka pul — sirf tests aur `main` |

@@ -1,0 +1,126 @@
+---
+title: suspend, launch and async
+description: A suspending function waits without holding a thread. Three keywords are enough to replace every callback you have written.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`suspend` marks a function that may pause and resume later. It reads top to bottom like
+blocking code, but it gives the thread back while it waits.
+</KeyIdea>
+
+## The same logic, without the nesting
+
+```kotlin title="Sequential.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun fetchUser(): String {
+    delay(300)                 // suspends — does not block
+    return "Asha"
+}
+
+suspend fun fetchOrders(user: String): Int {
+    delay(200)
+    return 3
+}
+
+fun main() = runBlocking {
+    val user = fetchUser()
+    val orders = fetchOrders(user)
+    println("$user has $orders orders")
+}
+```
+
+Compare that with the nested callbacks from the previous lesson. Same work, and the order of
+execution now matches the order of the text.
+
+<Tip bare>
+`delay` suspends. `Thread.sleep` blocks. Inside a coroutine, always the first one.
+</Tip>
+
+## Where a suspending function can be called
+
+A `suspend` function may only be called from another `suspend` function, or from a coroutine
+builder. That restriction is the compiler keeping you honest.
+
+| Builder | Returns | Use for |
+| --- | --- | --- |
+| `launch` | `Job` | Fire and forget; you want the work done |
+| `async` | `Deferred<T>` | You need the **result** |
+| `runBlocking` | The block's value | Tests and `main` only — it blocks |
+
+<Pitfall bare>
+Never call `runBlocking` in Android app code. It does exactly the thing coroutines exist to
+avoid: it holds the thread until the block finishes.
+</Pitfall>
+
+## Concurrency: `async` is the one that overlaps
+
+```kotlin title="Parallel.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun slow(name: String, ms: Long): String {
+    delay(ms); return name
+}
+
+fun main() = runBlocking {
+    val time = System.currentTimeMillis()
+
+    val a = async { slow("orders", 300) }     // starts now
+    val b = async { slow("address", 300) }    // also starts now
+
+    println("${a.await()} + ${b.await()}")
+    println("took ${System.currentTimeMillis() - time}ms")   // ~300, not 600
+}
+```
+
+<ThreadTimeline
+  lanes={[
+    { name: "sequential", segments: [
+      { label: "orders 300ms", weight: 3, kind: "work" },
+      { label: "address 300ms", weight: 3, kind: "work" },
+    ]},
+    { name: "async + await", segments: [
+      { label: "orders and address together — 300ms", weight: 3, kind: "work" },
+      { label: "done", weight: 3, kind: "free" },
+    ]},
+  ]}
+  caption="Two independent calls. Written sequentially they add up; started with `async` they overlap and cost the longer of the two."
+/>
+
+<Quiz
+  question="What happens if you write `async { }.await()` immediately, on one line, for both calls?"
+  options={[
+    "They still run in parallel — `async` always overlaps",
+    "They run one after the other, because `await` waits before the second `async` starts",
+    "It does not compile",
+  ]}
+  answer={1}
+  explanation="`async` starts the work; `await` waits for it. Awaiting immediately means the second `async` is not reached until the first has finished, so you get sequential timing with extra ceremony. Start every `async` first, then await them — that gap is where the concurrency lives."
+/>
+
+<Detail summary="What the compiler does to a suspend function">
+It rewrites it as a state machine. Each suspension point becomes a labelled state, and the
+function's local variables move into an object that survives the pause. Resuming means calling
+the same function again with that object and jumping to the right label. This is why suspending
+costs no thread — there is no stack to keep alive, only an object on the heap.
+</Detail>
+
+## Practice
+
+1. Convert `fetchUser`/`fetchOrders` to run concurrently with `async`, then print the elapsed
+   time both ways.
+2. Replace one `delay` with `Thread.sleep` and time the parallel version. Explain the result.
+3. Call a `suspend` function from a plain `fun` and read the compiler error.
+4. Use `launch` where you should have used `async` and observe what you cannot do with the
+   result.
+
+## Recap
+
+| Keyword | Meaning |
+| --- | --- |
+| `suspend` | May pause and resume; releases the thread while waiting |
+| `delay(ms)` | Suspends — the coroutine version of sleeping |
+| `launch` | Start work, get a `Job`, no result |
+| `async` / `await` | Start work, get a `Deferred<T>`, collect the result |
+| `runBlocking` | Bridges blocking and suspending — tests and `main` only |

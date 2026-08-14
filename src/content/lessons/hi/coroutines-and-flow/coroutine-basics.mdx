@@ -1,0 +1,126 @@
+---
+title: suspend, launch और async
+description: Suspending function बिना thread पकड़े इंतज़ार करता है। तीन keywords हर उस callback की जगह ले लेते हैं जो आपने लिखा है।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`suspend` उस function पर लगता है जो रुककर बाद में चालू हो सकता है। वह पढ़ने में blocking code जैसा ऊपर
+से नीचे चलता है, पर इंतज़ार के दौरान thread वापस दे देता है।
+</KeyIdea>
+
+## वही logic, बिना एक-के-अंदर-एक के
+
+```kotlin title="Sequential.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun fetchUser(): String {
+    delay(300)                 // suspend करता है — block नहीं
+    return "Asha"
+}
+
+suspend fun fetchOrders(user: String): Int {
+    delay(200)
+    return 3
+}
+
+fun main() = runBlocking {
+    val user = fetchUser()
+    val orders = fetchOrders(user)
+    println("$user has $orders orders")
+}
+```
+
+इसे पिछले lesson वाले nested callbacks से मिलाइए। काम वही है, और अब चलने का क्रम लिखे हुए के क्रम से
+मिल गया।
+
+<Tip bare>
+`delay` suspend करता है। `Thread.sleep` block करता है। Coroutine के अंदर हमेशा पहला वाला।
+</Tip>
+
+## Suspending function बुलाया कहाँ जा सकता है
+
+`suspend` function सिर्फ़ किसी दूसरे `suspend` function से, या किसी coroutine builder से बुलाया जा
+सकता है। यह रोक compiler का आपको ईमानदार रखना है।
+
+| Builder | क्या लौटाता है | किस लिए |
+| --- | --- | --- |
+| `launch` | `Job` | चालू कीजिए और भूल जाइए; बस काम होना चाहिए |
+| `async` | `Deferred<T>` | आपको **नतीजा** चाहिए |
+| `runBlocking` | Block की value | सिर्फ़ tests और `main` — यह block करता है |
+
+<Pitfall bare>
+Android app code में `runBlocking` कभी मत बुलाइए। वह ठीक वही करता है जिससे बचने के लिए coroutines बने
+हैं: block ख़त्म होने तक thread पकड़े रखता है।
+</Pitfall>
+
+## Concurrency: overlap `async` करवाता है
+
+```kotlin title="Parallel.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun slow(name: String, ms: Long): String {
+    delay(ms); return name
+}
+
+fun main() = runBlocking {
+    val time = System.currentTimeMillis()
+
+    val a = async { slow("orders", 300) }     // अभी शुरू
+    val b = async { slow("address", 300) }    // यह भी अभी शुरू
+
+    println("${a.await()} + ${b.await()}")
+    println("took ${System.currentTimeMillis() - time}ms")   // ~300, 600 नहीं
+}
+```
+
+<ThreadTimeline
+  lanes={[
+    { name: "sequential", segments: [
+      { label: "orders 300ms", weight: 3, kind: "work" },
+      { label: "address 300ms", weight: 3, kind: "work" },
+    ]},
+    { name: "async + await", segments: [
+      { label: "orders और address साथ — 300ms", weight: 3, kind: "work" },
+      { label: "हो गया", weight: 3, kind: "free" },
+    ]},
+  ]}
+  labels={{ work: "आपका code चल रहा है", free: "ख़ाली, दूसरे काम के लिए" }}
+  timeLabel="समय"
+  caption="दो अलग calls. एक के बाद एक लिखिए तो जुड़ जाते हैं; `async` से शुरू कीजिए तो साथ चलते हैं और सिर्फ़ लंबे वाले जितना समय लगता है।"
+/>
+
+<Quiz
+  question="अगर आप दोनों calls को एक ही line में `async { }.await()` लिख दें तो क्या होगा?"
+  options={[
+    "फिर भी साथ चलेंगे — `async` हमेशा overlap करता है",
+    "एक के बाद एक चलेंगे, क्योंकि `await` दूसरे `async` के शुरू होने से पहले ही रुक जाता है",
+    "Compile ही नहीं होगा",
+  ]}
+  answer={1}
+  explanation="`async` काम शुरू करता है; `await` उसका इंतज़ार करता है। तुरंत await करने का मतलब है कि पहला ख़त्म होने तक दूसरा `async` आता ही नहीं, तो समय sequential ही रहता है, बस दिखावा ज़्यादा। पहले सारे `async` शुरू कीजिए, फिर await कीजिए — concurrency उसी ख़ाली जगह में रहती है।"
+/>
+
+<Detail summary="Compiler suspend function का करता क्या है">
+वह उसे एक state machine में बदल देता है। हर suspension point एक label वाला state बन जाता है, और
+function के local variables एक ऐसे object में चले जाते हैं जो रुकने के बाद भी बचा रहता है। दोबारा चालू
+होना मतलब उसी function को उस object के साथ बुलाना और सही label पर जाना। इसीलिए suspend होने में कोई
+thread नहीं लगता — कोई stack ज़िंदा नहीं रखनी पड़ती, बस heap पर एक object।
+</Detail>
+
+## अभ्यास
+
+1. `fetchUser`/`fetchOrders` को `async` से साथ चलाइए, फिर दोनों तरीक़ों का समय print कीजिए।
+2. एक `delay` को `Thread.sleep` से बदलिए और parallel वाले का समय नापिए। नतीजा समझाइए।
+3. सादे `fun` से एक `suspend` function बुलाइए और compiler की ग़लती पढ़िए।
+4. जहाँ `async` चाहिए था वहाँ `launch` इस्तेमाल कीजिए और देखिए कि नतीजे के साथ क्या नहीं कर सकते।
+
+## सारांश
+
+| Keyword | मतलब |
+| --- | --- |
+| `suspend` | रुककर चालू हो सकता है; इंतज़ार में thread छोड़ देता है |
+| `delay(ms)` | Suspend करता है — सोने का coroutine वाला रूप |
+| `launch` | काम शुरू कीजिए, `Job` मिलता है, नतीजा नहीं |
+| `async` / `await` | काम शुरू कीजिए, `Deferred<T>` मिलता है, नतीजा ले लीजिए |
+| `runBlocking` | Blocking और suspending का पुल — सिर्फ़ tests और `main` |
