@@ -52,14 +52,14 @@ Dhyan do ki `else` hai hi nahi. Uska na hona hi poori khoobi hai.
     "`Empty` dikhte hi `render` chalte waqt exception fenkega",
   ]}
   answer={1}
-  explanation="`when` poora hai aur usme `else` nahi hai, isliye naya subtype jodte hi wo adhoora ho jata hai — aur ye compile error hai. Bug usi pal batta hai jab wo aaya, na ki jab kisi user ko wo state mili. `else -> ...` likhna is guarantee ko phenk dena hai."
+  explanation="`when` poora hai aur usme `else` nahi hai, isliye naya subtype jodte hi wo incomplete ho jata hai — aur ye compile error hai. Bug usi pal batta hai jab wo aaya, na ki jab kisi user ko wo state mili. `else -> ...` likhna is guarantee ko phenk dena hai."
 />
 
 ## Sealed aur enum mein farq
 
 | | `enum` | `sealed` |
 | --- | --- | --- |
-| Cases | **Values** ka tay set | **Types** ka tay set |
+| Cases | **Values** ka fixed set | **Types** ka fixed set |
 | Data rakh sakta hai | Har case mein wahi fields | Har case ki apni fields |
 | Kai instances | Nahi, har constant ka ek | Haan, `Success` kai baar ho sakta hai |
 | Kis liye | Tabs, sort order, status flags | Screen state, results, events |
@@ -72,7 +72,7 @@ sirf ek naam hai, to `enum` chahiye.
 <Detail summary="sealed interface ya sealed class">
 `sealed interface` behtar hai. Koi subtype kai interfaces implement kar sakta hai par class sirf
 ek badha sakta hai, isliye interface wala roop jodne-todne laayak rehta hai. `sealed class`
-tabhi uthao jab cases sach mein saanjhi stored state rakhte hon, jo kam hi hota hai.
+tabhi uthao jab cases sach mein shared stored state rakhte hon, jo kam hi hota hai.
 </Detail>
 
 ## Common galtiyan
@@ -90,7 +90,7 @@ object banata hai aur bewajah values milata hai. Bina state wala case `object` h
 
 1. `render` ko chhue bina `UiState` mein `Empty` case jodo. Compiler ki galti padho, phir theek
    karo.
-2. `render` ko `else -> "unknown"` ke saath likho, ek aur case jodo, aur dekho ki koi chetavni
+2. `render` ko `else -> "unknown"` ke saath likho, ek aur case jodo, aur dekho ki koi warning
    nahi aati. Yahi cheez aap chhod rahe ho.
 3. Payment result ko sealed interface se model karo — `Approved(txnId)`, `Declined(reason)` aur
    `Pending`. Teeno mein se kaun sa `object` hona chahiye?
@@ -99,7 +99,7 @@ object banata hai aur bewajah values milata hai. Bina state wala case `object` h
 
 ## Recap
 
-| Baat | Vivran |
+| Baat | Detail |
 | --- | --- |
 | `sealed` | Saare subtypes compile time par pata, usi module mein |
 | Poora `when` | `else` chahiye nahi — aur kabhi jodo mat |

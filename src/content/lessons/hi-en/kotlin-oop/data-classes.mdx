@@ -81,7 +81,7 @@ warna har na-badla field dobara likhna padta.
 
 ## Wo niyam jispar sab phisalte hain
 
-Sirf **primary constructor** ki properties ginti hain.
+Sirf **primary constructor** ki properties calculation hain.
 
 ```kotlin title="Trap.kt" numbered runnable
 data class Note(val title: String) {
@@ -97,7 +97,7 @@ fun main() {
 
 <Pitfall title="Do jo asli bug bunti hain">
 **Body mein likhi properties ko** `equals`, `hashCode`, `toString` aur `copy` — chaaron
-anadekha kar dete hain. Agar koi value object ki pehchaan ka hissa hai, to uski jagah primary
+ignore kar dete hain. Agar koi value object ki pehchaan ka hissa hai, to uski jagah primary
 constructor hai.
 
 **`var` wali data class ko `Map` key ya `Set` mein daalna.** Bucket mein rakhne ke baad use
@@ -110,7 +110,7 @@ ki properties `val` rakho.
 1. `Order` ko body mein ek `discount` property do, sirf usme alag do orders banao, aur dekho ki
    wo barabar nikalte hain. Phir use constructor mein le jaakar dobara chalao.
 2. `var` wali ek data class `mutableSetOf` mein daalo, property badlo, phir usi object se
-   `contains` bulao. Natija samjhao.
+   `contains` bulao. Result samjhao.
 3. `copy()` se ek chhota "order lifecycle" banao — placed, paid, shipped — bina kisi object ko
    badle.
 4. Orders ki list par `for` loop ke andar `Order` ko destructure karo.
@@ -122,5 +122,5 @@ ki properties `val` rakho.
 | `equals` / `hashCode` | Sirf primary constructor ki properties |
 | `toString` | Padhne laayak, property naamon ke saath |
 | `copy(...)` | Badli hui state banane ka sahi tarika |
-| Destructuring | `val (a, b) = obj`, kram se — order maayne rakhta hai |
+| Destructuring | `val (a, b) = obj`, order se — order maayne rakhta hai |
 | Properties `val` rakho | Badalne wali key hash collections tod deti hai |

@@ -1,11 +1,11 @@
 ---
 title: Structured concurrency और cancellation
-description: Coroutines एक पेड़ बनाते हैं। Parent अपने बच्चों से पहले ख़त्म नहीं हो सकता — इसीलिए cancellation भरोसेमंद होती है, उम्मीद भर नहीं।
+description: Coroutines एक पेड़ बनाते हैं। Parent अपने बच्चों से पहले खत्म नहीं हो सकता — इसीलिए cancellation भरोसेमंद होती है, उम्मीद भर नहीं।
 updated: 2026-08-12
 ---
 
 <KeyIdea>
-हर coroutine का एक parent होता है, और parent **अपने बच्चों का इंतज़ार करता है**। जो concurrency leak
+हर coroutine का एक parent होता है, और parent **अपने बच्चों का इंतजार करता है**। जो concurrency leak
 करती है, वह बिना parent वाली concurrency है।
 </KeyIdea>
 
@@ -26,15 +26,15 @@ fun main() = runBlocking {
 }
 ```
 
-`coroutineScope` तब तक नहीं लौटता जब तक उसके अंदर का हर बच्चा ख़त्म न हो जाए। कोई भागता नहीं।
+`coroutineScope` तब तक नहीं लौटता जब तक उसके अंदर का हर बच्चा खत्म न हो जाए। कोई भागता नहीं।
 
-<Detail summary="coroutineScope और supervisorScope में फ़र्क़">
-दोनों बच्चों का इंतज़ार करते हैं। फ़र्क़ ग़लती पर है: `coroutineScope` में एक बच्चे के fail होने पर उसके
-भाई-बहन cancel होते हैं और ग़लती वापस फेंकी जाती है। `supervisorScope` में बच्चे अलग-अलग fail होते हैं।
+<Detail summary="coroutineScope और supervisorScope में फर्क">
+दोनों बच्चों का इंतजार करते हैं। फर्क गलती पर है: `coroutineScope` में एक बच्चे के fail होने पर उसके
+भाई-बहन cancel होते हैं और गलती वापस फेंकी जाती है। `supervisorScope` में बच्चे अलग-अलग fail होते हैं।
 पहला तब जब "ये सब चाहिए", दूसरा तब जब "जो मिल जाए वही सही"।
 </Detail>
 
-## Cancellation सहयोग माँगती है
+## Cancellation साथ माँगती है
 
 Cancel करना एक निशान लगाता है। Coroutine सच में **suspension point** पर ही रुकता है।
 
@@ -67,9 +67,9 @@ fun main() = runBlocking {
   explanation="Cancellation वहीं लगती है जहाँ coroutine उसे जाँचता है। `while (isActive)` चुपचाप निकल जाता है; `ensureActive()` `CancellationException` फेंकता है; `yield()` जाँचता भी है और दूसरों को बारी भी देता है। इनमें से एक भी न हो तो कोई ऐसा पल ही नहीं जहाँ coroutine को पता चले।"
 />
 
-## सफ़ाई करना
+## सफाई करना
 
-`CancellationException` `finally` से होकर जाती है, इसलिए सफ़ाई चलती है — पर coroutine cancel हो चुका
+`CancellationException` `finally` से होकर जाती है, इसलिए सफाई चलती है — पर coroutine cancel हो चुका
 है, इसलिए वह दोबारा suspend नहीं हो सकता।
 
 ```kotlin title="Cleanup.kt" numbered
@@ -77,7 +77,7 @@ val job = launch {
     try {
         download()
     } finally {
-        withContext(NonCancellable) {   // सफ़ाई के दौरान suspend करने के लिए ज़रूरी
+        withContext(NonCancellable) {   // सफाई के दौरान suspend करने के लिए जरूरी
             deleteTempFile()
         }
     }
@@ -87,7 +87,7 @@ val job = launch {
 <Tabs>
   <Tab label="withTimeout">
 
-समय ख़त्म होने पर `TimeoutCancellationException` फेंकता है।
+समय खत्म होने पर `TimeoutCancellationException` फेंकता है।
 
 ```kotlin title="Timeout.kt" numbered runnable
 import kotlinx.coroutines.*
@@ -114,7 +114,7 @@ fun main() = runBlocking {
   </Tab>
 </Tabs>
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
 <Pitfall title="दो जो cancellation तोड़ देती हैं">
 **Suspending code के आस-पास `Exception` पकड़ना।** `CancellationException` भी एक `Exception` है,
@@ -128,19 +128,19 @@ fun main() = runBlocking {
 ## अभ्यास
 
 1. ऊपर वाले न-रुकने वाले loop को पहले `isActive` से ठीक कीजिए, फिर `ensureActive()` से। दोनों के
-   निकलने के तरीक़े का फ़र्क़ देखिए।
+   निकलने के तरीके का फर्क देखिए।
 2. Suspending code को `try/catch (e: Exception)` में लपेटिए और cancel कीजिए। Cancellation निगली जाते
    देखिए, फिर ठीक कीजिए।
 3. `withTimeoutOrNull` से एक network call को 2 second का समय और एक fallback दीजिए।
-4. `finally` में `println` डालिए और बीच में cancel करके साबित कीजिए कि सफ़ाई चलती है।
+4. `finally` में `println` डालिए और बीच में cancel करके साबित कीजिए कि सफाई चलती है।
 
 ## सारांश
 
 | Tool | काम |
 | --- | --- |
-| `coroutineScope` | सब बच्चों का इंतज़ार; एक fail हुआ तो बाक़ी cancel |
-| `supervisorScope` | सब बच्चों का इंतज़ार; ग़लतियाँ अलग-अलग रहती हैं |
-| `isActive` / `ensureActive()` | गिनती को cancel होने लायक़ बनाइए |
+| `coroutineScope` | सब बच्चों का इंतजार; एक fail हुआ तो बाकी cancel |
+| `supervisorScope` | सब बच्चों का इंतजार; गलतियाँ अलग-अलग रहती हैं |
+| `isActive` / `ensureActive()` | गिनती को cancel होने लायक बनाइए |
 | `yield()` | Cancellation जाँचिए और दूसरों को बारी दीजिए |
 | `withTimeout` / `OrNull` | काम कितना लंबा चले, उसकी सीमा |
-| `NonCancellable` | सिर्फ़ सफ़ाई के दौरान suspend करने की छूट |
+| `NonCancellable` | सिर्फ सफाई के दौरान suspend करने की छूट |

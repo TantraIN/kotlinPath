@@ -4,13 +4,13 @@ description: Android एक Linux है जिसके ऊपर पाँच 
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
-Android पहले ही दिन आपसे ऐसे फ़ैसले करवाता है जो तभी समझ आते हैं जब नीचे का ढाँचा पता हो: कौन
+Android पहले ही दिन आपसे ऐसे फैसले करवाता है जो तभी समझ आते हैं जब नीचे का ढाँचा पता हो: कौन
 सा `minSdk` support करना है, आपकी app दूसरी app की files क्यों नहीं पढ़ सकती, और `targetSdk`
 बदलने से वह behaviour क्यों बदल जाता है जो आपने लिखा ही नहीं।
 
-इनमें से कोई चीज़ मनमानी नहीं है। हर एक architecture से निकलती है। यहाँ पंद्रह मिनट लगाने से आप
+इनमें से कोई चीज मनमानी नहीं है। हर एक architecture से निकलती है। यहाँ पंद्रह मिनट लगाने से आप
 वे settings copy-paste करने से बच जाएँगे जिनका मतलब पता ही नहीं।
 
 ## पूरा stack
@@ -26,7 +26,7 @@ Android पहले ही दिन आपसे ऐसे फ़ैसले 
       { label: "Linux kernel", sub: "drivers, memory, power", accent: "rose", detail: "Processes, memory, drivers और power। Android ने Linux का user और permission model लिया है — app sandbox उसी से बना है।" },
       { label: "Hardware abstraction layer", sub: "HAL", accent: "amber", detail: "एक तय interface जिसे हर manufacturer camera, sensors और audio के लिए implement करता है, ताकि एक ही Android build बहुत अलग hardware पर चल जाए।" },
       { label: "Native libraries + ART", sub: "libc, SQLite, runtime", accent: "emerald", detail: "C++ में SQLite, media codecs और OpenGL, और साथ में Android Runtime जो आपका DEX bytecode चलाता है।" },
-      { label: "Java API framework", sub: "Activity, View, Context", accent: "sky", detail: "जो भी Android class आप import करते हैं — `Activity`, `View`, `Context`। नीचे की हर चीज़ के ऊपर एक documented परत।" },
+      { label: "Java API framework", sub: "Activity, View, Context", accent: "sky", detail: "जो भी Android class आप import करते हैं — `Activity`, `View`, `Context`। नीचे की हर चीज के ऊपर एक documented परत।" },
       { label: "आपकी app", sub: "MainActivity.kt", accent: "violet", highlight: true, detail: "आपकी APK, अपने अलग Linux user और अपने process में, ठीक उसी layer पर जहाँ system apps हैं।" },
     ]}
   />
@@ -49,7 +49,7 @@ Android पहले ही दिन आपसे ऐसे फ़ैसले 
   </TimelineItem>
   <TimelineItem title="Java API framework" meta="जो आप call करते हैं">
     `Activity`, `View`, `Context`, `PackageManager`। जो भी Android class आप import करते हैं वह
-    यहीं रहती है। यह नीचे की हर चीज़ के ऊपर एक पतली, अच्छी तरह documented परत है।
+    यहीं रहती है। यह नीचे की हर चीज के ऊपर एक पतली, अच्छी तरह documented परत है।
   </TimelineItem>
   <TimelineItem title="Applications" meta="आपका APK">
     आपकी app, और system apps — दोनों ठीक एक ही layer पर, एक जैसे नियमों के साथ।
@@ -58,7 +58,7 @@ Android पहले ही दिन आपसे ऐसे फ़ैसले 
 
 ## ART, JVM नहीं है
 
-पिछला पाठ एक सवाल पर ख़त्म हुआ था: Android साधारण JVM क्यों नहीं भेज सकता?
+पिछला पाठ एक सवाल पर खत्म हुआ था: Android साधारण JVM क्यों नहीं भेज सकता?
 
 क्योंकि phone server नहीं है। उसमें छोटी battery है, कम RAM है, और एक user spinner देख रहा
 होता है। Android ने JVM की जगह **Android Runtime** रखा, जो अलग trade-offs करता है।
@@ -71,8 +71,8 @@ Android पहले ही दिन आपसे ऐसे फ़ैसले 
     points: [
       "~ .class bytecode चलाता है, हर class की अलग file",
       "~ चलते-चलते JIT से hot code compile करता है",
-      "- मानता है कि RAM और बिजली दोनों काफ़ी हैं",
-      "- हर launch पर startup की क़ीमत लगती है",
+      "- मानता है कि RAM और बिजली दोनों काफी हैं",
+      "- हर launch पर startup की कीमत लगती है",
     ],
   }}
   right={{
@@ -82,7 +82,7 @@ Android पहले ही दिन आपसे ऐसे फ़ैसले 
     points: [
       "+ DEX bytecode चलाता है, एक file में कई classes",
       "+ Install पर पहले ही compile, साथ में JIT भी",
-      "+ कम memory और तेज़ cold start के लिए tuned",
+      "+ कम memory और तेज cold start के लिए tuned",
       "+ Profile-guided: जो user असल में चलाता है वही optimise करता है",
     ],
   }}
@@ -106,11 +106,11 @@ Android पहले ही दिन आपसे ऐसे फ़ैसले 
 
 ## Sandbox
 
-Android का सबसे ज़्यादा असर डालने वाला design फ़ैसला यही है: **हर app को अपना अलग Linux user
+Android का सबसे ज्यादा असर डालने वाला design फैसला यही है: **हर app को अपना अलग Linux user
 ID मिलता है।**
 
 यह कोई उपमा नहीं है — सच में एक user, जैसे server पर `root` और `www-data` users होते हैं।
-आपकी app की files उस user की हैं, और बाक़ी काम Linux की file permissions कर देती हैं।
+आपकी app की files उस user की हैं, और बाकी काम Linux की file permissions कर देती हैं।
 
 ```bash title="Terminal" no-glossary
 # दो apps, दो बिलकुल अलग पहचान
@@ -120,16 +120,16 @@ u0_a142  ...  com.example.myapp
 u0_a201  ...  com.android.chrome
 ```
 
-बाक़ी सब इसी से निकलता है:
+बाकी सब इसी से निकलता है:
 
 - दूसरी app आपका database नहीं पढ़ सकती, क्योंकि वह file उसके user के लिए readable ही नहीं है।
-- Permission का मतलब है system आपके user ID को sandbox के बाहर की किसी चीज़ तक पहुँच दे रहा है
+- Permission का मतलब है system आपके user ID को sandbox के बाहर की किसी चीज तक पहुँच दे रहा है
   — camera, network, user के contacts।
 - हर app अपने अलग process और अपने runtime instance में चलती है, इसलिए एक app का crash दूसरी
   को नहीं ले डूबता।
 
 <Note>
-इसीलिए "file SD card पर लिख दो और दूसरी app से पढ़ लो" वाला तरीक़ा सालों पहले बंद हो गया, और
+इसीलिए "file SD card पर लिख दो और दूसरी app से पढ़ लो" वाला तरीका सालों पहले बंद हो गया, और
 इसीलिए Android पर हर storage सवाल घूम-फिरकर यही बन जाता है कि file किस sandbox में पड़ी है।
 Scoped storage Phase 8 में विस्तार से आएगा।
 </Note>
@@ -145,9 +145,9 @@ build API level वाला नाम इस्तेमाल करती ह
 | `minSdk` | सबसे पुराना device जो app install कर सके | जितना नीचे आपके users को चाहिए |
 | `targetSdk` | किस behaviour के against app test की गई है | Latest, और सोच-समझकर बढ़ाएँ |
 
-`targetSdk` सबसे सूक्ष्म है। System इसे पढ़कर तय करता है कि आपके साथ कितनी सख़्ती करनी है। इसे
-बढ़ाइए और behaviour बदल जाते हैं — background limits कस जाती हैं, permissions सख़्त हो जाती हैं
-— बिना आपके एक line बदले। Google Play भी इसे recent रखना ज़रूरी करता है, तो यह optional नहीं है।
+`targetSdk` सबसे सूक्ष्म है। System इसे पढ़कर तय करता है कि आपके साथ कितनी सख्ती करनी है। इसे
+बढ़ाइए और behaviour बदल जाते हैं — background limits कस जाती हैं, permissions सख्त हो जाती हैं
+— बिना आपके एक line बदले। Google Play भी इसे recent रखना जरूरी करता है, तो यह optional नहीं है।
 
 <Pitfall title="दो मान्यताएँ जो असली apps तोड़ती हैं">
 **Compile हो गया मतलब class है — यह मान लेना।** `compileSdk 35` आपको level 33 में जुड़ा API
@@ -163,7 +163,7 @@ changes के against test कर लिया है। बढ़ाइए, �
 ## आप भेजते क्या हैं
 
 अब Google Play पर APK upload नहीं होता। **AAB** upload होता है — Android App Bundle — और Play
-हर device के लिए सही नाप का APK ख़ुद बना लेता है।
+हर device के लिए सही नाप का APK खुद बना लेता है।
 
 <Compare
   left={{
@@ -191,8 +191,8 @@ changes के against test कर लिया है। बढ़ाइए, �
 ## अभ्यास
 
 1. इन सबकी layer बताइए: `SQLite`, `Activity`, camera driver, `PackageManager`, DEX execution.
-2. आपकी app सिर्फ़ पुराने phones पर `NoSuchMethodError` देती है। तीन SDK settings में से कौन सी
-   ग़लत है, और fix क्या है?
+2. आपकी app सिर्फ पुराने phones पर `NoSuchMethodError` देती है। तीन SDK settings में से कौन सी
+   गलत है, और fix क्या है?
 3. Sandbox के आधार पर समझाइए कि एक to-do app, banking app का saved session क्यों नहीं पढ़ सकती
    — बिना "security" शब्द इस्तेमाल किए।
 4. आपका APK 40 MB का है। दो वजहें बताइए कि AAB से असली download छोटा क्यों हो जाएगा।
@@ -209,10 +209,10 @@ changes के against test कर लिया है। बढ़ाइए, �
 | API level | वह number जिसे build target करती है, जैसे Android 15 के लिए 35 |
 | AAB | जो आप upload करते हैं; Play इससे per-device APK बनाता है |
 
-<Interview title="यह देखने के लिए पूछा जाता है कि platform समझ आया या सिर्फ़ SDK">
-"`minSdk`, `targetSdk` और `compileSdk` में क्या फ़र्क़ है?"
+<Interview title="यह देखने के लिए पूछा जाता है कि platform समझ आया या सिर्फ SDK">
+"`minSdk`, `targetSdk` और `compileSdk` में क्या फर्क है?"
 
 जो जवाब जमता है: `compileSdk` compile time है, `minSdk` install time है, `targetSdk` run time
-है। फिर हर एक के ग़लत होने का नतीजा बताइए — code compile ही नहीं होगा, users install नहीं कर
+है। फिर हर एक के गलत होने का नतीजा बताइए — code compile ही नहीं होगा, users install नहीं कर
 पाएँगे, और वह behaviour बदल जाएगा जो आपने कभी test ही नहीं किया।
 </Interview>

@@ -1,13 +1,13 @@
 ---
-title: "Null safety: एक अरब डॉलर वाली ग़लती का इलाज"
-description: Tony Hoare ने null reference को अपनी billion-dollar mistake कहा था। Kotlin null हटाता नहीं — वह समस्या को run time से compile time पर ले आता है, जहाँ उसकी क़ीमत second है, users नहीं।
+title: "Null safety: एक अरब डॉलर वाली गलती का इलाज"
+description: Tony Hoare ने null reference को अपनी billion-dollar mistake कहा था। Kotlin null हटाता नहीं — वह समस्या को run time से compile time पर ले आता है, जहाँ उसकी कीमत second है, users नहीं।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 Java Android apps में `NullPointerException` सबसे आम crash है। कोई गहरा bug नहीं — एक boring सा
-bug, जो तब होता है जब कहीं कोई value ग़ायब होती है और किसी ने check नहीं किया।
+bug, जो तब होता है जब कहीं कोई value गायब होती है और किसी ने check नहीं किया।
 
 Kotlin का जवाब null पर पाबंदी लगाना नहीं है। उसका जवाब है absence को **type के अंदर** रख देना,
 ताकि compiler उसे देख सके।
@@ -36,7 +36,7 @@ fun main() {
       accent: "rose",
       points: [
         "- हर reference null हो सकता है",
-        "- Type में इसका कोई ज़िक्र नहीं",
+        "- Type में इसका कोई जिक्र नहीं",
         "- पता तब चलता है जब user के पास crash हो",
       ],
     }}
@@ -65,10 +65,10 @@ fun main() {
     // 2. elvis — बदले में कुछ दो
     println(name?.uppercase() ?: "GUEST") // GUEST
 
-    // 3. let — सिर्फ़ non-null पर block चलाओ
+    // 3. let — सिर्फ non-null पर block चलाओ
     name?.let { println("hello $it") }    // चलता ही नहीं
 
-    // 4. not-null assertion — "मुझ पर भरोसा करो"; ग़लत हुआ तो फेंकता है
+    // 4. not-null assertion — "मुझ पर भरोसा करो"; गलत हुआ तो फेंकता है
     // println(name!!.length)             // NullPointerException
 }
 ```
@@ -77,12 +77,12 @@ fun main() {
 | --- | --- | --- |
 | `?.` | "अगर है, तो…" | `null` |
 | `?:` | "…वरना यह लो" | बदले वाली value |
-| `?.let { }` | "सिर्फ़ जब हो, तब यह करो" | block चलता ही नहीं |
+| `?.let { }` | "सिर्फ जब हो, तब यह करो" | block चलता ही नहीं |
 | `!!` | "मैं कह रहा हूँ null नहीं है" | फेंकता है |
 
 <Tip bare>
-Elvis के दाएँ `return` और `throw` भी लिखा जा सकता है, जो function से जल्दी निकलने का सबसे साफ़
-तरीक़ा है: `val user = findUser(id) ?: return null`।
+Elvis के दाएँ `return` और `throw` भी लिखा जा सकता है, जो function से जल्दी निकलने का सबसे साफ
+तरीका है: `val user = findUser(id) ?: return null`।
 </Tip>
 
 ## Chaining, और वह कहाँ रुकती है
@@ -101,21 +101,21 @@ fun main() {
 }
 ```
 
-ज़ंजीर पहले `null` पर रुक जाती है और पूरा expression `null` बन जाता है। अंत में एक `?:` इन सभी
+जंजीर पहले `null` पर रुक जाती है और पूरा expression `null` बन जाता है। अंत में एक `?:` इन सभी
 मामलों को सँभाल लेता है।
 
 ## अंदर की बात: कोई wrapper है ही नहीं
 
-`String?` किसी `String` के ऊपर डिब्बा नहीं है। Runtime पर दोनों एक ही reference हैं; `?` सिर्फ़
-type system में है, और compiler जो null checks चाहिए ख़ुद डाल देता है। इसलिए null safety की
-runtime क़ीमत शून्य है।
+`String?` किसी `String` के ऊपर डिब्बा नहीं है। Runtime पर दोनों एक ही reference हैं; `?` सिर्फ
+type system में है, और compiler जो null checks चाहिए खुद डाल देता है। इसलिए null safety की
+runtime कीमत शून्य है।
 
-इसी वजह से यह guarantee Java की सीमा पर ख़त्म हो जाती है — Java में `?` है ही नहीं, तो Java से आई
+इसी वजह से यह guarantee Java की सीमा पर खत्म हो जाती है — Java में `?` है ही नहीं, तो Java से आई
 value एक **platform type** है जिसके बारे में compiler कुछ कह नहीं सकता।
 
 <Pitfall title="तीन आदतें जो यह सुरक्षा दे देती हैं">
 **`!!` उठाना।** हर `!!` एक जगह है जहाँ आपने compiler से मदद बंद करने को कहा। अगर सच में पता है कि
-null नहीं हो सकता, तो structure ऐसा बनाइए कि type ख़ुद यह कहे। अगर अंदाज़ा लगा रहे हैं, तो `?:`
+null नहीं हो सकता, तो structure ऐसा बनाइए कि type खुद यह कहे। अगर अंदाजा लगा रहे हैं, तो `?:`
 इस्तेमाल कीजिए और उस स्थिति को handle कीजिए।
 
 **`lateinit` को nullability से बचने का रास्ता समझना।** वह समस्या नहीं हटाता, *check* हटाता है।
@@ -135,16 +135,16 @@ explicitly nullable type में डालिए: `val name: String? = javaCal
 3. एक चलता हुआ `?.let { }` लीजिए और उसे `if (x != null) { }` में बदलिए। Compiler `if` वाले रूप में
    smart cast कब होने देता है और कब मना करता है?
 4. अपने लिखे किसी भी `!!` को ढूँढ़िए। हर एक के लिए तय कीजिए: क्या type ऐसे बदला जा सकता है कि उसकी
-   ज़रूरत ही न रहे?
+   जरूरत ही न रहे?
 
 ## सारांश
 
 | बात | एक line |
 | --- | --- |
-| `T` vs `T?` | अलग types; null सिर्फ़ एक में आ सकता है |
+| `T` vs `T?` | अलग types; null सिर्फ एक में आ सकता है |
 | `?.` | Non-null हो तभी call कीजिए |
 | `?:` | बदले वाली value, या `return` / `throw` |
-| `?.let { }` | सिर्फ़ non-null पर block चलाइए |
+| `?.let { }` | सिर्फ non-null पर block चलाइए |
 | `!!` | जान-बूझकर सुरक्षा छोड़ना — इसे शक से देखिए |
 | Platform type | Java की value जिसे Kotlin जाँच नहीं सकता; `T?` में pin कीजिए |
 

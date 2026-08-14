@@ -9,7 +9,7 @@ Enum का हर constant असल में **नाम वाला singlet
 interface implement कर सकता है, और फिर भी `==` से मिलाया जा सकता है।
 </KeyIdea>
 
-## सिर्फ़ नामों की list से ज़्यादा
+## सिर्फ नामों की list से ज्यादा
 
 ```kotlin title="Status.kt" numbered runnable
 enum class Status(val label: String, val retryable: Boolean) {
@@ -27,7 +27,7 @@ fun main() {
 }
 ```
 
-हर constant के पास वही fields हैं। यही एक-जैसापन `sealed` से फ़र्क़ है।
+हर constant के पास वही fields हैं। यही एक-जैसापन `sealed` से फर्क है।
 
 <Quiz
   question={'`Status.PENDING === Status.valueOf("PENDING")` क्या लौटाता है?'}
@@ -64,16 +64,16 @@ fun main() = Op.entries.forEach { println("${it.name}: ${it.apply(3, 4)}") }
 | सवाल | हाँ तो |
 | --- | --- |
 | क्या सारे cases वही fields रखते हैं? | `enum` |
-| क्या किसी एक case को ऐसा data चाहिए जो बाक़ियों को नहीं? | `sealed` |
+| क्या किसी एक case को ऐसा data चाहिए जो बाकियों को नहीं? | `sealed` |
 | क्या एक case के कई instances चाहिए? | `sealed` |
 | क्या `valueOf`, `ordinal` या `entries` चाहिए? | `enum` |
 | क्या यह screen state या operation result है? | लगभग हमेशा `sealed` |
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
 <Pitfall title="दो जो production में काटती हैं">
 **`ordinal` को save करना।** Database में `2` लिखकर उसे `SHIPPED` पढ़ना उस दिन टूटेगा जिस दिन कोई बीच
-में एक constant घुसा देगा। `name` save कीजिए, या अपना ख़ुद का `val code: Int`।
+में एक constant घुसा देगा। `name` save कीजिए, या अपना खुद का `val code: Int`।
 
 **Enum पर `when` में `else`।** वही जाल जो sealed के साथ था: नया constant जोड़ना compile error होना
 चाहिए, और `else` उसे चुपचाप निगल जाता है। हर constant लिखिए, या जहाँ ठीक बैठे वहाँ `entries.forEach`
@@ -83,7 +83,7 @@ fun main() = Op.entries.forEach { println("${it.name}: ${it.apply(3, 4)}") }
 ## अभ्यास
 
 1. `Status` में `CANCELLED` constant जोड़िए और हर वह `when` ढूँढिए जो compile होना बंद हो गया। यही
-   ख़ूबी काम कर रही है।
+   खूबी काम कर रही है।
 2. `Status` को एक `companion object` दीजिए जिसमें `fromCode(code: Int)` हो और अनजान code पर `null`
    लौटे।
 3. Enum से interface implement कीजिए — `Status` को `label` के हिसाब से `Comparable` बनाइए।
@@ -92,10 +92,10 @@ fun main() = Op.entries.forEach { println("${it.name}: ${it.apply(3, 4)}") }
 
 ## सारांश
 
-| चीज़ | बात |
+| चीज | बात |
 | --- | --- |
 | हर constant | साझा singleton — `==` और `===` दोनों सुरक्षित |
 | Properties | हर constant के लिए वही fields |
-| हर constant की अपनी body | चलती है, `abstract` member के ज़रिए |
+| हर constant की अपनी body | चलती है, `abstract` member के जरिए |
 | `entries` | `values()` से बेहतर — कोई allocation नहीं |
 | कभी save मत कीजिए | `ordinal`; `name` या अपना code save कीजिए |

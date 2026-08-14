@@ -9,7 +9,7 @@ Kotlin mein class ko tab tak badhaya nahi ja sakta jab tak aap `open` na likho. 
 soch-samajh kar liya faisla hai, galti se mila hua default nahi.
 </KeyIdea>
 
-## Jo dhaancha aap bana rahe ho
+## Jo structure aap bana rahe ho
 
 <ClassDiagram
   base={{ name: "Payment", kind: "open class", members: ["val amount: Int", "open fun fee(): Int"], accent: "violet", highlight: true }}
@@ -53,7 +53,7 @@ method pakka hai, dusra ek khaali jagah hai jise subclasses bharti hain. Poora i
     "Kyunki `Card` chupke se `receipt()` ko override kar deta hai",
   ]}
   answer={1}
-  explanation="`receipt()` ek hi baar, `Payment` mein compile hota hai. Uske andar ka `fee()` call object ki asli class par jata hai, isliye `Card` type ke object par `Card.fee()` chalta hai. Isi ko dynamic dispatch kehte hain, aur isiliye `open` sirf syntax nahi — behaviour ka vaada hai."
+  explanation="`receipt()` ek hi baar, `Payment` mein compile hota hai. Uske andar ka `fee()` call object ki asli class par jata hai, isliye `Card` type ke object par `Card.fee()` chalta hai. Isi ko dynamic dispatch kehte hain, aur isiliye `open` sirf syntax nahi — behaviour ka promise hai."
 />
 
 ## Teen keywords, har ek ka ek niyam
@@ -63,7 +63,7 @@ method pakka hai, dusra ek khaali jagah hai jise subclasses bharti hain. Poora i
 | Class par `open` | Is class ko badhaya ja sakta hai |
 | Member par `open` | Is member ko badla ja sakta hai |
 | `override` | Ye member upar wale `open` member ki jagah leta hai |
-| `final override` | Jagah leta hai, aur silsila yahin rok deta hai |
+| `final override` | Jagah leta hai, aur chain yahin rok deta hai |
 | `super.x()` | Jise maine abhi badla, wahi wala chalao |
 
 <Detail summary="Kotlin ne classes default se band kyun ki, Java ne kyun nahi">
@@ -98,7 +98,7 @@ hui hi nahi hotin, isliye override aadhe-adhoore state par chalta hai aur `null`
 hai. Construction ke dauraan overridable method kabhi mat bulao.
 
 **Code baantne ke liye inheritance use karna.** Agar `Card` aur `Upi` ko sirf ek hi helper
-chahiye, to wo `is-a` rishta nahi hai — wo ek saanjha function hai. Inheritance subclass ko base
+chahiye, to wo `is-a` rishta nahi hai — wo ek shared function hai. Inheritance subclass ko base
 ke har aane wale badlav se baandh deta hai. Composition behtar hai, ya default wala interface.
 </Pitfall>
 
@@ -110,14 +110,14 @@ ke har aane wale badlav se baandh deta hai. Composition behtar hai, ya default w
    karne ki koshish karo. Compiler ki galti padho.
 3. `Payment` ke `init` mein ek `println` daalo jo `fee()` bulaye, phir `Card` banao. Jo number
    mila use samjhao.
-4. Poore dhaanche ko aise likho ki `fee()` open class ki jagah interface se aaye. Paanchwa
+4. Poore structure ko aise likho ki `fee()` open class ki jagah interface se aaye. Paanchwa
    payment type jodne par kaun sa version zyada aaram se jhelta?
 
 ## Recap
 
-| Sthiti | Kya uthao |
+| Situation | Kya uthao |
 | --- | --- |
 | Subtypes state aur behaviour dono baantein | `open class` + `override` |
 | Subtypes sirf behaviour baantein | Default wala interface |
 | Reuse chahiye, `is-a` nahi | Composition — doosre object ko rakho |
-| Subtypes ka set tay aur pata ho | `sealed` — aage ke lesson mein |
+| Subtypes ka set fixed aur pata ho | `sealed` — aage ke lesson mein |

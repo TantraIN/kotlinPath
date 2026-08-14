@@ -5,7 +5,7 @@ updated: 2026-08-12
 ---
 
 <KeyIdea>
-`Flow` ek **nuskha** hai, chalta hua kaam nahi. Builder block tab tak nahi chalta jab tak koi
+`Flow` ek **recipe** hai, chalta hua kaam nahi. Builder block tab tak nahi chalta jab tak koi
 collector na aaye — aur har collector ke liye wo shuru se dobara chalta hai.
 </KeyIdea>
 
@@ -37,7 +37,7 @@ fun main() = runBlocking {
 <Quiz
   question="Aap `ticker()` do baar bulate ho aur dono collect karte ho. 'builder started' kitni baar chhapega?"
   options={[
-    "Ek baar — flow saanjha hota hai",
+    "Ek baar — flow shared hota hai",
     "Do baar — cold flow har collector ke liye apna builder alag chalata hai",
     "Ek baar bhi nahi, jab tak `start()` na bulao",
   ]}
@@ -96,7 +96,7 @@ try/catch — teeno ki jagah le leti hain.
 **Do consumers ke liye ek hi cold flow do baar collect karna.** Har collection kaam dobara
 chalati hai. Agar wo network call hai, to aapne do call kar diye.
 
-**Ye maanna ki `catch` collector ko bachayega.** Wo sirf upar wale hisse ki hifazat karta hai.
+**Ye maanna ki `catch` collector ko bachayega.** Wo sirf upar wale hisse ki protect karta hai.
 Aapke `collect` lambda ki galtiyan usse poori tarah bach nikalti hain.
 </Pitfall>
 
@@ -111,11 +111,11 @@ Aapke `collect` lambda ki galtiyan usse poori tarah bach nikalti hain.
 
 ## Recap
 
-| Baat | Vivran |
+| Baat | Detail |
 | --- | --- |
 | Cold | Collect hone tak kuch nahi chalta; har collector dobara chalata hai |
 | `emit` | Ek value neeche bhejta hai; suspend ho sakta hai |
 | Operators | Naya Flow lautate hain; khud kuch nahi chalate |
 | `collect` | Terminal, suspending, poori chain shuru karta hai |
 | `catch` | Sirf upar se aayi galtiyan |
-| `debounce` / `distinctUntilChanged` | Yahi jodi search-as-you-type aasan banati hai |
+| `debounce` / `distinctUntilChanged` | Yahi pair search-as-you-type aasan banati hai |

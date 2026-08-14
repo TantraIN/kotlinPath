@@ -1,6 +1,6 @@
 ---
 title: Structured concurrency aur cancellation
-description: Coroutines ek ped banate hain. Parent apne bachhon se pehle khatam nahi ho sakta — isiliye cancellation bharosemand hoti hai, ummeed bhar nahi.
+description: Coroutines ek ped banate hain. Parent apne bachhon se pehle khatam nahi ho sakta — isiliye cancellation reliable hoti hai, ummeed bhar nahi.
 updated: 2026-08-12
 ---
 
@@ -36,7 +36,7 @@ bachhe alag-alag fail hote hain. Pehla tab jab "ye sab chahiye", dusra tab jab "
 sahi".
 </Detail>
 
-## Cancellation sahyog maangti hai
+## Cancellation cooperative hai
 
 Cancel karna ek nishaan lagata hai. Coroutine sach mein **suspension point** par hi rukta hai.
 
@@ -55,7 +55,7 @@ fun main() = runBlocking {
 }
 ```
 
-Aisa kasa hua ginti wala loop jisme na `delay` hai, na `yield`, na IO — wo chahe jitni baar
+Aisa kasa hua calculation wala loop jisme na `delay` hai, na `yield`, na IO — wo chahe jitni baar
 cancel karo, poora chalkar hi manega.
 
 <Quiz
@@ -66,7 +66,7 @@ cancel karo, poora chalkar hi manega.
     "Use `Dispatchers.IO` par le jao",
   ]}
   answer={1}
-  explanation="Cancellation wahin lagti hai jahan coroutine use jaanchta hai. `while (isActive)` chupchap nikal jata hai; `ensureActive()` `CancellationException` fenkta hai; `yield()` jaanchta bhi hai aur dusron ko bari bhi deta hai. Inme se ek bhi na ho to koi aisa pal hi nahi jahan coroutine ko pata chale."
+  explanation="Cancellation wahin lagti hai jahan coroutine use check karta hai. `while (isActive)` chupchap nikal jata hai; `ensureActive()` `CancellationException` fenkta hai; `yield()` checkta bhi hai aur dusron ko bari bhi deta hai. Inme se ek bhi na ho to koi aisa pal hi nahi jahan coroutine ko pata chale."
 />
 
 ## Safai karna
@@ -124,7 +124,7 @@ hai, isliye chauda `catch` cancel ka sandesh nigal jata hai aur coroutine chalta
 types pakdo, ya `CancellationException` wapas fenko.
 
 **Bina suspension point wali lambi ginti.** Wo cancel ho hi nahi sakti. Loop ke andar
-`ensureActive()` daalo, ya kaam ko tukdon mein todo.
+`ensureActive()` daalo, ya kaam ko parts mein todo.
 </Pitfall>
 
 ## Practice
@@ -143,6 +143,6 @@ types pakdo, ya `CancellationException` wapas fenko.
 | `coroutineScope` | Sab bachhon ka intezaar; ek fail hua to baaki cancel |
 | `supervisorScope` | Sab bachhon ka intezaar; galtiyan alag-alag rehti hain |
 | `isActive` / `ensureActive()` | Ginti ko cancel hone laayak banao |
-| `yield()` | Cancellation jaancho aur dusron ko bari do |
-| `withTimeout` / `OrNull` | Kaam kitna lamba chale, uski seema |
+| `yield()` | Cancellation check karo aur dusron ko bari do |
+| `withTimeout` / `OrNull` | Kaam kitna lamba chale, uski limit |
 | `NonCancellable` | Sirf safai ke dauraan suspend karne ki chhoot |

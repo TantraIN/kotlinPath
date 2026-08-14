@@ -4,7 +4,7 @@ description: Kotlin न ठीक-ठीक compiled है न interpreted, ज
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 कभी न कभी build कुछ ऐसा कहकर fail होगी:
 
@@ -28,7 +28,7 @@ Kotlin इन दोनों में से कोई नहीं चुन�
 
 <Figure caption="एक compile step bytecode बनाता है। हर platform पर अलग JVM उसी bytecode को उस machine की समझ में आने वाले instructions में बदल देता है।">
   <PipelineDiagram
-    title="Kotlin source से processor तक का सफ़र"
+    title="Kotlin source से processor तक का सफर"
     description="Kotlin source को kotlinc एक बार compile करके JVM bytecode बनाता है जो class files में रहता है। Run time पर Java Virtual Machine उस bytecode को पढ़कर अपने processor के लिए machine code बनाता है।"
     stages={[
       { label: "Main.kt", sub: "source", accent: "violet" },
@@ -39,29 +39,29 @@ Kotlin इन दोनों में से कोई नहीं चुन�
   />
 </Figure>
 
-यही पूरा खेल है। भारी काम compiler एक बार कर देता है। जो चीज़ Windows laptop, Linux server
+यही पूरा खेल है। भारी काम compiler एक बार कर देता है। जो चीज Windows laptop, Linux server
 और phone के बीच अलग होती है, उसे JVM सँभालता है।
 
 <Tip bare>
 "Write once, run anywhere" का मतलब यही है। Source portable है इसलिए नहीं — बल्कि **compile
-की हुई चीज़** portable है इसलिए।
+की हुई चीज** portable है इसलिए।
 </Tip>
 
 ## जिस stack पर आप खड़े हैं
 
-<Figure caption="हर layer सिर्फ़ अपने नीचे वाली layer से बात करती है। आपका code कभी सीधे processor से बात नहीं करता।">
+<Figure caption="हर layer सिर्फ अपने नीचे वाली layer से बात करती है। आपका code कभी सीधे processor से बात नहीं करता।">
   <LayerStack
     title="आपकी Kotlin file और processor के बीच की layers"
     description="नीचे से: hardware, operating system, Java Virtual Machine, Kotlin standard library, और सबसे ऊपर आपका अपना code।"
     youWriteThis="यह आप लिखते हैं"
-    topLabel="आपके सबसे क़रीब"
-    bottomLabel="machine के सबसे क़रीब"
+    topLabel="आपके सबसे करीब"
+    bottomLabel="machine के सबसे करीब"
     layers={[
-      { label: "Hardware", sub: "CPU, RAM", accent: "rose", detail: "वह processor और memory जो आख़िर में सब चलाते हैं। आपका code इनसे सीधे बात नहीं करता — बीच में चार layers हैं।" },
+      { label: "Hardware", sub: "CPU, RAM", accent: "rose", detail: "वह processor और memory जो आखिर में सब चलाते हैं। आपका code इनसे सीधे बात नहीं करता — बीच में चार layers हैं।" },
       { label: "Operating system", sub: "Linux, macOS, Windows", accent: "amber", detail: "Processes schedule करता है, memory और files सँभालता है, devices से बात करता है। इसीलिए Windows का JVM, Linux के JVM से अलग होता है।" },
-      { label: "JVM", sub: "java", accent: "emerald", detail: "Bytecode पढ़कर चलाता है, और चलते-चलते गर्म हिस्सों को असली machine code बना देता है। यही layer एक compile की हुई चीज़ को कहीं भी चलने लायक़ बनाती है।" },
+      { label: "JVM", sub: "java", accent: "emerald", detail: "Bytecode पढ़कर चलाता है, और चलते-चलते गर्म हिस्सों को असली machine code बना देता है। यही layer एक compile की हुई चीज को कहीं भी चलने लायक बनाती है।" },
       { label: "Kotlin stdlib", sub: "kotlin.*", accent: "sky", detail: "`kotlin.*` के नीचे सब कुछ — collections, strings, scope functions, coroutine primitives। बिना किसी import के मिलता है।" },
-      { label: "आपका code", sub: "Main.kt", accent: "violet", highlight: true, detail: "इकलौती layer जो आप लिखते हैं। नीचे की हर चीज़ machine के हर दूसरे Kotlin program के साथ साझा है।" },
+      { label: "आपका code", sub: "Main.kt", accent: "violet", highlight: true, detail: "इकलौती layer जो आप लिखते हैं। नीचे की हर चीज machine के हर दूसरे Kotlin program के साथ साझा है।" },
     ]}
   />
 </Figure>
@@ -69,7 +69,7 @@ Kotlin इन दोनों में से कोई नहीं चुन�
 दो नाम बार-बार मिलेंगे:
 
 - **JDK** — Java Development Kit. Tools *और* JVM दोनों। Build करने के लिए चाहिए।
-- **JRE** — Java Runtime Environment. सिर्फ़ JVM। चलाने के लिए काफ़ी, build के लिए नहीं।
+- **JRE** — Java Runtime Environment. सिर्फ JVM। चलाने के लिए काफी, build के लिए नहीं।
 
 Android Studio अपने साथ एक JDK लेकर आता है, इसलिए आम तौर पर अलग install नहीं करना पड़ता —
 और इसीलिए "यह build कौन सा JDK इस्तेमाल कर रही है?" का जवाब ढूँढ़ना आना चाहिए।
@@ -89,20 +89,20 @@ fun main() {
 ```
 
 Compile होने पर `add` लगभग चार bytecode instructions बन जाता है: पहला argument load करो,
-दूसरा load करो, जोड़ो, return करो। JVM इन्हें चलाता है — और जब कोई function काफ़ी बार चल चुका
+दूसरा load करो, जोड़ो, return करो। JVM इन्हें चलाता है — और जब कोई function काफी बार चल चुका
 होता है तो **JIT compiler** उसे असली machine code में बदल देता है, ताकि आगे की calls में
 interpretation का काम बचे ही ना।
 
 <Note>
-इसीलिए JVM program पहले एक second धीमा और उसके बाद तेज़ लगता है। Android पर यही सोच
+इसीलिए JVM program पहले एक second धीमा और उसके बाद तेज लगता है। Android पर यही सोच
 **Baseline Profiles** के रूप में आती है, जो runtime को पहले ही बता देती है कि क्या compile
 करना है — ताकि आपके user को वह धीमा पहला second दिखे ही नहीं। इनसे दोबारा Phase 12 में
-मुलाक़ात होगी।
+मुलाकात होगी।
 </Note>
 
 ## तो Kotlin ही क्यों, Java क्यों नहीं?
 
-दोनों का bytecode एक ही है। JVM को फ़र्क़ ही पता नहीं चलता। फ़र्क़ सिर्फ़ इतना है कि भाषा आपको
+दोनों का bytecode एक ही है। JVM को फर्क ही पता नहीं चलता। फर्क सिर्फ इतना है कि भाषा आपको
 क्या कहने देती है — और क्या लिखने से **रोक** देती है।
 
 <Compare
@@ -114,7 +114,7 @@ interpretation का काम बचे ही ना।
       "+ बहुत बड़ा ecosystem, हर library इसी को target करती है",
       "- कोई भी reference null हो सकता है, और कोई चेतावनी नहीं मिलती",
       "- साधारण data के लिए भी getter, setter और boilerplate",
-      "~ नए versions ने कुछ फ़ासला कम किया है",
+      "~ नए versions ने कुछ फासला कम किया है",
     ],
   }}
   right={{
@@ -122,7 +122,7 @@ interpretation का काम बचे ही ना।
     subtitle: "2019 से Android के लिए Google की पहली पसंद",
     accent: "violet",
     points: [
-      "+ Null safety compiler ख़ुद enforce करता है",
+      "+ Null safety compiler खुद enforce करता है",
       "+ Data class, when, extensions — बहुत कम code",
       "+ Coroutines भाषा में ही built-in",
       "+ Java को आराम से call करता है, ecosystem बचा रहता है",
@@ -130,7 +130,7 @@ interpretation का काम बचे ही ना।
   }}
 />
 
-एक ही चीज़, दोनों भाषाओं में:
+एक ही चीज, दोनों भाषाओं में:
 
 ```java title="User.java" numbered
 public class User {
@@ -146,16 +146,16 @@ data class User(val name: String)
 ```
 
 एक line, और `equals`, `hashCode`, `toString` तथा `copy` साथ में। यह कोई जादू का खेल नहीं है
-— value equality ही वह चीज़ है जिसकी वजह से list diffing और Compose recomposition सही चलते
+— value equality ही वह चीज है जिसकी वजह से list diffing और Compose recomposition सही चलते
 हैं, जो आप Phase 2 में देखेंगे।
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
-<Pitfall title="दो ग़लतियाँ जो beginners का एक-एक दिन खाती हैं">
+<Pitfall title="दो गलतियाँ जो beginners का एक-एक दिन खाती हैं">
 **JDK versions मिला देना।** आपकी Gradle build, Kotlin compiler और Android Studio — तीनों का
 JDK एक होना चाहिए। `Unsupported class file major version 65` का मतलब है कि कुछ नए JDK से
 compile हुआ है और पढ़ने वाला पुराना है। इसे एक ही जगह ठीक कीजिए — project का Java toolchain
-— न कि randomly चीज़ें reinstall करके।
+— न कि randomly चीजें reinstall करके।
 
 **Java से आई value पर भरोसा कर लेना।** Compiler को पता ही नहीं चलता कि Java का method null
 लौटा सकता है या नहीं, इसलिए वह उसे *platform type* मानकर पीछे हट जाता है। उस boundary पर
@@ -169,9 +169,9 @@ nullable type (`String?`) में डाल दीजिए।
    सही जगह इस्तेमाल करके बताइए कि हर एक क्या है।
 2. `add(2, 3)` लगभग चार instructions बनता है। अपने शब्दों में लिखिए कि हर instruction शायद
    क्या करता होगा।
-3. कोई कहता है "Kotlin, Java से तेज़ है"। इस पाठ के आधार पर समझाइए कि यह बात ऐसे कहना बेमानी
+3. कोई कहता है "Kotlin, Java से तेज है"। इस पाठ के आधार पर समझाइए कि यह बात ऐसे कहना बेमानी
    क्यों है, और वह असल में कहना क्या चाहता होगा।
-4. Android साधारण JVM क्यों नहीं भेज सकता? पहले अंदाज़ा लगाइए, फिर अगला पाठ पढ़कर अपना जवाब
+4. Android साधारण JVM क्यों नहीं भेज सकता? पहले अंदाजा लगाइए, फिर अगला पाठ पढ़कर अपना जवाब
    जाँचिए।
 
 ## सारांश
@@ -180,8 +180,8 @@ nullable type (`String?`) में डाल दीजिए।
 | --- | --- | --- |
 | Bytecode | एक काल्पनिक machine के instructions | `.class` files, build errors |
 | JVM | वह program जो bytecode चलाता है | हर `java` command |
-| JDK | Tools + JVM, build के लिए ज़रूरी | Gradle toolchain settings |
-| JIT | Run time पर hot code को machine code बनाता है | पहला run धीमा, बाद में तेज़ |
+| JDK | Tools + JVM, build के लिए जरूरी | Gradle toolchain settings |
+| JIT | Run time पर hot code को machine code बनाता है | पहला run धीमा, बाद में तेज |
 | Platform type | Java की वह value जिसका null Kotlin जाँच नहीं सकता | Interop crashes |
 
 <Interview title="बहुत common opening question">
@@ -189,6 +189,6 @@ nullable type (`String?`) में डाल दीजिए।
 
 अच्छा जवाब दोनों layers अलग करता है: bytecode level पर कुछ नहीं — JVM को वही instructions
 दिखते हैं — और language level पर बहुत कुछ, जहाँ compiler null safety enforce करता है, data
-class के members ख़ुद बनाता है, और `suspend` functions को bytecode बनने से पहले ही state
+class के members खुद बनाता है, और `suspend` functions को bytecode बनने से पहले ही state
 machine में बदल देता है।
 </Interview>

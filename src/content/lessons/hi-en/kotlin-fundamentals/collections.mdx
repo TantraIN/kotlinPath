@@ -25,7 +25,7 @@ fun main() {
 }
 ```
 
-| Type | Kram | Duplicates | Isse ye poochho |
+| Type | Order | Duplicates | Isse ye poochho |
 | --- | --- | --- | --- |
 | `List` | Haan | Haan | "teesri jagah par kya hai?" |
 | `Set` | Guarantee nahi | Nahi | "ye pehle se ismein hai kya?" |
@@ -93,7 +93,7 @@ fun main() {
 
 Sets aur map keys `equals` aur `hashCode` se chalte hain. Saadi class identity se tulna karti
 hai, isliye ek jaise dikhne wale do objects do alag entries ban jate hain. Yahin se `data
-class` suvidha se hatkar shuddhata ki shart ban jati hai.
+class` convenience se hatkar shuddhata ki shart ban jati hai.
 
 <Pitfall title="Do jo asli bugs banti hain">
 **`var` property ko map key banana.** Insert ke baad use badlo aur uska hash badal jata hai —
@@ -119,7 +119,7 @@ sakta hai. Bahar `List` do aur `MutableList` private rakho.
 
 | Zarurat | Kya uthao |
 | --- | --- |
-| Kram chahiye, duplicates theek hain | `List` / `MutableList` |
+| Order chahiye, duplicates theek hain | `List` / `MutableList` |
 | Sadasyata, duplicates nahi | `Set` / `MutableSet` |
 | Key se dhundhna | `Map` / `MutableMap` |
 | Surakshit padhna | `getOrNull`, `getOrElse`, `firstOrNull` |

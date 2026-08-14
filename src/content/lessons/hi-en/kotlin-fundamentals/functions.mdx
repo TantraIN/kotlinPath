@@ -10,7 +10,7 @@ Koi bhi Java library kholo, ek hi method paanch baar milega alag-alag parameter 
 saath. Kotlin ko ek hi chahiye, kyunki parameters ke default ho sakte hain aur bulane wala
 unhe naam se de sakta hai.
 
-## Function ka dhaancha
+## Function ka structure
 
 ```kotlin title="Shapes.kt" numbered runnable
 fun add(a: Int, b: Int): Int {
@@ -33,7 +33,7 @@ fun main() {
 ```
 
 Parameters hamesha `val` hote hain. Function ke andar unhe dobara assign nahi kar sakte, aur
-ye jaan-boojh kar hai — beech mein matlab badal dene wala parameter padhne wale ke liye jaal
+ye jaan-boojh kar hai — beech mein matlab badal dene wala parameter padhne wale ke liye trap
 hai.
 
 ## Default arguments
@@ -96,7 +96,7 @@ liye overloads bana dega.
 
 **Mutable object wala default har call par naya banta hai, ek baar nahi.** `fun f(list:
 MutableList<Int> = mutableListOf())` har baar nayi list banata hai — jo aap chahte bhi ho, aur
-Python ke classic jaal ka ulta hai. Kaun si language kya karti hai, ye pata hona chahiye.
+Python ke classic trap ka ulta hai. Kaun si language kya karti hai, ye pata hona chahiye.
 </Pitfall>
 
 ## Practice

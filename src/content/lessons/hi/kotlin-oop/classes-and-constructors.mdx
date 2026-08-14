@@ -13,7 +13,7 @@ Kotlin class अपना data **constructor में** ही declare कर�
 
 Class आपका data रखता नहीं है। वह बस **ढाँचा** है जो data लेगा — नाम और types, values नहीं।
 
-उससे बना हर object उन ख़ानों की अपनी copy पाता है, अपनी values के साथ भरी हुई।
+उससे बना हर object उन खानों की अपनी copy पाता है, अपनी values के साथ भरी हुई।
 
 <ObjectDiagram
   typeName="User"
@@ -36,7 +36,7 @@ Class आपका data रखता नहीं है। वह बस **ढ�
     "जब तक पढ़ें नहीं, तय नहीं",
   ]}
   answer={1}
-  explanation="Constructor में declare की properties object में रहती हैं, class में नहीं। दो objects मतलब दो अलग `age` ख़ाने। जो चीज़ हर object में साझी हो, वह `companion object` में declare होती है।"
+  explanation="Constructor में declare की properties object में रहती हैं, class में नहीं। दो objects मतलब दो अलग `age` खाने। जो चीज हर object में साझी हो, वह `companion object` में declare होती है।"
 />
 
 ## सबसे छोटी काम की class
@@ -54,7 +54,7 @@ fun main() {
 
 उस एक line ने एक class, दो properties, और उन्हें भरने वाला constructor — तीनों बना दिए।
 
-<Detail summary="Java को इसी चीज़ के लिए क्या चाहिए">
+<Detail summary="Java को इसी चीज के लिए क्या चाहिए">
 हर property के लिए एक field, एक constructor parameter, एक assignment और एक getter। जो Kotlin एक
 line में कहता है उसके लिए लगभग पंद्रह lines। बना हुआ bytecode दोनों का एक ही है।
 </Detail>
@@ -93,7 +93,7 @@ class Order(val id: String, val items: List<String>) {
 </Tabs>
 
 <Tip bare>
-Secondary constructor लिखने से पहले default argument आज़मा लीजिए। अक्सर उसी से ज़रूरत ख़त्म हो जाती
+Secondary constructor लिखने से पहले default argument आजमा लीजिए। अक्सर उसी से जरूरत खत्म हो जाती
 है।
 </Tip>
 
@@ -117,8 +117,8 @@ fun main() {
 }
 ```
 
-यह construction के वक़्त चलता है, इसलिए जो `Order` मौजूद है वह checks पार कर चुका है। बाद में
-आधे-अधूरे object से बचने की ज़रूरत ही नहीं।
+यह construction के वक्त चलता है, इसलिए जो `Order` मौजूद है वह checks पार कर चुका है। बाद में
+आधे-अधूरे object से बचने की जरूरत ही नहीं।
 
 <Quiz
   question="Property initialiser और init block किस क्रम में चलते हैं?"
@@ -128,7 +128,7 @@ fun main() {
     "पहले init blocks, फिर property initialisers",
   ]}
   answer={1}
-  explanation="ये सख़्ती से ऊपर से नीचे, आपस में गुँथे हुए चलते हैं। इसीलिए कोई init block अपने से नीचे लिखी property पढ़ नहीं सकता — उस पल तक वह assign हुई ही नहीं होती।"
+  explanation="ये सख्ती से ऊपर से नीचे, आपस में गुँथे हुए चलते हैं। इसीलिए कोई init block अपने से नीचे लिखी property पढ़ नहीं सकता — उस पल तक वह assign हुई ही नहीं होती।"
 />
 
 ## Object memory में दिखता कैसा है
@@ -144,7 +144,7 @@ fun main() {
 ```
 
 <MemoryDiagram
-  caption="दो नाम, एक object। Assignment reference copy करता है, जिस चीज़ की ओर वह इशारा करता है उसे कभी नहीं।"
+  caption="दो नाम, एक object। Assignment reference copy करता है, जिस चीज की ओर वह इशारा करता है उसे कभी नहीं।"
   stackLabel="Stack"
   heapLabel="Heap"
   stack={[
@@ -156,24 +156,24 @@ fun main() {
   ]}
 />
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
 <Pitfall title="दो जो हर पहले project में दिखती हैं">
-**Constructor से आई चीज़ को body में दोबारा declare करना।**
+**Constructor से आई चीज को body में दोबारा declare करना।**
 `class User(name: String) { val name = name }` चल तो जाता है, पर बिना `val` वाला parameter
-property है ही नहीं — वह सिर्फ़ construction के दौरान होता है। Header में `val` लिखिए और वह line हटा
+property है ही नहीं — वह सिर्फ construction के दौरान होता है। Header में `val` लिखिए और वह line हटा
 दीजिए।
 
-**`init` में असली काम करना।** Network call, file read या भारी loop वहाँ object के काम लायक़ होने से
+**`init` में असली काम करना।** Network call, file read या भारी loop वहाँ object के काम लायक होने से
 पहले चलते हैं, और उसी thread पर जिसने object बनाया। `init` को validation और हल्के setup तक सीमित
 रखिए।
 </Pitfall>
 
 ## अभ्यास
 
-1. `class Book(val title: String, val pages: Int)` लिखिए और एक `init` जोड़िए जो ख़ाली title और
+1. `class Book(val title: String, val pages: Int)` लिखिए और एक `init` जोड़िए जो खाली title और
    शून्य-या-कम pages दोनों को मना कर दे।
-2. सिर्फ़ title लेने वाला secondary constructor जोड़िए जो pages 100 रखे। फिर उसे हटाकर वही काम
+2. सिर्फ title लेने वाला secondary constructor जोड़िए जो pages 100 रखे। फिर उसे हटाकर वही काम
    default argument से कीजिए।
 3. एक `init` block में और उसके ऊपर वाले property initialiser में `println` डालिए। चलाइए और क्रम
    confirm कीजिए।
@@ -189,4 +189,4 @@ property है ही नहीं — वह सिर्फ़ construction �
 | Default arguments | अक्सर secondary constructor की जगह ले लेता है |
 | `constructor(...) : this(...)` | Secondary constructor, primary को देते हुए |
 | `init { }` | Validation; property initialisers के साथ ऊपर से नीचे |
-| `require(...)` | ग़लत arguments को साफ़ message के साथ रोकता है |
+| `require(...)` | गलत arguments को साफ message के साथ रोकता है |

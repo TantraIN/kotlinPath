@@ -1,6 +1,6 @@
 ---
 title: Classes, constructors aur init blocks
-description: Class ek dhaancha hai data ka, aur unhi niyamon ka jo use sahi rakhte hain. Kotlin dono ek line mein kehla deta hai.
+description: Class ek structure hai data ka, aur unhi niyamon ka jo use sahi rakhte hain. Kotlin dono ek line mein kehla deta hai.
 updated: 2026-08-12
 ---
 
@@ -11,7 +11,7 @@ pehle se sahi object hai.
 
 ## Class asal mein hai kya
 
-Class aapka data rakhta nahi hai. Wo bas **dhaancha** hai jo data lega — naam aur types,
+Class aapka data rakhta nahi hai. Wo bas **structure** hai jo data lega — naam aur types,
 values nahi.
 
 Usse bana har object un khaanon ki apni copy paata hai, apni values ke saath bhari hui.
@@ -20,7 +20,7 @@ Usse bana har object un khaanon ki apni copy paata hai, apni values ke saath bha
   typeName="User"
   properties={["val name: String", "var age: Int"]}
   createLabel={'User("Asha", 30)'}
-  blueprintLabel="class (dhaancha)"
+  blueprintLabel="class (structure)"
   instanceLabel="objects (memory mein)"
   instances={[
     { name: "asha", values: ['name = "Asha"', "age = 30"] },
@@ -34,10 +34,10 @@ Usse bana har object un khaanon ki apni copy paata hai, apni values ke saath bha
   options={[
     "31 — age class ka hai",
     "41 — har object ke paas apni copy hai",
-    "Jab tak padho nahi, tay nahi",
+    "Jab tak padho nahi, decide nahi",
   ]}
   answer={1}
-  explanation="Constructor mein declare ki properties object mein rehti hain, class mein nahi. Do objects matlab do alag `age` khaane. Jo cheez har object mein saanjhi ho, wo `companion object` mein declare hoti hai."
+  explanation="Constructor mein declare ki properties object mein rehti hain, class mein nahi. Do objects matlab do alag `age` khaane. Jo cheez har object mein shared ho, wo `companion object` mein declare hoti hai."
 />
 
 ## Sabse chhoti kaam ki class
@@ -123,10 +123,10 @@ Ye construction ke waqt chalta hai, isliye jo `Order` maujood hai wo checks paar
 hai. Baad mein aadhe-adhoore object se bachne ki zarurat hi nahi.
 
 <Quiz
-  question="Property initialiser aur init block kis kram mein chalte hain?"
+  question="Property initialiser aur init block kis order mein chalte hain?"
   options={[
     "Pehle saari properties, phir saare init blocks",
-    "Upar se neeche, jis kram mein file mein likhe hain",
+    "Upar se neeche, jis order mein file mein likhe hain",
     "Pehle init blocks, phir property initialisers",
   ]}
   answer={1}
@@ -180,11 +180,11 @@ aur halke setup tak seemit rakho.
 3. Ek `init` block mein aur uske upar wale property initialiser mein `println` daalo. Chalao
    aur kram confirm karo.
 4. Do variables ek hi object par point karwao, ek se `var` badlo, dusre se padho. Upar wale
-   memory diagram se natija samjhao.
+   memory diagram se result samjhao.
 
 ## Recap
 
-| Tukda | Kis liye |
+| Part | Kis liye |
 | --- | --- |
 | `class Name(val x: T)` | Class, property aur constructor ek saath |
 | Header mein `val` / `var` | Parameter ko property banata hai; bina iske nahi banta |

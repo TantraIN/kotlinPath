@@ -20,7 +20,7 @@ replay set kiya ho.
 | Naye collector ko | Maujooda value turant | Sirf `replay` jitni cheezein |
 | Kis liye | Screen ki **state** | Ek baar hone wale **events** |
 
-Farq state aur events ka hai, aur galat chunav do bilkul tay bugs paida karta hai.
+Farq state aur events ka hai, aur galat chunav do bilkul specific bugs paida karta hai.
 
 ```kotlin title="ViewModel.kt" numbered
 class ProfileViewModel : ViewModel() {
@@ -69,7 +69,7 @@ rakhta hai. Yahi khidki phone ghumane par query dobara chalne se rokti hai.
 <Tabs>
   <Tab label="Eagerly">
 
-Turant shuru, kabhi band nahi. Jab koi dekh hi nahi raha, tab bhi kaam barbaad karta hai.
+Turant shuru, kabhi band nahi. Jab koi dekh hi nahi raha, tab bhi kaam waste karta hai.
 
   </Tab>
   <Tab label="Lazily">

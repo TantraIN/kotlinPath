@@ -63,7 +63,7 @@ data class Order(val id: String, val qty: Int, val paid: Boolean = false)
 
 fun main() {
     val order = Order("A1", 2)
-    val settled = order.copy(paid = true)     // बाक़ी सब जैसा था वैसा
+    val settled = order.copy(paid = true)     // बाकी सब जैसा था वैसा
 
     println(order)
     println(settled)
@@ -73,15 +73,15 @@ fun main() {
 }
 ```
 
-<Detail summary="copy() दिखने से ज़्यादा ज़रूरी क्यों है">
-Compose और coroutine `StateFlow` में state बदली नहीं जाती, बदली जाती है — सुनने वाले को सिर्फ़ *नई*
-value दिखती है। `copy()` उस नई value को एक पढ़ने लायक़ line बना देता है, वरना हर न-बदला field दोबारा
+<Detail summary="copy() दिखने से ज्यादा जरूरी क्यों है">
+Compose और coroutine `StateFlow` में state बदली नहीं जाती, बदली जाती है — सुनने वाले को सिर्फ *नई*
+value दिखती है। `copy()` उस नई value को एक पढ़ने लायक line बना देता है, वरना हर न-बदला field दोबारा
 लिखना पड़ता।
 </Detail>
 
 ## वह नियम जिसपर सब फिसलते हैं
 
-सिर्फ़ **primary constructor** की properties गिनती हैं।
+सिर्फ **primary constructor** की properties गिनती हैं।
 
 ```kotlin title="Trap.kt" numbered runnable
 data class Note(val title: String) {
@@ -105,7 +105,7 @@ fun main() {
 
 ## अभ्यास
 
-1. `Order` को body में एक `discount` property दीजिए, सिर्फ़ उसमें अलग दो orders बनाइए, और देखिए कि
+1. `Order` को body में एक `discount` property दीजिए, सिर्फ उसमें अलग दो orders बनाइए, और देखिए कि
    वे बराबर निकलते हैं। फिर उसे constructor में ले जाकर दोबारा चलाइए।
 2. `var` वाली एक data class `mutableSetOf` में डालिए, property बदलिए, फिर उसी object से `contains`
    बुलाइए। नतीजा समझाइए।
@@ -114,10 +114,10 @@ fun main() {
 
 ## सारांश
 
-| चीज़ | बात |
+| चीज | बात |
 | --- | --- |
-| `equals` / `hashCode` | सिर्फ़ primary constructor की properties |
-| `toString` | पढ़ने लायक़, property नामों के साथ |
-| `copy(...)` | बदली हुई state बनाने का सही तरीक़ा |
+| `equals` / `hashCode` | सिर्फ primary constructor की properties |
+| `toString` | पढ़ने लायक, property नामों के साथ |
+| `copy(...)` | बदली हुई state बनाने का सही तरीका |
 | Destructuring | `val (a, b) = obj`, क्रम से — order मायने रखता है |
 | Properties `val` रखिए | बदलने वाली key hash collections तोड़ देती है |

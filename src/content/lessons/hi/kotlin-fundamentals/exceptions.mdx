@@ -1,13 +1,13 @@
 ---
 title: Exceptions, try/catch और Result type
-description: Kotlin में checked exceptions हैं ही नहीं, मतलब कोई आपको failure handle करने पर मजबूर नहीं करता। यह आज़ादी तभी safe है जब आप सोच-समझकर तय करें कि error कहाँ सँभालना है।
+description: Kotlin में checked exceptions हैं ही नहीं, मतलब कोई आपको failure handle करने पर मजबूर नहीं करता। यह आजादी तभी safe है जब आप सोच-समझकर तय करें कि error कहाँ सँभालना है।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 Java में compiler `IOException` के लिए टोकता था। Kotlin नहीं टोकता। कोई याद नहीं दिलाएगा कि network
-call fail हो सकती है — इसलिए *कहाँ* failure सँभालना है, यह फ़ैसला आपका है, और जान-बूझकर लेना होगा।
+call fail हो सकती है — इसलिए *कहाँ* failure सँभालना है, यह फैसला आपका है, और जान-बूझकर लेना होगा।
 
 ## `try` भी एक expression है
 
@@ -28,10 +28,10 @@ fun main() {
 }
 ```
 
-`try` value बनाता है, इसलिए उसके ऊपर `var` declare करने की ज़रूरत कम ही पड़ती है। `finally` हर रास्ते
+`try` value बनाता है, इसलिए उसके ऊपर `var` declare करने की जरूरत कम ही पड़ती है। `finally` हर रास्ते
 पर चलता है, पर उसकी value फेंक दी जाती है — वहाँ cleanup रखिए, नतीजा कभी नहीं।
 
-## अक्सर `try` की ज़रूरत ही नहीं
+## अक्सर `try` की जरूरत ही नहीं
 
 ```kotlin title="SafeApis.kt" numbered runnable
 fun main() {
@@ -44,13 +44,13 @@ fun main() {
 }
 ```
 
-जो चीज़ें अनुमानित रूप से fail हो सकती हैं, उनमें से ज़्यादातर का standard library एक `OrNull` जोड़ा
-देता है। Failure *अपेक्षित* हो — ग़लत user input, ग़ायब key — तो nullable API चुनिए। Exceptions
+जो चीजें अनुमानित रूप से fail हो सकती हैं, उनमें से ज्यादातर का standard library एक `OrNull` जोड़ा
+देता है। Failure *अपेक्षित* हो — गलत user input, गायब key — तो nullable API चुनिए। Exceptions
 अनपेक्षित के लिए हैं।
 
 <Tip bare>
 एक अच्छा नियम: exceptions bugs के लिए हैं और बाहर की दुनिया के fail होने के लिए। ये control flow का
-औज़ार नहीं हैं। Failure आते हुए दिख रही हो तो उसे return type में model कीजिए।
+औजार नहीं हैं। Failure आते हुए दिख रही हो तो उसे return type में model कीजिए।
 </Tip>
 
 ## `Result` और `runCatching`
@@ -83,7 +83,7 @@ fun main() {
 <Warning>
 `runCatching` **सब कुछ** पकड़ लेता है, `CancellationException` भी। Coroutines में वही exception
 cancellation ले जाता है, इसलिए उसे निगल जाने पर cancel हुआ काम चलता रहता है। `suspend` code के अंदर
-ख़ास exceptions पकड़िए — Phase 3 इसे ठीक से cover करता है।
+खास exceptions पकड़िए — Phase 3 इसे ठीक से cover करता है।
 </Warning>
 
 ## अपने exceptions, और `require`
@@ -104,24 +104,24 @@ fun main() {
 ```
 
 `require` arguments की रखवाली करता है, `check` state की। दोनों हाथ से लिखे `if` और `throw` से बेहतर
-पढ़ते हैं, और दोनों साफ़ बताते हैं कि ग़लती किसकी है।
+पढ़ते हैं, और दोनों साफ बताते हैं कि गलती किसकी है।
 
 <Pitfall title="दो जो असली समस्या छुपा देती हैं">
-**ख़ाली body वाला `catch (e: Exception) { }`।** Failure फिर भी हुई; आपने बस उसे अदृश्य कर दिया। कम से
+**खाली body वाला `catch (e: Exception) { }`।** Failure फिर भी हुई; आपने बस उसे अदृश्य कर दिया। कम से
 कम log तो कीजिए। इससे बेहतर, यह तय कीजिए कि इस layer पर सुधार संभव है भी या नहीं।
 
-**ग़लत layer पर पकड़ना।** जो repository network error निगलकर ख़ाली list दे देता है, वह screen के लिए
+**गलत layer पर पकड़ना।** जो repository network error निगलकर खाली list दे देता है, वह screen के लिए
 "no connection" दिखाना असंभव बना देता है। वहाँ पकड़िए जहाँ आप कुछ कर सकते हैं, और तब तक failure को
 type में चलने दीजिए।
 </Pitfall>
 
 ## अभ्यास
 
-1. `fun parsePort(text: String): Int` लिखिए जो ग़लत input पर 8080 लौटाए — पहले `try/catch` से, फिर
+1. `fun parsePort(text: String): Int` लिखिए जो गलत input पर 8080 लौटाए — पहले `try/catch` से, फिर
    `toIntOrNull()` से। कौन सा बेहतर है और क्यों?
 2. फेंक सकने वाले function को `runCatching` में लपेटिए और दोनों branches `fold` से सँभालिए।
 3. `transfer(from, to, amount)` में `require` और `check` दोनों लगाइए। कौन सी failure कौन सी है, और
-   बुलाने वाले के लिए यह फ़र्क़ क्यों मायने रखता है?
+   बुलाने वाले के लिए यह फर्क क्यों मायने रखता है?
 4. समझाइए कि coroutine के अंदर `runCatching` cancellation कैसे तोड़ सकता है।
 
 ## सारांश
@@ -132,5 +132,5 @@ type में चलने दीजिए।
 | `toIntOrNull`, `getOrNull` | अपेक्षित failure — इन्हें चुनिए |
 | `runCatching { }` | फेंकने वाले block को `Result` में लपेटना |
 | `Result<T>` | सफलता या failure को type में ले जाना |
-| `require` | बुलाने वाले ने ग़लत चीज़ दी |
-| `check` | Object ग़लत state में है |
+| `require` | बुलाने वाले ने गलत चीज दी |
+| `check` | Object गलत state में है |

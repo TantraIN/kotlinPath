@@ -35,9 +35,9 @@ Body ke andar `this` hi receiver hai — aur Kotlin ke har `this` ki tarah, use 
 poori khoobi bas dot wala syntax hai.
 </Detail>
 
-## Wo natija jispar log galat samajhte hain
+## Wo result jispar log galat samajhte hain
 
-Kyunki ye static function hai, ye **likhe hue type** se tay hota hai, chalte waqt wale type se nahi.
+Kyunki ye static function hai, ye **likhe hue type** se decide hota hai, chalte waqt wale type se nahi.
 
 ```kotlin title="Dispatch.kt" numbered runnable
 open class Animal
@@ -56,7 +56,7 @@ fun main() {
   question="Object sach mein `Dog` hai, phir `pet.speak()` `Animal` wala kyun chhapta hai?"
   options={[
     "Kyunki `Dog.speak()` `Animal.speak()` ke baad likha hai",
-    "Kyunki extensions static tay hote hain, variable ke likhe hue type se",
+    "Kyunki extensions static decide hote hain, variable ke likhe hue type se",
     "Kyunki `Animal` `open` hai aur `Dog` nahi",
   ]}
   answer={1}
@@ -133,15 +133,15 @@ poori team unhe na chahe.
 2. `fun List<Int>.average2()` jodo, phir apne wale ka naam `average()` rakhkar dekho ki standard
    library wala hi jeetta hai.
 3. Ek extension property likho — `val LocalDate.isWeekend: Boolean`.
-4. Upar wala `Animal`/`Dog` natija dobara banao, phir `speak()` ko member banakar chalao. Farq
+4. Upar wala `Animal`/`Dog` result dobara banao, phir `speak()` ko member banakar chalao. Farq
    ek line mein samjhao.
 
 ## Recap
 
-| Baat | Vivran |
+| Baat | Detail |
 | --- | --- |
 | Banta kya hai | Static function, receiver pehla parameter |
 | Dispatch | Static — likha hua type, chalte waqt wala nahi |
 | Member ya extension | Member hamesha jeetta hai |
-| Nullable receiver | Chalta hai, aur aksar wahi maqsad hai |
+| Nullable receiver | Chalta hai, aur aksar wahi point hai |
 | Kab use karo | Jo types aapke nahi, ya seemit dayre ke helpers |

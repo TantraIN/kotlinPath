@@ -4,18 +4,18 @@ description: ऐसी machine तैयार कीजिए जो Android ap
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
-Setup वही जगह है जहाँ ज़्यादातर लोग चुपचाप हार मान लेते हैं। मुश्किल इसलिए नहीं कि काम बड़ा है,
+Setup वही जगह है जहाँ ज्यादातर लोग चुपचाप हार मान लेते हैं। मुश्किल इसलिए नहीं कि काम बड़ा है,
 बल्कि इसलिए कि एक साथ पाँच अलग tools install हो जाते हैं और कोई यह नहीं बताता कि कौन सा क्या
-है। फिर कुछ fail होता है और पता ही नहीं चलता कि ग़लती Studio की है, SDK की, Gradle की, JDK की,
+है। फिर कुछ fail होता है और पता ही नहीं चलता कि गलती Studio की है, SDK की, Gradle की, JDK की,
 या emulator की।
 
-तो install तो करेंगे, पर हर चीज़ का नाम साथ-साथ रखते चलेंगे।
+तो install तो करेंगे, पर हर चीज का नाम साथ-साथ रखते चलेंगे।
 
-## चार चीज़ें install हो रही हैं
+## चार चीजें install हो रही हैं
 
-<Figure caption="Android Studio सिर्फ़ editor है। जो असल में build और run करता है वह उससे अलग है — इसीलिए बिना IDE खोले terminal से भी build चल जाती है।">
+<Figure caption="Android Studio सिर्फ editor है। जो असल में build और run करता है वह उससे अलग है — इसीलिए बिना IDE खोले terminal से भी build चल जाती है।">
   <LayerStack
     title="आपकी machine पर क्या install होता है"
     description="सबसे ऊपर Android Studio editor है। उसके नीचे Gradle build system, Android SDK अपने platform और build tools के साथ, और एक JDK जो compiler चलाता है।"
@@ -26,7 +26,7 @@ Setup वही जगह है जहाँ ज़्यादातर लो
       { label: "JDK", sub: "compiler चलाता है", accent: "rose", detail: "Kotlin और Java compiler चलाता है। जब build class-file version error दे, तो यही टुकड़ा किसी दूसरे से मेल नहीं खा रहा होता।" },
       { label: "Android SDK", sub: "platforms, build-tools, adb", accent: "amber", detail: "वे platform APIs जिनके against आप compile करते हैं, और साथ में `adb`, emulator तथा build tools। Machine के हर project के साथ साझा।" },
       { label: "Gradle", sub: "build सँभालता है", accent: "emerald", detail: "तय करता है कि क्या compile होगा, किस क्रम में, और क्या छोड़ा जा सकता है। APK असल में यही बनाता है।" },
-      { label: "Android Studio", sub: "editor + debugger", accent: "violet", highlight: true, detail: "Editor, debugger और profiler। सुविधा है, पर ख़ुद कुछ build नहीं करता — वही काम terminal भी कर लेता है।" },
+      { label: "Android Studio", sub: "editor + debugger", accent: "violet", highlight: true, detail: "Editor, debugger और profiler। सुविधा है, पर खुद कुछ build नहीं करता — वही काम terminal भी कर लेता है।" },
     ]}
   />
 </Figure>
@@ -52,18 +52,18 @@ Setup वही जगह है जहाँ ज़्यादातर लो
     हैं।
   </TimelineItem>
   <TimelineItem title="adb को PATH पर लगाइए" meta="platform-tools">
-    किसी भी terminal से `adb` चला पाना उन दो मिनट के लायक़ है। नीचे के commands यही मानकर लिखे
+    किसी भी terminal से `adb` चला पाना उन दो मिनट के लायक है। नीचे के commands यही मानकर लिखे
     हैं।
   </TimelineItem>
   <TimelineItem title="Virtual device बनाइए" meta="Device Manager">
     एक Pixel profile चुनिए और ऐसा system image जिसका API level आपके build से मेल खाए। अपने CPU
-    architecture वाला image लीजिए — Apple Silicon पर arm64, ज़्यादातर PC पर x86_64। ग़लत
+    architecture वाला image लीजिए — Apple Silicon पर arm64, ज्यादातर PC पर x86_64। गलत
     architecture ही emulator के बेकार धीमे होने की number one वजह है।
   </TimelineItem>
   <TimelineItem title="या असली phone इस्तेमाल कीजिए" meta="recommended">
     Settings → About phone → *Build number* पर सात बार tap → Developer options →
     **USB debugging** चालू कीजिए। एक mid-range असली device performance के बारे में किसी भी
-    emulator से कहीं ज़्यादा सच बताता है।
+    emulator से कहीं ज्यादा सच बताता है।
   </TimelineItem>
 </Timeline>
 
@@ -83,7 +83,7 @@ Setup वही जगह है जहाँ ज़्यादातर लो
   ]}
 />
 
-आपका project सिर्फ़ इतना लिखता है कि *कौन सी* SDK directory इस्तेमाल करनी है — और वह file
+आपका project सिर्फ इतना लिखता है कि *कौन सी* SDK directory इस्तेमाल करनी है — और वह file
 जान-बूझकर commit नहीं होती:
 
 ```properties title="local.properties" no-glossary
@@ -94,7 +94,7 @@ sdk.dir=/Users/you/Library/Android/sdk
 <Warning>
 `local.properties` `.gitignore` में इसीलिए है: यह path हर machine पर अलग होता है। Commit कर
 दिया तो teammate की build "SDK location not found" के साथ टूटेगी। इस file से दोबारा Git वाले
-पाठ में मुलाक़ात होगी।
+पाठ में मुलाकात होगी।
 </Warning>
 
 ## पहले दिन के काम के commands
@@ -106,10 +106,10 @@ adb devices -l
 # बनी हुई APK install कीजिए
 adb install app/build/outputs/apk/debug/app-debug.apk
 
-# सिर्फ़ अपनी app के logs देखिए, system का शोर हटाकर
+# सिर्फ अपनी app के logs देखिए, system का शोर हटाकर
 adb logcat --pid=$(adb shell pidof -s com.example.myapp)
 
-# Build के लिए Android Studio खुला होना ज़रूरी नहीं
+# Build के लिए Android Studio खुला होना जरूरी नहीं
 ./gradlew assembleDebug
 
 # जब कुछ बिना वजह पुराना चिपका रह जाए
@@ -122,9 +122,9 @@ adb logcat --pid=$(adb shell pidof -s com.example.myapp)
 चलती है। Android के लिए Gradle कभी globally install मत कीजिए।
 </Tip>
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
-<Pitfall title="तीन ग़लतियाँ जो पूरी दोपहर खा जाती हैं">
+<Pitfall title="तीन गलतियाँ जो पूरी दोपहर खा जाती हैं">
 **धीमा emulator।** लगभग हमेशा architecture mismatch, या hardware acceleration बंद होना।
 देखिए कि system image आपके CPU से match करता है, और virtualisation चालू है — Windows पर
 Hyper-V या WHPX, Linux पर KVM।
@@ -133,7 +133,7 @@ Hyper-V या WHPX, Linux पर KVM।
 हो सकता है। जब build IDE में और terminal में अलग behave करे, वजह यही होती है। दोनों को एक ही पर
 point कीजिए: Settings → Build Tools → Gradle → Gradle JDK।
 
-**`local.properties` commit कर देना।** Machine-specific paths version control में बाक़ी सबकी
+**`local.properties` commit कर देना।** Machine-specific paths version control में बाकी सबकी
 build तोड़ते हैं। अगर पहले से committed है तो उसे tracking से हटाइए और `.gitignore` में डालिए।
 </Pitfall>
 
@@ -147,7 +147,7 @@ build तोड़ते हैं। अगर पहले से committed �
 
 ## सारांश
 
-| Tool | जो command सबसे ज़्यादा लिखेंगे |
+| Tool | जो command सबसे ज्यादा लिखेंगे |
 | --- | --- |
 | Gradle wrapper | `./gradlew assembleDebug` |
 | adb | `adb devices -l`, `adb install`, `adb logcat` |
@@ -155,5 +155,5 @@ build तोड़ते हैं। अगर पहले से committed �
 | Device Manager | Studio के अंदर: AVD बनाइए और boot कीजिए |
 
 आगे बढ़ने से पहले checklist: Studio खुलता है, `adb devices` में कोई device या emulator दिखता है,
-और terminal से `./gradlew assembleDebug` सफल होता है। तीनों सच हैं तो आपकी machine बाक़ी course
+और terminal से `./gradlew assembleDebug` सफल होता है। तीनों सच हैं तो आपकी machine बाकी course
 के लिए तैयार है।

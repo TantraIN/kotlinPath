@@ -1,6 +1,6 @@
 ---
 title: CoroutineScope, Job aur CoroutineContext
-description: Scope tay karta hai ki coroutines kitna jiyenge. Yahi seema theek rakhna kaam ko us screen se zyada jeene se rokta hai jisne use shuru kiya tha.
+description: Scope decide karta hai ki coroutines kitna jiyenge. Yahi limit theek rakhna kaam ko us screen se zyada jeene se rokta hai jisne use shuru kiya tha.
 updated: 2026-08-12
 ---
 
@@ -26,7 +26,7 @@ fun main() = runBlocking {
 }
 ```
 
-Coroutine se vinamrata se khatam hone ko nahi kaha jata. Poora scope cancel hota hai, aur uske
+Coroutine se politely khatam hone ko nahi kaha jata. Poora scope cancel hota hai, aur uske
 saare bacche uske saath.
 
 <ClassDiagram
@@ -142,7 +142,7 @@ Aur screen, ViewModel aur cancel karne ki har koshish — teeno se zyada jeeta h
 | Cheez | Kis sawal ka jawab |
 | --- | --- |
 | `CoroutineScope` | Ye kaam kitna jee sakta hai? |
-| `Job` | Cancellation aur parent-child dhaancha |
+| `Job` | Cancellation aur parent-child structure |
 | `SupervisorJob` | Ek child ki galti bhai-behnon ko na maare |
 | `CoroutineContext` | Hisson ka set, `+` se juda hua |
 | `viewModelScope` | Android ka default; ViewModel ke saath cancel |

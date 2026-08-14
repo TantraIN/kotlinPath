@@ -1,6 +1,6 @@
 ---
 title: Operator overloading aur inline functions
-description: Operators bas tay naam wale function calls hain. Inline functions wo object hata dete hain jo lambda warna banata.
+description: Operators bas fixed naam wale function calls hain. Inline functions wo object hata dete hain jo lambda warna banata.
 updated: 2026-08-12
 ---
 
@@ -46,7 +46,7 @@ fun main() {
   options={[
     "Sirf `>`",
     "`<`, `>`, `<=` aur `>=` — chaaron",
-    "Saari tulnaayein, `==` samet",
+    "Saare comparisons, `==` samet",
   ]}
   answer={1}
   explanation="Chaaron relational operators `compareTo(...)` ko zero se milane mein badalte hain, isliye ek function poora set chalu kar deta hai. `==` alag hai — wo `equals` par jata hai, isiliye data class `==` deti hai par `<` nahi."
@@ -71,7 +71,7 @@ function object banta hi nahi.
 <Detail summary="Standard library ke collection functions sab inline kyun hain">
 `filter`, `map` aur `forEach` sab `inline` hain. Warna aapke app ka har `list.filter { }` ek
 lambda object banata. Inlining se ye bhi ho jata hai ki aap lambda ke andar `return` likhkar
-bahar wale function se laut sakte ho — asli function object ke saath ye namumkin hai.
+bahar wale function se laut sakte ho — asli function object ke saath ye impossible hai.
 </Detail>
 
 <Tabs>
@@ -106,7 +106,7 @@ inline fun onBackground(crossinline work: () -> Unit) {
 <Pitfall title="Do jo faayda hi kha jati hain">
 **Bade function ko inline karna.** Body har call site par copy hoti hai, isliye bada `inline`
 function har jagah bytecode badha deta hai. Lambda lene wale functions inline karo; bas
-shaukiya inline mat karo. Bewajah ho to compiler khud chetavni deta hai.
+shaukiya inline mat karo. Bewajah ho to compiler khud warning deta hai.
 
 **Operator ka aisa matlab nikalna jo chaunka de.** `operator fun Money.minus` saaf hai.
 `operator fun User.plus(other: User)` nahi — do users ko jodne se hota kya hai, koi anda nahi
@@ -118,15 +118,15 @@ laga sakta. Agar matlab turant saaf na ho, naam wala function likho.
 1. `operator fun Money.unaryMinus()` jodo taaki `-a` chale, aur `operator fun div(n: Int)` bhi.
 2. `DateRange` class par `operator fun contains` banao taaki `date in range` saaf padhe.
 3. Lambda lene wala ek `inline` function likho, phir `inline` hatakar compiler ki parameter wali
-   chetavni padho.
+   warning padho.
 4. Kisi class mein `operator fun invoke()` jodo aur instance ko function ki tarah bulao. Ye kab
    naam wale method se saaf hoga — aur kab bura?
 
 ## Recap
 
-| Baat | Vivran |
+| Baat | Detail |
 | --- | --- |
-| `operator` | Zaroori; tay naam ko chinh se jodta hai |
+| `operator` | Zaroori; fixed naam ko chinh se jodta hai |
 | `compareTo` | Ek saath `<`, `>`, `<=`, `>=` chalu karta hai |
 | `equals` | `==` ke peeche; data class pehle se deti hai |
 | `inline` | Body copy karta hai; lambda object hata deta hai |

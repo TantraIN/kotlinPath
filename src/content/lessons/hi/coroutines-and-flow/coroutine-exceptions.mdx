@@ -1,15 +1,15 @@
 ---
 title: Coroutines में exception handling
-description: launch और async बिलकुल अलग तरीक़े से fail होते हैं। आपने कौन सा इस्तेमाल किया, यही तय करता है कि app crash होगी या चुपचाप ख़ाली रह जाएगी।
+description: launch और async बिलकुल अलग तरीके से fail होते हैं। आपने कौन सा इस्तेमाल किया, यही तय करता है कि app crash होगी या चुपचाप खाली रह जाएगी।
 updated: 2026-08-12
 ---
 
 <KeyIdea>
-`launch` तुरंत फेंकता है और parent तक पहुँचा देता है। `async` ग़लती को **रख लेता है** और तभी फेंकता है
+`launch` तुरंत फेंकता है और parent तक पहुँचा देता है। `async` गलती को **रख लेता है** और तभी फेंकता है
 जब आप `await` बुलाते हैं।
 </KeyIdea>
 
-## वह फ़र्क़ जो सबको चौंकाता है
+## वह फर्क जो सबको चौंकाता है
 
 ```kotlin title="Difference.kt" numbered runnable
 import kotlinx.coroutines.*
@@ -35,7 +35,7 @@ fun main() = runBlocking {
     "कुछ भी नहीं — वह फेंक दिया जाता है",
   ]}
   answer={1}
-  explanation="`await` ही वह चीज़ है जो ग़लती *आप तक* वापस फेंकती है, इसलिए बिना await किए fail होने पर call site पर कोई ग़लती दिखती ही नहीं। पर fail हुआ बच्चा parent को ख़बर फिर भी करता है, तो सादे Job के साथ scope cancel हो ही जाता है। इसी बँटवारे की वजह से छोड़ा हुआ async ऐसा लगता है जैसे screen चुपचाप मर गई।"
+  explanation="`await` ही वह चीज है जो गलती *आप तक* वापस फेंकती है, इसलिए बिना await किए fail होने पर call site पर कोई गलती दिखती ही नहीं। पर fail हुआ बच्चा parent को खबर फिर भी करता है, तो सादे Job के साथ scope cancel हो ही जाता है। इसी बँटवारे की वजह से छोड़ा हुआ async ऐसा लगता है जैसे screen चुपचाप मर गई।"
 />
 
 ## `try` रखें कहाँ
@@ -69,7 +69,7 @@ val result = runCatching { repository.user() }
   </Tab>
   <Tab label="Handler">
 
-`launch` के लिए आख़िरी जाल, scope पर लगाया हुआ। जो `async` आपने await किया, उसकी ग़लती इसे कभी नहीं
+`launch` के लिए आखिरी जाल, scope पर लगाया हुआ। जो `async` आपने await किया, उसकी गलती इसे कभी नहीं
 दिखती।
 
 ```kotlin title="Handler.kt" numbered
@@ -85,7 +85,7 @@ Suspending code के आस-पास `try { } catch (e: Exception)` `Cancella
 जिससे cancellation चुपचाप टूट जाती है। तय type पकड़िए, या उसे वापस फेंकिए।
 </Pitfall>
 
-## एक चीज़ fail हो, पर सब नहीं
+## एक चीज fail हो, पर सब नहीं
 
 ```kotlin title="Supervisor.kt" numbered runnable
 import kotlinx.coroutines.*
@@ -98,12 +98,12 @@ fun main() = runBlocking {
 }
 ```
 
-`coroutineScope` के साथ दूसरा widget पहले की ग़लती से cancel हो जाता। `supervisorScope` के साथ नहीं
+`coroutineScope` के साथ दूसरा widget पहले की गलती से cancel हो जाता। `supervisorScope` के साथ नहीं
 होता।
 
 <Detail summary="CoroutineExceptionHandler अक्सर बेकार क्यों साबित होता है">
-वह सिर्फ़ scope के **root** coroutine पर चलता है, और सिर्फ़ `launch` के लिए। उसे किसी बच्चे पर लगाने से
-कुछ नहीं होता — जब तक वह चलता, ग़लती parent तक जा चुकी होती है। और `async` की ग़लतियाँ आप तक `await` से
+वह सिर्फ scope के **root** coroutine पर चलता है, और सिर्फ `launch` के लिए। उसे किसी बच्चे पर लगाने से
+कुछ नहीं होता — जब तक वह चलता, गलती parent तक जा चुकी होती है। और `async` की गलतियाँ आप तक `await` से
 आती हैं, handler से नहीं। इसे crash report समझिए, error handling नहीं।
 </Detail>
 
@@ -121,8 +121,8 @@ fun main() = runBlocking {
 | Builder | Fail होने पर |
 | --- | --- |
 | `launch` | तुरंत फेंकता है; parent तक जाता है |
-| `async` | `await()` तक रखा रहता है; parent को ख़बर फिर भी |
-| `coroutineScope` | एक बच्चे की ग़लती भाई-बहनों को cancel करती है |
-| `supervisorScope` | ग़लतियाँ अलग-अलग रहती हैं |
-| `CoroutineExceptionHandler` | सिर्फ़ root `launch`; reporting समझिए |
+| `async` | `await()` तक रखा रहता है; parent को खबर फिर भी |
+| `coroutineScope` | एक बच्चे की गलती भाई-बहनों को cancel करती है |
+| `supervisorScope` | गलतियाँ अलग-अलग रहती हैं |
+| `CoroutineExceptionHandler` | सिर्फ root `launch`; reporting समझिए |
 | `CancellationException` | कभी मत निगलिए — पकड़ें तो वापस फेंकिए |

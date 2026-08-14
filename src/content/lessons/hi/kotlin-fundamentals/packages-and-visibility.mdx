@@ -1,12 +1,12 @@
 ---
 title: Packages, imports और visibility modifiers
-description: आपका code कहाँ रहता है और उसे देखने की इजाज़त किसे है। यह एक बार सही हो जाए तो project पाँच files पर जितना navigable है, पचास पर भी उतना ही रहता है।
+description: आपका code कहाँ रहता है और उसे देखने की इजाजत किसे है। यह एक बार सही हो जाए तो project पाँच files पर जितना navigable है, पचास पर भी उतना ही रहता है।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
-Visibility ही वह इकलौता औज़ार है जो code को सुरक्षित रूप से बदलने देता है। जो भी `public` है वह एक
+Visibility ही वह इकलौता औजार है जो code को सुरक्षित रूप से बदलने देता है। जो भी `public` है वह एक
 वादा है; जो `private` है उसे आप आज दोपहर दोबारा लिख सकते हैं। Beginners सब कुछ public कर देते हैं और
 फिर पाते हैं कि कुछ भी बदला नहीं जा सकता बिना कुछ टूटे।
 
@@ -19,7 +19,7 @@ class User(val id: Int, val name: String)
 ```
 
 Package file के सबसे ऊपर लिखा जाता है और परंपरा से folder path जैसा ही होता है। Kotlin, Java की तरह
-folders और package का मिलना ज़रूरी नहीं करता — पर फिर भी मिलाइए, क्योंकि हर tool और हर teammate यही
+folders और package का मिलना जरूरी नहीं करता — पर फिर भी मिलाइए, क्योंकि हर tool और हर teammate यही
 उम्मीद करता है।
 
 <FileTree
@@ -47,21 +47,21 @@ import kotlinx.coroutines.flow.*                     // पूरा package, �
 
 `kotlin.*`, `kotlin.collections.*` और कुछ और हर file में अपने आप आ जाते हैं, इसीलिए `listOf` और
 `println` के लिए import नहीं लगता। जब दो packages एक ही नाम दें — और `User` का data तथा domain दोनों
-में होना बहुत आम है — तो `as` alias सबसे साफ़ रास्ता है।
+में होना बहुत आम है — तो `as` alias सबसे साफ रास्ता है।
 
 ## चार visibilities
 
 | Modifier | किसे दिखता है |
 | --- | --- |
 | `public` | सबको। Default यही है — इसीलिए सोचकर तय करना पड़ता है |
-| `internal` | उसी **module** की हर चीज़ को |
+| `internal` | उसी **module** की हर चीज को |
 | `protected` | Declare करने वाली class और उसकी subclasses को |
 | `private` | उसी file को, या उसी class को |
 
 ```kotlin title="Visibility.kt" numbered
 class Cart {
     private val items = mutableListOf<String>()      // बाहर से कोई नहीं छू सकता
-    internal var lastSyncedAt: Long = 0              // इस module का बाक़ी code छू सकता है
+    internal var lastSyncedAt: Long = 0              // इस module का बाकी code छू सकता है
     val size: Int get() = items.size                 // public surface
 
     fun add(item: String) { items += item }
@@ -69,11 +69,11 @@ class Cart {
 ```
 
 `internal` वही है जो लोग कम इस्तेमाल करते हैं। Multi-module Android project में यह किसी module को
-अंदर से भरी-भरकम API रखने देता है और बाहर सिर्फ़ गिने-चुने types दिखाता है — और compiler इसे लागू
+अंदर से भरी-भरकम API रखने देता है और बाहर सिर्फ गिने-चुने types दिखाता है — और compiler इसे लागू
 करवाता है।
 
 <Tip bare>
-हर declaration `private` से शुरू कीजिए। तभी खोलिए जब बाहर किसी को सच में ज़रूरत हो। Private से public
+हर declaration `private` से शुरू कीजिए। तभी खोलिए जब बाहर किसी को सच में जरूरत हो। Private से public
 जाना एक अक्षर का बदलाव है; उल्टा जाना एक refactor है।
 </Tip>
 
@@ -82,20 +82,20 @@ class Cart {
 ```kotlin title="TopLevel.kt" numbered
 package com.example.myapp.util
 
-private const val PREFIX = "app"                   // सिर्फ़ इस file को
+private const val PREFIX = "app"                   // सिर्फ इस file को
 fun log(message: String) = println("[$PREFIX] $message")
 ```
 
 Kotlin functions और properties को class के बाहर भी रहने देता है। `private` top-level declaration
-सिर्फ़ अपनी file में दिखता है, जिससे एक-file वाले helpers सच में सीमित रहते हैं — Java में इसका कोई
+सिर्फ अपनी file में दिखता है, जिससे एक-file वाले helpers सच में सीमित रहते हैं — Java में इसका कोई
 जोड़ नहीं है।
 
 <Pitfall title="दो जो codebase बदलना मुश्किल बना देती हैं">
-**सब कुछ default से public।** Public default है, इसलिए यह फ़ैसला लेकर नहीं, छोड़ देने से होता है। हर
-public symbol वह चीज़ है जिसे callers देखे बिना बदला नहीं जा सकता।
+**सब कुछ default से public।** Public default है, इसलिए यह फैसला लेकर नहीं, छोड़ देने से होता है। हर
+public symbol वह चीज है जिसे callers देखे बिना बदला नहीं जा सकता।
 
 **`util` package जो कबाड़ का डिब्बा बन जाए।** `StringUtils`, `Helpers`, `Common` — अंदर क्या है कोई
-अंदाज़ा नहीं लगा सकता। बेहतर है extension function उसी type के पास रखिए जिसे वह बढ़ा रहा है, उसी
+अंदाजा नहीं लगा सकता। बेहतर है extension function उसी type के पास रखिए जिसे वह बढ़ा रहा है, उसी
 package में जिसका वह type है।
 </Pitfall>
 
@@ -103,7 +103,7 @@ package में जिसका वह type है।
 
 1. दो packages बनाइए जिनमें दोनों में `User` नाम की class हो। दोनों को एक ही file में import करके
    compile करवाइए।
-2. अपनी कोई class लीजिए और उसके हर member को `private` कर दीजिए। सिर्फ़ वही errors ठीक कीजिए जो सच
+2. अपनी कोई class लीजिए और उसके हर member को `private` कर दीजिए। सिर्फ वही errors ठीक कीजिए जो सच
    में बाहर के इस्तेमाल हैं। कितने members को सच में public होना चाहिए था?
 3. Multi-module project का उदाहरण लेकर समझाइए कि `internal` कब सही चुनाव है और `private` कब नहीं।
 4. `private` top-level function उसी file की दूसरी class को क्यों दिखता है, पर उसी package की दूसरी
@@ -114,8 +114,8 @@ package में जिसका वह type है।
 | बात | एक line |
 | --- | --- |
 | `package` | File के ऊपर; folders में भी वही रखिए |
-| `import ... as` | नाम टकराने पर साफ़ हल |
-| `public` | Default — इसे फ़ैसला मानिए, छूट नहीं |
-| `internal` | पूरे module में; multi-module projects का असली औज़ार |
+| `import ... as` | नाम टकराने पर साफ हल |
+| `public` | Default — इसे फैसला मानिए, छूट नहीं |
+| `internal` | पूरे module में; multi-module projects का असली औजार |
 | `private` | उसी file या उसी class में; हर declaration यहीं से शुरू हो |
 | Top-level declarations | बिना class के functions और constants |

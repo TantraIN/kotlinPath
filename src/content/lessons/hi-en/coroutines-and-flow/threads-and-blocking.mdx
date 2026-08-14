@@ -31,7 +31,7 @@ Us thread par koi bhi dheemi cheez matlab jama hua app.
 <Quiz
   question="Main thread par ek network call 2 second leta hai. Us dauraan thread kar kya raha hai?"
   options={[
-    "Kam raftaar se frames bana raha hai",
+    "Kam speed se frames bana raha hai",
     "Kuch bhi nahi — wo call ne pakad rakha hai aur koi dusra kaam nahi kar sakta",
     "Apne aap background thread par chala jata hai",
   ]}
@@ -57,7 +57,7 @@ dikkatein hain.
 | --- | --- |
 | Threads mehnge hain | Har ek ka lagbhag 1MB stack; hazaron nahi rakh sakte |
 | Cancel karne ka tarika nahi | User screen chhod deta hai; thread chalta rehta hai |
-| Natija wapas laana padta hai | Main ke bahar View chhuo to exception aata hai |
+| Result wapas laana padta hai | Main ke bahar View chhuo to exception aata hai |
 
 ## Doosra ilaaj: callbacks, aur wo bigadte kahan hain
 
@@ -74,11 +74,11 @@ fun loadScreen() {
 }
 ```
 
-Har kadam theek hai. Ek ke andar ek rakhne par aisa code banta hai jahan chalne ka kram aur
-likhe hue ka kram ek nahi rehte.
+Har kadam theek hai. Ek ke andar ek rakhne par aisa code banta hai jahan chalne ka order aur
+likhe hue ka order ek nahi rehte.
 
 <Pitfall bare>
-Upar wale mein error handling jodo aur har star ko apni alag failure branch chahiye. Aisa koi
+Upar wale mein error handling jodo aur har level ko apni alag failure branch chahiye. Aisa koi
 `try` hai hi nahi jo teeno ko lapet le, kyunki teeno ek hi stack par hain hi nahi.
 </Pitfall>
 
@@ -113,17 +113,17 @@ hi nahi.
 
 1. Likho ki main thread par 3 second ki image upload ke dauraan aapka app kar kya raha hai. Un
    secondon mein kya kiya ja sakta tha?
-2. Upar wale nested callback example mein har star par error handling jodo. Branches gino.
+2. Upar wale nested callback example mein har level par error handling jodo. Branches gino.
 3. Apne project ke liye 60fps aur 120fps ka frame budget milliseconds mein dekho.
 4. Jo app aap use karte ho usme ek aisa kaam batao jo saaf taur par background thread par chalta
    hai. Bahar se ye kaise pata chalta hai?
 
 ## Recap
 
-| Shabd | Matlab |
+| Term | Matlab |
 | --- | --- |
 | Main thread | Akela thread jise draw aur input ki ijazat hai |
 | Blocking | Intezaar ke dauraan thread pakadna — yahi keemat hataani hai |
 | Frame budget | 60fps par ~16ms, 120fps par ~8ms |
 | ANR | Android ka "Application Not Responding" dialog |
-| Callback hell | Nested callbacks jahan chalne ka kram padhne ke kram se alag ho jata hai |
+| Callback hell | Nested callbacks jahan chalne ka order padhne ke order se alag ho jata hai |

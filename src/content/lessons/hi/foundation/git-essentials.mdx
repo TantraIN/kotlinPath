@@ -1,17 +1,17 @@
 ---
 title: इस course के लिए Git की बुनियाद
-description: इतना Git जितने से इस course का हर project सुरक्षित रहे, एक ख़राब दोपहर वापस हो जाए, और आप वैसे काम करें जैसे असली Android teams करती हैं — बिना पूरा tool सीखे।
+description: इतना Git जितने से इस course का हर project सुरक्षित रहे, एक खराब दोपहर वापस हो जाए, और आप वैसे काम करें जैसे असली Android teams करती हैं — बिना पूरा tool सीखे।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 आप कुछ तोड़ेंगे। शायद नहीं — पक्का। Phase 6 के बीच में कोई refactor बिगड़ेगा और जो app एक घंटे
 पहले चल रही थी वह compile ही नहीं होगी।
 
 Git के साथ यह तीस second की समस्या है। Git के बिना यह आपकी पूरी शाम है।
 
-इस course का हर project commit होगा। यह दिखावा नहीं है — यही चीज़ experiment करना safe बनाती है।
+इस course का हर project commit होगा। यह दिखावा नहीं है — यही चीज experiment करना safe बनाती है।
 
 ## आपका code तीन जगह रहता है
 
@@ -24,8 +24,8 @@ Git के साथ यह तीस second की समस्या है।
     बदलता।
   </TimelineItem>
   <TimelineItem title="Staging area" meta="git add">
-    उन बदलावों की छोटी list जो अगले commit में जाएँगे। इसीलिए आप तीन चीज़ें ठीक करके उन्हें तीन
-    अलग, पढ़ने लायक़ commits बना सकते हैं।
+    उन बदलावों की छोटी list जो अगले commit में जाएँगे। इसीलिए आप तीन चीजें ठीक करके उन्हें तीन
+    अलग, पढ़ने लायक commits बना सकते हैं।
   </TimelineItem>
   <TimelineItem title="Repository" meta="git commit">
     स्थायी history। Commit एक पूरा snapshot है plus एक message, और लिखने के बाद कभी बदलता नहीं।
@@ -40,7 +40,7 @@ git push
 ```
 
 <Tip bare>
-`git status` सिर्फ़ औपचारिकता नहीं है। हर `add` और हर `commit` से पहले चलाइए — Git के ज़्यादातर
+`git status` सिर्फ औपचारिकता नहीं है। हर `add` और हर `commit` से पहले चलाइए — Git के ज्यादातर
 हादसे वही file commit कर देने से होते हैं जो करनी ही नहीं थी।
 </Tip>
 
@@ -79,7 +79,7 @@ git merge feature/lesson-list
 ## क्या कभी commit नहीं होना चाहिए
 
 Android projects बहुत सी ऐसी files बनाते हैं जो history में नहीं होनी चाहिए। कुछ बस शोर हैं; दो
-सच में ख़तरनाक हैं।
+सच में खतरनाक हैं।
 
 <FileTree
   caption="जो आपकी लिखी हुई हैं वे Git में जानी चाहिए। Generated, machine-specific या secret files बाहर रहनी चाहिए।"
@@ -113,29 +113,29 @@ secrets.properties
 
 <Warning>
 Signing keystore वह इकलौती file है जो न वापस मिल सकती है न बदली जा सकती है। Leak हो गई तो कोई
-भी ऐसा update publish कर सकता है जिसे Google Play आपका मान लेगा। खो गई तो आप ख़ुद कभी अपनी app
+भी ऐसा update publish कर सकता है जिसे Google Play आपका मान लेगा। खो गई तो आप खुद कभी अपनी app
 उस पहचान से update नहीं कर पाएँगे। इसे Git से बाहर रखिए, और कहीं अलग backup कीजिए।
 </Warning>
 
-## चीज़ें वापस करना
+## चीजें वापस करना
 
-जो commands असल में चाहिए होते हैं, कितने ख़तरनाक हैं उसके क्रम में:
+जो commands असल में चाहिए होते हैं, कितने खतरनाक हैं उसके क्रम में:
 
 | स्थिति | Command | काम जाएगा? |
 | --- | --- | --- |
-| ग़लती से file stage हो गई | `git restore --staged <file>` | नहीं |
+| गलती से file stage हो गई | `git restore --staged <file>` | नहीं |
 | एक file के edits फेंकने हैं | `git restore <file>` | हाँ, वह file |
-| पिछले commit का message ग़लत था | `git commit --amend` | नहीं |
+| पिछले commit का message गलत था | `git commit --amend` | नहीं |
 | पिछला commit हटाना है, बदलाव रखने हैं | `git reset --soft HEAD~1` | नहीं |
 | Commit और उसके बदलाव दोनों जाने हैं | `git reset --hard HEAD~1` | हाँ |
 | Push हो चुका है और वापस करना है | `git revert <hash>` | नहीं — उल्टा commit जोड़ता है |
 
-<Pitfall title="दो जो सच में नुक़सान करते हैं">
+<Pitfall title="दो जो सच में नुकसान करते हैं">
 **बिना commit किए काम पर `git reset --hard`।** यह वापस नहीं आता — लौटने के लिए कोई snapshot ही
 नहीं है। पहले commit, फिर reset। गंदा commit बाद में amend हो सकता है; गया हुआ काम नहीं।
 
 **दूसरों की pull की हुई history बदलना।** `--amend` और `reset` commit hashes बदल देते हैं। Shared
-branch पर इससे बाक़ी सबको तकलीफ़ होती है। जिस branch को सिर्फ़ आपने छुआ है, वहाँ दोनों बिलकुल safe
+branch पर इससे बाकी सबको तकलीफ होती है। जिस branch को सिर्फ आपने छुआ है, वहाँ दोनों बिलकुल safe
 हैं।
 </Pitfall>
 
@@ -150,10 +150,10 @@ branch पर इससे बाक़ी सबको तकलीफ़ ह�
     `git switch -c phase-1/null-safety`। खुलकर experiment कीजिए — branch फेंकने के लिए ही है।
   </TimelineItem>
   <TimelineItem title="जब भी कुछ चल जाए" meta="commit">
-    हर उस जगह commit कीजिए जहाँ काम खोने पर दुख होगा। छोटे commits मुफ़्त हैं; गई हुई दोपहर नहीं।
+    हर उस जगह commit कीजिए जहाँ काम खोने पर दुख होगा। छोटे commits मुफ्त हैं; गई हुई दोपहर नहीं।
   </TimelineItem>
-  <TimelineItem title="आख़िर में" meta="merge और push">
-    `main` में merge कीजिए और GitHub पर push। Course ख़त्म होने तक वह repository आपका portfolio
+  <TimelineItem title="आखिर में" meta="merge और push">
+    `main` में merge कीजिए और GitHub पर push। Course खत्म होने तक वह repository आपका portfolio
     है, जिसमें commit history इसका सबूत है कि आप काम कैसे करते हैं।
   </TimelineItem>
 </Timeline>
@@ -167,7 +167,7 @@ branch पर इससे बाक़ी सबको तकलीफ़ ह�
 3. जान-बूझकर `local.properties` commit कीजिए। अब उसे disk से हटाए बिना tracking से निकालिए और
    `.gitignore` में डालिए। कौन सा command file रखता है पर tracking बंद कर देता है?
 4. एक branch बनाइए, एक commit कीजिए, `main` पर वापस आइए, और file देखिए। समझाइए कि आपका बदलाव
-   ग़ायब क्यों हुआ — और यह bug क्यों नहीं है।
+   गायब क्यों हुआ — और यह bug क्यों नहीं है।
 
 ## सारांश
 
@@ -184,7 +184,7 @@ branch पर इससे बाक़ी सबको तकलीफ़ ह�
 <Interview title="यह Git का सवाल नहीं, समझ का सवाल है">
 "Android project में आप क्या commit करेंगे और क्या नहीं?"
 
-`build/`, `.gradle/` और `.idea/` का नाम लेना बताता है कि आप generated चीज़ें पहचानते हैं।
+`build/`, `.gradle/` और `.idea/` का नाम लेना बताता है कि आप generated चीजें पहचानते हैं।
 `local.properties` का नाम बताता है कि आपने team में काम किया है। Keystore का नाम लेना — और यह
 कहना कि उसे बदला नहीं जा सकता — बताता है कि आपने app ship की है।
 </Interview>

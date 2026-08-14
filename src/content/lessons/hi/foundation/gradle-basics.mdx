@@ -1,26 +1,26 @@
 ---
 title: Gradle, बिना डर के
-description: Gradle वही जगह है जहाँ beginners के दिन निकल जाते हैं। यह मुश्किल नहीं है — बस यह दिख जाए कि build file सिर्फ़ Kotlin code है जो एक pipeline configure करता है।
+description: Gradle वही जगह है जहाँ beginners के दिन निकल जाते हैं। यह मुश्किल नहीं है — बस यह दिख जाए कि build file सिर्फ Kotlin code है जो एक pipeline configure करता है।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 हर Android project में कुछ files ऐसी होती हैं जो आपने लिखी नहीं, पढ़ नहीं सकते, और छूने से डरते
-हैं। फिर जब कोई tutorial कहता है "यह line build.gradle में डालो", तो आप ग़लत वाली में paste कर
+हैं। फिर जब कोई tutorial कहता है "यह line build.gradle में डालो", तो आप गलत वाली में paste कर
 देते हैं, build टूटती है, और सीखने को कुछ मिलता नहीं।
 
-बीस मिनट का ढाँचा यह समस्या हमेशा के लिए ख़त्म कर देता है।
+बीस मिनट का ढाँचा यह समस्या हमेशा के लिए खत्म कर देता है।
 
 ## Gradle एक pipeline है, कोई रहस्य नहीं
 
-Build कड़ियों की एक शृंखला है, जहाँ हर कड़ी एक चीज़ को दूसरी में बदलती है। Gradle का काम है इन
+Build कड़ियों की एक शृंखला है, जहाँ हर कड़ी एक चीज को दूसरी में बदलती है। Gradle का काम है इन
 कड़ियों को सही क्रम में चलाना, और जिनके inputs नहीं बदले उन्हें छोड़ देना।
 
-<Figure caption="हर Android build यही steps चलाती है। Build fail होने पर message बताता है कौन सा step — इसीलिए task का नाम पढ़ लेना ही अक्सर समस्या ढूँढ़ने के लिए काफ़ी होता है।">
+<Figure caption="हर Android build यही steps चलाती है। Build fail होने पर message बताता है कौन सा step — इसीलिए task का नाम पढ़ लेना ही अक्सर समस्या ढूँढ़ने के लिए काफी होता है।">
   <PipelineDiagram
     title="Android build असल में करती क्या है"
-    description="Resources compile होते हैं, Kotlin class files में compile होता है, R8 उन्हें DEX बनाता है, सब कुछ APK या bundle में package होता है, और आख़िर में sign होता है।"
+    description="Resources compile होते हैं, Kotlin class files में compile होता है, R8 उन्हें DEX बनाता है, सब कुछ APK या bundle में package होता है, और आखिर में sign होता है।"
     stages={[
       { label: "Resources", sub: "aapt2", accent: "sky" },
       { label: "Compile", sub: "kotlinc", accent: "violet" },
@@ -32,7 +32,7 @@ Build कड़ियों की एक शृंखला है, जहा�
 </Figure>
 
 ये steps ही **tasks** हैं। `./gradlew assembleDebug` का मतलब है आप `assembleDebug` नाम का task
-माँग रहे हैं; Gradle ख़ुद पता करता है कि वह किस-किस पर निर्भर है और उन्हें भी चला देता है।
+माँग रहे हैं; Gradle खुद पता करता है कि वह किस-किस पर निर्भर है और उन्हें भी चला देता है।
 
 ```bash title="Terminal" no-glossary
 ./gradlew tasks              # मैं क्या माँग सकता हूँ?
@@ -44,7 +44,7 @@ Build कड़ियों की एक शृंखला है, जहा�
 ## Files, और कौन सी क्या है
 
 <FileTree
-  caption="दो build files हैं, और दोनों का काम अलग है। 'मैंने ग़लत जगह paste कर दिया' वाली लगभग हर ग़लती इन्हीं दो के confusion से आती है।"
+  caption="दो build files हैं, और दोनों का काम अलग है। 'मैंने गलत जगह paste कर दिया' वाली लगभग हर गलती इन्हीं दो के confusion से आती है।"
   entries={[
     { name: "MyApp/", kind: "folder" },
     { name: "settings.gradle.kts", kind: "gradle", depth: 1, note: "कौन से modules हैं" },
@@ -64,8 +64,8 @@ Build कड़ियों की एक शृंखला है, जहा�
 />
 
 <Tip bare>
-वह एक नियम जो ज़्यादातर confusion ख़त्म कर देता है: **library dependencies module की
-`app/build.gradle.kts` में जाती हैं।** Root वाली `build.gradle.kts` सिर्फ़ यह बताती है कि पूरा
+वह एक नियम जो ज्यादातर confusion खत्म कर देता है: **library dependencies module की
+`app/build.gradle.kts` में जाती हैं।** Root वाली `build.gradle.kts` सिर्फ यह बताती है कि पूरा
 project कौन से plugins, किस version में इस्तेमाल कर सकता है।
 </Tip>
 
@@ -110,7 +110,7 @@ dependencies {
 | --- | --- |
 | `plugins` | यह module है क्या — app, या library? |
 | `android` | कौन से SDK levels, कौन सा package name, कौन से build types? |
-| `buildTypes` | Debug और release में फ़र्क़ क्या हो? |
+| `buildTypes` | Debug और release में फर्क क्या हो? |
 | `dependencies` | इस module को बाहर का कौन सा code चाहिए? |
 
 दो lines पर थोड़ा रुकिए। `namespace` वह package है जिसमें आपकी generated `R` class बनती है।
@@ -134,12 +134,12 @@ junit = { module = "junit:junit", version = "4.13.2" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 ```
 
-एक जगह version बदलिए, और हर module उसे उठा लेता है। Multi-module project में यही फ़र्क़ है कि
+एक जगह version बदलिए, और हर module उसे उठा लेता है। Multi-module project में यही फर्क है कि
 upgrade एक मिनट लेता है या पूरी दोपहर।
 
 ## अंदर की बात: पहली build धीमी क्यों होती है
 
-Gradle दो अलग phases में चलता है, और आप किस phase में हैं यह पता होना ज़्यादातर उलझाने वाले
+Gradle दो अलग phases में चलता है, और आप किस phase में हैं यह पता होना ज्यादातर उलझाने वाले
 behaviour को समझा देता है।
 
 <Timeline>
@@ -148,8 +148,8 @@ behaviour को समझा देता है।
     code **अभी** चलता है — उस task के लिए भी जो आपने माँगा ही नहीं। इसीलिए build script में पड़ा
     एक आवारा `println` या file read हर एक build को धीमा कर देता है।
   </TimelineItem>
-  <TimelineItem title="Execution" meta="सिर्फ़ जो ज़रूरी है">
-    आपने जो माँगा उसके लिए ज़रूरी tasks चलते हैं। जिन tasks के inputs और outputs नहीं बदले, उन्हें
+  <TimelineItem title="Execution" meta="सिर्फ जो जरूरी है">
+    आपने जो माँगा उसके लिए जरूरी tasks चलते हैं। जिन tasks के inputs और outputs नहीं बदले, उन्हें
     छोड़ दिया जाता है और `UP-TO-DATE` लिख दिया जाता है।
   </TimelineItem>
 </Timeline>
@@ -162,10 +162,10 @@ BUILD SUCCESSFUL in 12s
 38 actionable tasks: 6 executed, 32 up-to-date
 ```
 
-आख़िरी line ही काम की है। 32 tasks इसलिए छोड़े गए क्योंकि उनसे जुड़ी कोई चीज़ बदली ही नहीं। यही
-Gradle का incremental build है — और इसीलिए `./gradlew clean` आख़िरी रास्ता होना चाहिए, आदत नहीं।
+आखिरी line ही काम की है। 32 tasks इसलिए छोड़े गए क्योंकि उनसे जुड़ी कोई चीज बदली ही नहीं। यही
+Gradle का incremental build है — और इसीलिए `./gradlew clean` आखिरी रास्ता होना चाहिए, आदत नहीं।
 
-## `implementation` और `api` में फ़र्क़
+## `implementation` और `api` में फर्क
 
 ```kotlin title="app/build.gradle.kts" numbered
 dependencies {
@@ -174,25 +174,25 @@ dependencies {
 }
 ```
 
-`implementation` library को सिर्फ़ इस module तक सीमित रखता है। `api` उसे उन सबको दे देता है जो
+`implementation` library को सिर्फ इस module तक सीमित रखता है। `api` उसे उन सबको दे देता है जो
 इस module पर निर्भर हैं।
 
-लगभग हमेशा `implementation` चुनिए। इसका मतलब है कि उस library को बदलने पर सिर्फ़ यही module
-दोबारा compile होगा — बड़े project में यही फ़र्क़ पाँच second और दो मिनट की build के बीच का है।
+लगभग हमेशा `implementation` चुनिए। इसका मतलब है कि उस library को बदलने पर सिर्फ यही module
+दोबारा compile होगा — बड़े project में यही फर्क पाँच second और दो मिनट की build के बीच का है।
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
-<Pitfall title="तीन ग़लतियाँ जो सबसे ज़्यादा समय खाती हैं">
+<Pitfall title="तीन गलतियाँ जो सबसे ज्यादा समय खाती हैं">
 **Dependency को root `build.gradle.kts` में paste कर देना।** वह module की file में जानी चाहिए।
 जो error मिलता है — `implementation` का unresolved reference — वह यह कभी नहीं बताता।
 
-**ज़रा सी दिक़्क़त पर तुरंत `clean` मार देना।** वह हर cached output फेंक देता है और अगली build पूरी
-दोबारा बनाती है। पहले `./gradlew --stop` या `./gradlew build --rerun-tasks` आज़माइए; `clean`
+**जरा सी दिक्कत पर तुरंत `clean` मार देना।** वह हर cached output फेंक देता है और अगली build पूरी
+दोबारा बनाती है। पहले `./gradlew --stop` या `./gradlew build --rerun-tasks` आजमाइए; `clean`
 तभी जब सच में पुराना output शक हो।
 
-**बिना changelog पढ़े library version बढ़ा देना।** Gradle ख़ुशी-ख़ुशी नया version resolve कर देगा जो
+**बिना changelog पढ़े library version बढ़ा देना।** Gradle खुशी-खुशी नया version resolve कर देगा जो
 behaviour चुपचाप बदल देगा। `./gradlew :app:dependencies` से देखिए कि असल में मिला क्या —
-transitive dependencies की वजह से जो version माँगा था ज़रूरी नहीं वही मिले।
+transitive dependencies की वजह से जो version माँगा था जरूरी नहीं वही मिले।
 </Pitfall>
 
 ## अभ्यास
@@ -202,9 +202,9 @@ transitive dependencies की वजह से जो version माँगा �
 2. `app/build.gradle.kts` के top level पर `println("configuring")` डालिए। कोई भी task चलाइए और
    देखिए यह कब print होता है। यह कौन से phase में है? अब उसे हटा दीजिए।
 3. `./gradlew assembleDebug` लगातार दो बार चलाइए। `actionable tasks` वाली line compare कीजिए।
-   फ़र्क़ समझाइए।
+   फर्क समझाइए।
 4. एक dependency को `implementation` से `api` में बदलिए। दिखने में कुछ नहीं बदलेगा — समझाइए
-   क्यों, और कब यह फ़र्क़ पड़ने लगेगा।
+   क्यों, और कब यह फर्क पड़ने लगेगा।
 
 ## सारांश
 
@@ -213,15 +213,15 @@ transitive dependencies की वजह से जो version माँगा �
 | Task | Build का एक step; जिसे आप असल में बुलाते हैं |
 | Wrapper (`./gradlew`) | Gradle version project के अंदर pin करता है |
 | Configuration phase | Build files पढ़ता है, task graph बनाता है — हर बार चलता है |
-| Execution phase | सिर्फ़ ज़रूरी और पुराने पड़े tasks चलाता है |
+| Execution phase | सिर्फ जरूरी और पुराने पड़े tasks चलाता है |
 | Version catalogue | `libs.versions.toml` — हर version के लिए एक ही जगह |
-| `implementation` | Dependency सिर्फ़ इस module तक सीमित |
+| `implementation` | Dependency सिर्फ इस module तक सीमित |
 | `api` | Dependency इस module के consumers तक खुली |
 
-<Interview title="जिन्होंने ship किया है और जिन्होंने सिर्फ़ tutorial देखे हैं, उन्हें अलग करता है">
+<Interview title="जिन्होंने ship किया है और जिन्होंने सिर्फ tutorial देखे हैं, उन्हें अलग करता है">
 "`api` के बजाय `implementation` क्यों बेहतर है?"
 
 जवाब correctness का नहीं, build time का है: `api` उस library को हर dependent module के compile
-classpath पर डाल देता है, इसलिए उसे बदलने पर बहुत ज़्यादा दोबारा compile होता है। यह भी कहिए कि
-इससे आपके अंदर के फ़ैसले module की public surface पर leak हो जाते हैं।
+classpath पर डाल देता है, इसलिए उसे बदलने पर बहुत ज्यादा दोबारा compile होता है। यह भी कहिए कि
+इससे आपके अंदर के फैसले module की public surface पर leak हो जाते हैं।
 </Interview>

@@ -1,6 +1,6 @@
 ---
 title: Enum classes, aur kab sealed behtar hai
-description: Enum naamon ka ek tay set hai jo behaviour bhi rakh sakta hai. Wo kahan rukta hai, ye jaanna utna hi kaam ka hai jitna wo karta kya hai.
+description: Enum naamon ka ek fixed set hai jo behaviour bhi rakh sakta hai. Wo kahan rukta hai, ye jaanna utna hi kaam ka hai jitna wo karta kya hai.
 updated: 2026-08-12
 ---
 
@@ -33,11 +33,11 @@ Har constant ke paas wahi fields hain. Yahi ek-jaisapan `sealed` se farq hai.
   question={'`Status.PENDING === Status.valueOf("PENDING")` kya lautata hai?'}
   options={[
     "false — valueOf naya constant banata hai",
-    "true — har constant ek hi saanjha object hai",
+    "true — har constant ek hi shared object hai",
     "Compile hi nahi hoga; enums par `===` nahi chalta",
   ]}
   answer={1}
-  explanation="Har enum constant ek hi baar banta hai aur saanjha rehta hai, bilkul `object` declaration ki tarah. `valueOf` kuch banata nahi, wahi instance dhoondhta hai, isliye reference barabari bhi sach hai. Isiliye enum par `when` bina `is` ke mila leta hai."
+  explanation="Har enum constant ek hi baar banta hai aur shared rehta hai, bilkul `object` declaration ki tarah. `valueOf` kuch banata nahi, wahi instance dhoondhta hai, isliye reference barabari bhi sach hai. Isiliye enum par `when` bina `is` ke mila leta hai."
 />
 
 ## Har constant ka apna behaviour
@@ -55,7 +55,7 @@ fun main() = Op.entries.forEach { println("${it.name}: ${it.apply(3, 4)}") }
 
 <Detail summary="`values()` nahi, `entries` use karo">
 `values()` har call par nayi array banata hai, isliye use loop ya Compose recomposition ke andar
-bulane se chupchap kachra banta rehta hai. `entries` (Kotlin 1.9+) ek saanjhi immutable list
+bulane se chupchap kachra banta rehta hai. `entries` (Kotlin 1.9+) ek shared immutable list
 lautata hai. Naye code mein purana roop chunne ki koi wajah nahi.
 </Detail>
 
@@ -75,7 +75,7 @@ lautata hai. Naye code mein purana roop chunne ki koi wajah nahi.
 **`ordinal` ko save karna.** Database mein `2` likhkar use `SHIPPED` padhna us din tootega jis
 din koi beech mein ek constant ghusa dega. `name` save karo, ya apna khud ka `val code: Int`.
 
-**Enum par `when` mein `else`.** Wahi jaal jo sealed ke saath tha: naya constant jodna compile
+**Enum par `when` mein `else`.** Wahi trap jo sealed ke saath tha: naya constant jodna compile
 error hona chahiye, aur `else` use chupchap nigal jata hai. Har constant likho, ya jahan theek
 baithe wahan `entries.forEach` use karo.
 </Pitfall>

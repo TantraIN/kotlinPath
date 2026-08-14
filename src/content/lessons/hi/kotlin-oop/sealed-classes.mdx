@@ -1,5 +1,5 @@
 ---
-title: Sealed classes — state का model बिना ग़लती के
+title: Sealed classes — state का model बिना गलती के
 description: Sealed type compiler को बता देता है कि उसके subtypes कौन-कौन से होंगे। बदले में compiler आपको बताता है जब आप कोई भूल जाएँ।
 updated: 2026-08-12
 ---
@@ -18,7 +18,7 @@ case जोड़ता है जो आपने handle नहीं किय
     { name: "Success", kind: "data class", members: ["val items: List<T>"], accent: "emerald" },
     { name: "Error", kind: "data class", members: ["val message: String"], accent: "rose" },
   ]}
-  relation="जिनकी इजाज़त है"
+  relation="जिनकी इजाजत है"
   caption="तीन states, और compiler जानता है कि चौथा कोई नहीं होगा जिसका उसे पता न हो।"
 />
 
@@ -42,14 +42,14 @@ fun main() {
 }
 ```
 
-ध्यान दीजिए कि `else` है ही नहीं। उसका न होना ही पूरी ख़ूबी है।
+ध्यान दीजिए कि `else` है ही नहीं। उसका न होना ही पूरी खूबी है।
 
 <Quiz
   question="Sealed interface में चौथा state `Empty` जोड़ने पर क्या होगा?"
   options={[
     "`render` चुपचाप निकल जाएगा और कुछ नहीं लौटाएगा",
     "`render` तब तक compile नहीं होगा जब तक `Empty` handle न हो",
-    "`Empty` दिखते ही `render` चलते वक़्त exception फेंकेगा",
+    "`Empty` दिखते ही `render` चलते वक्त exception फेंकेगा",
   ]}
   answer={1}
   explanation="`when` पूरा है और उसमें `else` नहीं है, इसलिए नया subtype जोड़ते ही वह अधूरा हो जाता है — और यह compile error है। Bug उसी पल बताता है जब वह आया, न कि जब किसी user को वह state मिली। `else -> ...` लिखना इस guarantee को फेंक देना है।"
@@ -65,19 +65,19 @@ fun main() {
 | किस लिए | Tabs, sort order, status flags | Screen state, results, events |
 
 <Tip bare>
-अगर किसी एक case को ऐसा data चाहिए जो बाक़ियों को नहीं, तो `sealed` चाहिए। अगर हर case सिर्फ़ एक नाम
+अगर किसी एक case को ऐसा data चाहिए जो बाकियों को नहीं, तो `sealed` चाहिए। अगर हर case सिर्फ एक नाम
 है, तो `enum` चाहिए।
 </Tip>
 
 <Detail summary="sealed interface या sealed class">
-`sealed interface` बेहतर है। कोई subtype कई interfaces implement कर सकता है पर class सिर्फ़ एक बढ़ा
-सकता है, इसलिए interface वाला रूप जोड़ने-तोड़ने लायक़ रहता है। `sealed class` तभी उठाइए जब cases सच में
+`sealed interface` बेहतर है। कोई subtype कई interfaces implement कर सकता है पर class सिर्फ एक बढ़ा
+सकता है, इसलिए interface वाला रूप जोड़ने-तोड़ने लायक रहता है। `sealed class` तभी उठाइए जब cases सच में
 साझी stored state रखते हों, जो कम ही होता है।
 </Detail>
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
-<Pitfall title="दो जो चुपचाप पूरा फ़ायदा खा जाती हैं">
+<Pitfall title="दो जो चुपचाप पूरा फायदा खा जाती हैं">
 **Sealed type पर `when` में `else` जोड़ना।** आज भी compile होगा और हमेशा होता रहेगा — उस दिन भी जब नया
 case आएगा और बिना handle हुए `else` में गिर जाएगा। हर case अलग से लिखिए।
 
@@ -87,12 +87,12 @@ case आएगा और बिना handle हुए `else` में गि�
 
 ## अभ्यास
 
-1. `render` को छुए बिना `UiState` में `Empty` case जोड़िए। Compiler की ग़लती पढ़िए, फिर ठीक कीजिए।
+1. `render` को छुए बिना `UiState` में `Empty` case जोड़िए। Compiler की गलती पढ़िए, फिर ठीक कीजिए।
 2. `render` को `else -> "unknown"` के साथ लिखिए, एक और case जोड़िए, और देखिए कि कोई चेतावनी नहीं आती।
-   यही चीज़ आप छोड़ रहे हैं।
+   यही चीज आप छोड़ रहे हैं।
 3. Payment result को sealed interface से model कीजिए — `Approved(txnId)`, `Declined(reason)` और
    `Pending`। तीनों में से कौन सा `object` होना चाहिए?
-4. अपने लिखे किसी `enum` को sealed interface में बदलिए। क्या किसी case को ऐसा field मिला जो सिर्फ़ उसी
+4. अपने लिखे किसी `enum` को sealed interface में बदलिए। क्या किसी case को ऐसा field मिला जो सिर्फ उसी
    को चाहिए था?
 
 ## सारांश

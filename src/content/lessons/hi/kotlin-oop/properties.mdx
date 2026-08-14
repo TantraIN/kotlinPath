@@ -1,11 +1,11 @@
 ---
 title: Properties, custom accessors, lateinit और lazy
-description: Kotlin की property field नहीं है। वह एक getter है, और ज़रूरत पर setter — इसीलिए वह calculate कर सकती है, जाँच सकती है, या इंतज़ार कर सकती है।
+description: Kotlin की property field नहीं है। वह एक getter है, और जरूरत पर setter — इसीलिए वह calculate कर सकती है, जाँच सकती है, या इंतजार कर सकती है।
 updated: 2026-08-12
 ---
 
 <KeyIdea>
-Kotlin की हर property असल में **दो functions का जोड़ा** है। इसीलिए `user.fullName` मौक़े पर बन सकता
+Kotlin की हर property असल में **दो functions का जोड़ा** है। इसीलिए `user.fullName` मौके पर बन सकता
 है और बुलाने वाले को पता भी नहीं चलता।
 </KeyIdea>
 
@@ -18,7 +18,7 @@ class User(val first: String, val last: String) {
     val fullName: String
         get() = "$first $last"
 
-    // रखी हुई, पर लिखते वक़्त जाँची जाती है
+    // रखी हुई, पर लिखते वक्त जाँची जाती है
     var age: Int = 0
         set(value) {
             field = if (value < 0) 0 else value
@@ -33,21 +33,21 @@ fun main() {
 }
 ```
 
-`field` ही **backing field** है — असली जगह। वह सिर्फ़ accessor के अंदर होता है, और तभी जब आप उसे
+`field` ही **backing field** है — असली जगह। वह सिर्फ accessor के अंदर होता है, और तभी जब आप उसे
 लिखें। `fullName` उसका नाम ही नहीं लेता, इसलिए उसके लिए कोई जगह बनती ही नहीं।
 
 <Quiz
   question="ऊपर वाली `fullName` property हर object में कितनी memory लेती है?"
   options={[
-    "एक String reference, बाक़ी properties जितनी",
+    "एक String reference, बाकी properties जितनी",
     "बिलकुल नहीं — वह एक function है, हर बार पढ़ने पर बनता है",
     "नाम कितना लंबा है उस पर निर्भर करता है",
   ]}
   answer={1}
-  explanation="जिस property में सिर्फ़ custom getter हो और `field` का ज़िक्र न हो, उसका backing field बनता ही नहीं। वह एक method बन जाती है। सौदा यही है: memory नहीं, पर हर बार पढ़ने पर काम।"
+  explanation="जिस property में सिर्फ custom getter हो और `field` का जिक्र न हो, उसका backing field बनता ही नहीं। वह एक method बन जाती है। सौदा यही है: memory नहीं, पर हर बार पढ़ने पर काम।"
 />
 
-## Value को टालने के तीन तरीक़े
+## Value को टालने के तीन तरीके
 
 <Tabs>
   <Tab label="lateinit">
@@ -63,7 +63,7 @@ class ProfileScreen {
 }
 ```
 
-सिर्फ़ `var` पर, सिर्फ़ non-null object types पर — `Int`, `Boolean` या `String?` पर कभी नहीं।
+सिर्फ `var` पर, सिर्फ non-null object types पर — `Int`, `Boolean` या `String?` पर कभी नहीं।
 
   </Tab>
   <Tab label="lazy">
@@ -73,7 +73,7 @@ class ProfileScreen {
 ```kotlin title="Lazy.kt" numbered runnable
 class Repo {
     val database: String by lazy {
-        println("building…")      // ज़्यादा से ज़्यादा एक बार
+        println("building…")      // ज्यादा से ज्यादा एक बार
         "connection"
     }
 }
@@ -91,18 +91,18 @@ Default से thread-safe; एक ही thread छूता हो तो `Laz
   </Tab>
   <Tab label="nullable">
 
-ईमानदार चुनाव, जब value सच में ग़ायब हो सकती हो।
+ईमानदार चुनाव, जब value सच में गायब हो सकती हो।
 
 ```kotlin title="Nullable.kt" numbered
 class Session {
-    var user: User? = null        // यहाँ ग़ायब होना एक असली स्थिति है
+    var user: User? = null        // यहाँ गायब होना एक असली स्थिति है
 }
 ```
 
   </Tab>
 </Tabs>
 
-<Detail summary="lateinit सिर्फ़ कम typing वाला nullable क्यों नहीं है">
+<Detail summary="lateinit सिर्फ कम typing वाला nullable क्यों नहीं है">
 `lateinit` null का *check* हटाता है, null नहीं। जल्दी पढ़ने पर
 `UninitializedPropertyAccessException` आता है — लंबे नाम वाला `NullPointerException`, और
 compiler से कोई मदद नहीं। इसे तभी उठाइए जब framework assignment का क्रम guarantee करता हो।
@@ -120,12 +120,12 @@ compiler से कोई मदद नहीं। इसे तभी उठ�
   ]}
 />
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
 <Pitfall title="दो जो अभी नहीं, बाद में काटती हैं">
-**महँगा computed property।** `val total get() = items.sumOf { it.price }` मुफ़्त लगता है और हर बार
+**महँगा computed property।** `val total get() = items.sumOf { it.price }` मुफ्त लगता है और हर बार
 पढ़ने पर दोबारा चलता है। Compose के `LazyColumn` में वह हर item पर, हर frame में चलेगा। या उसे store
-कीजिए, या function बना दीजिए ताकि क़ीमत call site पर दिखे।
+कीजिए, या function बना दीजिए ताकि कीमत call site पर दिखे।
 
 **Fragment की view binding पर `lateinit`।** View, Fragment से पहले मर जाती है, इसलिए
 `onDestroyView` के बाद उसे छूने वाला कुछ भी फेंकता है। उसकी जगह nullable-backed pattern इस्तेमाल
@@ -136,11 +136,11 @@ compiler से कोई मदद नहीं। इसे तभी उठ�
 
 1. `User` में एक computed `initials` property जोड़िए जो `"A.R."` लौटाए। साबित कीजिए कि उसका
    backing field नहीं है — देखिए कि उसे initialiser चाहिए ही नहीं।
-2. एक `var password: String` लिखिए जिसका setter आठ से छोटी चीज़ को मना कर दे और पुरानी value बचाए
+2. एक `var password: String` लिखिए जिसका setter आठ से छोटी चीज को मना कर दे और पुरानी value बचाए
    रखे।
 3. एक महँगे object को `by lazy` में लपेटिए और पहले पढ़ने से पहले-बाद print करके साबित कीजिए कि वह
    कब बना।
-4. एक `lateinit var` को nullable `var` में बदलिए और ग़ायब होने को `?:` से सँभालिए। रात दो बजे किस
+4. एक `lateinit var` को nullable `var` में बदलिए और गायब होने को `?:` से सँभालिए। रात दो बजे किस
    version को debug करना पसंद करेंगे?
 
 ## सारांश
@@ -152,4 +152,4 @@ compiler से कोई मदद नहीं। इसे तभी उठ�
 | `field` | Accessor के अंदर, असली जगह तक पहुँचने के लिए |
 | `lateinit var` | Framework पहले इस्तेमाल से पहले भर देता हो |
 | `by lazy { }` | महँगा, read-only, शायद कभी चाहिए ही न हो |
-| `T?` | ग़ायब होना एक असली, अपेक्षित स्थिति हो |
+| `T?` | गायब होना एक असली, अपेक्षित स्थिति हो |

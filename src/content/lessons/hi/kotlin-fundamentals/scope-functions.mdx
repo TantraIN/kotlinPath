@@ -1,20 +1,20 @@
 ---
 title: let, run, with, apply, also — कौन सा कब
-description: पाँच functions जो लगभग एक जैसा ही काम करते हैं। इन्हें अलग करने वाली table एक screen में आ जाती है, और वह पता हो तो अंदाज़ा लगाना हमेशा के लिए ख़त्म।
+description: पाँच functions जो लगभग एक जैसा ही काम करते हैं। इन्हें अलग करने वाली table एक screen में आ जाती है, और वह पता हो तो अंदाजा लगाना हमेशा के लिए खत्म।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
-हर Kotlin codebase इन्हें इस्तेमाल करता है, अक्सर ग़लत तरीक़े से। ये सिर्फ़ दो बातों पर अलग होते हैं,
-और वे दो बातें दिख जाएँ तो फिर कभी अंदाज़ा नहीं लगाना पड़ता।
+हर Kotlin codebase इन्हें इस्तेमाल करता है, अक्सर गलत तरीके से। ये सिर्फ दो बातों पर अलग होते हैं,
+और वे दो बातें दिख जाएँ तो फिर कभी अंदाजा नहीं लगाना पड़ता।
 
 ## दो सवाल
 
 हर scope function बस इन्हीं का जवाब देता है:
 
 1. Block के अंदर receiver को **`it`** कहते हैं या **`this`**?
-2. पूरी call **block का नतीजा** लौटाती है या **receiver ख़ुद**?
+2. पूरी call **block का नतीजा** लौटाती है या **receiver खुद**?
 
 | Function | Receiver | लौटाता है |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ fun main() {
 ```
 
 `let` तब जब value को नाम देना हो, या जब `?.let { }` null से बचा रहा हो। `run` तब जब एक ही object
-के कई members बुला रहे हों और `it.` सिर्फ़ शोर लग रहा हो।
+के कई members बुला रहे हों और `it.` सिर्फ शोर लग रहा हो।
 
 ## Receiver वापस: `apply` और `also`
 
@@ -61,14 +61,14 @@ fun main() {
         timeout = 5000
     }
 
-    // also — उसके साथ कुछ कीजिए, पर आगे जाने वाली चीज़ बदले बिना
+    // also — उसके साथ कुछ कीजिए, पर आगे जाने वाली चीज बदले बिना
     val checked = request.also { println("built $it") }
 
     println(checked)
 }
 ```
 
-`apply` चीज़ें set करने के लिए है। `also` chain के बीच में side effect के लिए — logging,
+`apply` चीजें set करने के लिए है। `also` chain के बीच में side effect के लिए — logging,
 validation, caching — जहाँ value वैसी की वैसी आगे जानी चाहिए।
 
 ## `with` थोड़ा अलग है
@@ -91,7 +91,7 @@ fun main() {
 ## चुनाव, एक-एक line में
 
 ```kotlin title="Choosing.kt" numbered
-user?.let { save(it) }                    // सिर्फ़ तब जब null न हो
+user?.let { save(it) }                    // सिर्फ तब जब null न हो
 val n = text.run { trim().length }        // कई members से एक value बनाइए
 val v = View(context).apply { id = 1 }    // बनाइए और configure कीजिए
 repo.load().also { Log.d("app", "$it") }  // झाँकिए, value बदले बिना
@@ -119,7 +119,7 @@ APIs को setters चाहिए। Type आपका अपना है त
 
 | मुझे चाहिए… | इस्तेमाल कीजिए |
 | --- | --- |
-| सिर्फ़ non-null पर code चलाना | `?.let { }` |
+| सिर्फ non-null पर code चलाना | `?.let { }` |
 | कई members से एक value बनाना | `run { }` |
 | Object बनाकर configure करना | `apply { }` |
 | Chain के बीच log या check, value वही रहे | `also { }` |

@@ -29,7 +29,7 @@ fun main() {
 }
 ```
 
-`operator` keyword ज़रूरी है। उसके बिना function सादा रह जाता है और `+` उसे ढूँढ नहीं पाता।
+`operator` keyword जरूरी है। उसके बिना function सादा रह जाता है और `+` उसे ढूँढ नहीं पाता।
 
 | आप लिखते हैं | Kotlin बुलाता है |
 | --- | --- |
@@ -44,7 +44,7 @@ fun main() {
 <Quiz
   question="आप `operator fun compareTo` लिखते हैं। कौन से operators चलने लगते हैं?"
   options={[
-    "सिर्फ़ `>`",
+    "सिर्फ `>`",
     "`<`, `>`, `<=` और `>=` — चारों",
     "सारी तुलनाएँ, `==` समेत",
   ]}
@@ -52,9 +52,9 @@ fun main() {
   explanation="चारों relational operators `compareTo(...)` को zero से मिलाने में बदलते हैं, इसलिए एक function पूरा set चालू कर देता है। `==` अलग है — वह `equals` पर जाता है, इसीलिए data class `==` देती है पर `<` नहीं।"
 />
 
-## `inline` — lambda की क़ीमत
+## `inline` — lambda की कीमत
 
-हर lambda जो आप pass करते हैं, आम तौर पर एक object होता है। तेज़ चलते loop में वह allocation जुड़-जुड़कर
+हर lambda जो आप pass करते हैं, आम तौर पर एक object होता है। तेज चलते loop में वह allocation जुड़-जुड़कर
 भारी हो जाता है।
 
 ```kotlin title="Inline.kt" numbered runnable
@@ -82,7 +82,7 @@ object बनता ही नहीं।
 ```kotlin title="Noinline.kt" numbered
 inline fun run2(a: () -> Unit, noinline b: () -> Unit): () -> Unit {
     a()
-    return b        // सिर्फ़ इसलिए मुमकिन है कि b inline नहीं है
+    return b        // सिर्फ इसलिए मुमकिन है कि b inline नहीं है
 }
 ```
 
@@ -90,7 +90,7 @@ inline fun run2(a: () -> Unit, noinline b: () -> Unit): () -> Unit {
   <Tab label="crossinline">
 
 Inline रहने देता है, पर non-local `return` मना कर देता है — जब lambda किसी दूसरे object के अंदर चलता
-हो तब ज़रूरी।
+हो तब जरूरी।
 
 ```kotlin title="Crossinline.kt" numbered
 inline fun onBackground(crossinline work: () -> Unit) {
@@ -101,34 +101,34 @@ inline fun onBackground(crossinline work: () -> Unit) {
   </Tab>
 </Tabs>
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
-<Pitfall title="दो जो फ़ायदा ही खा जाती हैं">
+<Pitfall title="दो जो फायदा ही खा जाती हैं">
 **बड़े function को inline करना।** Body हर call site पर copy होती है, इसलिए बड़ा `inline` function हर
-जगह bytecode बढ़ा देता है। Lambda लेने वाले functions inline कीजिए; बस शौक़िया inline मत कीजिए। बेवजह
-हो तो compiler ख़ुद चेतावनी देता है।
+जगह bytecode बढ़ा देता है। Lambda लेने वाले functions inline कीजिए; बस बिना वजह inline मत कीजिए। बेवजह
+हो तो compiler खुद चेतावनी देता है।
 
-**Operator का ऐसा मतलब निकालना जो चौंका दे।** `operator fun Money.minus` साफ़ है।
-`operator fun User.plus(other: User)` नहीं — दो users को जोड़ने से होता क्या है, कोई अंदाज़ा नहीं लगा
-सकता। अगर मतलब तुरंत साफ़ न हो, नाम वाला function लिखिए।
+**Operator का ऐसा मतलब निकालना जो चौंका दे।** `operator fun Money.minus` साफ है।
+`operator fun User.plus(other: User)` नहीं — दो users को जोड़ने से होता क्या है, कोई अंदाजा नहीं लगा
+सकता। अगर मतलब तुरंत साफ न हो, नाम वाला function लिखिए।
 </Pitfall>
 
 ## अभ्यास
 
 1. `operator fun Money.unaryMinus()` जोड़िए ताकि `-a` चले, और `operator fun div(n: Int)` भी।
-2. `DateRange` class पर `operator fun contains` बनाइए ताकि `date in range` साफ़ पढ़े।
+2. `DateRange` class पर `operator fun contains` बनाइए ताकि `date in range` साफ पढ़े।
 3. Lambda लेने वाला एक `inline` function लिखिए, फिर `inline` हटाकर compiler की parameter वाली चेतावनी
    पढ़िए।
 4. किसी class में `operator fun invoke()` जोड़िए और instance को function की तरह बुलाइए। यह कब नाम वाले
-   method से साफ़ होगा — और कब बुरा?
+   method से साफ होगा — और कब बुरा?
 
 ## सारांश
 
 | बात | विवरण |
 | --- | --- |
-| `operator` | ज़रूरी; तय नाम को चिह्न से जोड़ता है |
+| `operator` | जरूरी; तय नाम को चिह्न से जोड़ता है |
 | `compareTo` | एक साथ `<`, `>`, `<=`, `>=` चालू करता है |
 | `equals` | `==` के पीछे; data class पहले से देती है |
 | `inline` | Body copy करता है; lambda object हटा देता है |
 | `noinline` / `crossinline` | एक lambda को छोड़ दीजिए, या non-local return रोकिए |
-| आम नियम | Overload तभी जब मतलब साफ़ हो |
+| आम नियम | Overload तभी जब मतलब साफ हो |

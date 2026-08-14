@@ -1,6 +1,6 @@
 ---
 title: CoroutineScope, Job और CoroutineContext
-description: Scope तय करता है कि coroutines कितना जिएँगे। यही सीमा ठीक रखना काम को उस screen से ज़्यादा जीने से रोकता है जिसने उसे शुरू किया था।
+description: Scope तय करता है कि coroutines कितना जिएँगे। यही सीमा ठीक रखना काम को उस screen से ज्यादा जीने से रोकता है जिसने उसे शुरू किया था।
 updated: 2026-08-12
 ---
 
@@ -26,7 +26,7 @@ fun main() = runBlocking {
 }
 ```
 
-Coroutine से विनम्रता से ख़त्म होने को नहीं कहा जाता। पूरा scope cancel होता है, और उसके सारे बच्चे उसके
+Coroutine से अदब से खत्म होने को नहीं कहा जाता। पूरा scope cancel होता है, और उसके सारे बच्चे उसके
 साथ।
 
 <ClassDiagram
@@ -55,20 +55,20 @@ val scope = CoroutineScope(
 | `Job` | यह cancel कैसे होगा, और इसका parent कौन है? |
 | `CoroutineDispatcher` | यह किस thread पर चलेगा? |
 | `CoroutineName` | Debugger में क्या दिखेगा? |
-| `CoroutineExceptionHandler` | बिना पकड़ी ग़लतियाँ कहाँ जाएँगी? |
+| `CoroutineExceptionHandler` | बिना पकड़ी गलतियाँ कहाँ जाएँगी? |
 
 <Quiz
   question="Scope का एक child exception फेंकता है। सादे `Job` के साथ उसके भाई-बहनों का क्या होगा, और `SupervisorJob` के साथ?"
   options={[
-    "दोनों में: सिर्फ़ fail होने वाला child रुकता है",
-    "सादा `Job` parent और सारे भाई-बहनों को cancel कर देता है; `SupervisorJob` ग़लती को वहीं रोक देता है",
+    "दोनों में: सिर्फ fail होने वाला child रुकता है",
+    "सादा `Job` parent और सारे भाई-बहनों को cancel कर देता है; `SupervisorJob` गलती को वहीं रोक देता है",
     "दोनों में: पूरा scope cancel हो जाता है",
   ]}
   answer={1}
-  explanation="सादे `Job` में ग़लती ऊपर की तरफ़ जाती है: child parent को cancel करता है, और parent हर भाई-बहन को। `SupervisorJob` उस ऊपर वाले रास्ते को तोड़ देता है, इसलिए एक fail हुई request पूरी screen नहीं गिराती। इसीलिए UI scopes उसी का इस्तेमाल करते हैं और parallel काम बाँटने वाले scopes आम तौर पर नहीं।"
+  explanation="सादे `Job` में गलती ऊपर की तरफ जाती है: child parent को cancel करता है, और parent हर भाई-बहन को। `SupervisorJob` उस ऊपर वाले रास्ते को तोड़ देता है, इसलिए एक fail हुई request पूरी screen नहीं गिराती। इसीलिए UI scopes उसी का इस्तेमाल करते हैं और parallel काम बाँटने वाले scopes आम तौर पर नहीं।"
 />
 
-## Android पर मुफ़्त मिलने वाले scopes
+## Android पर मुफ्त मिलने वाले scopes
 
 <Tabs>
   <Tab label="viewModelScope">
@@ -104,7 +104,7 @@ lifecycleScope.launch {
 ```kotlin title="Own.kt" numbered
 class SyncEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    fun stop() = scope.cancel()          // यह आपको ख़ुद बुलाना पड़ेगा
+    fun stop() = scope.cancel()          // यह आपको खुद बुलाना पड़ेगा
 }
 ```
 
@@ -117,19 +117,19 @@ class SyncEngine {
 `viewModelScope` के होने की वजह भी।
 </Detail>
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
 <Pitfall title="दो जो leak करती हैं">
 **Scope बनाकर कभी cancel न करना।** जो `CoroutineScope` आपने हाथ से बनाया, उसे cancel करना भी आपका काम
-है। अगर रखने वाले object का lifecycle है, तो उसके ख़त्म होने पर cancel कीजिए।
+है। अगर रखने वाले object का lifecycle है, तो उसके खत्म होने पर cancel कीजिए।
 
 **`GlobalScope` इसलिए इस्तेमाल करना क्योंकि वह compile हो जाता है।** वह हमेशा compile होता है। और
-screen, ViewModel और cancel करने की हर कोशिश — तीनों से ज़्यादा जीता है।
+screen, ViewModel और cancel करने की हर कोशिश — तीनों से ज्यादा जीता है।
 </Pitfall>
 
 ## अभ्यास
 
-1. सादे `Job` से scope बनाइए, तीन children launch कीजिए, एक में exception फेंकिए, और बाक़ी दो को
+1. सादे `Job` से scope बनाइए, तीन children launch कीजिए, एक में exception फेंकिए, और बाकी दो को
    देखिए। फिर `SupervisorJob` डालकर दोबारा चलाइए।
 2. Scope में `CoroutineName` जोड़िए और अंदर `coroutineContext[CoroutineName]` print कीजिए।
 3. `viewModelScope` में काम शुरू कीजिए, फिर screen छोड़िए और `finally` block में log करके साबित कीजिए
@@ -138,10 +138,10 @@ screen, ViewModel और cancel करने की हर कोशिश — �
 
 ## सारांश
 
-| चीज़ | किस सवाल का जवाब |
+| चीज | किस सवाल का जवाब |
 | --- | --- |
 | `CoroutineScope` | यह काम कितना जी सकता है? |
 | `Job` | Cancellation और parent-child ढाँचा |
-| `SupervisorJob` | एक child की ग़लती भाई-बहनों को न मारे |
+| `SupervisorJob` | एक child की गलती भाई-बहनों को न मारे |
 | `CoroutineContext` | हिस्सों का set, `+` से जुड़ा हुआ |
 | `viewModelScope` | Android का default; ViewModel के साथ cancel |

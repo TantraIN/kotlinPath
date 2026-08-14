@@ -6,7 +6,7 @@ updated: 2026-08-12
 
 <KeyIdea>
 Kotlin में class को तब तक बढ़ाया नहीं जा सकता जब तक आप `open` न लिखें। Inheritance एक सोच-समझकर लिया
-फ़ैसला है, ग़लती से मिला हुआ default नहीं।
+फैसला है, गलती से मिला हुआ default नहीं।
 </KeyIdea>
 
 ## जो ढाँचा आप बना रहे हैं
@@ -43,17 +43,17 @@ fun main() {
 ```
 
 ध्यान दीजिए कि `receipt()` `open` नहीं है, फिर भी वह `fee()` को बुलाता है जो `open` है। एक method
-पक्का है, दूसरा एक ख़ाली जगह है जिसे subclasses भरती हैं। पूरा idea यही है।
+पक्का है, दूसरा एक खाली जगह है जिसे subclasses भरती हैं। पूरा idea यही है।
 
 <Quiz
   question="`Card(500).receipt()` fee 10 क्यों बताता है जबकि `receipt()` `Payment` में रहता है?"
   options={[
     "क्योंकि `receipt()` compile time पर `Card` में copy हो गया",
-    "क्योंकि `fee()` virtual है — call चलते वक़्त object के असली type पर जाती है",
+    "क्योंकि `fee()` virtual है — call चलते वक्त object के असली type पर जाती है",
     "क्योंकि `Card` चुपके से `receipt()` को override कर देता है",
   ]}
   answer={1}
-  explanation="`receipt()` एक ही बार, `Payment` में compile होता है। उसके अंदर का `fee()` call object की असली class पर जाता है, इसलिए `Card` type के object पर `Card.fee()` चलता है। इसी को dynamic dispatch कहते हैं, और इसीलिए `open` सिर्फ़ syntax नहीं — behaviour का वादा है।"
+  explanation="`receipt()` एक ही बार, `Payment` में compile होता है। उसके अंदर का `fee()` call object की असली class पर जाता है, इसलिए `Card` type के object पर `Card.fee()` चलता है। इसी को dynamic dispatch कहते हैं, और इसीलिए `open` सिर्फ syntax नहीं — behaviour का वादा है।"
 />
 
 ## तीन keywords, हर एक का एक नियम
@@ -67,10 +67,10 @@ fun main() {
 | `super.x()` | जिसे मैंने अभी बदला, वही वाला चलाओ |
 
 <Detail summary="Kotlin ने classes default से बंद क्यों कीं, Java ने क्यों नहीं">
-Java में हर class बढ़ाई जा सकती थी जब तक `final` न लिखें, इसलिए library लिखने वाले को हर ख़तरनाक
+Java में हर class बढ़ाई जा सकती थी जब तक `final` न लिखें, इसलिए library लिखने वाले को हर खतरनाक
 subclass पहले से सोचकर रोकनी पड़ती थी। असल में कोई नहीं रोकता था, और fragile base class की समस्या
 आती थी: superclass का एक method बदलिए और ऐसी subclasses टूट जाएँ जिनके होने का पता भी न हो। Kotlin
-ने default उल्टा कर दिया। अब वही चीज़ बढ़ाई जा सकती है जिसके बारे में लिखने वाले ने सोचा हो।
+ने default उल्टा कर दिया। अब वही चीज बढ़ाई जा सकती है जिसके बारे में लिखने वाले ने सोचा हो।
 </Detail>
 
 ## `super` — पुराना behaviour रखकर उसमें जोड़ना
@@ -89,14 +89,14 @@ class TimestampLogger : Logger() {
 fun main() = TimestampLogger().log("saved")
 ```
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
 <Pitfall title="दो जो असली bug बुनती हैं">
 **Constructor या `init` से `open` method बुलाना।** Subclass की अपनी properties तब तक assign हुई ही
 नहीं होतीं, इसलिए override आधे-अधूरे state पर चलता है और `null` या `0` पढ़ता है। Construction के
 दौरान overridable method कभी मत बुलाइए।
 
-**Code बाँटने के लिए inheritance इस्तेमाल करना।** अगर `Card` और `Upi` को सिर्फ़ एक ही helper चाहिए,
+**Code बाँटने के लिए inheritance इस्तेमाल करना।** अगर `Card` और `Upi` को सिर्फ एक ही helper चाहिए,
 तो वह `is-a` रिश्ता नहीं है — वह एक साझा function है। Inheritance subclass को base के हर आने वाले
 बदलाव से बाँध देता है। Composition बेहतर है, या default वाला interface।
 </Pitfall>
@@ -106,17 +106,17 @@ fun main() = TimestampLogger().log("saved")
 1. एक `Wallet` payment जोड़िए जिसकी fee सीधी 5 हो। देखिए कि `receipt()` उसे बिना `Payment` छुए उठा
    लेता है।
 2. `Card` में `fee()` को `final override` कीजिए, फिर `Card` को बढ़ाकर उसे दोबारा override करने की
-   कोशिश कीजिए। Compiler की ग़लती पढ़िए।
+   कोशिश कीजिए। Compiler की गलती पढ़िए।
 3. `Payment` के `init` में एक `println` डालिए जो `fee()` बुलाए, फिर `Card` बनाइए। जो number मिला उसे
    समझाइए।
 4. पूरे ढाँचे को ऐसे लिखिए कि `fee()` open class की जगह interface से आए। पाँचवाँ payment type जोड़ने
-   पर कौन सा version ज़्यादा आराम से झेलता?
+   पर कौन सा version ज्यादा आराम से झेलता?
 
 ## सारांश
 
 | स्थिति | क्या उठाएँ |
 | --- | --- |
 | Subtypes state और behaviour दोनों बाँटें | `open class` + `override` |
-| Subtypes सिर्फ़ behaviour बाँटें | Default वाला interface |
+| Subtypes सिर्फ behaviour बाँटें | Default वाला interface |
 | Reuse चाहिए, `is-a` नहीं | Composition — दूसरे object को रखिए |
 | Subtypes का set तय और पता हो | `sealed` — आगे के lesson में |

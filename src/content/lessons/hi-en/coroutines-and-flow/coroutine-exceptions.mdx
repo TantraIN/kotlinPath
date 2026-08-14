@@ -1,6 +1,6 @@
 ---
 title: Coroutines mein exception handling
-description: launch aur async bilkul alag tarike se fail hote hain. Aapne kaun sa use kiya, yahi tay karta hai ki app crash hogi ya chupchap khaali reh jayegi.
+description: launch aur async bilkul alag tarike se fail hote hain. Aapne kaun sa use kiya, yahi decide karta hai ki app crash hogi ya chupchap khaali reh jayegi.
 updated: 2026-08-12
 ---
 
@@ -69,7 +69,7 @@ val result = runCatching { repository.user() }
   </Tab>
   <Tab label="Handler">
 
-`launch` ke liye aakhri jaal, scope par lagaya hua. Jo `async` aapne await kiya, uski galti ise
+`launch` ke liye aakhri trap, scope par lagaya hua. Jo `async` aapne await kiya, uski galti ise
 kabhi nahi dikhti.
 
 ```kotlin title="Handler.kt" numbered

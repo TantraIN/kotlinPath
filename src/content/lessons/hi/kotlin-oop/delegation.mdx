@@ -11,7 +11,7 @@ property — और दोनों में forwarding code compiler लिख
 
 ## Class delegation: composition, बिना type किए
 
-आपको ऐसी `List` चाहिए जो हर read log करे। `ArrayList` से inherit करना कमज़ोर रास्ता है। उसे लपेटना
+आपको ऐसी `List` चाहिए जो हर read log करे। `ArrayList` से inherit करना कमजोर रास्ता है। उसे लपेटना
 मतलब हर method हाथ से लिखना — जब तक आप delegate न करें।
 
 ```kotlin title="Delegate.kt" numbered runnable
@@ -19,7 +19,7 @@ class LoggingList<T>(
     private val inner: MutableList<T> = mutableListOf(),
 ) : MutableList<T> by inner {
 
-    // सिर्फ़ वही behaviour लिखा है जो अलग है
+    // सिर्फ वही behaviour लिखा है जो अलग है
     override fun get(index: Int): T {
         println("read $index")
         return inner[index]
@@ -34,7 +34,7 @@ fun main() {
 }
 ```
 
-`by inner` `MutableList` के हर method का forwarding बनाता है। आप सिर्फ़ वही लिखते हैं जो सच में बदल
+`by inner` `MutableList` के हर method का forwarding बनाता है। आप सिर्फ वही लिखते हैं जो सच में बदल
 रहे हैं।
 
 <Quiz
@@ -45,7 +45,7 @@ fun main() {
     "तभी जब `inner` `open` हो",
   ]}
   answer={1}
-  explanation="Delegation composition है, inheritance नहीं। `inner` एक अलग object है जिसे wrapper का पता ही नहीं, इसलिए उसके अंदर के calls उसी के अंदर रहते हैं। आम तौर पर यही चाहिए होता है — यही self-call वाली दिक़्क़त collection को subclass करना कमज़ोर बनाती है — पर लोग चौंक ज़रूर जाते हैं।"
+  explanation="Delegation composition है, inheritance नहीं। `inner` एक अलग object है जिसे wrapper का पता ही नहीं, इसलिए उसके अंदर के calls उसी के अंदर रहते हैं। आम तौर पर यही चाहिए होता है — यही self-call वाली दिक्कत collection को subclass करना कमजोर बनाती है — पर लोग चौंक जरूर जाते हैं।"
 />
 
 ## Property delegation: एक value पर `by`
@@ -55,7 +55,7 @@ Compiler `val x by Thing()` को `Thing.getValue()` के calls में ब
 <Tabs>
   <Tab label="lazy">
 
-ज़्यादा से ज़्यादा एक बार, पहली read पर।
+ज्यादा से ज्यादा एक बार, पहली read पर।
 
 ```kotlin title="Lazy.kt" numbered runnable
 val config: String by lazy { "built once" }
@@ -111,27 +111,27 @@ fun main() {
 </Tabs>
 
 <Detail summary="`by viewModels()` और `by remember` एक जैसे क्यों दिखते हैं">
-वे हैं ही एक ही चीज़। Android का `by viewModels()` और Compose का `by remember` बस ऐसे delegates हैं
+वे हैं ही एक ही चीज। Android का `by viewModels()` और Compose का `by remember` बस ऐसे delegates हैं
 जिनका `getValue` आपके लिए ढूँढ लाता है। जब एक बार समझ आ जाए कि `by` मतलब `getValue` का call, वे APIs
 जादू लगना बंद कर देती हैं।
 </Detail>
 
-## आम ग़लतियाँ
+## आम गलतियाँ
 
-<Pitfall title="दो जानने लायक़">
+<Pitfall title="दो जानने लायक">
 **यह सोचना कि override delegate के अंदर के calls पर भी लगेगा।** जैसा quiz में था: delegate एक अलग
-object है। अगर वह चाहिए, तो inheritance चाहिए, अपनी सारी क़ीमत के साथ।
+object है। अगर वह चाहिए, तो inheritance चाहिए, अपनी सारी कीमत के साथ।
 
-**ऐसी `by lazy` property जो बाद में भरने वाली चीज़ पर टिकी हो।** Block पहली read पर जो scope में मिला
+**ऐसी `by lazy` property जो बाद में भरने वाली चीज पर टिकी हो।** Block पहली read पर जो scope में मिला
 वही पकड़ लेता है, और फिर हमेशा के लिए cache कर लेता है — उस `null` समेत जिसे आप बाद में भरने वाले थे।
 </Pitfall>
 
 ## अभ्यास
 
-1. `LoggingList` से `add` भी log करवाइए। ध्यान दीजिए कि `MutableList` ख़ुद implement करने के मुक़ाबले
+1. `LoggingList` से `add` भी log करवाइए। ध्यान दीजिए कि `MutableList` खुद implement करने के मुकाबले
    कितनी कम lines लिखनी पड़ीं।
-2. `Delegates.vetoable` से ऋणात्मक quantity रोकिए, और देखिए कि पुरानी value बची रहती है।
-3. एक `NonBlank` delegate लिखिए जो ख़ाली string मिलने पर पुरानी value रखे।
+2. `Delegates.vetoable` से negative quantity रोकिए, और देखिए कि पुरानी value बची रहती है।
+3. एक `NonBlank` delegate लिखिए जो खाली string मिलने पर पुरानी value रखे।
 4. अपने custom delegate के `getValue` में `property.name` print कीजिए। इससे क्या किया जा सकता है?
 
 ## सारांश

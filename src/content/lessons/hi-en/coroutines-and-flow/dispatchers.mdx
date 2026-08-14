@@ -1,12 +1,12 @@
 ---
 title: Dispatchers — Main, IO aur Default
-description: Dispatcher tay karta hai ki aapka coroutine kis thread par chalega. Galat chunav hi chikni app ko atakne wali bana deta hai.
+description: Dispatcher decide karta hai ki aapka coroutine kis thread par chalega. Galat chunav hi chikni app ko atakne wali bana deta hai.
 updated: 2026-08-12
 ---
 
 <KeyIdea>
 Dispatcher ek **thread niti** hai, thread nahi. `withContext` kisi block ko us par le jata hai
-aur natija wapas bhi le aata hai.
+aur result wapas bhi le aata hai.
 </KeyIdea>
 
 ## Teen jo aap use karoge
@@ -31,7 +31,7 @@ nahi hoti.
     "`Dispatchers.Main`, kyunki ye to bas string ka kaam hai",
   ]}
   answer={1}
-  explanation="Chunav is baat se karo ki kaam *karta kya hai*, na ki data kahan se aaya. Bytes padhna IO hai; unhe objects banana ginti hai. Bhaari parsing IO pool par chalane se cores ke liye bina faayde ki dhakkam-pel hoti hai, aur Main par frames girte hain."
+  explanation="Chunav is baat se karo ki kaam *karta kya hai*, na ki data kahan se aaya. Bytes padhna IO hai; unhe objects banana calculation hai. Bhaari parsing IO pool par chalane se cores ke liye bina faayde ki dhakkam-pel hoti hai, aur Main par frames girte hain."
 />
 
 ## `withContext` — aam taur par isi ek switch ki zarurat hai
@@ -69,7 +69,7 @@ viewModelScope.launch {                   // Main par shuru
   ]}
   labels={{ work: "Aapka code chal raha hai", free: "Khaali, dusre kaam ke liye" }}
   timeLabel="samay"
-  caption="`withContext` kaam ko IO thread par le jata hai aur natija Main par wapas laata hai. Poori request ke dauraan UI thread khaali rehta hai."
+  caption="`withContext` kaam ko IO thread par le jata hai aur result Main par wapas laata hai. Poori request ke dauraan UI thread khaali rehta hai."
 />
 
 <Detail summary="Suspend function ko apna dispatcher khud kyun chunna chahiye">
@@ -99,10 +99,10 @@ hai. Aath cores par saath threads ka JSON parse karna sab kuch dheema kar deta h
 
 ## Recap
 
-| Baat | Vivran |
+| Baat | Detail |
 | --- | --- |
 | `Main` | Sirf UI; yahan koi bhi dheemi cheez frames giraati hai |
 | `IO` | Intezaar wala kaam; pool cores se kahin zyada badhta hai |
-| `Default` | Ginti wala kaam; pool cores ke aas-paas ruka |
+| `Default` | Calculation wala kaam; pool cores ke aas-paas ruka |
 | `withContext` | Ek block ke liye switch, aur apne aap wapas |
 | Main-safety | Dispatcher function chunta hai, bulane wala nahi |

@@ -37,7 +37,7 @@ karna hai.
       accent: "rose",
       points: [
         "- Har reference null ho sakta hai",
-        "- Type mein iska koi zikr nahi",
+        "- Type mein iska koi mention nahi",
         "- Pata tab chalta hai jab user ke paas crash ho",
       ],
     }}
@@ -74,7 +74,7 @@ fun main() {
 }
 ```
 
-| Tool | Kaise padha jaye | Null hone par natija |
+| Tool | Kaise padha jaye | Null hone par result |
 | --- | --- | --- |
 | `?.` | "agar hai, to…" | `null` |
 | `?:` | "…warna ye lo" | badal wali value |
@@ -111,7 +111,7 @@ Zanjeer pehle `null` par ruk jati hai aur poora expression `null` ban jata hai. 
 sirf type system mein hai, aur compiler jo null checks chahiye khud daal deta hai. Isliye null
 safety ki runtime keemat shoonya hai.
 
-Isi wajah se ye guarantee Java ki seema par khatam ho jati hai — Java mein `?` hai hi nahi, to
+Isi wajah se ye guarantee Java ki limit par khatam ho jati hai — Java mein `?` hai hi nahi, to
 Java se aayi value ek **platform type** hai jiske baare mein compiler kuch keh nahi sakta.
 
 <Pitfall title="Teen aadatein jo ye suraksha de deti hain">
@@ -147,13 +147,13 @@ aate hi unhe explicitly nullable type mein daalo: `val name: String? = javaCall(
 | `?:` | Badal wali value, ya `return` / `throw` |
 | `?.let { }` | Sirf non-null par block chalao |
 | `!!` | Jaan-boojh kar suraksha chhodna — isse shak se dekho |
-| Platform type | Java ki value jise Kotlin jaanch nahi sakta; `T?` mein pin karo |
+| Platform type | Java ki value jise Kotlin check nahi sakta; `T?` mein pin karo |
 
 <Interview title="Lagbhag har Kotlin interview mein poochha jata hai">
 "Kotlin NullPointerException kaise rokta hai?"
 
 Jo jawab jamta hai wo type system aur runtime ko alag karta hai: nullability type ka hissa
-hai, compile time par jaanchi jati hai, aur runtime par koi wrapper nahi hai. Phir teen jagah
+hai, compile time par check hoti hai, aur runtime par koi wrapper nahi hai. Phir teen jagah
 batao jahan ye guarantee phir bhi tooti ja sakti hai — `!!`, `lateinit`, aur Java se aaye
 platform types.
 </Interview>

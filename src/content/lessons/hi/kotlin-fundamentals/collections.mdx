@@ -1,12 +1,12 @@
 ---
 title: List, Set, Map और उनके mutable जोड़ीदार
-description: Kotlin हर collection को दो हिस्सों में बाँट देता है — read-only view और mutable। सही चुनना इस भाषा में bug रोकने का सबसे सस्ता तरीक़ा है।
+description: Kotlin हर collection को दो हिस्सों में बाँट देता है — read-only view और mutable। सही चुनना इस भाषा में bug रोकने का सबसे सस्ता तरीका है।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
-App का ज़्यादातर state एक collection ही होता है: messages की list, चुने हुए ids का set, settings
+App का ज्यादातर state एक collection ही होता है: messages की list, चुने हुए ids का set, settings
 का map। Kotlin आपसे type में ही कहलवाता है कि वह collection बदल सकता है या नहीं। यह सही हो जाए तो
 "मेरी list किसने बदली?" वाले पूरे परिवार के bugs पैदा ही नहीं होते।
 
@@ -32,7 +32,7 @@ fun main() {
 
 <Tip bare>
 अगर आपका code loop के अंदर `list.contains(x)` करता है, तो आपको `Set` चाहिए था। List पर
-`contains` पूरी scan है और set पर hash lookup — data बढ़ते ही फ़र्क़ दिखने लगता है।
+`contains` पूरी scan है और set पर hash lookup — data बढ़ते ही फर्क दिखने लगता है।
 </Tip>
 
 ## Read-only और mutable
@@ -53,10 +53,10 @@ fun main() {
 ```
 
 यही सूक्ष्म बात है: `List` **read-only** है, immutable नहीं। ऊपर वाले `readOnlyView` से list बदली
-नहीं जा सकती, पर list ख़ुद `growing` के ज़रिए बदल सकती है। ऐसा snapshot चाहिए जिसे कोई न बदल सके तो
+नहीं जा सकती, पर list खुद `growing` के जरिए बदल सकती है। ऐसा snapshot चाहिए जिसे कोई न बदल सके तो
 copy कीजिए: `growing.toList()`।
 
-## सुरक्षित तरीक़े से पढ़ना
+## सुरक्षित तरीके से पढ़ना
 
 ```kotlin title="Access.kt" numbered runnable
 fun main() {
@@ -74,8 +74,8 @@ fun main() {
 }
 ```
 
-ध्यान दीजिए कि दोनों अलग behave करते हैं: list का ग़लत index फेंकता है, पर map की ग़ायब key `null`
-लौटाती है। यह याद रखने लायक़ है, क्योंकि ज़्यादातर लोग इसका उल्टा अंदाज़ा लगाते हैं।
+ध्यान दीजिए कि दोनों अलग behave करते हैं: list का गलत index फेंकता है, पर map की गायब key `null`
+लौटाती है। यह याद रखने लायक है, क्योंकि ज्यादातर लोग इसका उल्टा अंदाजा लगाते हैं।
 
 ## `Set` और `Map` को आपके types से क्या चाहिए
 
@@ -106,19 +106,19 @@ Sets और map keys `equals` तथा `hashCode` से चलते हैं
 
 1. एक ही पाँच values से `List`, `Set` और `Map` बनाइए जिसमें दो दोहरी हों। तीनों print कीजिए और
    size समझाइए।
-2. एक class लिखिए जिसमें private `mutableListOf<String>()` हो और बाहर सिर्फ़ read-only `List` तथा
+2. एक class लिखिए जिसमें private `mutableListOf<String>()` हो और बाहर सिर्फ read-only `List` तथा
    एक `add` function दिखे। बाहर से साबित कीजिए कि list सीधे बदली नहीं जा सकती।
 3. एक सादी class के दो instances, जिनका field एक जैसा हो, `Set` में डालिए। फिर उसे `data class`
-   बना दीजिए। Size का फ़र्क़ समझाइए।
-4. `getOrNull` कब ग़लत होगा और exception कब सही?
+   बना दीजिए। Size का फर्क समझाइए।
+4. `getOrNull` कब गलत होगा और exception कब सही?
 
 ## सारांश
 
-| ज़रूरत | क्या उठाइए |
+| जरूरत | क्या उठाइए |
 | --- | --- |
 | क्रम चाहिए, duplicates ठीक हैं | `List` / `MutableList` |
 | सदस्यता, duplicates नहीं | `Set` / `MutableSet` |
 | Key से ढूँढ़ना | `Map` / `MutableMap` |
 | सुरक्षित पढ़ना | `getOrNull`, `getOrElse`, `firstOrNull` |
-| ऐसा snapshot जो बदले नहीं | `.toList()` — सिर्फ़ `List` type काफ़ी नहीं |
+| ऐसा snapshot जो बदले नहीं | `.toList()` — सिर्फ `List` type काफी नहीं |
 | Set element या map key | `val` वाली `data class` |

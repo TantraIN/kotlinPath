@@ -14,19 +14,19 @@ hote hain, aur wo do baatein dikh jayein to phir kabhi andaza nahi lagana padta.
 Har scope function bas inhi ka jawab deta hai:
 
 1. Block ke andar receiver ko **`it`** kehte hain ya **`this`**?
-2. Poori call **block ka natija** lautati hai ya **receiver khud**?
+2. Poori call **block ka result** lautati hai ya **receiver khud**?
 
 | Function | Receiver | Lautata hai |
 | --- | --- | --- |
-| `let` | `it` | block ka natija |
-| `run` | `this` | block ka natija |
-| `with` | `this` | block ka natija |
+| `let` | `it` | block ka result |
+| `run` | `this` | block ka result |
+| `with` | `this` | block ka result |
 | `apply` | `this` | receiver |
 | `also` | `it` | receiver |
 
 Poora lesson yahi hai. Neeche ka sab bas ye hai ki har column asli code mein kaisa lagta hai.
 
-## Block ka natija: `let` aur `run`
+## Block ka result: `let` aur `run`
 
 ```kotlin title="Transform.kt" numbered runnable
 fun main() {

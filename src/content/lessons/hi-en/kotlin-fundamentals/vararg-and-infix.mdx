@@ -1,6 +1,6 @@
 ---
 title: vararg, infix aur local functions
-description: Teen chhote features jo tay karte hain ki API ek wakya ki tarah padhegi ya ek form ki tarah. Apni library likhne se bahut pehle hi aap teeno use kar rahe hoge.
+description: Teen chhote features jo decide karte hain ki API ek wakya ki tarah padhegi ya ek form ki tarah. Apni library likhne se bahut pehle hi aap teeno use kar rahe hoge.
 updated: 2026-08-12
 ---
 
@@ -63,7 +63,7 @@ fun main() {
 
 <Pitfall title="Jahan infix chaturai nahi rehti">
 Infix dot hata deta hai, aur uske saath wo ishara bhi jo kehta hai "ye ek method call hai".
-Ise tabhi use karo jab natija sach mein angrezi ki tarah padhe — `1 to "one"`, `x shl 2`. Koi
+Ise tabhi use karo jab result sach mein angrezi ki tarah padhe — `1 to "one"`, `x shl 2`. Koi
 `user save database` API nahi, paheli hai.
 
 Iski precedence arithmetic se kam bhi hai: `1 to 2 + 3` ka matlab `1 to 5` hai, `(1 to 2) + 3`
@@ -89,7 +89,7 @@ fun validate(username: String, email: String): List<String> {
 fun main() = println(validate("jo", "nope"))
 ```
 
-Local function apne aas-paas ke variables ko pakad leta hai. Ye suvidha hai, aur yahi wajah
+Local function apne aas-paas ke variables ko pakad leta hai. Ye convenience hai, aur yahi wajah
 hai ki use aise hi bahar nahi nikala ja sakta — bahar le jaane ka matlab hai jo kuch usne
 pakda tha wo sab parameter mein dena.
 
@@ -99,7 +99,7 @@ pakda tha wo sab parameter mein dena.
    parts ke bulao, teen ke saath bulao, aur ek maujooda array spread karke bulao.
 2. `infix fun Int.percentOf(total: Int): Double` likho aur `20 percentOf 400` ki tarah use
    karo. Phir tark do ki yahan infix sahi chunav tha ya nahi.
-3. `1 to 2 + 3` ki value ka andaza lagao, phir jaanch lo.
+3. `1 to 2 + 3` ki value ka andaza lagao, phir check lo.
 4. Upar wale `validate` se `require` ko top level par le jao. Kaun sa extra parameter dena
    pada, aur kyun?
 

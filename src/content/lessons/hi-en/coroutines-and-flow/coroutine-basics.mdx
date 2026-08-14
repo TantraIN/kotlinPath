@@ -31,8 +31,8 @@ fun main() = runBlocking {
 }
 ```
 
-Ise pichle lesson wale nested callbacks se milao. Kaam wahi hai, aur ab chalne ka kram likhe
-hue ke kram se mil gaya.
+Ise pichle lesson wale nested callbacks se milao. Kaam wahi hai, aur ab chalne ka order likhe
+hue ke order se mil gaya.
 
 <Tip bare>
 `delay` suspend karta hai. `Thread.sleep` block karta hai. Coroutine ke andar hamesha pehla wala.
@@ -41,12 +41,12 @@ hue ke kram se mil gaya.
 ## Suspending function bulaya kahan ja sakta hai
 
 `suspend` function sirf kisi dusre `suspend` function se, ya kisi coroutine builder se bulaya
-ja sakta hai. Ye rok compiler ka aapko imaandaar rakhna hai.
+ja sakta hai. Ye rok compiler ka aapko honest rakhna hai.
 
 | Builder | Kya lautata hai | Kis liye |
 | --- | --- | --- |
 | `launch` | `Job` | Chalu karo aur bhool jao; bas kaam hona chahiye |
-| `async` | `Deferred<T>` | Aapko **natija** chahiye |
+| `async` | `Deferred<T>` | Aapko **result** chahiye |
 | `runBlocking` | Block ki value | Sirf tests aur `main` — ye block karta hai |
 
 <Pitfall bare>
@@ -112,9 +112,9 @@ padti, bas heap par ek object.
 ## Practice
 
 1. `fetchUser`/`fetchOrders` ko `async` se saath chalao, phir dono tarikon ka samay print karo.
-2. Ek `delay` ko `Thread.sleep` se badlo aur parallel wale ka samay naapo. Natija samjhao.
+2. Ek `delay` ko `Thread.sleep` se badlo aur parallel wale ka samay naapo. Result samjhao.
 3. Saade `fun` se ek `suspend` function bulao aur compiler ki galti padho.
-4. Jahan `async` chahiye tha wahan `launch` use karo aur dekho ki natije ke saath kya nahi kar
+4. Jahan `async` chahiye tha wahan `launch` use karo aur dekho ki results ke saath kya nahi kar
    sakte.
 
 ## Recap
@@ -123,6 +123,6 @@ padti, bas heap par ek object.
 | --- | --- |
 | `suspend` | Ruk kar chalu ho sakta hai; intezaar mein thread chhod deta hai |
 | `delay(ms)` | Suspend karta hai — sone ka coroutine wala roop |
-| `launch` | Kaam shuru karo, `Job` milta hai, natija nahi |
-| `async` / `await` | Kaam shuru karo, `Deferred<T>` milta hai, natija le lo |
+| `launch` | Kaam shuru karo, `Job` milta hai, result nahi |
+| `async` / `await` | Kaam shuru karo, `Deferred<T>` milta hai, result le lo |
 | `runBlocking` | Blocking aur suspending ka pul — sirf tests aur `main` |

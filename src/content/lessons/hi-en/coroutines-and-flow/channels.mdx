@@ -1,15 +1,15 @@
 ---
 title: Channels, aur inki zarurat sach mein kab padti hai
-description: Channel do coroutines ke beech ki qatar hai. Zyadatar aapko Flow chahiye tha — par jo apwaad hain wo jaanne laayak hain.
+description: Channel do coroutines ke beech ki queue hai. Zyadatar aapko Flow chahiye tha — par jo do-teen cases hain unme wahi sahi hai.
 updated: 2026-08-12
 ---
 
 <KeyIdea>
 `Channel` har value **theek ek** receiver ko deta hai, aur ek hi baar deta hai. `Flow` har
-collector ko bhejta hai. Bas yahi ek farq tay karta hai ki aapko kaun sa chahiye.
+collector ko bhejta hai. Bas yahi ek farq decide karta hai ki aapko kaun sa chahiye.
 </KeyIdea>
 
-## Aisi qatar jiske dono siron par coroutine hai
+## Aisi queue jiske dono end par coroutine hai
 
 ```kotlin title="Channel.kt" numbered runnable
 import kotlinx.coroutines.*
@@ -29,13 +29,13 @@ fun main() = runBlocking {
 ```
 
 `send` tab tak suspend rehta hai jab tak koi receiver value na le le. `close` loop khatam karta
-hai. Values dekhi nahi jatin, khap jati hain.
+hai. Values observe nahi hoti, consume ho jati hain.
 
 <Quiz
   question="Do coroutines ek hi Channel se receive karte hain, aur ek value bheji jati hai. Kitno ko dikhti hai?"
   options={[
     "Dono ko — broadcast ki tarah",
-    "Theek ek ko — jo pehle le le; value khap jati hai",
+    "Theek ek ko — jo pehle le le; value consume ho jati hai",
     "Kisi ko nahi, jab tak dono taiyaar na hon",
   ]}
   answer={1}
@@ -44,16 +44,16 @@ hai. Values dekhi nahi jatin, khap jati hain.
 
 ## Maza capacity mein hai
 
-| Capacity | `send` ka vyavhaar |
+| Capacity | `send` ka behaviour |
 | --- | --- |
 | `RENDEZVOUS` (default) | Receiver taiyaar hone tak suspend |
 | `BUFFERED` | Sirf buffer bharne par suspend |
 | `CONFLATED` | Kabhi suspend nahi; rakhi hui value ki jagah le leta hai |
-| `UNLIMITED` | Kabhi suspend nahi; bina seema badhta hai |
+| `UNLIMITED` | Kabhi suspend nahi; bina limit badhta hai |
 
 <Pitfall bare>
 `UNLIMITED` back-pressure poori tarah hata deta hai. Agar banane wala khapane wale se tez hai,
-to qatar tab tak badhti hai jab tak app ki memory khatam na ho jaye.
+to queue tab tak badhti hai jab tak app ki memory khatam na ho jaye.
 </Pitfall>
 
 ## Aapko shayad Flow hi chahiye
@@ -92,7 +92,7 @@ fun locations(): Flow<Location> = callbackFlow {
 
 <Pitfall title="Do jo aasani se lag jati hain">
 **`close` karna bhool jana.** Bina band kiye Channel par `for` loop hamesha ke liye intezaar
-karta rehta hai, aur coroutine kabhi khatam nahi hota. Flow mein aisa koi jaal hai hi nahi.
+karta rehta hai, aur coroutine kabhi khatam nahi hota. Flow mein aisa koi trap hai hi nahi.
 
 **State ke liye Channel use karna.** Har value sirf ek receiver ko dikhti hai, isliye doosre
 dekhne wale ko kuch nahi milta aur phone ghumane par value poori tarah kho jati hai.
@@ -100,7 +100,7 @@ dekhne wale ko kuch nahi milta aur phone ghumane par value poori tarah kho jati 
 
 ## Practice
 
-1. Do producers se ek Channel mein bhejo aur ek consumer se receive karo. Kram dhyan se dekho.
+1. Do producers se ek Channel mein bhejo aur ek consumer se receive karo. Order dhyan se dekho.
 2. `capacity = CONFLATED` rakho, receive se tez bhejo, aur dekho kaun si values bachti hain.
 3. Listener wale kisi API ko `callbackFlow` se lapeto aur confirm karo ki cancel par
    `awaitClose` chalta hai.
@@ -109,9 +109,9 @@ dekhne wale ko kuch nahi milta aur phone ghumane par value poori tarah kho jati 
 
 ## Recap
 
-| Baat | Vivran |
+| Baat | Detail |
 | --- | --- |
-| Pahunchana | Ek value, ek receiver — khap jati hai, dekhi nahi jati |
+| Pahunchana | Ek value, ek receiver — consume ho jati hai, dekhi nahi jati |
 | `send` / `receive` | Dono suspend hote hain; yahi back-pressure hai |
 | `close` | Zaroori, warna receivers hamesha intezaar karte rehte hain |
 | Capacity | `RENDEZVOUS`, `BUFFERED`, `CONFLATED`, `UNLIMITED` |

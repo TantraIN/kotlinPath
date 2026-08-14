@@ -53,6 +53,39 @@ Rules:
 5. If a translation is missing, fall back to `en` and render a visible "not yet translated"
    notice — never render an empty page.
 
+### Word choice — the rule these three languages are actually judged on
+
+Getting the vocabulary register wrong is what makes a translated page unreadable, and it is a
+different mistake in each language:
+
+- **Hinglish is Hindi grammar carrying English words.** If a Hindi speaker discussing code
+  would say the English word out loud, write the English word. `queue`, `result`, `order`,
+  `behaviour`, `warning`, `detail`, `structure`, `check`, `shared`, `level`, `limit`,
+  `possible` — not `qatar`, `natija`, `kram`, `vyavhaar`, `chetavni`, `vivran`, `dhaancha`,
+  `jaanch`, `saanjha`, `star`, `seema`, `sambhav`. Hindi vocabulary transliterated into Latin
+  reads like a translation, not like speech, which is the single fastest way to make a lesson
+  hard to follow.
+- **Hindi stays Hindi.** The fix there is *everyday* Hindi in place of textbook Hindi — never
+  English. `क्रम`, `नतीजा`, `साझा`, `स्तर`, `सीमा` are ordinary words and must be left alone;
+  only genuinely literary ones (`ऋणात्मक`, `विनम्रता`) get replaced.
+- **Words that stay English in all three:** every technical term, per rule 3 above.
+
+Hinglish keeps words people genuinely say in Hindi — `dhyan do`, `koshish karo`, `mushkil`,
+`madad`, `zaroorat`, `faisla`, `hissa`, `nirbhar karta hai`. The test is not "is this word
+Hindi" but "would someone say this out loud".
+
+**Nukta.** Drop the optional nukta on क ख ग ज फ — write `कीमत`, `फर्क`, `खुद`, `गलती`,
+`ज्यादा`, `सिर्फ`, not `क़ीमत`, `फ़र्क़`, `ख़ुद`, `ग़लती`, `ज़्यादा`, `सिर्फ़`. This is how
+Hindi is written on the web and it reads measurably faster. **Never** drop it on ड़ and ढ़,
+where it marks a different sound (`बड़ा`, `पढ़ना`).
+
+**Latin script means Latin script.** A Hinglish file must contain no Devanagari and no
+Cyrillic. Check before committing:
+
+```bash
+grep -rlP '[\x{0900}-\x{097F}]|[\x{0400}-\x{04FF}]' src/content/lessons/hi-en/
+```
+
 ---
 
 ## 3. UI text rules

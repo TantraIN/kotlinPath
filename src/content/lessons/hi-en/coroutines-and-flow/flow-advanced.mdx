@@ -1,11 +1,11 @@
 ---
 title: flatMapLatest, combine, flowOn aur buffering
-description: Wo operators jo tay karte hain ki jab values aapke sambhalne se tez aayein tab kya ho.
+description: Wo operators jo decide karte hain ki jab values aapke sambhalne se tez aayein tab kya ho.
 updated: 2026-08-12
 ---
 
 <KeyIdea>
-Jab kaam ke beech nayi value aa jaye, teen hi chunav hain: purana kaam cancel karo, use qatar
+Jab kaam ke beech nayi value aa jaye, teen hi chunav hain: purana kaam cancel karo, use queue
 mein lagao, ya kuch gira do. In operators mein se har ek inhi teen mein se ek chunav hai.
 </KeyIdea>
 
@@ -31,7 +31,7 @@ fun main() = runBlocking {
 | --- | --- |
 | `flatMapLatest` | Chal raha kaam cancel karo, dobara shuru |
 | `flatMapConcat` | Maujooda khatam hone ka intezaar, phir shuru |
-| `flatMapMerge` | Sabko ek saath chalao, natije mil-jul kar aate hain |
+| `flatMapMerge` | Sabko ek saath chalao, results mil-jul kar aate hain |
 
 <Quiz
   question="User jaldi-jaldi chaar akshar type karta hai, har ek se 1 second ka search chalta hai. `flatMapLatest` ke saath kitni network requests poori hoti hain?"
@@ -60,7 +60,7 @@ fun main() = runBlocking {
 ```
 
 `combine` tab emit karta hai jab **koi bhi** source emit kare, aur har ek se aakhri value leta
-hai. `zip` uske ulat **dono** se nayi value ka intezaar karta hai — jodi banane ke liye theek,
+hai. `zip` uske ulat **dono** se nayi value ka intezaar karta hai — pair banane ke liye theek,
 UI state ke liye galat.
 
 ## Kaam chalta kahan hai: `flowOn`
@@ -77,7 +77,7 @@ repository.itemsFlow()
 phir wo us cheez par lagta hi nahi jiske liye aapne rakha tha.
 </Pitfall>
 
-## Jab banane ki raftaar khapat se tez ho
+## Jab producer ki speed consumer se tez ho
 
 <Tabs>
   <Tab label="buffer">
@@ -112,8 +112,8 @@ flow.collectLatest { renderWithAnimation(it) }
 <Detail summary="Bina buffer ke emit suspend karta hai">
 Flow default se ek-ke-baad-ek chalta hai: `emit` tab tak nahi lautta jab tak collector us value
 ka kaam khatam na kar le. Yahi back-pressure hai, aur aam taur par yahi sahi hai. `buffer` is
-jodi ko todta hai taaki banane wala aur khapane wala saath chalein — memory ki keemat par, aur
-values qatar mein lagne ki keemat par.
+pair ko todta hai taaki banane wala aur consumer saath chalein — memory ki keemat par, aur
+values queue mein lagne ki keemat par.
 </Detail>
 
 ## Practice
@@ -128,9 +128,9 @@ values qatar mein lagne ki keemat par.
 | Operator | Kaun sa chunav |
 | --- | --- |
 | `flatMapLatest` | Chal raha kaam cancel — search, filters |
-| `flatMapConcat` | Kram bachao, ek baar mein ek |
-| `flatMapMerge` | Zyada se zyada saath, kram ki guarantee nahi |
+| `flatMapConcat` | Order bachao, ek baar mein ek |
+| `flatMapMerge` | Zyada se zyada saath, order ki guarantee nahi |
 | `combine` | Kisi bhi badlav par emit, har ek se aakhri value |
-| `zip` | Dono ka intezaar — jodi banane ke liye, UI state ke liye nahi |
-| `flowOn` | Apne upar wale sab ka dispatcher tay karta hai |
-| `buffer` / `conflate` | Sab qatar mein, ya sirf sabse naya |
+| `zip` | Dono ka intezaar — pair banane ke liye, UI state ke liye nahi |
+| `flowOn` | Apne upar wale sab ka dispatcher decide karta hai |
+| `buffer` / `conflate` | Sab queue mein, ya sirf sabse naya |

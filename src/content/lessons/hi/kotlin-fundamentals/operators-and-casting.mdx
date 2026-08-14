@@ -4,10 +4,10 @@ description: Java में जो manual casts लिखने पड़ते 
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 Java code में `ClassCastException` सबसे आम crashes में से एक था। Kotlin इसे दुर्लभ बना देता है —
-पकड़कर नहीं, बल्कि ज़्यादातर casts की ज़रूरत ही ख़त्म करके।
+पकड़कर नहीं, बल्कि ज्यादातर casts की जरूरत ही खत्म करके।
 
 ## Operators असल में function calls हैं
 
@@ -87,7 +87,7 @@ Smart cast के लिए गारंटी चाहिए कि check औ�
 fun main() {
     val any: Any = "Kotlin"
 
-    val forced = any as String        // चलता है, पर ग़लत हो तो फेंकता है
+    val forced = any as String        // चलता है, पर गलत हो तो फेंकता है
     val safe = any as? Int            // फेंकने के बजाय null
     val fallback = any as? Int ?: 0   // null पर default
 
@@ -95,9 +95,9 @@ fun main() {
 }
 ```
 
-<Pitfall title="Casting की दो ग़लतियाँ">
+<Pitfall title="Casting की दो गलतियाँ">
 **`as?` से काम चलता हो फिर भी `as` उठाना।** `as` `ClassCastException` फेंकता है; `as?` `null`
-लौटाता है। जब तक ग़लत type का मतलब यह न हो कि program ही टूटा है, `as?` और `?:` इस्तेमाल कीजिए।
+लौटाता है। जब तक गलत type का मतलब यह न हो कि program ही टूटा है, `as?` और `?:` इस्तेमाल कीजिए।
 
 **Generic type cast करके check की उम्मीद रखना।** `list as List<String>` unchecked warning के साथ
 compile होता है और runtime पर कुछ करता ही नहीं — JVM ने type parameter मिटा दिया। Crash बाद में
@@ -106,12 +106,12 @@ compile होता है और runtime पर कुछ करता ही 
 
 ## अभ्यास
 
-1. पहले अंदाज़ा लगाइए, फिर चलाइए: `println(5 / 2)`, `println(5 / 2.0)`, `println(5.0 / 0)`,
+1. पहले अंदाजा लगाइए, फिर चलाइए: `println(5 / 2)`, `println(5 / 2.0)`, `println(5.0 / 0)`,
    `println(5 / 0)`। हर नतीजे की वजह बताइए।
-2. `Any` लेने वाला एक function लिखिए जो `String`, `Int`, `List<*>` और बाक़ी सबके लिए अलग
+2. `Any` लेने वाला एक function लिखिए जो `String`, `Int`, `List<*>` और बाकी सबके लिए अलग
    description लौटाए — `is` और smart cast से, बिना एक बार भी `as` लिखे।
 3. एक class बनाइए जिसमें `var name: Any` हो। `if` के अंदर उसे smart cast करके देखिए। Error
-   पढ़िए, फिर दो तरीक़ों से ठीक कीजिए।
+   पढ़िए, फिर दो तरीकों से ठीक कीजिए।
 4. `val n = someAny as? Int ?: -1` — इस एक line के सभी संभावित रास्ते लिखिए।
 
 ## सारांश
@@ -119,8 +119,8 @@ compile होता है और runtime पर कुछ करता ही 
 | Tool | व्यवहार |
 | --- | --- |
 | `is` | Runtime type check, और smart cast चालू करता है |
-| Smart cast | अपने आप, सिर्फ़ तब जब value बदल न सके |
+| Smart cast | अपने आप, सिर्फ तब जब value बदल न सके |
 | `as` | मेल न खाए तो `ClassCastException` |
 | `as?` | मेल न खाए तो `null` — आम तौर पर यही चाहिए |
 | `==` | `equals` बुलाता है, और null-safe है |
-| `===` | Reference identity, कम ही ज़रूरत पड़ती है |
+| `===` | Reference identity, कम ही जरूरत पड़ती है |

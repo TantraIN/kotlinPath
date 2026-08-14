@@ -1,6 +1,6 @@
 ---
 title: Properties, custom accessors, lateinit aur lazy
-description: Kotlin ki property field nahi hai. Wo ek getter hai, aur zarurat par setter — isiliye wo calculate kar sakti hai, jaanch sakti hai, ya intezaar kar sakti hai.
+description: Kotlin ki property field nahi hai. Wo ek getter hai, aur zarurat par setter — isiliye wo calculate kar sakti hai, check sakti hai, ya intezaar kar sakti hai.
 updated: 2026-08-12
 ---
 
@@ -45,7 +45,7 @@ nahi.
     "Naam kitna lamba hai us par nirbhar karta hai",
   ]}
   answer={1}
-  explanation="Jis property mein sirf custom getter ho aur `field` ka zikr na ho, uska backing field banta hi nahi. Wo ek method ban jati hai. Sauda yahi hai: memory nahi, par har baar padhne par kaam."
+  explanation="Jis property mein sirf custom getter ho aur `field` ka mention na ho, uska backing field banta hi nahi. Wo ek method ban jati hai. Sauda yahi hai: memory nahi, par har baar padhne par kaam."
 />
 
 ## Value ko taalne ke teen tarike
@@ -150,8 +150,8 @@ use karo.
 | Tool | Kab |
 | --- | --- |
 | `get() =` | Value dusri properties se nikal aati ho |
-| `set(value) { field = ... }` | Har likhai jaanchni ya sudharni ho |
+| `set(value) { field = ... }` | Har likhai check ya fix karni ho |
 | `field` | Accessor ke andar, asli jagah tak pahunchne ke liye |
 | `lateinit var` | Framework pehle istemal se pehle bhar deta ho |
 | `by lazy { }` | Mehnga, read-only, shayad kabhi chahiye hi na ho |
-| `T?` | Gayab hona ek asli, apekshit sthiti ho |
+| `T?` | Gayab hona ek asli, expected situation ho |

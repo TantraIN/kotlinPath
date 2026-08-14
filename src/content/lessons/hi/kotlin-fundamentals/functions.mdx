@@ -1,10 +1,10 @@
 ---
 title: Functions, default और named arguments
-description: Kotlin के functions वे दो चीज़ें हटा देते हैं जिनसे Java की APIs फैल जाती हैं — overloads और builders। एक ही signature छह का काम कर देता है।
+description: Kotlin के functions वे दो चीजें हटा देते हैं जिनसे Java की APIs फैल जाती हैं — overloads और builders। एक ही signature छह का काम कर देता है।
 updated: 2026-08-12
 ---
 
-## यह क्यों ज़रूरी है
+## यह क्यों जरूरी है
 
 कोई भी Java library खोलिए, एक ही method पाँच बार मिलेगा अलग-अलग parameter lists के साथ। Kotlin
 को एक ही चाहिए, क्योंकि parameters के default हो सकते हैं और बुलाने वाला उन्हें नाम से दे सकता है।
@@ -16,10 +16,10 @@ fun add(a: Int, b: Int): Int {
     return a + b
 }
 
-// single expression: return type ख़ुद पता चल जाता है, न braces न return
+// single expression: return type खुद पता चल जाता है, न braces न return
 fun multiply(a: Int, b: Int) = a * b
 
-// कुछ काम की चीज़ नहीं लौटाता — type Unit है और छोड़ा जा सकता है
+// कुछ काम की चीज नहीं लौटाता — type Unit है और छोड़ा जा सकता है
 fun log(message: String) {
     println("[app] $message")
 }
@@ -49,16 +49,16 @@ fun main() {
 }
 ```
 
-आख़िरी call ही असली बात है। Named arguments के बिना आपको `greeting` सिर्फ़ इसलिए देना पड़ता कि
+आखिरी call ही असली बात है। Named arguments के बिना आपको `greeting` सिर्फ इसलिए देना पड़ता कि
 `excited` तक पहुँच सकें। इनके साथ आप सीधे उसी parameter को संबोधित करते हैं जिसकी आपको परवाह है।
 
-## Named arguments call site पढ़ने लायक़ बनाते हैं
+## Named arguments call site पढ़ने लायक बनाते हैं
 
 ```kotlin title="Named.kt" numbered
 // यहाँ `true, false, true` का मतलब क्या है?
 showDialog("Delete?", true, false, true)
 
-// अब साफ़ है, और क्रम बदलना भी safe है
+// अब साफ है, और क्रम बदलना भी safe है
 showDialog(
     message = "Delete?",
     cancelable = true,
@@ -98,7 +98,7 @@ classic जाल का उल्टा है। कौन सी भाषा
 ## अभ्यास
 
 1. `fun formatPrice(amount: Int, currency: String = "INR", showSymbol: Boolean = true)` लिखिए
-   और तीन तरीक़े से बुलाइए: सारे defaults, सिर्फ़ currency, और सिर्फ़ `showSymbol`।
+   और तीन तरीके से बुलाइए: सारे defaults, सिर्फ currency, और सिर्फ `showSymbol`।
 2. `fun square(n: Int): Int { return n * n }` को single-expression function बना दीजिए।
 3. चार parameters वाला एक function लीजिए जिसमें दो boolean हों। Call दो बार लिखिए — position से
    और नाम से। Review में कौन सा पढ़ना पसंद करेंगे?
@@ -111,6 +111,6 @@ classic जाल का उल्टा है। कौन सी भाषा
 | Single-expression `=` | छोटे functions बिना तामझाम के |
 | `Unit` | जब कुछ काम का वापस न आए |
 | Default arguments | Overloads के पूरे परिवार की जगह एक function |
-| Named arguments | Call site जो ख़ुद अपना मतलब बता दे |
+| Named arguments | Call site जो खुद अपना मतलब बता दे |
 | Local functions | Logic को नाम देना बिना scope बढ़ाए |
-| `@JvmOverloads` | Defaults को Java से इस्तेमाल लायक़ बनाना |
+| `@JvmOverloads` | Defaults को Java से इस्तेमाल लायक बनाना |
