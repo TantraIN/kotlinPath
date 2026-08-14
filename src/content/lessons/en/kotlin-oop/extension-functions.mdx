@@ -1,0 +1,147 @@
+---
+title: Extension functions and properties
+description: Add a method to a type you do not own — without inheriting from it, and without the compiler ever really adding anything.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+An extension is not added to the class. It is a plain function whose first parameter is the
+receiver, dressed up to be called with a dot.
+</KeyIdea>
+
+## The problem
+
+You need `"asha@mail.com".isEmail()`. You do not own `String`, and it is `final` anyway.
+
+```kotlin title="Extensions.kt" numbered runnable
+fun String.isEmail(): Boolean =
+    contains("@") && substringAfter("@").contains(".")
+
+val String.initials: String
+    get() = split(" ").mapNotNull { it.firstOrNull() }.joinToString(".")
+
+fun main() {
+    println("asha@mail.com".isEmail())
+    println("nope".isEmail())
+    println("Asha Rao Patel".initials)
+}
+```
+
+Inside the body, `this` is the receiver — and like any `this` in Kotlin, you may leave it out.
+
+<Detail summary="What the compiler actually produces">
+`fun String.isEmail()` compiles to a static method taking a `String` as its first argument.
+Calling `"x".isEmail()` compiles to `StringExtKt.isEmail("x")`. Nothing is added to `String`;
+the dot syntax is the whole feature.
+</Detail>
+
+## The consequence people get wrong
+
+Because it is a static function, it is resolved by the **declared type**, not the run-time type.
+
+```kotlin title="Dispatch.kt" numbered runnable
+open class Animal
+class Dog : Animal()
+
+fun Animal.speak() = "generic noise"
+fun Dog.speak() = "woof"
+
+fun main() {
+    val pet: Animal = Dog()
+    println(pet.speak())        // "generic noise" — not "woof"
+}
+```
+
+<Quiz
+  question="Why does `pet.speak()` print the `Animal` version when the object is really a `Dog`?"
+  options={[
+    "Because `Dog.speak()` is declared after `Animal.speak()`",
+    "Because extensions are resolved statically, from the declared type of the variable",
+    "Because `Animal` is `open` and `Dog` is not",
+  ]}
+  answer={1}
+  explanation="Extensions are not virtual. The compiler picks one at the call site using the variable's declared type, which here is `Animal`. Member functions do the opposite — they dispatch on the real object at run time. This is why an extension can never replace an override."
+/>
+
+<Pitfall bare>
+A member function always wins over an extension with the same signature. If a future version of
+the library adds that member, your extension silently stops being called.
+</Pitfall>
+
+## Where extensions genuinely pay off
+
+<Tabs>
+  <Tab label="Nullable receiver">
+
+The receiver may be null, so the null check lives inside.
+
+```kotlin title="Nullable.kt" numbered runnable
+fun String?.orPlaceholder(): String =
+    if (this.isNullOrBlank()) "—" else this
+
+fun main() {
+    val missing: String? = null
+    println(missing.orPlaceholder())    // no ?. needed at the call site
+}
+```
+
+  </Tab>
+  <Tab label="Scoped to a class">
+
+Declared inside a class, so it exists only where it makes sense.
+
+```kotlin title="Scoped.kt" numbered
+class Formatter(private val symbol: String) {
+
+    // visible only inside Formatter
+    fun Int.money(): String = "$symbol$this"
+
+    fun render(amount: Int) = amount.money()
+}
+```
+
+  </Tab>
+  <Tab label="Generic">
+
+Works for every element type, with no subclassing anywhere.
+
+```kotlin title="Generic.kt" numbered runnable
+fun <T> List<T>.second(): T? = getOrNull(1)
+
+fun main() = println(listOf("a", "b", "c").second())
+```
+
+  </Tab>
+</Tabs>
+
+## Common mistakes
+
+<Pitfall title="Two that make a codebase harder to read">
+**Extending a type you do own.** If you can add a member, add a member. It dispatches
+virtually, it shows up in the class, and it can be overridden. Extensions are for types you
+cannot change.
+
+**Extensions on `Any` or `String` in a shared module.** They appear in autocomplete for every
+`String` in the project. Keep broad receivers private or `internal` unless the whole team wants
+them.
+</Pitfall>
+
+## Practice
+
+1. Write `fun Int.isEven()` and use it in a `filter`. Then write it as a top-level
+   `fun isEven(n: Int)` — which call site reads better?
+2. Add `fun List<Int>.average2()` and confirm the standard library's `average()` still wins if
+   you name yours `average()`.
+3. Write an extension property `val LocalDate.isWeekend: Boolean`.
+4. Reproduce the `Animal`/`Dog` result above, then make `speak()` a member and re-run. Explain
+   the difference in one sentence.
+
+## Recap
+
+| Point | Detail |
+| --- | --- |
+| What it compiles to | A static function taking the receiver as parameter one |
+| Dispatch | Static — declared type, not run-time type |
+| Member versus extension | The member always wins |
+| Nullable receiver | Allowed, and often the point |
+| When to use | Types you do not own, or narrowly scoped helpers |

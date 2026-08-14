@@ -1,0 +1,147 @@
+---
+title: Extension functions aur properties
+description: Aise type mein method jodo jo aapka hai hi nahi — bina usse inherit kiye, aur bina compiler ke usme sach mein kuch joda.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Extension class mein juda nahi hota. Wo ek saada function hai jiska pehla parameter receiver
+hai, bas use dot se bulane laayak bana diya gaya hai.
+</KeyIdea>
+
+## Samasya
+
+Aapko `"asha@mail.com".isEmail()` chahiye. `String` aapka hai nahi, aur waise bhi wo `final` hai.
+
+```kotlin title="Extensions.kt" numbered runnable
+fun String.isEmail(): Boolean =
+    contains("@") && substringAfter("@").contains(".")
+
+val String.initials: String
+    get() = split(" ").mapNotNull { it.firstOrNull() }.joinToString(".")
+
+fun main() {
+    println("asha@mail.com".isEmail())
+    println("nope".isEmail())
+    println("Asha Rao Patel".initials)
+}
+```
+
+Body ke andar `this` hi receiver hai — aur Kotlin ke har `this` ki tarah, use chhoda ja sakta hai.
+
+<Detail summary="Compiler asal mein banata kya hai">
+`fun String.isEmail()` ek static method banta hai jiska pehla argument `String` hai.
+`"x".isEmail()` likhna `StringExtKt.isEmail("x")` ban jata hai. `String` mein kuch juda nahi;
+poori khoobi bas dot wala syntax hai.
+</Detail>
+
+## Wo natija jispar log galat samajhte hain
+
+Kyunki ye static function hai, ye **likhe hue type** se tay hota hai, chalte waqt wale type se nahi.
+
+```kotlin title="Dispatch.kt" numbered runnable
+open class Animal
+class Dog : Animal()
+
+fun Animal.speak() = "generic noise"
+fun Dog.speak() = "woof"
+
+fun main() {
+    val pet: Animal = Dog()
+    println(pet.speak())        // "generic noise" — "woof" nahi
+}
+```
+
+<Quiz
+  question="Object sach mein `Dog` hai, phir `pet.speak()` `Animal` wala kyun chhapta hai?"
+  options={[
+    "Kyunki `Dog.speak()` `Animal.speak()` ke baad likha hai",
+    "Kyunki extensions static tay hote hain, variable ke likhe hue type se",
+    "Kyunki `Animal` `open` hai aur `Dog` nahi",
+  ]}
+  answer={1}
+  explanation="Extensions virtual nahi hote. Compiler call site par variable ke likhe hue type se chunta hai, jo yahan `Animal` hai. Member functions ulta karte hain — wo chalte waqt asli object par jate hain. Isiliye extension kabhi override ki jagah nahi le sakta."
+/>
+
+<Pitfall bare>
+Ek hi signature wale member function ke saamne extension hamesha haar jata hai. Agar library ke
+kisi naye version ne wo member joda, to aapka extension chupchap bulna band ho jayega.
+</Pitfall>
+
+## Extensions sach mein kahan kaam aate hain
+
+<Tabs>
+  <Tab label="Nullable receiver">
+
+Receiver null ho sakta hai, isliye null check andar hi rehta hai.
+
+```kotlin title="Nullable.kt" numbered runnable
+fun String?.orPlaceholder(): String =
+    if (this.isNullOrBlank()) "—" else this
+
+fun main() {
+    val missing: String? = null
+    println(missing.orPlaceholder())    // call site par `?.` ki zarurat nahi
+}
+```
+
+  </Tab>
+  <Tab label="Class ke andar">
+
+Class ke andar likha hua, isliye sirf wahin maujood hai jahan uska matlab hai.
+
+```kotlin title="Scoped.kt" numbered
+class Formatter(private val symbol: String) {
+
+    // sirf Formatter ke andar dikhta hai
+    fun Int.money(): String = "$symbol$this"
+
+    fun render(amount: Int) = amount.money()
+}
+```
+
+  </Tab>
+  <Tab label="Generic">
+
+Har element type par chalta hai, kahin koi subclass banaye bina.
+
+```kotlin title="Generic.kt" numbered runnable
+fun <T> List<T>.second(): T? = getOrNull(1)
+
+fun main() = println(listOf("a", "b", "c").second())
+```
+
+  </Tab>
+</Tabs>
+
+## Common galtiyan
+
+<Pitfall title="Do jo codebase padhna mushkil kar deti hain">
+**Apne hi type ko extend karna.** Agar aap member jod sakte ho, member jodo. Wo virtually
+dispatch hota hai, class mein dikhta hai, aur override ho sakta hai. Extensions un types ke
+liye hain jinhe aap badal nahi sakte.
+
+**Saanjhe module mein `Any` ya `String` par extensions.** Wo project ki har `String` ke
+autocomplete mein aa jate hain. Aise chaude receivers ko `private` ya `internal` rakho, jab tak
+poori team unhe na chahe.
+</Pitfall>
+
+## Practice
+
+1. `fun Int.isEven()` likho aur use `filter` mein use karo. Phir wahi cheez top-level
+   `fun isEven(n: Int)` se likho — kaun sa call site behtar padhta hai?
+2. `fun List<Int>.average2()` jodo, phir apne wale ka naam `average()` rakhkar dekho ki standard
+   library wala hi jeetta hai.
+3. Ek extension property likho — `val LocalDate.isWeekend: Boolean`.
+4. Upar wala `Animal`/`Dog` natija dobara banao, phir `speak()` ko member banakar chalao. Farq
+   ek line mein samjhao.
+
+## Recap
+
+| Baat | Vivran |
+| --- | --- |
+| Banta kya hai | Static function, receiver pehla parameter |
+| Dispatch | Static — likha hua type, chalte waqt wala nahi |
+| Member ya extension | Member hamesha jeetta hai |
+| Nullable receiver | Chalta hai, aur aksar wahi maqsad hai |
+| Kab use karo | Jo types aapke nahi, ya seemit dayre ke helpers |
