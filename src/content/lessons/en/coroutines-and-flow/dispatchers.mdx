@@ -1,0 +1,105 @@
+---
+title: Dispatchers — Main, IO and Default
+description: A dispatcher decides which thread your coroutine resumes on. Picking the wrong one is how a smooth app becomes a janky one.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+A dispatcher is a **thread policy**, not a thread. `withContext` moves a block onto one and
+moves the result back for you.
+</KeyIdea>
+
+## The three you will use
+
+| Dispatcher | Backed by | Use for |
+| --- | --- | --- |
+| `Dispatchers.Main` | The one UI thread | Touching views, reading and writing state |
+| `Dispatchers.IO` | A large elastic pool | Network, disk, database — work that **waits** |
+| `Dispatchers.Default` | Pool sized to CPU cores | Sorting, parsing, image work — work that **computes** |
+
+The distinction between the last two is the one that matters.
+
+`IO` is sized for tasks that are mostly idle, so it grows to many threads. `Default` is capped
+near the core count, because more threads than cores does not compute anything faster.
+
+<Quiz
+  question="You parse a 5MB JSON string. Which dispatcher, and why?"
+  options={[
+    "`Dispatchers.IO`, because the JSON came from the network",
+    "`Dispatchers.Default`, because parsing is CPU work — where the data came from is irrelevant",
+    "`Dispatchers.Main`, since it is only a string operation",
+  ]}
+  answer={1}
+  explanation="Choose by what the work *does*, not where the data came from. Reading the bytes is IO; turning them into objects is computation. Running heavy parsing on the IO pool competes for cores with no benefit, and on Main it drops frames."
+/>
+
+## `withContext` — the only switch you usually need
+
+```kotlin title="Switch.kt" numbered
+class Repository(private val api: Api, private val dao: Dao) {
+
+    suspend fun user(id: String): User = withContext(Dispatchers.IO) {
+        val response = api.fetch(id)      // waits — IO
+        dao.insert(response)
+        response.toUser()
+    }
+}
+```
+
+```kotlin title="Caller.kt" numbered
+viewModelScope.launch {                   // starts on Main
+    val user = repository.user("1")       // hops to IO inside, comes back
+    nameText.text = user.name             // back on Main, safe
+}
+```
+
+<ThreadTimeline
+  lanes={[
+    { name: "main", segments: [
+      { label: "launch", weight: 1, kind: "work" },
+      { label: "free — keeps drawing", weight: 4, kind: "free" },
+      { label: "update UI", weight: 1, kind: "work" },
+    ]},
+    { name: "IO worker", segments: [
+      { label: "idle", weight: 1, kind: "free" },
+      { label: "network + database", weight: 4, kind: "work" },
+      { label: "idle", weight: 1, kind: "free" },
+    ]},
+  ]}
+  caption="`withContext` moves the work to an IO thread and brings the result back to Main. The UI thread is free for the whole request."
+/>
+
+<Detail summary="Why a suspend function should pick its own dispatcher">
+A well-written `suspend` function is **main-safe**: it can be called from anywhere without the
+caller thinking about threads. That means the dispatcher choice belongs inside the repository,
+not at the call site. If every caller has to remember `withContext(Dispatchers.IO)`, one of them
+eventually will not.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Two that cause jank or worse">
+**Switching dispatchers for trivial work.** `withContext` has a real cost — a context switch and
+possible thread hop. Wrapping a three-line calculation in it is slower than just doing it.
+
+**Using `Dispatchers.IO` for heavy computation.** The IO pool can grow far past the core count.
+Sixty threads all trying to parse JSON on eight cores makes everything slower, including the UI.
+</Pitfall>
+
+## Practice
+
+1. Time a CPU-heavy loop on `IO` and on `Default` with many coroutines. Compare.
+2. Touch a View from inside `withContext(Dispatchers.IO)` and read the exception.
+3. Make a repository function main-safe, then call it from `viewModelScope.launch` with no
+   `withContext` at the call site.
+4. Print `Thread.currentThread().name` before, inside and after a `withContext` block.
+
+## Recap
+
+| Point | Detail |
+| --- | --- |
+| `Main` | UI only; anything slow here drops frames |
+| `IO` | Work that waits; pool grows well past core count |
+| `Default` | Work that computes; pool capped near core count |
+| `withContext` | Switch for a block, and come back automatically |
+| Main-safety | The function picks its dispatcher, not the caller |

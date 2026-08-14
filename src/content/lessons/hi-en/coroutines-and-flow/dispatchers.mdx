@@ -1,0 +1,108 @@
+---
+title: Dispatchers — Main, IO aur Default
+description: Dispatcher tay karta hai ki aapka coroutine kis thread par chalega. Galat chunav hi chikni app ko atakne wali bana deta hai.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Dispatcher ek **thread niti** hai, thread nahi. `withContext` kisi block ko us par le jata hai
+aur natija wapas bhi le aata hai.
+</KeyIdea>
+
+## Teen jo aap use karoge
+
+| Dispatcher | Peeche kya hai | Kis liye |
+| --- | --- | --- |
+| `Dispatchers.Main` | Akela UI thread | Views chhuna, state padhna-likhna |
+| `Dispatchers.IO` | Bada lachila pool | Network, disk, database — jo kaam **intezaar** karta hai |
+| `Dispatchers.Default` | CPU cores jitna pool | Sorting, parsing, image — jo kaam **ginta** hai |
+
+Aakhri do ka farq hi asal mein maayne rakhta hai.
+
+`IO` un kaamon ke liye hai jo zyadatar khaali baithe rehte hain, isliye wo kai threads tak badh
+jata hai. `Default` cores ke aas-paas ruk jata hai, kyunki cores se zyada threads se ginti tez
+nahi hoti.
+
+<Quiz
+  question="Aap 5MB ka JSON parse karte ho. Kaun sa dispatcher, aur kyun?"
+  options={[
+    "`Dispatchers.IO`, kyunki JSON network se aaya tha",
+    "`Dispatchers.Default`, kyunki parsing CPU ka kaam hai — data kahan se aaya isse koi matlab nahi",
+    "`Dispatchers.Main`, kyunki ye to bas string ka kaam hai",
+  ]}
+  answer={1}
+  explanation="Chunav is baat se karo ki kaam *karta kya hai*, na ki data kahan se aaya. Bytes padhna IO hai; unhe objects banana ginti hai. Bhaari parsing IO pool par chalane se cores ke liye bina faayde ki dhakkam-pel hoti hai, aur Main par frames girte hain."
+/>
+
+## `withContext` — aam taur par isi ek switch ki zarurat hai
+
+```kotlin title="Switch.kt" numbered
+class Repository(private val api: Api, private val dao: Dao) {
+
+    suspend fun user(id: String): User = withContext(Dispatchers.IO) {
+        val response = api.fetch(id)      // intezaar — IO
+        dao.insert(response)
+        response.toUser()
+    }
+}
+```
+
+```kotlin title="Caller.kt" numbered
+viewModelScope.launch {                   // Main par shuru
+    val user = repository.user("1")       // andar IO par jata hai, wapas aata hai
+    nameText.text = user.name             // wapas Main par, surakshit
+}
+```
+
+<ThreadTimeline
+  lanes={[
+    { name: "main", segments: [
+      { label: "launch", weight: 1, kind: "work" },
+      { label: "khaali — draw karta rehta hai", weight: 4, kind: "free" },
+      { label: "UI update", weight: 1, kind: "work" },
+    ]},
+    { name: "IO worker", segments: [
+      { label: "khaali", weight: 1, kind: "free" },
+      { label: "network + database", weight: 4, kind: "work" },
+      { label: "khaali", weight: 1, kind: "free" },
+    ]},
+  ]}
+  labels={{ work: "Aapka code chal raha hai", free: "Khaali, dusre kaam ke liye" }}
+  timeLabel="samay"
+  caption="`withContext` kaam ko IO thread par le jata hai aur natija Main par wapas laata hai. Poori request ke dauraan UI thread khaali rehta hai."
+/>
+
+<Detail summary="Suspend function ko apna dispatcher khud kyun chunna chahiye">
+Achhe se likha `suspend` function **main-safe** hota hai: use kahin se bhi bulaya ja sakta hai
+aur bulane wale ko threads ke baare mein sochna nahi padta. Iska matlab dispatcher ka chunav
+repository ke andar hona chahiye, call site par nahi. Agar har bulane wale ko
+`withContext(Dispatchers.IO)` yaad rakhna pade, to ek na ek din koi bhool hi jayega.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Do jo atkav ya usse bura karti hain">
+**Chhote kaam ke liye dispatcher badalna.** `withContext` ki asli keemat hai — ek context switch
+aur shayad thread badalna. Teen line ke hisaab ko usme lapetna seedhe karne se dheema hai.
+
+**Bhaari ginti ke liye `Dispatchers.IO` use karna.** IO pool cores se kahin zyada bada ho sakta
+hai. Aath cores par saath threads ka JSON parse karna sab kuch dheema kar deta hai, UI samet.
+</Pitfall>
+
+## Practice
+
+1. Ek CPU-bhaari loop ko kai coroutines ke saath `IO` par aur `Default` par chalao. Samay milao.
+2. `withContext(Dispatchers.IO)` ke andar se ek View chhuo aur exception padho.
+3. Repository ka ek function main-safe banao, phir use `viewModelScope.launch` se bina call site
+   par `withContext` likhe bulao.
+4. `withContext` block se pehle, andar aur baad mein `Thread.currentThread().name` print karo.
+
+## Recap
+
+| Baat | Vivran |
+| --- | --- |
+| `Main` | Sirf UI; yahan koi bhi dheemi cheez frames giraati hai |
+| `IO` | Intezaar wala kaam; pool cores se kahin zyada badhta hai |
+| `Default` | Ginti wala kaam; pool cores ke aas-paas ruka |
+| `withContext` | Ek block ke liye switch, aur apne aap wapas |
+| Main-safety | Dispatcher function chunta hai, bulane wala nahi |
