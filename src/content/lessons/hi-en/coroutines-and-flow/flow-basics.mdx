@@ -83,20 +83,20 @@ collect ki body ko khud `try` mein lapeto, ya kaam ko `catch` ke upar `onEach` m
 queryFlow
     .debounce(300)                       // typing rukne ka intezaar
     .filter { it.length >= 2 }
-    .distinctUntilChanged()              // dohraav anadekha karo
+    .distinctUntilChanged()              // duplicate ignore karo
     .map { repository.search(it) }
     .catch { emit(emptyList()) }
     .collect { showResults(it) }
 ```
 
-Chhe lines ek debounce handler, pichhli query se milaan, aur teen callbacks mein faila
+Chhe lines ek debounce handler, pichhli query se match, aur teen callbacks mein faila
 try/catch — teeno ki jagah le leti hain.
 
 <Pitfall title="Do jo log pakad nahi paate">
 **Do consumers ke liye ek hi cold flow do baar collect karna.** Har collection kaam dobara
 chalati hai. Agar wo network call hai, to aapne do call kar diye.
 
-**Ye maanna ki `catch` collector ko bachayega.** Wo sirf upar wale hisse ki protect karta hai.
+**Ye maanna ki `catch` collector ko bachayega.** Wo sirf upar wale hisse ko protect karta hai.
 Aapke `collect` lambda ki galtiyan usse poori tarah bach nikalti hain.
 </Pitfall>
 

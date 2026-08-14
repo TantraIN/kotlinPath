@@ -106,10 +106,10 @@ inline fun onBackground(crossinline work: () -> Unit) {
 <Pitfall title="Do jo faayda hi kha jati hain">
 **Bade function ko inline karna.** Body har call site par copy hoti hai, isliye bada `inline`
 function har jagah bytecode badha deta hai. Lambda lene wale functions inline karo; bas
-shaukiya inline mat karo. Bewajah ho to compiler khud warning deta hai.
+bina soche inline mat karo. Bewajah ho to compiler khud warning deta hai.
 
 **Operator ka aisa matlab nikalna jo chaunka de.** `operator fun Money.minus` saaf hai.
-`operator fun User.plus(other: User)` nahi — do users ko jodne se hota kya hai, koi anda nahi
+`operator fun User.plus(other: User)` nahi — do users ko jodne se hota kya hai, koi andaza nahi
 laga sakta. Agar matlab turant saaf na ho, naam wala function likho.
 </Pitfall>
 
@@ -126,7 +126,7 @@ laga sakta. Agar matlab turant saaf na ho, naam wala function likho.
 
 | Baat | Detail |
 | --- | --- |
-| `operator` | Zaroori; fixed naam ko chinh se jodta hai |
+| `operator` | Zaroori; fixed naam ko symbol se jodta hai |
 | `compareTo` | Ek saath `<`, `>`, `<=`, `>=` chalu karta hai |
 | `equals` | `==` ke peeche; data class pehle se deti hai |
 | `inline` | Body copy karta hai; lambda object hata deta hai |

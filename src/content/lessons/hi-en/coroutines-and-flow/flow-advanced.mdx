@@ -41,7 +41,7 @@ fun main() = runBlocking {
     "Ek bhi nahi — sab ek dusre ko cancel kar deti hain",
   ]}
   answer={1}
-  explanation="Har nayi value pichhle inner flow ko chala raha coroutine cancel kar deti hai, isliye sirf aakhri search poora chalta hai. Wo cancellation asli hai — HTTP call rok di jati hai, sirf anadekhi nahi hoti. Uske pehle `debounce` jodo to pehli teen requests shuru hi nahi hongi."
+  explanation="Har nayi value pichhle inner flow ko chala raha coroutine cancel kar deti hai, isliye sirf aakhri search poora chalta hai. Wo cancellation asli hai — HTTP call rok di jati hai, sirf ignore nahi hoti. Uske pehle `debounce` jodo to pehli teen requests shuru hi nahi hongi."
 />
 
 ## Kai sources ko jodna

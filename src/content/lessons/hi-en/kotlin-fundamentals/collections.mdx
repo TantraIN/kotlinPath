@@ -7,16 +7,16 @@ updated: 2026-08-12
 ## Ye kyun zaruri hai
 
 App ka zyadatar state ek collection hi hota hai: messages ki list, chune hue ids ka set,
-settings ka map. Kotlin aapse type mein hi kehlwata hai ki wo collection badal sakta hai ya
-nahi. Ye sahi ho jaye to "meri list kisne badli?" wale poore parivaar ke bugs paida hi nahi
-hote.
+settings ka map. Kotlin mein aapko type mein hi batana hota hai ki wo collection badal sakta
+hai ya nahi. Ye sahi ho jaye to "meri list kisne badli?" wale poore parivaar ke bugs paida hi
+nahi hote.
 
 ## Teen roop
 
 ```kotlin title="Three.kt" numbered runnable
 fun main() {
-    val names = listOf("Asha", "Ravi", "Asha")   // kramit, duplicates chalte hain
-    val ids = setOf(1, 2, 2, 3)                  // bina kram, duplicates hat jate hain
+    val names = listOf("Asha", "Ravi", "Asha")   // sorted, duplicates chalte hain
+    val ids = setOf(1, 2, 2, 3)                  // bina order, duplicates hat jate hain
     val ages = mapOf("Asha" to 30, "Ravi" to 25) // key se value
 
     println(names)   // [Asha, Ravi, Asha]
@@ -48,16 +48,16 @@ fun main() {
     growing.removeAt(0)
     println(growing)                      // [2, 3, 4]
 
-    val readOnlyView: List<Int> = growing // wahi object, sankra type
+    val readOnlyView: List<Int> = growing // wahi object, narrow type
     println(readOnlyView.size)
 }
 ```
 
-Yahi sookshm baat hai: `List` **read-only** hai, immutable nahi. Upar wale `readOnlyView` se
+Yahi baareek baat hai: `List` **read-only** hai, immutable nahi. Upar wale `readOnlyView` se
 list badli nahi ja sakti, par list khud `growing` ke zariye badal sakti hai. Aisa snapshot
 chahiye jise koi na badal sake to copy karo: `growing.toList()`.
 
-## Surakshit tarike se padhna
+## Safe tarike se padhna
 
 ```kotlin title="Access.kt" numbered runnable
 fun main() {
@@ -91,13 +91,13 @@ fun main() {
 }
 ```
 
-Sets aur map keys `equals` aur `hashCode` se chalte hain. Saadi class identity se tulna karti
+Sets aur map keys `equals` aur `hashCode` se chalte hain. Saadi class identity se compare karti
 hai, isliye ek jaise dikhne wale do objects do alag entries ban jate hain. Yahin se `data
-class` convenience se hatkar shuddhata ki shart ban jati hai.
+class` convenience nahi rehti, sahi chalne ki shart ban jati hai.
 
 <Pitfall title="Do jo asli bugs banti hain">
 **`var` property ko map key banana.** Insert ke baad use badlo aur uska hash badal jata hai —
-entry pahunch se bahar ho jati hai, jagah phir bhi ghere rehti hai. Keys prabhaavi roop se
+entry pahunch se bahar ho jati hai, jagah phir bhi ghere rehti hai. Keys asal mein
 immutable honi chahiye, aur yahi ek aur wajah hai ki keys aam taur par `val` waali `data
 class` hoti hain.
 
@@ -107,7 +107,7 @@ sakta hai. Bahar `List` do aur `MutableList` private rakho.
 
 ## Practice
 
-1. Ek hi paanch values se `List`, `Set` aur `Map` banao jismein do dohri hon. Teeno print
+1. Ek hi paanch values se `List`, `Set` aur `Map` banao jismein do duplicate hon. Teeno print
    karo aur size samjhao.
 2. Ek class likho jismein private `mutableListOf<String>()` ho aur bahar sirf read-only
    `List` aur ek `add` function dikhe. Bahar se sabit karo ki list seedhe badli nahi ja sakti.
@@ -120,8 +120,8 @@ sakta hai. Bahar `List` do aur `MutableList` private rakho.
 | Zarurat | Kya uthao |
 | --- | --- |
 | Order chahiye, duplicates theek hain | `List` / `MutableList` |
-| Sadasyata, duplicates nahi | `Set` / `MutableSet` |
+| Membership, duplicates nahi | `Set` / `MutableSet` |
 | Key se dhundhna | `Map` / `MutableMap` |
-| Surakshit padhna | `getOrNull`, `getOrElse`, `firstOrNull` |
+| Safe padhna | `getOrNull`, `getOrElse`, `firstOrNull` |
 | Aisa snapshot jo badle nahi | `.toList()` — sirf `List` type kaafi nahi |
 | Set element ya map key | `val` waali `data class` |

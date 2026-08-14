@@ -1,6 +1,6 @@
 ---
 title: Classes, constructors aur init blocks
-description: Class ek structure hai data ka, aur unhi niyamon ka jo use sahi rakhte hain. Kotlin dono ek line mein kehla deta hai.
+description: Class ek structure hai data ka, aur unhi niyamon ka jo use sahi rakhte hain. Kotlin ye dono baatein ek hi line mein keh deta hai.
 updated: 2026-08-12
 ---
 
@@ -86,7 +86,7 @@ Body ke andar `constructor` se likha jata hai. Ise `: this(...)` se primary ko d
 ```kotlin title="Secondary.kt" numbered
 class Order(val id: String, val items: List<String>) {
 
-    // suvidha: ek hi item se bana lo
+    // convenience: ek hi item se bana lo
     constructor(id: String, item: String) : this(id, listOf(item))
 }
 ```
@@ -168,17 +168,17 @@ line hata do.
 
 **`init` mein asli kaam karna.** Network call, file read ya bhaari loop wahan object ke kaam
 laayak hone se pehle chalte hain, aur usi thread par jisne object banaya. `init` ko validation
-aur halke setup tak seemit rakho.
+aur halke setup tak limited rakho.
 </Pitfall>
 
 ## Practice
 
 1. `class Book(val title: String, val pages: Int)` likho aur ek `init` jodo jo khaali title
-   aur shoonya-ya-kam pages dono ko mana kar de.
+   aur zero-ya-kam pages dono ko mana kar de.
 2. Sirf title lene wala secondary constructor jodo jo pages 100 rakhe. Phir use hatakar wahi
    kaam default argument se karo.
 3. Ek `init` block mein aur uske upar wale property initialiser mein `println` daalo. Chalao
-   aur kram confirm karo.
+   aur order confirm karo.
 4. Do variables ek hi object par point karwao, ek se `var` badlo, dusre se padho. Upar wale
    memory diagram se result samjhao.
 

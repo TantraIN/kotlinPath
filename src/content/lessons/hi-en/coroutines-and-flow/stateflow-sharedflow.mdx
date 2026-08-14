@@ -16,7 +16,7 @@ replay set kiya ho.
 | --- | --- | --- |
 | Maujooda value | Hamesha hoti hai | Replay set na ho to nahi |
 | Shuruati value | Zaroori | Ijazat nahi |
-| Dohraav | Gira diya jata hai | Bhej diya jata hai |
+| Duplicate | Gira diya jata hai | Bhej diya jata hai |
 | Naye collector ko | Maujooda value turant | Sirf `replay` jitni cheezein |
 | Kis liye | Screen ki **state** | Ek baar hone wale **events** |
 
@@ -84,13 +84,13 @@ Pehle collector par shuru, timeout ke baad band. **Android ka default.**
   </Tab>
 </Tabs>
 
-<Detail summary="StateFlow dohri values kyun gira deta hai">
+<Detail summary="StateFlow duplicate values kyun gira deta hai">
 `StateFlow` `equals` se milata hai aur maujooda value ke barabar emissions chhod deta hai. Isi se
 Compose ek jaisi state par dobara recompose nahi karta — aur isiliye state rakhne wali `data
 class` zaroori hai: value barabari na ho to har update badlav jaisa dikhta hai.
 </Detail>
 
-## Android par surakshit collect karna
+## Android par safe collect karna
 
 ```kotlin title="Collect.kt" numbered
 lifecycleScope.launch {
@@ -124,7 +124,7 @@ model karo.
 | --- | --- |
 | `Flow` | Cold; har collector ko apna chalna chahiye |
 | `StateFlow` | Hamesha ek maujooda value ho — screen state |
-| `SharedFlow` | Jo ek baar hota hai — navigation, sandesh |
+| `SharedFlow` | Jo ek baar hota hai — navigation, message |
 | `stateIn` / `shareIn` | Scope ke andar cold flow ko hot banao |
 | `WhileSubscribed(5_000)` | Ghumane par bache, par kaam leak na ho |
 | `repeatOnLifecycle` | UI na dikhe to collect karna band |

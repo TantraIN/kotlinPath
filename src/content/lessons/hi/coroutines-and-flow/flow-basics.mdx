@@ -95,7 +95,7 @@ queryFlow
 **दो consumers के लिए एक ही cold flow दो बार collect करना।** हर collection काम दोबारा चलाती है। अगर वह
 network call है, तो आपने दो call कर दिए।
 
-**यह मानना कि `catch` collector को बचाएगा।** वह सिर्फ ऊपर वाले हिस्से की बचाता है। आपके
+**यह मानना कि `catch` collector को बचाएगा।** वह सिर्फ ऊपर वाले हिस्से को बचाता है। आपके
 `collect` lambda की गलतियाँ उससे पूरी तरह बच निकलती हैं।
 </Pitfall>
 

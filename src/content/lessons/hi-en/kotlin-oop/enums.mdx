@@ -27,7 +27,7 @@ fun main() {
 }
 ```
 
-Har constant ke paas wahi fields hain. Yahi ek-jaisapan `sealed` se farq hai.
+Har constant ke paas wahi fields hain. Yahi ek jaisa hona `sealed` se farq hai.
 
 <Quiz
   question={'`Status.PENDING === Status.valueOf("PENDING")` kya lautata hai?'}
@@ -94,7 +94,7 @@ baithe wahan `entries.forEach` use karo.
 
 | Cheez | Baat |
 | --- | --- |
-| Har constant | Saanjha singleton — `==` aur `===` dono surakshit |
+| Har constant | Shared singleton — `==` aur `===` dono safe |
 | Properties | Har constant ke liye wahi fields |
 | Har constant ki apni body | Chalti hai, `abstract` member ke zariye |
 | `entries` | `values()` se behtar — koi allocation nahi |

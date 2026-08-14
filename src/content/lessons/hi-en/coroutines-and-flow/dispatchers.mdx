@@ -1,11 +1,11 @@
 ---
 title: Dispatchers — Main, IO aur Default
-description: Dispatcher decide karta hai ki aapka coroutine kis thread par chalega. Galat chunav hi chikni app ko atakne wali bana deta hai.
+description: Dispatcher decide karta hai ki aapka coroutine kis thread par chalega. Galat chunav hi smooth app ko atakne wali bana deta hai.
 updated: 2026-08-12
 ---
 
 <KeyIdea>
-Dispatcher ek **thread niti** hai, thread nahi. `withContext` kisi block ko us par le jata hai
+Dispatcher ek **thread policy** hai, thread nahi. `withContext` kisi block ko us par le jata hai
 aur result wapas bhi le aata hai.
 </KeyIdea>
 
@@ -14,7 +14,7 @@ aur result wapas bhi le aata hai.
 | Dispatcher | Peeche kya hai | Kis liye |
 | --- | --- | --- |
 | `Dispatchers.Main` | Akela UI thread | Views chhuna, state padhna-likhna |
-| `Dispatchers.IO` | Bada lachila pool | Network, disk, database — jo kaam **intezaar** karta hai |
+| `Dispatchers.IO` | Bada flexible pool | Network, disk, database — jo kaam **intezaar** karta hai |
 | `Dispatchers.Default` | CPU cores jitna pool | Sorting, parsing, image — jo kaam **ginta** hai |
 
 Aakhri do ka farq hi asal mein maayne rakhta hai.
@@ -50,7 +50,7 @@ class Repository(private val api: Api, private val dao: Dao) {
 ```kotlin title="Caller.kt" numbered
 viewModelScope.launch {                   // Main par shuru
     val user = repository.user("1")       // andar IO par jata hai, wapas aata hai
-    nameText.text = user.name             // wapas Main par, surakshit
+    nameText.text = user.name             // wapas Main par, safe
 }
 ```
 
@@ -86,7 +86,7 @@ repository ke andar hona chahiye, call site par nahi. Agar har bulane wale ko
 aur shayad thread badalna. Teen line ke hisaab ko usme lapetna seedhe karne se dheema hai.
 
 **Bhaari ginti ke liye `Dispatchers.IO` use karna.** IO pool cores se kahin zyada bada ho sakta
-hai. Aath cores par saath threads ka JSON parse karna sab kuch dheema kar deta hai, UI samet.
+hai. Aath cores par 60 threads ka JSON parse karna sab kuch dheema kar deta hai, UI samet.
 </Pitfall>
 
 ## Practice

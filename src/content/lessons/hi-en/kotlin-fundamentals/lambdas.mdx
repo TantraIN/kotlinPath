@@ -1,13 +1,13 @@
 ---
 title: Lambdas aur higher-order functions
-description: Aisa function jise aap value ki tarah idhar-udhar bhej sako. Har collection operation, har click listener, aur aage chalkar har composable isi vichaar par khada hai.
+description: Aisa function jise aap value ki tarah idhar-udhar bhej sako. Har collection operation, har click listener, aur aage chalkar har composable isi idea par khada hai.
 updated: 2026-08-12
 ---
 
 ## Ye kyun zaruri hai
 
 Pehle `filter { }` se hi aap lambdas bhej rahe ho. Ye lesson us cheez ko naam deta hai, taaki
-jab Compose `onClick: () -> Unit` maange to aap use ek type ki tarah padho, chinh ki tarah
+jab Compose `onClick: () -> Unit` maange to aap use ek type ki tarah padho, punctuation ki tarah
 nahi.
 
 ## Lambda ek value hai
@@ -125,7 +125,7 @@ non-inline function ko diya lambda, har baar banne par asli object hai.
    bulao: lambda se, trailing lambda se, aur function reference se.
 2. In sabka type batao: `String` par lagaya `{ println(it) }`, `{ a: Int, b: Int -> a + b }`,
    aur `{ }`.
-3. `List<T>` par apna `myMap` extension likho jo `(T) -> R` parameter le. Asli `map` se tulna
+3. `List<T>` par apna `myMap` extension likho jo `(T) -> R` parameter le. Asli `map` se compare
    karo.
 4. `forEach { return }` bahar wale function se wapas kyun aa sakta hai, jabki variable mein
    rakha lambda nahi aa sakta?
@@ -140,4 +140,4 @@ non-inline function ko diya lambda, har baar banne par asli object hai.
 | Na parameter na result | `() -> Unit` |
 | Trailing lambda | `f(x) { ... }` |
 | Function reference | `::isLong`, `String::uppercase` |
-| `inline` | Koi lambda object nahi; non-local `return` sambhav |
+| `inline` | Koi lambda object nahi; non-local `return` possible |

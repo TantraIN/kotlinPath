@@ -6,7 +6,7 @@ updated: 2026-08-12
 
 ## Ye kyun zaruri hai
 
-Java code mein `ClassCastException` sabse aam crashes mein se ek tha. Kotlin ise durlabh bana
+Java code mein `ClassCastException` sabse aam crashes mein se ek tha. Kotlin ise rare bana
 deta hai — pakad kar nahi, balki zyadatar casts ki zarurat hi khatam karke.
 
 ## Operators asal mein function calls hain
@@ -14,7 +14,7 @@ deta hai — pakad kar nahi, balki zyadatar casts ki zarurat hi khatam karke.
 ```kotlin title="Operators.kt" numbered runnable
 fun main() {
     println(7 / 2)        // 3   — Int division kaat deta hai
-    println(7 / 2.0)      // 3.5 — ek Double ho to natija Double
+    println(7 / 2.0)      // 3.5 — ek Double ho to result Double
     println(7 % 2)        // 1   — shesh
     println(7.0 / 0)      // Infinity, koi exception nahi
     // println(7 / 0)     // ArithmeticException
@@ -109,7 +109,7 @@ diya. Crash baad mein aata hai, pehle padhe gaye element par. List nahi, element
 ## Practice
 
 1. Pehle andaza lagao, phir chalao: `println(5 / 2)`, `println(5 / 2.0)`, `println(5.0 / 0)`,
-   `println(5 / 0)`. Har results ki wajah batao.
+   `println(5 / 0)`. Har result ki wajah batao.
 2. `Any` lene wala ek function likho jo `String`, `Int`, `List<*>` aur baaki sabke liye alag
    description laute — `is` aur smart cast se, bina ek baar bhi `as` likhe.
 3. Ek class banao jismein `var name: Any` ho. `if` ke andar use smart cast karke dekho. Error
@@ -118,7 +118,7 @@ diya. Crash baad mein aata hai, pehle padhe gaye element par. List nahi, element
 
 ## Recap
 
-| Tool | Vyavhaar |
+| Tool | Behaviour |
 | --- | --- |
 | `is` | Runtime type check, aur smart cast chalu karta hai |
 | Smart cast | Apne aap, sirf tab jab value badal na sake |

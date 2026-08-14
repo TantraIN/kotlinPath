@@ -46,9 +46,9 @@ fun main() {
 }
 ```
 
-Jo cheezein anumaanit roop se fail ho sakti hain, unmein se zyadatar ka standard library ek
-`OrNull` joda deta hai. Failure *apekshit* ho — galat user input, gayab key — to nullable API
-chuno. Exceptions anapekshit ke liye hain.
+Jo cheezein aam taur par fail ho sakti hain, unmein se zyadatar ka standard library ek
+`OrNull` joda deta hai. Failure *expected* ho — galat user input, gayab key — to nullable API
+chuno. Exceptions unexpected ke liye hain.
 
 <Tip bare>
 Ek achha niyam: exceptions bugs ke liye hain aur bahar ki duniya ke fail hone ke liye. Ye
@@ -81,7 +81,7 @@ fun main() {
 ```
 
 `Result<T>` "ya to value ya wo failure jisne roka" type mein hi le aata hai, isliye bulane
-wala bhool nahi sakta ki failure sambhav hai. `runCatching { }` aise block ko lapetta hai jo
+wala bhool nahi sakta ki failure possible hai. `runCatching { }` aise block ko lapetta hai jo
 fenk sakta hai.
 
 <Warning>
@@ -107,16 +107,16 @@ fun main() {
 }
 ```
 
-`require` arguments ki rakhwali karta hai, `check` state ki. Dono haath se likhe `if` aur
+`require` arguments ko guard karta hai, `check` state ki. Dono haath se likhe `if` aur
 `throw` se behtar padhte hain, aur dono saaf batate hain ki galti kiski hai.
 
-<Pitfall title="Do jo asli samasya chhupa deti hain">
-**Khaali body wala `catch (e: Exception) { }`.** Failure phir bhi hui; aapne bas use adrishya
-kar diya. Kam se kam log to karo. Isse behtar, ye tay karo ki is layer par sudhaar sambhav hai
+<Pitfall title="Do jo asli problem chhupa deti hain">
+**Khaali body wala `catch (e: Exception) { }`.** Failure phir bhi hui; aapne bas use chhupa
+diya. Kam se kam log to karo. Isse behtar, ye tay karo ki is layer par fix possible hai
 bhi ya nahi.
 
 **Galat layer par pakadna.** Jo repository network error nigal kar khaali list de deta hai, wo
-screen ke liye "no connection" dikhana asambhav bana deta hai. Wahan pakdo jahan aap kuch kar
+screen ke liye "no connection" dikhana impossible bana deta hai. Wahan pakdo jahan aap kuch kar
 sakte ho, aur tab tak failure ko type mein chalne do.
 </Pitfall>
 
@@ -127,15 +127,15 @@ sakte ho, aur tab tak failure ko type mein chalne do.
 2. Fenk sakne wale function ko `runCatching` mein lapeto aur dono branches `fold` se sambhalo.
 3. `transfer(from, to, amount)` mein `require` aur `check` dono lagao. Kaun si failure kaun si
    hai, aur bulane wale ke liye ye farak kyun mayne rakhta hai?
-4. Samjhao ki coroutine ke andar `runCatching` cancellation kaise todh sakta hai.
+4. Samjhao ki coroutine ke andar `runCatching` cancellation kaise tod sakta hai.
 
 ## Recap
 
 | Tool | Kis liye |
 | --- | --- |
-| `try/catch/finally` | Sach mein asadharan failure; ye ek expression hai |
-| `toIntOrNull`, `getOrNull` | Apekshit failure — inhe chuno |
+| `try/catch/finally` | Sach mein unusual failure; ye ek expression hai |
+| `toIntOrNull`, `getOrNull` | Expected failure — inhe chuno |
 | `runCatching { }` | Fenkne wale block ko `Result` mein lapetna |
-| `Result<T>` | Safalta ya failure ko type mein le jana |
+| `Result<T>` | Success ya failure ko type mein le jana |
 | `require` | Bulane wale ne galat cheez di |
 | `check` | Object galat state mein hai |

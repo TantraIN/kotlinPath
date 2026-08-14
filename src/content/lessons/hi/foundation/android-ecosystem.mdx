@@ -1,6 +1,6 @@
 ---
 title: Android ecosystem, ऊपर से नीचे तक
-description: Android एक Linux है जिसके ऊपर पाँच layers रखी हैं। समस्या किस layer में है यह पता हो तो ढूँढ़ना आसान हो जाता है — और permissions, sandboxing तथा API levels हैं ही क्यों, यह भी समझ आता है।
+description: Android एक Linux है जिसके ऊपर पाँच layers रखी हैं। समस्या किस layer में है यह पता हो तो ढूँढ़ना आसान हो जाता है — और permissions, sandboxing और API levels हैं ही क्यों, यह भी समझ आता है।
 updated: 2026-08-12
 ---
 
@@ -109,8 +109,9 @@ Android पहले ही दिन आपसे ऐसे फैसले क
 Android का सबसे ज्यादा असर डालने वाला design फैसला यही है: **हर app को अपना अलग Linux user
 ID मिलता है।**
 
-यह कोई उपमा नहीं है — सच में एक user, जैसे server पर `root` और `www-data` users होते हैं।
-आपकी app की files उस user की हैं, और बाकी काम Linux की file permissions कर देती हैं।
+यह सिर्फ समझाने का तरीका नहीं है — सच में एक user बनता है, जैसे server पर `root` और
+`www-data` users होते हैं। आपकी app की files उस user की हैं, और बाकी काम Linux की file
+permissions कर देती हैं।
 
 ```bash title="Terminal" no-glossary
 # दो apps, दो बिलकुल अलग पहचान
@@ -145,11 +146,12 @@ build API level वाला नाम इस्तेमाल करती ह
 | `minSdk` | सबसे पुराना device जो app install कर सके | जितना नीचे आपके users को चाहिए |
 | `targetSdk` | किस behaviour के against app test की गई है | Latest, और सोच-समझकर बढ़ाएँ |
 
-`targetSdk` सबसे सूक्ष्म है। System इसे पढ़कर तय करता है कि आपके साथ कितनी सख्ती करनी है। इसे
-बढ़ाइए और behaviour बदल जाते हैं — background limits कस जाती हैं, permissions सख्त हो जाती हैं
-— बिना आपके एक line बदले। Google Play भी इसे recent रखना जरूरी करता है, तो यह optional नहीं है।
+इन तीनों में `targetSdk` सबसे बारीक है। System इसे पढ़कर तय करता है कि आपके साथ कितनी सख्ती
+करनी है। इसे बढ़ाइए और behaviour बदल जाते हैं — background limits कस जाती हैं, permissions
+सख्त हो जाती हैं — बिना आपके एक line बदले। Google Play भी इसे recent रखना जरूरी करता है, तो
+यह optional नहीं है।
 
-<Pitfall title="दो मान्यताएँ जो असली apps तोड़ती हैं">
+<Pitfall title="दो अंदाजे जो असली apps तोड़ते हैं">
 **Compile हो गया मतलब class है — यह मान लेना।** `compileSdk 35` आपको level 33 में जुड़ा API
 call करने देता है। `minSdk 24` वाले device पर वह class है ही नहीं, और app `NoSuchMethodError`
 के साथ crash हो जाती है। Guard लगाइए:

@@ -6,10 +6,10 @@ updated: 2026-08-12
 
 <KeyIdea>
 `data` barabari ka matlab **ek jaisi values** kar deta hai, **ek hi object** nahi. Bas isi ek
-badlav ki wajah se data class ko `Set`, `Map` key ya Compose state mein rakhna surakshit hai.
+badlav ki wajah se data class ko `Set`, `Map` key ya Compose state mein rakhna safe hai.
 </KeyIdea>
 
-## Ye kaunsi samasya hal karta hai
+## Ye kaunsi problem hal karta hai
 
 ```kotlin title="Equality.kt" numbered runnable
 class PlainUser(val id: Int)
@@ -74,14 +74,14 @@ fun main() {
 ```
 
 <Detail summary="copy() dikhne se zyada zaroori kyun hai">
-Compose aur coroutine `StateFlow` mein state badli nahi jati, badli jati hai — sunne wale ko
-sirf *nayi* value dikhti hai. `copy()` us nayi value ko ek padhne laayak line bana deta hai,
-warna har na-badla field dobara likhna padta.
+Compose aur coroutine `StateFlow` mein state ko badla nahi jata, uski jagah nayi value rakhi
+jati hai — sunne wale ko sirf *nayi* value dikhti hai. `copy()` us nayi value ko ek padhne
+laayak line bana deta hai, warna har na-badla field dobara likhna padta.
 </Detail>
 
 ## Wo niyam jispar sab phisalte hain
 
-Sirf **primary constructor** ki properties calculation hain.
+Sirf **primary constructor** ki properties ginti mein aati hain.
 
 ```kotlin title="Trap.kt" numbered runnable
 data class Note(val title: String) {
@@ -97,7 +97,7 @@ fun main() {
 
 <Pitfall title="Do jo asli bug bunti hain">
 **Body mein likhi properties ko** `equals`, `hashCode`, `toString` aur `copy` — chaaron
-ignore kar dete hain. Agar koi value object ki pehchaan ka hissa hai, to uski jagah primary
+ignore kar dete hain. Agar koi value object ki identity ka hissa hai, to uski jagah primary
 constructor hai.
 
 **`var` wali data class ko `Map` key ya `Set` mein daalna.** Bucket mein rakhne ke baad use

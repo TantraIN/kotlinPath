@@ -77,7 +77,7 @@ Jab subtypes behaviour ke saath **state** bhi baantein.
 ```kotlin title="Shared.kt" numbered
 abstract class Screen(val title: String) {   // state rakhta hai
     abstract fun render()
-    fun header() = "== $title =="            // saanjha, final
+    fun header() = "== $title =="            // shared, final
 }
 ```
 
@@ -123,7 +123,7 @@ se implement karti hai jitni ek bade ko.
    implement karwao. Dhyan do ki purana koi code nahi badla.
 2. `Clickable` ko ek `val id: String` do aur use ek baar constructor property se, ek baar
    computed `get()` se poora karo.
-3. Upar wala `A`/`B` takraav bina `override` ke banao. Compiler ki galti dhyan se padho — wo
+3. Upar wala `A`/`B` conflict bina `override` ke banao. Compiler ki galti dhyan se padho — wo
    dono parents ka naam leti hai.
 4. Apni likhi kisi abstract class ko interface mein badalne ki koshish karo. Kis cheez ne aapko
    abstract class rakhne par majboor kiya, agar kiya?

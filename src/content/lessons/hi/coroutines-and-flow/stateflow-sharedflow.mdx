@@ -99,7 +99,7 @@ lifecycleScope.launch {
 }
 ```
 
-<Pitfall title="दो जो असली bug बुनती हैं">
+<Pitfall title="दो जो असली bugs बनाती हैं">
 **बिना `repeatOnLifecycle` के सादा `lifecycleScope.launch { collect }`।** App background में चली जाए
 तो भी collection चलती रहती है, और ऐसे views update करती है जो किसी को दिख ही नहीं रहे।
 

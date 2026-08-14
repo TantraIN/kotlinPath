@@ -97,14 +97,14 @@ val v = View(context).apply { id = 1 }    // banao aur configure karo
 repo.load().also { Log.d("app", "$it") }  // jhaanko, value badle bina
 ```
 
-<Pitfall title="Do aadatein jo scope functions ko apathya bana deti hain">
+<Pitfall title="Do aadatein jo scope functions ko unreadable bana deti hain">
 **Inhe nested karna.** `a.let { b.let { ... } }` se ek hi scope mein do `it` aa jate hain aur
 andar wala bahar wale ko chupchap dhak deta hai. Nest karna hi ho to parameters ko naam do:
 `a.let { outer -> ... }`.
 
 **Jahan constructor ya `data class` se kaam ho, wahan `apply` uthana.** `apply` isliye hai
 kyunki Java APIs ko setters chahiye. Type aapka apna hai to values constructor mein lo — phir
-koi bhoolna sambhav hi nahi.
+koi bhoolna possible hi nahi.
 </Pitfall>
 
 ## Practice

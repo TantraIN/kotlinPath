@@ -10,15 +10,15 @@ Har Android project mein kuch files aisi hoti hain jo aapne likhi nahi, padh nah
 aur chhune se darte ho. Phir jab koi tutorial kehta hai "ye line build.gradle mein daalo",
 to aap galat wali mein paste kar dete ho, build tootti hai, aur seekhne ko kuch milta nahi.
 
-Bees minute ka structure ye samasya hamesha ke liye khatam kar deta hai.
+Bees minute ka structure ye problem hamesha ke liye khatam kar deta hai.
 
-## Gradle ek pipeline hai, koi rahasya nahi
+## Gradle ek pipeline hai, koi mystery nahi
 
-Build kadiyon ki ek shrinkhala hai, jahan har kadi ek cheez ko dusri mein badalti hai.
-Gradle ka kaam hai in kadiyon ko sahi kram mein chalana, aur jinke inputs nahi badle unhe
-chhod dena.
+Build ek ke baad ek chalne wale steps ki kadi hai, jahan har step ek cheez ko dusri mein
+badalta hai. Gradle ka kaam hai in steps ko sahi order mein chalana, aur jinke inputs nahi
+badle unhe chhod dena.
 
-<Figure caption="Har Android build yahi steps chalati hai. Build fail hone par message batata hai kaun sa step — isiliye task ka naam padh lena hi aksar samasya dhundhne ke liye kaafi hota hai.">
+<Figure caption="Har Android build yahi steps chalati hai. Build fail hone par message batata hai kaun sa step — isiliye task ka naam padh lena hi aksar problem dhundhne ke liye kaafi hota hai.">
   <PipelineDiagram
     title="Android build asal mein karti kya hai"
     description="Resources compile hote hain, Kotlin class files mein compile hota hai, R8 unhe DEX banata hai, sab kuch APK ya bundle mein package hota hai, aur aakhir mein sign hota hai."
@@ -116,7 +116,7 @@ Ise chaar sawalon ki tarah padho:
 | `dependencies` | Is module ko bahar ka kaun sa code chahiye? |
 
 Do lines par thoda ruk jao. `namespace` wo package hai jismein aapki generated `R` class
-banti hai. `applicationId` device par aur Google Play par aapki app ki sthayi pehchaan hai —
+banti hai. `applicationId` device par aur Google Play par aapki app ki permanent identity hai —
 pehli release ke baad ise kabhi badla nahi ja sakta. Aam taur par dono same hote hain, par
 matlab dono ka alag hai.
 
@@ -179,7 +179,7 @@ dependencies {
 }
 ```
 
-`implementation` library ko sirf is module tak seemit rakhta hai. `api` use un sabko de deta
+`implementation` library ko sirf is module tak limited rakhta hai. `api` use un sabko de deta
 hai jo is module par nirbhar hain.
 
 Lagbhag hamesha `implementation` chuno. Iska matlab hai ki us library ko badalne par sirf
@@ -223,7 +223,7 @@ mile.
 | Configuration phase | Build files padhta hai, task graph banata hai — har baar chalta hai |
 | Execution phase | Sirf zaruri aur purane pade tasks chalata hai |
 | Version catalogue | `libs.versions.toml` — har version ke liye ek hi jagah |
-| `implementation` | Dependency sirf is module tak seemit |
+| `implementation` | Dependency sirf is module tak limited |
 | `api` | Dependency is module ke consumers tak khuli |
 
 <Interview title="Jinhone ship kiya hai aur jinhone sirf tutorial dekhe hain, unhe alag karta hai">

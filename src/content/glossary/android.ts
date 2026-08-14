@@ -180,8 +180,8 @@ export const ANDROID_GLOSSARY: Glossary = {
     importLine: "import androidx.compose.ui.Modifier",
     does: {
       en: "An ordered chain of decorations and behaviours applied to a composable — size, padding, background, clicks.",
-      hi: "किसी composable पर लागू सजावट और व्यवहार की क्रमबद्ध श्रृंखला — size, padding, background, clicks।",
-      "hi-en": "Kisi composable par lagu sajawat aur behaviour ki ordered chain — size, padding, background, clicks.",
+      hi: "किसी composable पर एक के बाद एक लगने वाली सजावट और व्यवहार — size, padding, background, clicks।",
+      "hi-en": "Kisi composable par ek ke baad ek lagne wali sajawat aur behaviour — size, padding, background, clicks.",
     },
     affects: {
       en: "Order is not cosmetic, it is the semantics. `padding().background()` paints behind the content only; `background().padding()` paints behind the padding too. The same applies to `clickable` — whatever comes before it is outside the touch area.",

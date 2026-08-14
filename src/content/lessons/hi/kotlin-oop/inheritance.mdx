@@ -91,7 +91,7 @@ fun main() = TimestampLogger().log("saved")
 
 ## आम गलतियाँ
 
-<Pitfall title="दो जो असली bug बुनती हैं">
+<Pitfall title="दो जो असली bugs बनाती हैं">
 **Constructor या `init` से `open` method बुलाना।** Subclass की अपनी properties तब तक assign हुई ही
 नहीं होतीं, इसलिए override आधे-अधूरे state पर चलता है और `null` या `0` पढ़ता है। Construction के
 दौरान overridable method कभी मत बुलाइए।
@@ -110,7 +110,7 @@ fun main() = TimestampLogger().log("saved")
 3. `Payment` के `init` में एक `println` डालिए जो `fee()` बुलाए, फिर `Card` बनाइए। जो number मिला उसे
    समझाइए।
 4. पूरे ढाँचे को ऐसे लिखिए कि `fee()` open class की जगह interface से आए। पाँचवाँ payment type जोड़ने
-   पर कौन सा version ज्यादा आराम से झेलता?
+   पर कौन सा version ज्यादा आराम से झेलता है?
 
 ## सारांश
 

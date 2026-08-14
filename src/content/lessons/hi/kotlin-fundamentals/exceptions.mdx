@@ -44,7 +44,7 @@ fun main() {
 }
 ```
 
-जो चीजें अनुमानित रूप से fail हो सकती हैं, उनमें से ज्यादातर का standard library एक `OrNull` जोड़ा
+जो चीजें आम तौर पर fail हो सकती हैं, उनमें से ज्यादातर का standard library एक `OrNull` जोड़ा
 देता है। Failure *अपेक्षित* हो — गलत user input, गायब key — तो nullable API चुनिए। Exceptions
 अनपेक्षित के लिए हैं।
 
@@ -107,7 +107,7 @@ fun main() {
 पढ़ते हैं, और दोनों साफ बताते हैं कि गलती किसकी है।
 
 <Pitfall title="दो जो असली समस्या छुपा देती हैं">
-**खाली body वाला `catch (e: Exception) { }`।** Failure फिर भी हुई; आपने बस उसे अदृश्य कर दिया। कम से
+**खाली body वाला `catch (e: Exception) { }`।** Failure फिर भी हुई; आपने बस उसे छुपा दिया। कम से
 कम log तो कीजिए। इससे बेहतर, यह तय कीजिए कि इस layer पर सुधार संभव है भी या नहीं।
 
 **गलत layer पर पकड़ना।** जो repository network error निगलकर खाली list दे देता है, वह screen के लिए

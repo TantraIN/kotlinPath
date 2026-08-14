@@ -1,6 +1,6 @@
 ---
 title: Properties, custom accessors, lateinit aur lazy
-description: Kotlin ki property field nahi hai. Wo ek getter hai, aur zarurat par setter — isiliye wo calculate kar sakti hai, check sakti hai, ya intezaar kar sakti hai.
+description: Kotlin ki property field nahi hai. Wo ek getter hai, aur zarurat par setter — isiliye wo calculate kar sakti hai, check kar sakti hai, ya intezaar kar sakti hai.
 updated: 2026-08-12
 ---
 
@@ -96,7 +96,7 @@ Imaandaar chunav, jab value sach mein gayab ho sakti ho.
 
 ```kotlin title="Nullable.kt" numbered
 class Session {
-    var user: User? = null        // yahan gayab hona ek asli sthiti hai
+    var user: User? = null        // yahan gayab hona ek asli situation hai
 }
 ```
 
@@ -106,7 +106,7 @@ class Session {
 <Detail summary="lateinit sirf kam typing wala nullable kyun nahi hai">
 `lateinit` null ka *check* hatata hai, null nahi. Jaldi padhne par
 `UninitializedPropertyAccessException` aata hai — lambe naam wala `NullPointerException`, aur
-compiler se koi madad nahi. Ise tabhi uthao jab framework assignment ka kram guarantee karta
+compiler se koi madad nahi. Ise tabhi uthao jab framework assignment ka order guarantee karta
 ho.
 </Detail>
 

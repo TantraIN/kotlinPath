@@ -9,7 +9,7 @@ Extension class mein juda nahi hota. Wo ek saada function hai jiska pehla parame
 hai, bas use dot se bulane laayak bana diya gaya hai.
 </KeyIdea>
 
-## Samasya
+## Problem
 
 Aapko `"asha@mail.com".isEmail()` chahiye. `String` aapka hai nahi, aur waise bhi wo `final` hai.
 
@@ -35,7 +35,7 @@ Body ke andar `this` hi receiver hai — aur Kotlin ke har `this` ki tarah, use 
 poori khoobi bas dot wala syntax hai.
 </Detail>
 
-## Wo result jispar log galat samajhte hain
+## Wo result jise log galat samajhte hain
 
 Kyunki ye static function hai, ye **likhe hue type** se decide hota hai, chalte waqt wale type se nahi.
 
@@ -65,7 +65,7 @@ fun main() {
 
 <Pitfall bare>
 Ek hi signature wale member function ke saamne extension hamesha haar jata hai. Agar library ke
-kisi naye version ne wo member joda, to aapka extension chupchap bulna band ho jayega.
+kisi naye version ne wo member joda, to aapka extension chupchap bulaya jana band ho jayega.
 </Pitfall>
 
 ## Extensions sach mein kahan kaam aate hain
@@ -121,7 +121,7 @@ fun main() = println(listOf("a", "b", "c").second())
 dispatch hota hai, class mein dikhta hai, aur override ho sakta hai. Extensions un types ke
 liye hain jinhe aap badal nahi sakte.
 
-**Saanjhe module mein `Any` ya `String` par extensions.** Wo project ki har `String` ke
+**Shared module mein `Any` ya `String` par extensions.** Wo project ki har `String` ke
 autocomplete mein aa jate hain. Aise chaude receivers ko `private` ya `internal` rakho, jab tak
 poori team unhe na chahe.
 </Pitfall>
@@ -144,4 +144,4 @@ poori team unhe na chahe.
 | Dispatch | Static — likha hua type, chalte waqt wala nahi |
 | Member ya extension | Member hamesha jeetta hai |
 | Nullable receiver | Chalta hai, aur aksar wahi point hai |
-| Kab use karo | Jo types aapke nahi, ya seemit dayre ke helpers |
+| Kab use karo | Jo types aapke nahi, ya limited dayre ke helpers |

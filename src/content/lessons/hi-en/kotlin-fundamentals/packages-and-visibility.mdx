@@ -6,7 +6,7 @@ updated: 2026-08-12
 
 ## Ye kyun zaruri hai
 
-Visibility hi wo iklauta auzaar hai jo code ko surakshit roop se badalne deta hai. Jo bhi
+Visibility hi wo iklauta auzaar hai jo code ko safe roop se badalne deta hai. Jo bhi
 `public` hai wo ek waada hai; jo `private` hai use aap aaj dopahar dobara likh sakte ho.
 Beginners sab kuch public kar dete hain aur phir paate hain ki kuch bhi badla nahi ja sakta
 bina kuch toote.
@@ -19,7 +19,7 @@ package com.example.myapp.data
 class User(val id: Int, val name: String)
 ```
 
-Package file ke sabse upar likha jata hai aur parampara se folder path jaisa hi hota hai.
+Package file ke sabse upar likha jata hai aur convention se folder path jaisa hi hota hai.
 Kotlin Java ki tarah folders aur package ka milna zaruri nahi karta — par phir bhi milaao,
 kyunki har tool aur har teammate yahi ummeed karta hai.
 
@@ -42,7 +42,7 @@ kyunki har tool aur har teammate yahi ummeed karta hai.
 
 ```kotlin title="Imports.kt" numbered
 import com.example.myapp.data.UserRepository
-import com.example.myapp.domain.User as DomainUser   // alias naam ka takraav suljhata hai
+import com.example.myapp.domain.User as DomainUser   // alias naam ka conflict suljhata hai
 import kotlinx.coroutines.flow.*                     // poora package, kam hi use karo
 ```
 
@@ -88,7 +88,7 @@ fun log(message: String) = println("[$PREFIX] $message")
 ```
 
 Kotlin functions aur properties ko class ke bahar bhi rehne deta hai. `private` top-level
-declaration sirf apni file mein dikhta hai, jisse ek-file wale helpers sach mein simite rehte
+declaration sirf apni file mein dikhta hai, jisse ek-file wale helpers sach mein limited rehte
 hain — Java mein iska koi jod nahi hai.
 
 <Pitfall title="Do jo codebase badalna mushkil bana deti hain">
@@ -106,7 +106,7 @@ badha raha hai, usi package mein jiska wo type hai.
    karke compile karwao.
 2. Apni koi class lo aur uske har member ko `private` kar do. Sirf wahi errors theek karo jo
    sach mein bahar ke istemal hain. Kitne members ko sach mein public hona chahiye tha?
-3. Multi-module project ka udaharan lekar samjhao ki `internal` kab sahi chunav hai aur
+3. Multi-module project ka example lekar samjhao ki `internal` kab sahi chunav hai aur
    `private` kab nahi.
 4. `private` top-level function usi file ki dusri class ko kyun dikhta hai, par usi package ki
    dusri file ko kyun nahi?

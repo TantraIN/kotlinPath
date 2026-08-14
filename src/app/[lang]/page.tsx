@@ -138,9 +138,9 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
                 }
                 body={
                   lang === "hi"
-                    ? "कोड में रेखांकित हर token बताता है कि वह क्या है, कहाँ से import होता है, करता क्या है, और आगे किस चीज़ पर असर डालता है।"
+                    ? "Code में जिस token के नीचे लकीर है वह बताता है कि वह क्या है, कहाँ से import होता है, करता क्या है, और आगे किस चीज पर असर डालता है।"
                     : lang === "hi-en"
-                      ? "Code mein underline har token batata hai ki wo kya hai, kahan se import hota hai, karta kya hai, aur aage kis cheez par asar dalta hai."
+                      ? "Code mein jis token ke neeche underline hai wo batata hai ki wo kya hai, kahan se import hota hai, karta kya hai, aur aage kis cheez par asar dalta hai."
                       : "Every underlined token in the code tells you what it is, where it is imported from, what it does, and what it affects downstream."
                 }
               />

@@ -14,8 +14,8 @@ Unsupported class file major version 65
 ```
 
 Is message mein na Kotlin hai, na Android, na aapka code. Ye baat kar raha hai **bytecode**
-aur **JDK versions** ki — yaani us layer ki, jo is lesson ka vishay hai. Ye layer dikhne
-lag jaye to aise errors rahasya nahi rehte, ek line ka fix ban jate hain.
+aur **JDK versions** ki — yaani us layer ki, jo is lesson ka topic hai. Ye layer dikhne
+lag jaye to aise errors mystery nahi rehte, ek line ka fix ban jate hain.
 
 ## Beech ka rasta
 
@@ -23,7 +23,7 @@ Pichhle lesson mein do raste the: sab kuch pehle hi compile kar do, ya line by l
 interpret karo. Kotlin in dono mein se koi nahi chunta.
 
 Wo pehle hi compile karta hai — lekin aapke processor ke machine code mein nahi. Wo
-**bytecode** mein compile karta hai: ek kalpanik computer ke liye instructions. Phir
+**bytecode** mein compile karta hai: ek imaginary computer ke liye instructions. Phir
 **Java Virtual Machine** naam ka program us bytecode ko us asli machine par chalata hai
 jahan wo install hai.
 
@@ -62,7 +62,7 @@ Linux server aur phone ke beech alag hoti hai, use JVM sambhalta hai.
       { label: "Operating system", sub: "Linux, macOS, Windows", accent: "amber", detail: "Processes schedule karta hai, memory aur files sambhalta hai, devices se baat karta hai. Isiliye Windows ka JVM Linux ke JVM se alag hota hai." },
       { label: "JVM", sub: "java", accent: "emerald", detail: "Bytecode padhkar chalata hai, aur chalte-chalte garam hisson ko asli machine code bana deta hai. Yahi layer ek compiled cheez ko kahin bhi chalne laayak banati hai." },
       { label: "Kotlin stdlib", sub: "kotlin.*", accent: "sky", detail: "`kotlin.*` ke neeche sab kuch — collections, strings, scope functions, coroutine primitives. Bina kisi import ke milta hai." },
-      { label: "Aapka code", sub: "Main.kt", accent: "violet", highlight: true, detail: "Iklauti layer jo aap likhte ho. Neeche ki har cheez machine ke har dusre Kotlin program ke saath saajha hai." },
+      { label: "Aapka code", sub: "Main.kt", accent: "violet", highlight: true, detail: "Iklauti layer jo aap likhte ho. Neeche ki har cheez machine ke har dusre Kotlin program ke saath shared hai." },
     ]}
   />
 </Figure>
@@ -92,7 +92,7 @@ fun main() {
 Compile hone par `add` lagbhag chaar bytecode instructions ban jata hai: pehla argument
 load karo, dusra load karo, jodo, return karo. JVM inhe chalata hai — aur jab koi function
 kaafi baar chal chuka hota hai to **JIT compiler** use asli machine code mein badal deta
-hai, taaki aage ki calls mein interpretation ka kaam bache hi na.
+hai, taaki aage ki calls mein interpretation ka kaam rahe hi nahi.
 
 <Note>
 Isiliye JVM program pehle ek second dheema aur uske baad tez lagta hai. Android par yahi
@@ -146,7 +146,7 @@ public class User {
 data class User(val name: String)
 ```
 
-Ek line, aur `equals`, `hashCode`, `toString` aur `copy` mufta mein. Ye koi jaadu ka khel
+Ek line, aur `equals`, `hashCode`, `toString` aur `copy` muft mein. Ye koi jaadu ka khel
 nahi hai — value equality hi wo cheez hai jiski wajah se list diffing aur Compose
 recomposition sahi chalte hain, jo aap Phase 2 mein dekhoge.
 
@@ -179,7 +179,7 @@ code mein aaye, use turant explicitly nullable type (`String?`) mein daal do.
 
 | Term | Ye kya hai | Kahan milega |
 | --- | --- | --- |
-| Bytecode | Ek kalpanik machine ke instructions | `.class` files, build errors |
+| Bytecode | Ek imaginary machine ke instructions | `.class` files, build errors |
 | JVM | Wo program jo bytecode chalata hai | Har `java` command |
 | JDK | Tools + JVM, build ke liye zaruri | Gradle toolchain settings |
 | JIT | Run time par hot code ko machine code banata hai | Pehla run dheema, baad mein tez |

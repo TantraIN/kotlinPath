@@ -27,7 +27,7 @@ minute lagane se aap wo settings copy-paste karne se bach jaoge jinka matlab pat
       { label: "Linux kernel", sub: "drivers, memory, power", accent: "rose", detail: "Processes, memory, drivers aur power. Android ne Linux ka user aur permission model liya hai — app sandbox usi se bana hai." },
       { label: "Hardware abstraction layer", sub: "HAL", accent: "amber", detail: "Ek tay interface jise har manufacturer camera, sensors aur audio ke liye implement karta hai, taaki ek hi Android build bahut alag hardware par chal jaye." },
       { label: "Native libraries + ART", sub: "libc, SQLite, runtime", accent: "emerald", detail: "C++ mein SQLite, media codecs aur OpenGL, aur saath mein Android Runtime jo aapka DEX bytecode chalata hai." },
-      { label: "Java API framework", sub: "Activity, View, Context", accent: "sky", detail: "Jo bhi Android class aap import karte ho — `Activity`, `View`, `Context`. Neeche ki har cheez ke upar ek documented parat." },
+      { label: "Java API framework", sub: "Activity, View, Context", accent: "sky", detail: "Jo bhi Android class aap import karte ho — `Activity`, `View`, `Context`. Neeche ki har cheez ke upar ek documented layer." },
       { label: "Aapki app", sub: "MainActivity.kt", accent: "violet", highlight: true, detail: "Aapki APK, apne alag Linux user aur apne process mein, theek usi layer par jahan system apps hain." },
     ]}
   />
@@ -42,7 +42,7 @@ Neeche se upar padho:
     model bhi hai jis par app sandbox khada hai.
   </TimelineItem>
   <TimelineItem title="Hardware abstraction layer" meta="HAL">
-    Camera, sensors, Bluetooth aur audio ke liye ek sthir interface. Isiliye ek hi Android
+    Camera, sensors, Bluetooth aur audio ke liye ek stable interface. Isiliye ek hi Android
     build sau manufacturers ke hardware par chal jati hai.
   </TimelineItem>
   <TimelineItem title="Native libraries aur ART" meta="C++ / runtime">
@@ -51,7 +51,7 @@ Neeche se upar padho:
   <TimelineItem title="Java API framework" meta="jo aap call karte ho">
     `Activity`, `View`, `Context`, `PackageManager`. Jo bhi Android class aap import karte
     ho wo yahin rehti hai. Ye neeche ki har cheez ke upar ek patli, achhi tarah documented
-    parat hai.
+    layer hai.
   </TimelineItem>
   <TimelineItem title="Applications" meta="aapka APK">
     Aapki app, aur system apps — dono theek ek hi layer par, ek jaise niyamon ke saath.
@@ -112,12 +112,12 @@ device tak jata hai.
 Android ka sabse zyada asar daalne wala design faisla yahi hai: **har app ko apna alag
 Linux user ID milta hai.**
 
-Ye koi upma nahi hai — sach mein ek user, jaise server par `root` aur `www-data` users hote
-hain. Aapki app ki files us user ki hain, aur baaki kaam Linux ki file permissions kar deti
+Ye sirf samjhane ka tarika nahi hai — sach mein ek user banta hai, jaise server par `root`
+aur `www-data` users hote hain. Aapki app ki files us user ki hain, aur baaki kaam Linux ki file permissions kar deti
 hain.
 
 ```bash title="Terminal" no-glossary
-# Do apps, do bilkul alag pehchaan
+# Do apps, do bilkul alag identity
 adb shell ps -A | grep -E "com.example|com.android.chrome"
 
 u0_a142  ...  com.example.myapp
@@ -150,18 +150,18 @@ hain, aur build API level wala naam use karti hai.
 | `minSdk` | Sabse purana device jo app install kar sake | Jitna neeche aapke users ko chahiye |
 | `targetSdk` | Kis behaviour ke against app test ki gayi hai | Latest, aur soch-samajh kar badhao |
 
-`targetSdk` sabse sookshm hai. System ise padhkar decide karta hai ki aapke saath kitni sakhti
-karni hai. Ise badhao aur behaviour badal jate hain — background limits kas jati hain,
+In teeno mein `targetSdk` sabse baareek hai. System ise padhkar decide karta hai ki aapke
+saath kitni sakhti karni hai. Ise badhao aur behaviour badal jate hain — background limits kas jati hain,
 permissions sakht ho jati hain — bina aapke ek line badle. Google Play bhi ise recent rakhna
 zaruri karta hai, to ye optional nahi hai.
 
-<Pitfall title="Do maanyataayein jo asli apps todti hain">
+<Pitfall title="Do andaaze jo asli apps todte hain">
 **Compile ho gaya matlab class hai — ye maan lena.** `compileSdk 35` aapko level 33 mein
 juda API call karne deta hai. `minSdk 24` wale device par wo class hai hi nahi, aur app
 `NoSuchMethodError` ke saath crash ho jati hai. Guard lagao:
 `if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)`.
 
-**Warning chupane ke liye `targetSdk` badha dena.** Ye ek ghoshna hai ki aapne us version ke
+**Warning chupane ke liye `targetSdk` badha dena.** Ye ek declaration hai ki aapne us version ke
 behaviour changes ke against test kar liya hai. Badhao, phir app sach mein chalao — release
 se ek raat pehle mat badhao.
 </Pitfall>
@@ -208,8 +208,8 @@ Play har device ke liye sahi naap ka APK khud bana leta hai.
 
 | Term | Ek line |
 | --- | --- |
-| Linux kernel | Sabse neeche ki layer; user-ID sandbox ka srot |
-| HAL | Alag-alag manufacturers ke hardware tak sthir interface |
+| Linux kernel | Sabse neeche ki layer; user-ID sandbox ka source |
+| HAL | Alag-alag manufacturers ke hardware tak stable interface |
 | ART | Android ka runtime — DEX chalata hai, pehle hi compile karta hai |
 | DEX | Android ka bytecode format, R8 banata hai |
 | Sandbox | Har app ka ek Linux user; permission uske bahar ki anumati hai |
@@ -220,6 +220,6 @@ Play har device ke liye sahi naap ka APK khud bana leta hai.
 "`minSdk`, `targetSdk` aur `compileSdk` mein kya farak hai?"
 
 Jo jawab jamta hai: `compileSdk` compile time hai, `minSdk` install time hai, `targetSdk`
-run time hai. Phir har ek ke galat hone ka nateeja batao — code compile hi nahi hoga, users
+run time hai. Phir har ek ke galat hone ka result batao — code compile hi nahi hoga, users
 install nahi kar payenge, aur wo behaviour badal jayega jo aapne kabhi test hi nahi kiya.
 </Interview>

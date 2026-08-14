@@ -1,6 +1,6 @@
 ---
 title: object, companion object aur singletons
-description: Kotlin mein `static` hai hi nahi. Uski jagah kuch zyada seemit aur surakshit hai — ek declaration jo khud hi apna akela instance hai.
+description: Kotlin mein `static` hai hi nahi. Uski jagah kuch zyada limited aur safe hai — ek declaration jo khud hi apna akela instance hai.
 updated: 2026-08-12
 ---
 
@@ -44,7 +44,7 @@ fun main() {
     "Har baar jab uska naam likho",
   ]}
   answer={1}
-  explanation="Kotlin ise static INSTANCE field wali class banata hai jo static initialiser mein bharta hai, isliye JVM guarantee deta hai ki wo theek ek baar, pehle istemal par, saare threads ke liye surakshit tarike se chale. Isiliye `object` bina aapka koi locking code likhe sahi singleton hai."
+  explanation="Kotlin ise static INSTANCE field wali class banata hai jo static initialiser mein bharta hai, isliye JVM guarantee deta hai ki wo theek ek baar, pehle istemal par, saare threads ke liye safe tarike se chale. Isiliye `object` bina aapka koi locking code likhe sahi singleton hai."
 />
 
 ## Teen roop

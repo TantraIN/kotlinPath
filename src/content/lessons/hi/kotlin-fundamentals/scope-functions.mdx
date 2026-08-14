@@ -97,7 +97,7 @@ val v = View(context).apply { id = 1 }    // बनाइए और configure �
 repo.load().also { Log.d("app", "$it") }  // झाँकिए, value बदले बिना
 ```
 
-<Pitfall title="दो आदतें जो scope functions को अपाठ्य बना देती हैं">
+<Pitfall title="दो आदतें जो scope functions को पढ़ने लायक नहीं छोड़तीं">
 **इन्हें nested करना।** `a.let { b.let { ... } }` से एक ही scope में दो `it` आ जाते हैं और अंदर
 वाला बाहर वाले को चुपचाप ढक देता है। Nest करना ही हो तो parameters को नाम दीजिए:
 `a.let { outer -> ... }`।

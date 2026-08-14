@@ -7,8 +7,8 @@ updated: 2026-08-12
 ## Ye kyun zaruri hai
 
 Jo bhi screen aap bhejte ho wo text hi hai: labels, error messages, formatted prices, log
-lines. Java mein iska matlab tha `+` ki lambi zanjeer ya `String.format`. Kotlin ke paas
-isse behtar cheez hai, aur yahi pehla Kotlin feature hai jo logon ko muskurata hai.
+lines. Java mein iska matlab tha `+` ki lambi chain ya `String.format`. Kotlin ke paas
+isse behtar cheez hai, aur yahi pehla Kotlin feature hai jise dekhkar log muskura dete hain.
 
 ## Templates: string ke andar `$`
 
@@ -102,7 +102,7 @@ fun main() {
 }
 ```
 
-## Text ki tulna
+## Text compare karna
 
 ```kotlin title="Comparing.kt" numbered runnable
 fun main() {
@@ -117,11 +117,11 @@ fun main() {
 ```
 
 <Pitfall title="Do jo asli apps mein kaatti hain">
-**`===` se tulna karna.** `==` contents compare karta hai, `===` identity. Text ke liye
+**`===` se compare karna.** `==` contents compare karta hai, `===` identity. Text ke liye
 lagbhag hamesha `==` chahiye. Agar aapne strings par `===` likha hai, to wo bug hai.
 
-**Tulna ke liye user input ko `uppercase()` se case-fold karna.** Turkish mein
-`"i".uppercase()` `"I"` nahi hota. Case-insensitive milaan ke liye
+**Compare karne ke liye user input ko `uppercase()` se case-fold karna.** Turkish mein
+`"i".uppercase()` `"I"` nahi hota. Case-insensitive match ke liye
 `equals(other, ignoreCase = true)` use karo, jo locale ke hisab se sahi kaam karta hai, text
 ko pehle bigadta nahi.
 </Pitfall>
@@ -145,4 +145,4 @@ ko pehle bigadta nahi.
 | Triple quotes | JSON, SQL, regex, koi bhi multi-line cheez |
 | `.trimIndent()` | Code ne jo indentation di thi use hatane ke liye |
 | `buildString { }` | Bahut saare tukde bina kachra banaye jodne ke liye |
-| `equals(x, ignoreCase = true)` | Case-insensitive tulna, sahi tarike se |
+| `equals(x, ignoreCase = true)` | Case-insensitive compare, sahi tarike se |

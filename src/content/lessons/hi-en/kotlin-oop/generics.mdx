@@ -6,7 +6,7 @@ updated: 2026-08-12
 
 <KeyIdea>
 `List<Dog>` apne aap `List<Animal>` **nahi** hai jab tak aap na kaho. `out` aur `in` kehne ka
-tarika hain, aur har ek sirf ek hi disha mein surakshit hai.
+tarika hain, aur har ek sirf ek hi disha mein safe hai.
 </KeyIdea>
 
 ## Jo baat saaf lagti hai wo mana kyun hai
@@ -31,7 +31,7 @@ generic type **invariant** hai: `MutableList<Dog>` aur `MutableList<Animal>` ka 
     "`MutableList` class hai aur `List` interface hai",
   ]}
   answer={1}
-  explanation="Sirf padhne wali `List` covariant hai: `interface List<out E>`. `out` ka matlab E sirf return ki jagah aata hai, isliye `List<Dog>` se Animal padhna poori tarah surakshit hai. `MutableList` E ko `add` ke parameter ki tarah bhi leta hai, isliye wo `out` ho hi nahi sakta — yahi kutte ki list mein billi wala ched hai."
+  explanation="Sirf padhne wali `List` covariant hai: `interface List<out E>`. `out` ka matlab E sirf return ki jagah aata hai, isliye `List<Dog>` se Animal padhna poori tarah safe hai. `MutableList` E ko `add` ke parameter ki tarah bhi leta hai, isliye wo `out` ho hi nahi sakta — yahi kutte ki list mein billi wala ched hai."
 />
 
 ## Do keywords
@@ -52,7 +52,7 @@ class Box<out T>(private val value: T) {
 
 fun main() {
     val dogBox: Box<String> = Box("dog")
-    val anyBox: Box<Any> = dogBox      // surakshit: sirf padh sakte ho
+    val anyBox: Box<Any> = dogBox      // safe: sirf padh sakte ho
     println(anyBox.get())
 }
 ```
@@ -67,7 +67,7 @@ fun interface Printer<in T> {
 
 fun main() {
     val anyPrinter = Printer<Any> { println("value: $it") }
-    val stringPrinter: Printer<String> = anyPrinter   // surakshit: wo kuch bhi leta hai
+    val stringPrinter: Printer<String> = anyPrinter   // safe: wo kuch bhi leta hai
     stringPrinter.print("hello")
 }
 ```

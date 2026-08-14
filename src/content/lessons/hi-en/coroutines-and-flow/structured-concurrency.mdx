@@ -120,7 +120,7 @@ fun main() = runBlocking {
 
 <Pitfall title="Do jo cancellation tod deti hain">
 **Suspending code ke aas-paas `Exception` pakadna.** `CancellationException` bhi ek `Exception`
-hai, isliye chauda `catch` cancel ka sandesh nigal jata hai aur coroutine chalta rehta hai. Tay
+hai, isliye chauda `catch` cancel ka signal nigal jata hai aur coroutine chalta rehta hai. Tay
 types pakdo, ya `CancellationException` wapas fenko.
 
 **Bina suspension point wali lambi ginti.** Wo cancel ho hi nahi sakti. Loop ke andar

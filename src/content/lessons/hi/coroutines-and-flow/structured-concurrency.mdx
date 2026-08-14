@@ -34,7 +34,7 @@ fun main() = runBlocking {
 पहला तब जब "ये सब चाहिए", दूसरा तब जब "जो मिल जाए वही सही"।
 </Detail>
 
-## Cancellation साथ माँगती है
+## Cancellation cooperative है
 
 Cancel करना एक निशान लगाता है। Coroutine सच में **suspension point** पर ही रुकता है।
 
@@ -118,7 +118,7 @@ fun main() = runBlocking {
 
 <Pitfall title="दो जो cancellation तोड़ देती हैं">
 **Suspending code के आस-पास `Exception` पकड़ना।** `CancellationException` भी एक `Exception` है,
-इसलिए चौड़ा `catch` cancel का संदेश निगल जाता है और coroutine चलता रहता है। तय types पकड़िए, या
+इसलिए चौड़ा `catch` cancel का signal निगल जाता है और coroutine चलता रहता है। तय types पकड़िए, या
 `CancellationException` वापस फेंकिए।
 
 **बिना suspension point वाली लंबी गिनती।** वह cancel हो ही नहीं सकती। Loop के अंदर `ensureActive()`

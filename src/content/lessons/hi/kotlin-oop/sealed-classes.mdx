@@ -52,7 +52,7 @@ fun main() {
     "`Empty` दिखते ही `render` चलते वक्त exception फेंकेगा",
   ]}
   answer={1}
-  explanation="`when` पूरा है और उसमें `else` नहीं है, इसलिए नया subtype जोड़ते ही वह अधूरा हो जाता है — और यह compile error है। Bug उसी पल बताता है जब वह आया, न कि जब किसी user को वह state मिली। `else -> ...` लिखना इस guarantee को फेंक देना है।"
+  explanation="`when` पूरा है और उसमें `else` नहीं है, इसलिए नया subtype जोड़ते ही वह अधूरा हो जाता है — और यह compile error है। Bug उसी पल पता चल जाता है जब वह आया, न कि जब किसी user को वह state मिली। `else -> ...` लिखना इस guarantee को फेंक देना है।"
 />
 
 ## Sealed बनाम enum

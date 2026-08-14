@@ -1,6 +1,6 @@
 ---
 title: map, filter, groupBy aur unke saathi
-description: Aap jo bhi loop likhne wale the, wo lagbhag hamesha pehle se ek naam wale function ki tarah maujood hai. Yahi shabdawali Kotlin code ko chhota banati hai, bina use chatur banaye.
+description: Aap jo bhi loop likhne wale the, wo lagbhag hamesha pehle se ek naam wale function ki tarah maujood hai. Yahi vocabulary Kotlin code ko chhota banati hai, bina use chatur banaye.
 updated: 2026-08-12
 ---
 
@@ -8,7 +8,7 @@ updated: 2026-08-12
 
 Loop padhne wale ko *kaise* batata hai. `filter { it.isActive }` batata hai *kya*. Code aap
 likhne se kahin zyada padhte ho, isliye dusri cheez theek se seekhne laayak hai — aur yahi
-shabdawali Phase 3 mein `Flow` par dobara kaam aayegi.
+vocabulary Phase 3 mein `Flow` par dobara kaam aayegi.
 
 ## Chaar jo roz kaam aayenge
 
@@ -24,8 +24,8 @@ fun main() {
 
     println(users.map { it.name })                 // har ek ko badlo
     println(users.filter { it.age > 26 })          // kuch hi rakho
-    println(users.find { it.city == "Delhi" })     // pehla milaan, ya null
-    println(users.sortedBy { it.age })             // kramit copy
+    println(users.find { it.city == "Delhi" })     // pehla match, ya null
+    println(users.sortedBy { it.age })             // sorted copy
 }
 ```
 
@@ -34,10 +34,10 @@ fun main() {
 | `map` | "har item ko kisi aur cheez mein badlo" |
 | `filter` | "sirf wahi rakho jahan…" |
 | `find` / `first` | "ek milta hua do" — `find` null deta hai, `first` fenkta hai |
-| `sortedBy` | "wahi items, alag kram" |
+| `sortedBy` | "wahi items, alag order" |
 
 In sab mein se har ek **nayi** collection lautata hai. Original chhua tak nahi jata, isiliye
-ye surakshit roop se chain hote hain.
+ye safe roop se chain hote hain.
 
 ## Grouping aur folding
 
@@ -82,7 +82,7 @@ fun main() {
 ```
 
 Chain ko upar se neeche ek wakya ki tarah padho: posts lo, unke saare tags lo, duplicates
-hatao, sort karo. Poora aakarshan yahi hai.
+hatao, sort karo. Poori khoobi yahi hai.
 
 <Tip bare>
 `map { }.filter { }` list par do baar chalta hai. Gine-chune items ke liye ye koi baat nahi.
@@ -96,7 +96,7 @@ chain se ek hi baar, aalasi tarike se guzarta hai.
 call site par copy kar deta hai, isliye na lambda object banta hai na extra call hoti hai. Ek
 `filter` chain lagbhag wahi loop ban jati hai jo aap haath se likhte.
 
-Isiliye Kotlin mein "functional style use karo" kehne par performance ka koi apraadhbodh nahi
+Isiliye Kotlin mein "functional style use karo" kehne par performance ka koi guilt nahi
 hota, jo kuch dusri languages mein hota hai.
 
 <Pitfall title="Teen jo review mein dikhti hain">
@@ -124,10 +124,10 @@ hota, jo kuch dusri languages mein hota hai.
 | --- | --- |
 | Har item badlo | `map` |
 | Milte hue rakho | `filter` |
-| Ek milaan | `find` (null) / `first` (fenkta hai) |
+| Ek match | `find` (null) / `first` (fenkta hai) |
 | Order | `sortedBy`, `sortedByDescending` |
 | Key se baanto | `groupBy` |
-| Ek value mein simeto | `fold`, `sumOf`, `count` |
+| Ek value mein reduce karo | `fold`, `sumOf`, `count` |
 | Lists ki list se ek list | `flatMap` |
 | Duplicates hatao | `distinct`, `distinctBy` |
 | Aalasi, ek hi pass | `asSequence()` … `toList()` |

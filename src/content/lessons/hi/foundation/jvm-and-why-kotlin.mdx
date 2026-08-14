@@ -91,7 +91,7 @@ fun main() {
 Compile होने पर `add` लगभग चार bytecode instructions बन जाता है: पहला argument load करो,
 दूसरा load करो, जोड़ो, return करो। JVM इन्हें चलाता है — और जब कोई function काफी बार चल चुका
 होता है तो **JIT compiler** उसे असली machine code में बदल देता है, ताकि आगे की calls में
-interpretation का काम बचे ही ना।
+interpretation का काम रहे ही नहीं।
 
 <Note>
 इसीलिए JVM program पहले एक second धीमा और उसके बाद तेज लगता है। Android पर यही सोच
@@ -145,7 +145,7 @@ public class User {
 data class User(val name: String)
 ```
 
-एक line, और `equals`, `hashCode`, `toString` तथा `copy` साथ में। यह कोई जादू का खेल नहीं है
+एक line, और `equals`, `hashCode`, `toString` और `copy` साथ में। यह कोई जादू का खेल नहीं है
 — value equality ही वह चीज है जिसकी वजह से list diffing और Compose recomposition सही चलते
 हैं, जो आप Phase 2 में देखेंगे।
 
