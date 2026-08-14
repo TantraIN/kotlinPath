@@ -76,6 +76,33 @@ const LANG_ALIASES: Record<string, string> = {
  * Marks every token that exists in the glossary so the client tooltip layer can
  * find it. Runs on the server, adds no runtime cost beyond a data attribute.
  */
+/**
+ * A span that is nothing but an identifier or a dotted member chain, ignoring
+ * surrounding whitespace: `Intent`, `context.applicationContext`,
+ * `viewLifecycleOwner.lifecycleScope.`.
+ *
+ * Shiki hands member access back as one span, so without splitting on the dot a
+ * term like `applicationContext` could never be annotated. The shape is kept
+ * deliberately strict — a comment or a call expression contains spaces, slashes
+ * or brackets and is skipped, so prose that merely mentions a term stays plain.
+ */
+const IDENT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.?$/;
+
+function anchor(term: string): Element {
+  return {
+    type: "element",
+    tagName: "span",
+    properties: {
+      class: "kw-anchor",
+      "data-kw": term,
+      tabIndex: 0,
+      role: "button",
+      "aria-haspopup": "dialog",
+    },
+    children: [{ type: "text", value: term }],
+  };
+}
+
 function glossaryTransformer(): ShikiTransformer {
   return {
     name: "kotlinpath:glossary",
@@ -84,15 +111,15 @@ function glossaryTransformer(): ShikiTransformer {
       if (!child || child.type !== "text") return;
 
       const raw = child.value;
-      const term = raw.trim();
-      if (!term || !hasTerm(term)) return;
+      const trimmed = raw.trim();
+      if (!trimmed || !IDENT_CHAIN.test(trimmed)) return;
 
-      // The token is exactly the term — annotate the existing span.
-      if (raw === term) {
+      // The whole span is one term — annotate it in place, no extra element.
+      if (raw === trimmed && hasTerm(trimmed)) {
         node.properties = {
           ...node.properties,
           class: [node.properties?.class, "kw-anchor"].filter(Boolean).join(" "),
-          "data-kw": term,
+          "data-kw": trimmed,
           tabIndex: 0,
           role: "button",
           "aria-haspopup": "dialog",
@@ -100,27 +127,25 @@ function glossaryTransformer(): ShikiTransformer {
         return;
       }
 
-      // The token carries surrounding whitespace — wrap only the term itself so
-      // the underline never extends into the indentation.
-      const start = raw.indexOf(term);
-      const inner: Element = {
-        type: "element",
-        tagName: "span",
-        properties: {
-          class: "kw-anchor",
-          "data-kw": term,
-          tabIndex: 0,
-          role: "button",
-          "aria-haspopup": "dialog",
-        },
-        children: [{ type: "text", value: term }],
-      };
-
+      // Otherwise wrap each glossary segment individually, so the underline
+      // covers `applicationContext` alone and never the dot or the indentation.
       const next: ElementContent[] = [];
-      if (start > 0) next.push({ type: "text", value: raw.slice(0, start) });
-      next.push(inner);
-      const tail = raw.slice(start + term.length);
-      if (tail) next.push({ type: "text", value: tail });
+      let cursor = 0;
+      let matched = false;
+
+      for (const m of raw.matchAll(/[A-Za-z_$][\w$]*/g)) {
+        const seg = m[0];
+        if (!hasTerm(seg)) continue;
+        matched = true;
+        if (m.index > cursor) {
+          next.push({ type: "text", value: raw.slice(cursor, m.index) });
+        }
+        next.push(anchor(seg));
+        cursor = m.index + seg.length;
+      }
+
+      if (!matched) return;
+      if (cursor < raw.length) next.push({ type: "text", value: raw.slice(cursor) });
 
       node.children = next;
     },

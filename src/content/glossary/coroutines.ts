@@ -191,4 +191,23 @@ export const COROUTINES_GLOSSARY: Glossary = {
     docs: "https://kotlinlang.org/docs/flow.html",
     related: ["Flow", "StateFlow"],
   },
+
+  MutableStateFlow: {
+    term: "MutableStateFlow",
+    kind: { en: "Coroutines function", hi: "Coroutines function", "hi-en": "Coroutines function" },
+    source: "coroutines",
+    importLine: "import kotlinx.coroutines.flow.MutableStateFlow",
+    does: {
+      en: "Creates a `StateFlow` you can write to, holding a current value from the moment it is built.",
+      hi: "ऐसा `StateFlow` बनाता है जिसमें आप लिख सकते हैं, और जो बनते ही एक मौजूदा value रखता है।",
+      "hi-en": "Aisa `StateFlow` banata hai jismein aap likh sakte ho, aur jo bante hi ek maujooda value rakhta hai.",
+    },
+    affects: {
+      en: "Keep the mutable one `private` and expose `asStateFlow()`, or any caller can write your state. It also drops emissions equal to the current value by `equals`, which is why the state it holds should be a `data class`.",
+      hi: "Mutable वाले को `private` रखिए और बाहर `asStateFlow()` दीजिए, वरना कोई भी बुलाने वाला आपका state लिख सकता है। यह `equals` से मौजूदा value के बराबर emissions छोड़ भी देता है, इसीलिए जो state यह रखता है वह `data class` होनी चाहिए।",
+      "hi-en": "Mutable wale ko `private` rakho aur bahar `asStateFlow()` do, warna koi bhi bulane wala aapka state likh sakta hai. Ye `equals` se maujooda value ke barabar emissions chhod bhi deta hai, isiliye jo state ye rakhta hai wo `data class` honi chahiye.",
+    },
+    docs: "https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-mutable-state-flow.html",
+    related: ["StateFlow", "Flow", "collect"],
+  },
 };
