@@ -1,0 +1,130 @@
+---
+title: Coroutines mein exception handling
+description: launch aur async bilkul alag tarike se fail hote hain. Aapne kaun sa use kiya, yahi tay karta hai ki app crash hogi ya chupchap khaali reh jayegi.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`launch` turant fenkta hai aur parent tak pahuncha deta hai. `async` galti ko **rakh leta hai**
+aur tabhi fenkta hai jab aap `await` bulate ho.
+</KeyIdea>
+
+## Wo farq jo sabko chaunkata hai
+
+```kotlin title="Difference.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    // launch: abhi fail hota hai, aur bina handle kiye parent ko bhi le doobta hai
+    val job = launch { throw IllegalStateException("from launch") }
+    job.join()
+    println("launch failed already")
+
+    // async: await tak chupchap fail rehta hai
+    val deferred = async { throw IllegalStateException("from async") }
+    println("async has already failed, but nothing has happened yet")
+    println(runCatching { deferred.await() }.exceptionOrNull()?.message)
+}
+```
+
+<Quiz
+  question="Aap `async { }` bulate ho par kabhi `await()` nahi karte. Block exception fenkta hai. Kya hoga?"
+  options={[
+    "App turant crash ho jayegi",
+    "Exception Deferred mein pada rehta hai — aur saade Job ke saath wo phir bhi parent scope cancel kar deta hai",
+    "Kuch bhi nahi — wo phenk diya jata hai",
+  ]}
+  answer={1}
+  explanation="`await` hi wo cheez hai jo galti *aap tak* wapas fenkti hai, isliye bina await kiye fail hone par call site par koi galti dikhti hi nahi. Par fail hua bachha parent ko khabar phir bhi karta hai, to saade Job ke saath scope cancel ho hi jata hai. Isi baantne ki wajah se chhoda hua async aisa lagta hai jaise screen chupchap mar gayi."
+/>
+
+## `try` rakhein kahan
+
+<Tabs>
+  <Tab label="Kaam ke aas-paas">
+
+Bharosemand rasta. Jahan hoti hai wahin sambhalo.
+
+```kotlin title="Inside.kt" numbered
+viewModelScope.launch {
+    val result = try {
+        repository.user()
+    } catch (e: IOException) {          // tay type, `Exception` nahi
+        null
+    }
+    render(result)
+}
+```
+
+  </Tab>
+  <Tab label="runCatching">
+
+Fenkne ko value bana deta hai. Dhyan se — ye sab kuch pakad leta hai.
+
+```kotlin title="Result.kt" numbered
+val result = runCatching { repository.user() }
+    .onFailure { if (it is CancellationException) throw it }   // wapas fenkna hi padega
+```
+
+  </Tab>
+  <Tab label="Handler">
+
+`launch` ke liye aakhri jaal, scope par lagaya hua. Jo `async` aapne await kiya, uski galti ise
+kabhi nahi dikhti.
+
+```kotlin title="Handler.kt" numbered
+val handler = CoroutineExceptionHandler { _, e -> log(e) }
+val scope = CoroutineScope(SupervisorJob() + handler)
+```
+
+  </Tab>
+</Tabs>
+
+<Pitfall bare>
+Suspending code ke aas-paas `try { } catch (e: Exception)` `CancellationException` bhi pakad leta
+hai, jisse cancellation chupchap toot jati hai. Tay type pakdo, ya use wapas fenko.
+</Pitfall>
+
+## Ek cheez fail ho, par sab nahi
+
+```kotlin title="Supervisor.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    supervisorScope {
+        launch { throw RuntimeException("widget A failed") }
+        launch { delay(100); println("widget B still rendered") }
+    }
+}
+```
+
+`coroutineScope` ke saath doosra widget pehle ki galti se cancel ho jata. `supervisorScope` ke
+saath nahi hota.
+
+<Detail summary="CoroutineExceptionHandler aksar bekaar kyun saabit hota hai">
+Wo sirf scope ke **root** coroutine par chalta hai, aur sirf `launch` ke liye. Use kisi bachhe
+par lagane se kuch nahi hota — jab tak wo chalta, galti parent tak ja chuki hoti hai. Aur
+`async` ki galtiyan aap tak `await` se aati hain, handler se nahi. Ise crash report samjho,
+error handling nahi.
+</Detail>
+
+## Practice
+
+1. `coroutineScope` mein do bachhe launch karo, ek fail karo, aur doosre ko cancel hote dekho.
+   Phir `supervisorScope` par jao.
+2. Ek `async` banao jo fenke aur use kabhi await mat karo. Dekho scope kya karta hai.
+3. Suspending call ke aas-paas `Exception` pakdo, job cancel karo, aur sabit karo ki cancellation
+   nigli gayi. Phir theek karo.
+4. Kisi bachhe coroutine par `CoroutineExceptionHandler` lagao aur confirm karo ki wo kabhi
+   chalta hi nahi.
+
+## Recap
+
+| Builder | Fail hone par |
+| --- | --- |
+| `launch` | Turant fenkta hai; parent tak jata hai |
+| `async` | `await()` tak rakha rehta hai; parent ko khabar phir bhi |
+| `coroutineScope` | Ek bachhe ki galti bhai-behnon ko cancel karti hai |
+| `supervisorScope` | Galtiyan alag-alag rehti hain |
+| `CoroutineExceptionHandler` | Sirf root `launch`; reporting samjho |
+| `CancellationException` | Kabhi mat niglo — pakdo to wapas fenko |

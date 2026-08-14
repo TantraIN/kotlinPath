@@ -1,0 +1,129 @@
+---
+title: Exception handling in coroutines
+description: launch and async fail in completely different ways. Knowing which one you used decides whether your app crashes or goes silent.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`launch` throws immediately and propagates to the parent. `async` **stores** the failure and
+only throws when you call `await`.
+</KeyIdea>
+
+## The difference that surprises everyone
+
+```kotlin title="Difference.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    // launch: fails now, and takes the parent with it unless handled
+    val job = launch { throw IllegalStateException("from launch") }
+    job.join()
+    println("launch failed already")
+
+    // async: fails silently until awaited
+    val deferred = async { throw IllegalStateException("from async") }
+    println("async has already failed, but nothing has happened yet")
+    println(runCatching { deferred.await() }.exceptionOrNull()?.message)
+}
+```
+
+<Quiz
+  question="You call `async { }` and never `await()` it. The block throws. What happens?"
+  options={[
+    "The app crashes immediately",
+    "The exception is held in the Deferred — and with a plain Job it still cancels the parent scope",
+    "Nothing at all — it is discarded",
+  ]}
+  answer={1}
+  explanation="`await` is what rethrows to *you*, so an un-awaited failure produces no visible error at the call site. But the failed child still notifies its parent, so under a regular Job the scope is cancelled anyway. This split is why a dropped async can look like the screen silently dying."
+/>
+
+## Where to put the `try`
+
+<Tabs>
+  <Tab label="Around the work">
+
+The reliable option. Handle it where it happens.
+
+```kotlin title="Inside.kt" numbered
+viewModelScope.launch {
+    val result = try {
+        repository.user()
+    } catch (e: IOException) {          // specific, not Exception
+        null
+    }
+    render(result)
+}
+```
+
+  </Tab>
+  <Tab label="runCatching">
+
+Turns a throw into a value. Careful — it catches everything.
+
+```kotlin title="Result.kt" numbered
+val result = runCatching { repository.user() }
+    .onFailure { if (it is CancellationException) throw it }   // must rethrow
+```
+
+  </Tab>
+  <Tab label="Handler">
+
+A last-resort net for `launch`, installed on the scope. It never sees `async` failures you
+awaited.
+
+```kotlin title="Handler.kt" numbered
+val handler = CoroutineExceptionHandler { _, e -> log(e) }
+val scope = CoroutineScope(SupervisorJob() + handler)
+```
+
+  </Tab>
+</Tabs>
+
+<Pitfall bare>
+`try { } catch (e: Exception)` around suspending code also catches `CancellationException`, which
+silently breaks cancellation. Catch the specific type, or rethrow it.
+</Pitfall>
+
+## Failing one thing without failing everything
+
+```kotlin title="Supervisor.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    supervisorScope {
+        launch { throw RuntimeException("widget A failed") }
+        launch { delay(100); println("widget B still rendered") }
+    }
+}
+```
+
+Under `coroutineScope` the second widget would be cancelled by the first one's failure. Under
+`supervisorScope` it is not.
+
+<Detail summary="Why CoroutineExceptionHandler is so often ineffective">
+It only works on the **root** coroutine of a scope, and only for `launch`. Installing it on a
+child does nothing — the failure has already gone up to the parent by the time it would run.
+And `async` failures reach you through `await`, not the handler. Treat it as crash reporting,
+not error handling.
+</Detail>
+
+## Practice
+
+1. Launch two children under `coroutineScope`, fail one, and see the other cancelled. Switch to
+   `supervisorScope`.
+2. Create an `async` that throws and never await it. Observe what the scope does.
+3. Catch `Exception` around a suspending call, cancel the job, and prove the cancellation was
+   swallowed. Then fix it.
+4. Install a `CoroutineExceptionHandler` on a child coroutine and confirm it never fires.
+
+## Recap
+
+| Builder | Failure behaviour |
+| --- | --- |
+| `launch` | Throws immediately; propagates to the parent |
+| `async` | Stored until `await()`; parent still notified |
+| `coroutineScope` | One child's failure cancels the siblings |
+| `supervisorScope` | Failures stay isolated |
+| `CoroutineExceptionHandler` | Root `launch` only; treat as reporting |
+| `CancellationException` | Never swallow it — rethrow if caught |
