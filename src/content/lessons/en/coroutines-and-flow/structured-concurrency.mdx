@@ -1,0 +1,146 @@
+---
+title: Structured concurrency and cancellation
+description: Coroutines form a tree. A parent cannot finish before its children — which is what makes cancellation reliable instead of hopeful.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Every coroutine has a parent, and a parent **waits for its children**. Concurrency that leaks
+is concurrency with no parent.
+</KeyIdea>
+
+## The guarantee
+
+```kotlin title="Structured.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun loadScreen(): String = coroutineScope {
+    val user = async { delay(200); "Asha" }
+    val orders = async { delay(300); 3 }
+    "${user.await()} has ${orders.await()} orders"
+}
+
+fun main() = runBlocking {
+    println(loadScreen())
+    println("both children finished before this line")
+}
+```
+
+`coroutineScope` does not return until every child inside it has completed. Nothing escapes.
+
+<Detail summary="coroutineScope versus supervisorScope">
+Both wait for children. They differ on failure: in `coroutineScope`, one child failing cancels
+its siblings and rethrows. In `supervisorScope`, children fail independently. Use the first for
+"I need all of these", the second for "I want whatever succeeded".
+</Detail>
+
+## Cancellation is cooperative
+
+Cancelling sets a flag. A coroutine only actually stops at a **suspension point**.
+
+```kotlin title="Cooperative.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val job = launch(Dispatchers.Default) {
+        var i = 0
+        while (i < 1_000_000_000) { i++ }      // never suspends
+        println("finished anyway")
+    }
+    delay(100)
+    job.cancelAndJoin()
+    println("cancelled — but the loop above ignored it")
+}
+```
+
+A tight computational loop with no `delay`, no `yield` and no IO will run to completion no
+matter how often you cancel it.
+
+<Quiz
+  question="How do you make that loop actually respond to cancellation?"
+  options={[
+    "Call `job.cancel()` twice",
+    "Check `isActive`, or call `ensureActive()` or `yield()` inside the loop",
+    "Move it to `Dispatchers.IO`",
+  ]}
+  answer={1}
+  explanation="Cancellation only takes effect where the coroutine checks for it. `while (isActive)` exits quietly; `ensureActive()` throws `CancellationException`; `yield()` both checks and gives other coroutines a turn. Without one of these there is no point at which the coroutine can notice."
+/>
+
+## Cleaning up
+
+`CancellationException` travels through `finally`, so cleanup runs — but the coroutine is
+already cancelled, so it cannot suspend again.
+
+```kotlin title="Cleanup.kt" numbered
+val job = launch {
+    try {
+        download()
+    } finally {
+        withContext(NonCancellable) {   // needed to suspend during cleanup
+            deleteTempFile()
+        }
+    }
+}
+```
+
+<Tabs>
+  <Tab label="withTimeout">
+
+Throws `TimeoutCancellationException` when the deadline passes.
+
+```kotlin title="Timeout.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val result = runCatching { withTimeout(150) { delay(500); "done" } }
+    println(result.exceptionOrNull()?.let { "timed out" } ?: result.getOrNull())
+}
+```
+
+  </Tab>
+  <Tab label="withTimeoutOrNull">
+
+Returns `null` instead of throwing — usually what you want in UI code.
+
+```kotlin title="TimeoutOrNull.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    println(withTimeoutOrNull(150) { delay(500); "done" } ?: "gave up")
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Common mistakes
+
+<Pitfall title="Two that break cancellation">
+**Catching `Exception` around suspending code.** `CancellationException` is an `Exception`, so a
+broad `catch` swallows the cancellation signal and the coroutine keeps going. Catch specific
+types, or rethrow `CancellationException`.
+
+**A long computation with no suspension point.** It cannot be cancelled at all. Add
+`ensureActive()` inside the loop, or break the work into chunks.
+</Pitfall>
+
+## Practice
+
+1. Fix the uncancellable loop above with `isActive`, then with `ensureActive()`. Note the
+   difference in how each one exits.
+2. Wrap suspending code in `try/catch (e: Exception)` and cancel it. Observe the cancellation
+   being swallowed, then fix it.
+3. Use `withTimeoutOrNull` to give a network call a 2-second budget and a fallback.
+4. Put a `println` in a `finally` and cancel mid-flight to prove cleanup runs.
+
+## Recap
+
+| Tool | Purpose |
+| --- | --- |
+| `coroutineScope` | Wait for all children; one failure cancels the rest |
+| `supervisorScope` | Wait for all children; failures stay isolated |
+| `isActive` / `ensureActive()` | Make a computation cancellable |
+| `yield()` | Check for cancellation and let others run |
+| `withTimeout` / `OrNull` | Bound how long work may take |
+| `NonCancellable` | Allow suspension during cleanup only |

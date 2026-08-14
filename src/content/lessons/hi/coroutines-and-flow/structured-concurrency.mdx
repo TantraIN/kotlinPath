@@ -1,0 +1,146 @@
+---
+title: Structured concurrency और cancellation
+description: Coroutines एक पेड़ बनाते हैं। Parent अपने बच्चों से पहले ख़त्म नहीं हो सकता — इसीलिए cancellation भरोसेमंद होती है, उम्मीद भर नहीं।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+हर coroutine का एक parent होता है, और parent **अपने बच्चों का इंतज़ार करता है**। जो concurrency leak
+करती है, वह बिना parent वाली concurrency है।
+</KeyIdea>
+
+## यह guarantee क्या है
+
+```kotlin title="Structured.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun loadScreen(): String = coroutineScope {
+    val user = async { delay(200); "Asha" }
+    val orders = async { delay(300); 3 }
+    "${user.await()} has ${orders.await()} orders"
+}
+
+fun main() = runBlocking {
+    println(loadScreen())
+    println("both children finished before this line")
+}
+```
+
+`coroutineScope` तब तक नहीं लौटता जब तक उसके अंदर का हर बच्चा ख़त्म न हो जाए। कोई भागता नहीं।
+
+<Detail summary="coroutineScope और supervisorScope में फ़र्क़">
+दोनों बच्चों का इंतज़ार करते हैं। फ़र्क़ ग़लती पर है: `coroutineScope` में एक बच्चे के fail होने पर उसके
+भाई-बहन cancel होते हैं और ग़लती वापस फेंकी जाती है। `supervisorScope` में बच्चे अलग-अलग fail होते हैं।
+पहला तब जब "ये सब चाहिए", दूसरा तब जब "जो मिल जाए वही सही"।
+</Detail>
+
+## Cancellation सहयोग माँगती है
+
+Cancel करना एक निशान लगाता है। Coroutine सच में **suspension point** पर ही रुकता है।
+
+```kotlin title="Cooperative.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val job = launch(Dispatchers.Default) {
+        var i = 0
+        while (i < 1_000_000_000) { i++ }      // कभी suspend नहीं होता
+        println("finished anyway")
+    }
+    delay(100)
+    job.cancelAndJoin()
+    println("cancelled — but the loop above ignored it")
+}
+```
+
+ऐसा कसा हुआ गिनती वाला loop जिसमें न `delay` है, न `yield`, न IO — वह चाहे जितनी बार cancel कीजिए,
+पूरा चलकर ही मानेगा।
+
+<Quiz
+  question="उस loop को cancellation पर सच में रुकवाने के लिए क्या करें?"
+  options={[
+    "`job.cancel()` दो बार बुलाइए",
+    "Loop के अंदर `isActive` देखिए, या `ensureActive()` या `yield()` बुलाइए",
+    "उसे `Dispatchers.IO` पर ले जाइए",
+  ]}
+  answer={1}
+  explanation="Cancellation वहीं लगती है जहाँ coroutine उसे जाँचता है। `while (isActive)` चुपचाप निकल जाता है; `ensureActive()` `CancellationException` फेंकता है; `yield()` जाँचता भी है और दूसरों को बारी भी देता है। इनमें से एक भी न हो तो कोई ऐसा पल ही नहीं जहाँ coroutine को पता चले।"
+/>
+
+## सफ़ाई करना
+
+`CancellationException` `finally` से होकर जाती है, इसलिए सफ़ाई चलती है — पर coroutine cancel हो चुका
+है, इसलिए वह दोबारा suspend नहीं हो सकता।
+
+```kotlin title="Cleanup.kt" numbered
+val job = launch {
+    try {
+        download()
+    } finally {
+        withContext(NonCancellable) {   // सफ़ाई के दौरान suspend करने के लिए ज़रूरी
+            deleteTempFile()
+        }
+    }
+}
+```
+
+<Tabs>
+  <Tab label="withTimeout">
+
+समय ख़त्म होने पर `TimeoutCancellationException` फेंकता है।
+
+```kotlin title="Timeout.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val result = runCatching { withTimeout(150) { delay(500); "done" } }
+    println(result.exceptionOrNull()?.let { "timed out" } ?: result.getOrNull())
+}
+```
+
+  </Tab>
+  <Tab label="withTimeoutOrNull">
+
+फेंकने की जगह `null` लौटाता है — UI code में आम तौर पर यही चाहिए।
+
+```kotlin title="TimeoutOrNull.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    println(withTimeoutOrNull(150) { delay(500); "done" } ?: "gave up")
+}
+```
+
+  </Tab>
+</Tabs>
+
+## आम ग़लतियाँ
+
+<Pitfall title="दो जो cancellation तोड़ देती हैं">
+**Suspending code के आस-पास `Exception` पकड़ना।** `CancellationException` भी एक `Exception` है,
+इसलिए चौड़ा `catch` cancel का संदेश निगल जाता है और coroutine चलता रहता है। तय types पकड़िए, या
+`CancellationException` वापस फेंकिए।
+
+**बिना suspension point वाली लंबी गिनती।** वह cancel हो ही नहीं सकती। Loop के अंदर `ensureActive()`
+डालिए, या काम को टुकड़ों में तोड़िए।
+</Pitfall>
+
+## अभ्यास
+
+1. ऊपर वाले न-रुकने वाले loop को पहले `isActive` से ठीक कीजिए, फिर `ensureActive()` से। दोनों के
+   निकलने के तरीक़े का फ़र्क़ देखिए।
+2. Suspending code को `try/catch (e: Exception)` में लपेटिए और cancel कीजिए। Cancellation निगली जाते
+   देखिए, फिर ठीक कीजिए।
+3. `withTimeoutOrNull` से एक network call को 2 second का समय और एक fallback दीजिए।
+4. `finally` में `println` डालिए और बीच में cancel करके साबित कीजिए कि सफ़ाई चलती है।
+
+## सारांश
+
+| Tool | काम |
+| --- | --- |
+| `coroutineScope` | सब बच्चों का इंतज़ार; एक fail हुआ तो बाक़ी cancel |
+| `supervisorScope` | सब बच्चों का इंतज़ार; ग़लतियाँ अलग-अलग रहती हैं |
+| `isActive` / `ensureActive()` | गिनती को cancel होने लायक़ बनाइए |
+| `yield()` | Cancellation जाँचिए और दूसरों को बारी दीजिए |
+| `withTimeout` / `OrNull` | काम कितना लंबा चले, उसकी सीमा |
+| `NonCancellable` | सिर्फ़ सफ़ाई के दौरान suspend करने की छूट |

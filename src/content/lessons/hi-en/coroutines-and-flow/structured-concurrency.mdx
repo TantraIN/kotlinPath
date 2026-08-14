@@ -1,0 +1,148 @@
+---
+title: Structured concurrency aur cancellation
+description: Coroutines ek ped banate hain. Parent apne bachhon se pehle khatam nahi ho sakta — isiliye cancellation bharosemand hoti hai, ummeed bhar nahi.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+Har coroutine ka ek parent hota hai, aur parent **apne bachhon ka intezaar karta hai**. Jo
+concurrency leak karti hai, wo bina parent wali concurrency hai.
+</KeyIdea>
+
+## Ye guarantee kya hai
+
+```kotlin title="Structured.kt" numbered runnable
+import kotlinx.coroutines.*
+
+suspend fun loadScreen(): String = coroutineScope {
+    val user = async { delay(200); "Asha" }
+    val orders = async { delay(300); 3 }
+    "${user.await()} has ${orders.await()} orders"
+}
+
+fun main() = runBlocking {
+    println(loadScreen())
+    println("both children finished before this line")
+}
+```
+
+`coroutineScope` tab tak nahi lautta jab tak uske andar ka har bachha khatam na ho jaye. Koi
+bhagta nahi.
+
+<Detail summary="coroutineScope aur supervisorScope mein farq">
+Dono bachhon ka intezaar karte hain. Farq galti par hai: `coroutineScope` mein ek bachhe ke fail
+hone par uske bhai-behen cancel hote hain aur galti wapas fenki jati hai. `supervisorScope` mein
+bachhe alag-alag fail hote hain. Pehla tab jab "ye sab chahiye", dusra tab jab "jo mil jaye wahi
+sahi".
+</Detail>
+
+## Cancellation sahyog maangti hai
+
+Cancel karna ek nishaan lagata hai. Coroutine sach mein **suspension point** par hi rukta hai.
+
+```kotlin title="Cooperative.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val job = launch(Dispatchers.Default) {
+        var i = 0
+        while (i < 1_000_000_000) { i++ }      // kabhi suspend nahi hota
+        println("finished anyway")
+    }
+    delay(100)
+    job.cancelAndJoin()
+    println("cancelled — but the loop above ignored it")
+}
+```
+
+Aisa kasa hua ginti wala loop jisme na `delay` hai, na `yield`, na IO — wo chahe jitni baar
+cancel karo, poora chalkar hi manega.
+
+<Quiz
+  question="Us loop ko cancellation par sach mein rukwane ke liye kya karein?"
+  options={[
+    "`job.cancel()` do baar bulao",
+    "Loop ke andar `isActive` dekho, ya `ensureActive()` ya `yield()` bulao",
+    "Use `Dispatchers.IO` par le jao",
+  ]}
+  answer={1}
+  explanation="Cancellation wahin lagti hai jahan coroutine use jaanchta hai. `while (isActive)` chupchap nikal jata hai; `ensureActive()` `CancellationException` fenkta hai; `yield()` jaanchta bhi hai aur dusron ko bari bhi deta hai. Inme se ek bhi na ho to koi aisa pal hi nahi jahan coroutine ko pata chale."
+/>
+
+## Safai karna
+
+`CancellationException` `finally` se hokar jati hai, isliye safai chalti hai — par coroutine
+cancel ho chuka hai, isliye wo dobara suspend nahi ho sakta.
+
+```kotlin title="Cleanup.kt" numbered
+val job = launch {
+    try {
+        download()
+    } finally {
+        withContext(NonCancellable) {   // safai ke dauraan suspend karne ke liye zaroori
+            deleteTempFile()
+        }
+    }
+}
+```
+
+<Tabs>
+  <Tab label="withTimeout">
+
+Samay khatam hone par `TimeoutCancellationException` fenkta hai.
+
+```kotlin title="Timeout.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    val result = runCatching { withTimeout(150) { delay(500); "done" } }
+    println(result.exceptionOrNull()?.let { "timed out" } ?: result.getOrNull())
+}
+```
+
+  </Tab>
+  <Tab label="withTimeoutOrNull">
+
+Fenkne ki jagah `null` lautata hai — UI code mein aam taur par yahi chahiye.
+
+```kotlin title="TimeoutOrNull.kt" numbered runnable
+import kotlinx.coroutines.*
+
+fun main() = runBlocking {
+    println(withTimeoutOrNull(150) { delay(500); "done" } ?: "gave up")
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Common galtiyan
+
+<Pitfall title="Do jo cancellation tod deti hain">
+**Suspending code ke aas-paas `Exception` pakadna.** `CancellationException` bhi ek `Exception`
+hai, isliye chauda `catch` cancel ka sandesh nigal jata hai aur coroutine chalta rehta hai. Tay
+types pakdo, ya `CancellationException` wapas fenko.
+
+**Bina suspension point wali lambi ginti.** Wo cancel ho hi nahi sakti. Loop ke andar
+`ensureActive()` daalo, ya kaam ko tukdon mein todo.
+</Pitfall>
+
+## Practice
+
+1. Upar wale na-ruk-ne wale loop ko pehle `isActive` se theek karo, phir `ensureActive()` se.
+   Dono ke nikalne ke tarike ka farq dekho.
+2. Suspending code ko `try/catch (e: Exception)` mein lapeto aur cancel karo. Cancellation nigli
+   jaate dekho, phir theek karo.
+3. `withTimeoutOrNull` se ek network call ko 2 second ka samay aur ek fallback do.
+4. `finally` mein `println` daalo aur beech mein cancel karke sabit karo ki safai chalti hai.
+
+## Recap
+
+| Tool | Kaam |
+| --- | --- |
+| `coroutineScope` | Sab bachhon ka intezaar; ek fail hua to baaki cancel |
+| `supervisorScope` | Sab bachhon ka intezaar; galtiyan alag-alag rehti hain |
+| `isActive` / `ensureActive()` | Ginti ko cancel hone laayak banao |
+| `yield()` | Cancellation jaancho aur dusron ko bari do |
+| `withTimeout` / `OrNull` | Kaam kitna lamba chale, uski seema |
+| `NonCancellable` | Sirf safai ke dauraan suspend karne ki chhoot |
