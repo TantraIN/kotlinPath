@@ -1,0 +1,218 @@
+---
+title: Intents, extras aur Activity results
+description: Intent ek message hai, function call nahi. Target ka naam likho to apni app ke andar navigation milta hai; zarurat batao to poora device.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Intent` batata hai ki **hona kya chahiye**. Component ka naam likh do to apni app ke andar
+navigation milta hai; uski jagah kaam bata do to system khud dhundhta hai ki ye kaun kar sakta
+hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Android par jo kuch bhi ek screen ki had paar karta hai wo `Intent` hai — aapka apna navigation,
+link kholna, photo share karna, contact chunna, camera se aayi tasveer lautana.
+
+Chunki ye call nahi message hai, compiler aapki madad nahi kar sakta. Extras par koi type
+checking nahi, koi guarantee nahi ki use koi sambhalega, aur koi return value nahi. In teeno
+kamiyon ka ek-ek tay ilaaj hai.
+
+## Do tarah ke
+
+<Compare
+  left={{
+    title: "Explicit",
+    subtitle: "Aap class ka naam likhte ho",
+    accent: "violet",
+    points: [
+      "+ Hamesha milta hai — wo aapka apna component hai",
+      "+ Andaruni navigation ke liye iklauta safe tarika",
+      "+ Compile time wala class reference, to rename pakda jata hai",
+      "~ Dusri app tak nahi pahunch sakta",
+    ],
+  }}
+  right={{
+    title: "Implicit",
+    subtitle: "Aap kaam batate ho",
+    accent: "amber",
+    points: [
+      "+ Har us app tak pahunchta hai jisne mel khata filter likha hai",
+      "+ Share, dial, view aur pick sab aise hi chalte hain",
+      "- Kuch na mile, ya chooser aa jaye — dono ho sakta hai",
+      "- Apne hi components shuru karne ke liye kabhi mat use karo",
+    ],
+  }}
+/>
+
+```kotlin title="Intents.kt" numbered
+// Explicit: apni app ke andar navigation
+startActivity(Intent(this, DetailActivity::class.java).apply {
+    putExtra("orderId", "A-1042")
+})
+
+// Implicit: jo bhi web page khol sakta ho
+startActivity(Intent(Intent.ACTION_VIEW, "https://example.com".toUri()))
+
+// Implicit, chooser ke saath, taaki user har baar khud chune
+val share = Intent(Intent.ACTION_SEND).apply {
+    type = "text/plain"
+    putExtra(Intent.EXTRA_TEXT, "Order A-1042 shipped")
+}
+startActivity(Intent.createChooser(share, "Share order"))
+```
+
+<Warning>
+Apne hi component ko implicit intent kabhi mat bhejo. Koi dusri app wahi filter likhkar use apne
+paas le sakti hai, jisse andaruni navigation aisa rasta ban jata hai jise beech mein chheena ja
+sakta hai.
+</Warning>
+
+## Result wapas lena
+
+`startActivityForResult` ab deprecated hai aur uske request codes khatam. Uski jagah pehle se
+register kiya hua launcher hai, aur ek contract jo type badalne ka kaam aapke liye kar deta hai.
+
+```kotlin title="Results.kt" numbered
+class ProfileActivity : ComponentActivity() {
+
+    // onCreate ke dauraan register — activity ke STARTED hone se pehle
+    private val pickImage = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) showAvatar(uri)     // null matlab user ne back daba diya
+    }
+
+    private fun onPickClicked() = pickImage.launch("image/*")
+}
+```
+
+| Contract | Kya deta hai |
+| --- | --- |
+| `GetContent()` | Chuni hui ek file ka `Uri?` |
+| `TakePicture()` | `Boolean` — destination `Uri` aap dete ho |
+| `RequestPermission()` | Mila ya nahi, iska `Boolean` |
+| `StartActivityForResult()` | Kachha `ActivityResult`, khaas maamlon ke liye |
+
+<Quiz
+  question="Aap `registerForActivityResult` ko banate waqt ki jagah button ke click listener ke andar bulate ho. Kya hoga?"
+  options={[
+    "Chal jayega — register karne ka order maayne nahi rakhta",
+    "Fenkega, kyunki register STARTED se pehle hona chahiye",
+    "Chalega par callback do baar chalega",
+  ]}
+  answer={1}
+  explanation="Launcher ko component ke STARTED tak pahunchne se pehle register hona hi padta hai, kyunki result dobara bante waqt bhi aa sakta hai — process death ke baad system use tab deta hai jab activity shuru hi ho rahi hoti hai, aur tab tak callback pehle se maujood hona chahiye. Click listener ke andar register karna bahut der se hai, aur framework aapka result chupchap khone ke bajaye fenk deta hai. Hamesha field ki tarah ya onCreate mein, bina kisi shart ke register karo."
+/>
+
+## Extras ek bina type wala `Bundle` hai
+
+```kotlin title="Extras.kt" numbered
+// Bhejna
+intent.putExtra("orderId", "A-1042")
+
+// Lena — key aur type, dono bina jaanch ke
+val id = intent.getStringExtra("orderId") ?: return finish()
+```
+
+<Pitfall bare>
+Key mein typo saaf compile ho jata hai aur runtime par `null` lautata hai. Keys ko usi activity
+ke `companion object` mein rakho jo unhe padhti hai, aur ek `newIntent(...)` function do taaki
+bulane wala galti kar hi na sake.
+</Pitfall>
+
+## Andar ki baat: system chunta kaise hai
+
+<Timeline>
+  <TimelineItem title="Action" meta="mel khana chahiye">
+    Filter mein wahi action string likhi honi chahiye, jaise `ACTION_VIEW`.
+  </TimelineItem>
+  <TimelineItem title="Category" meta="sab mel khani chahiye">
+    Intent ki har category filter mein honi chahiye. Implicit intents mein `CATEGORY_DEFAULT`
+    apne aap jud jati hai, isiliye filters mein use likhna padta hai.
+  </TimelineItem>
+  <TimelineItem title="Data" meta="scheme, host, path, MIME">
+    Jis filter mein `<data>` hai wo sirf unhi intents se milta hai jinka URI aur MIME type usmein
+    baithte hain.
+  </TimelineItem>
+  <TimelineItem title="Result" meta="zero, ek ya kai">
+    Zero matlab `ActivityNotFoundException`. Ek matlab seedhe shuru. Kai matlab chooser, ya user
+    ka tay kiya hua default.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Android 11 par `resolveActivity` chalna kyun band ho gaya">
+API 30 se aapki app ko zyadatar dusri installed apps dikhti hi nahi. Jin apps mein aapne ruchi
+nahi likhi unke liye `queryIntentActivities` aur `resolveActivity` kuch nahi lautate, isliye
+purana "launch se pehle jaanch lo" wala tarika *koi handler nahi* batata hai, jabki handler
+maujood hota hai.
+
+Ilaaj ya to ye likhna hai ki aap kya dhundhte ho:
+
+```xml title="Queries.xml"
+<queries>
+    <intent>
+        <action android:name="android.intent.action.VIEW" />
+        <data android:scheme="https" />
+    </intent>
+</queries>
+```
+
+…ya, isse bhi aasan, jaanchna chhodkar nakami sambhal lena:
+
+```kotlin title="Safe.kt"
+try {
+    startActivity(intent)
+} catch (e: ActivityNotFoundException) {
+    showMessage("No app can open this")
+}
+```
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo users tak pahunch jati hain">
+**"Ise koi khol hi nahi sakta" wali haalat na sambhalna.** Aisa device asli hota hai jismein koi
+email client nahi, koi camera app nahi, ya profile bandha hua hai. Implicit launches ko
+`try`/`catch` mein lapeto.
+
+**Extras mein bada data.** Extras ek Binder transaction se jate hain jiski had poore transaction
+ke liye milakar lagbhag 1 MB hai. Ek id bhejo aur dusri taraf object dobara padho; bitmap ya
+saikdon items ki list kabhi mat bhejo.
+
+**Launcher ko shart ke saath register karna.** Kisi `if` ke andar, click listener ke andar, ya
+sirf pehli baar. Register har baar banne par ek hi tarah hona chahiye, warna process death ke
+baad result aane par callback wahan hoga hi nahi.
+</Pitfall>
+
+## Practice
+
+1. Explicit intent aur ek extra ke saath dusri activity par jao. Phir lene wali taraf key galat
+   likho aur dekho ki runtime tak kuch fail hota hi nahi.
+2. Bina dialer wale emulator par `tel:` URI ke liye `ACTION_VIEW` bhejo. Exception sambhalo.
+3. `GetContent()` launcher ki jagah `StartActivityForResult()` rakho aur dekho kitna zyada likhna
+   padta hai.
+4. `registerForActivityResult` ko click listener ke andar le jao aur crash ka message padho.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Explicit intent | Component ka naam aap likhte ho; apni app ke andar |
+| Implicit intent | Kaam aap batate ho; system dhundhta hai |
+| `createChooser` | Default ke bajaye har baar poochho |
+| Extras | Bina type wala `Bundle`; keys ko factory function mein lapeto |
+| `registerForActivityResult` | Bina shart, STARTED se pehle register karo |
+| Contracts | Kachhe result ko asli type mein badal dete hain |
+| `ActivityNotFoundException` | Bina handler wale implicit intent ka aam result |
+| `<queries>` | API 30 se, dusri apps dikhne ke liye hi zaruri |
+
+<Interview title="Jahan kaam mein dusri apps se baat karni ho, wahan aata hi hai">
+"Dusri activity se result wapas kaise lete ho, aur badla kya?"
+
+Purana API aur uske jaane ki wajah batao: `startActivityForResult`, haath se rakhe request
+codes, koi type safety nahi, aur result aise component mein aana jo shayad dobara ban chuka ho.
+Phir naya naam lo aur uske saath aane wali shart bhi — `registerForActivityResult` `STARTED` se
+pehle bulana hi padta hai, kyunki result dobara bante waqt bhi aa sakta hai.
+</Interview>

@@ -1,0 +1,215 @@
+---
+title: Intents, extras और Activity results
+description: Intent एक संदेश है, function call नहीं। Target का नाम लिखिए तो अपनी app के अंदर navigation मिलता है; जरूरत बताइए तो पूरा device।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Intent` बताता है कि **होना क्या चाहिए**। Component का नाम लिख दीजिए तो अपनी app के अंदर
+navigation मिलता है; उसकी जगह काम बता दीजिए तो system खुद ढूँढ़ता है कि यह कौन कर सकता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Android पर जो कुछ भी एक screen की हद पार करता है वह `Intent` है — आपका अपना navigation, link
+खोलना, photo share करना, contact चुनना, camera से आई तस्वीर लौटाना।
+
+चूँकि यह call नहीं संदेश है, compiler आपकी मदद नहीं कर सकता। Extras पर कोई type checking नहीं,
+कोई guarantee नहीं कि उसे कोई सँभालेगा, और कोई return value नहीं। इन तीनों कमियों का एक-एक तय
+इलाज है।
+
+## दो तरह के
+
+<Compare
+  left={{
+    title: "Explicit",
+    subtitle: "आप class का नाम लिखते हैं",
+    accent: "violet",
+    points: [
+      "+ हमेशा मिलता है — वह आपका अपना component है",
+      "+ अंदरूनी navigation के लिए इकलौता safe तरीका",
+      "+ Compile time वाला class reference, तो rename पकड़ा जाता है",
+      "~ दूसरी app तक नहीं पहुँच सकता",
+    ],
+  }}
+  right={{
+    title: "Implicit",
+    subtitle: "आप काम बताते हैं",
+    accent: "amber",
+    points: [
+      "+ हर उस app तक पहुँचता है जिसने मेल खाता filter लिखा है",
+      "+ Share, dial, view और pick सब ऐसे ही चलते हैं",
+      "- कुछ न मिले, या chooser आ जाए — दोनों हो सकता है",
+      "- अपने ही components शुरू करने के लिए कभी मत इस्तेमाल कीजिए",
+    ],
+  }}
+/>
+
+```kotlin title="Intents.kt" numbered
+// Explicit: अपनी app के अंदर navigation
+startActivity(Intent(this, DetailActivity::class.java).apply {
+    putExtra("orderId", "A-1042")
+})
+
+// Implicit: जो भी web page खोल सकता हो
+startActivity(Intent(Intent.ACTION_VIEW, "https://example.com".toUri()))
+
+// Implicit, chooser के साथ, ताकि user हर बार खुद चुने
+val share = Intent(Intent.ACTION_SEND).apply {
+    type = "text/plain"
+    putExtra(Intent.EXTRA_TEXT, "Order A-1042 shipped")
+}
+startActivity(Intent.createChooser(share, "Share order"))
+```
+
+<Warning>
+अपने ही component को implicit intent कभी मत भेजिए। कोई दूसरी app वही filter लिखकर उसे अपने पास
+ले सकती है, जिससे अंदरूनी navigation ऐसा रास्ता बन जाता है जिसे बीच में छीना जा सकता है।
+</Warning>
+
+## नतीजा वापस लेना
+
+`startActivityForResult` अब deprecated है और उसके request codes खत्म। उसकी जगह पहले से register
+किया हुआ launcher है, और एक contract जो type बदलने का काम आपके लिए कर देता है।
+
+```kotlin title="Results.kt" numbered
+class ProfileActivity : ComponentActivity() {
+
+    // onCreate के दौरान register — activity के STARTED होने से पहले
+    private val pickImage = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) showAvatar(uri)     // null मतलब user ने back दबा दिया
+    }
+
+    private fun onPickClicked() = pickImage.launch("image/*")
+}
+```
+
+| Contract | क्या देता है |
+| --- | --- |
+| `GetContent()` | चुनी हुई एक file का `Uri?` |
+| `TakePicture()` | `Boolean` — destination `Uri` आप देते हैं |
+| `RequestPermission()` | मिला या नहीं, इसका `Boolean` |
+| `StartActivityForResult()` | कच्चा `ActivityResult`, खास मामलों के लिए |
+
+<Quiz
+  question="आप `registerForActivityResult` को बनाते वक्त की जगह button के click listener के अंदर बुलाते हैं। क्या होगा?"
+  options={[
+    "चल जाएगा — register करने का क्रम मायने नहीं रखता",
+    "फेंकेगा, क्योंकि register STARTED से पहले होना चाहिए",
+    "चलेगा पर callback दो बार चलेगा",
+  ]}
+  answer={1}
+  explanation="Launcher को component के STARTED तक पहुँचने से पहले register होना ही पड़ता है, क्योंकि नतीजा दोबारा बनते वक्त भी आ सकता है — process death के बाद system उसे तब देता है जब activity शुरू ही हो रही होती है, और तब तक callback पहले से मौजूद होना चाहिए। Click listener के अंदर register करना बहुत देर से है, और framework आपका नतीजा चुपचाप खोने के बजाय फेंक देता है। हमेशा field की तरह या onCreate में, बिना किसी शर्त के register कीजिए।"
+/>
+
+## Extras एक बिना type वाला `Bundle` है
+
+```kotlin title="Extras.kt" numbered
+// भेजना
+intent.putExtra("orderId", "A-1042")
+
+// लेना — key और type, दोनों बिना जाँच के
+val id = intent.getStringExtra("orderId") ?: return finish()
+```
+
+<Pitfall bare>
+Key में typo साफ compile हो जाता है और runtime पर `null` लौटाता है। Keys को उसी activity के
+`companion object` में रखिए जो उन्हें पढ़ती है, और एक `newIntent(...)` function दीजिए ताकि
+बुलाने वाला गलती कर ही न सके।
+</Pitfall>
+
+## अंदर की बात: system चुनता कैसे है
+
+<Timeline>
+  <TimelineItem title="Action" meta="मेल खाना चाहिए">
+    Filter में वही action string लिखी होनी चाहिए, जैसे `ACTION_VIEW`।
+  </TimelineItem>
+  <TimelineItem title="Category" meta="सब मेल खानी चाहिए">
+    Intent की हर category filter में होनी चाहिए। Implicit intents में `CATEGORY_DEFAULT` अपने आप
+    जुड़ जाती है, इसीलिए filters में उसे लिखना पड़ता है।
+  </TimelineItem>
+  <TimelineItem title="Data" meta="scheme, host, path, MIME">
+    जिस filter में `<data>` है वह सिर्फ उन्हीं intents से मिलता है जिनका URI और MIME type उसमें
+    बैठते हैं।
+  </TimelineItem>
+  <TimelineItem title="नतीजा" meta="शून्य, एक या कई">
+    शून्य मतलब `ActivityNotFoundException`। एक मतलब सीधे शुरू। कई मतलब chooser, या user का तय
+    किया हुआ default।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Android 11 पर `resolveActivity` चलना क्यों बंद हो गया">
+API 30 से आपकी app को ज्यादातर दूसरी installed apps दिखती ही नहीं। जिन apps में आपने रुचि नहीं
+लिखी उनके लिए `queryIntentActivities` और `resolveActivity` कुछ नहीं लौटाते, इसलिए पुराना
+"launch से पहले जाँच लो" वाला तरीका *कोई handler नहीं* बताता है, जबकि handler मौजूद होता है।
+
+इलाज या तो यह लिखना है कि आप क्या ढूँढ़ते हैं:
+
+```xml title="Queries.xml"
+<queries>
+    <intent>
+        <action android:name="android.intent.action.VIEW" />
+        <data android:scheme="https" />
+    </intent>
+</queries>
+```
+
+…या, इससे भी आसान, जाँचना छोड़कर नाकामी सँभाल लेना:
+
+```kotlin title="Safe.kt"
+try {
+    startActivity(intent)
+} catch (e: ActivityNotFoundException) {
+    showMessage("No app can open this")
+}
+```
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो users तक पहुँच जाती हैं">
+**"इसे कोई खोल ही नहीं सकता" वाली हालत न सँभालना।** ऐसा device असली होता है जिसमें कोई email
+client नहीं, कोई camera app नहीं, या profile बँधा हुआ है। Implicit launches को `try`/`catch`
+में लपेटिए।
+
+**Extras में बड़ा data।** Extras एक Binder transaction से जाते हैं जिसकी हद पूरे transaction के
+लिए मिलाकर लगभग 1 MB है। एक id भेजिए और दूसरी तरफ object दोबारा पढ़िए; bitmap या सैकड़ों items
+की list कभी मत भेजिए।
+
+**Launcher को शर्त के साथ register करना।** किसी `if` के अंदर, click listener के अंदर, या सिर्फ
+पहली बार। Register हर बार बनने पर एक ही तरह होना चाहिए, वरना process death के बाद नतीजा आने पर
+callback वहाँ होगा ही नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. Explicit intent और एक extra के साथ दूसरी activity पर जाइए। फिर लेने वाली तरफ key गलत लिखिए
+   और देखिए कि runtime तक कुछ fail होता ही नहीं।
+2. बिना dialer वाले emulator पर `tel:` URI के लिए `ACTION_VIEW` भेजिए। Exception सँभालिए।
+3. `GetContent()` launcher की जगह `StartActivityForResult()` रखिए और देखिए कितना ज्यादा लिखना
+   पड़ता है।
+4. `registerForActivityResult` को click listener के अंदर ले जाइए और crash का message पढ़िए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Explicit intent | Component का नाम आप लिखते हैं; अपनी app के अंदर |
+| Implicit intent | काम आप बताते हैं; system ढूँढ़ता है |
+| `createChooser` | Default के बजाय हर बार पूछिए |
+| Extras | बिना type वाला `Bundle`; keys को factory function में लपेटिए |
+| `registerForActivityResult` | बिना शर्त, STARTED से पहले register कीजिए |
+| Contracts | कच्चे नतीजे को असली type में बदल देते हैं |
+| `ActivityNotFoundException` | बिना handler वाले implicit intent का आम नतीजा |
+| `<queries>` | API 30 से, दूसरी apps दिखने के लिए ही जरूरी |
+
+<Interview title="जहाँ काम में दूसरी apps से बात करनी हो, वहाँ आता ही है">
+"दूसरी activity से नतीजा वापस कैसे लेते हैं, और बदला क्या?"
+
+पुराना API और उसके जाने की वजह बताइए: `startActivityForResult`, हाथ से रखे request codes, कोई
+type safety नहीं, और नतीजा ऐसे component में आना जो शायद दोबारा बन चुका हो। फिर नया नाम लीजिए
+और उसके साथ आने वाली शर्त भी — `registerForActivityResult` `STARTED` से पहले बुलाना ही पड़ता
+है, क्योंकि नतीजा दोबारा बनते वक्त भी आ सकता है।
+</Interview>

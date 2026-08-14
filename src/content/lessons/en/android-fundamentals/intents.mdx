@@ -1,0 +1,213 @@
+---
+title: Intents, extras and Activity results
+description: An Intent is a message, not a function call. Naming a target gives you navigation; describing a need gives you the whole device.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+An `Intent` describes **what should happen**. Name the component and you get navigation inside
+your app; describe the action instead and the system finds whichever app can do it.
+</KeyIdea>
+
+## Why this matters
+
+Everything that crosses a screen boundary on Android is an `Intent` — your own navigation,
+opening a link, sharing a photo, picking a contact, returning a camera shot.
+
+Because it is a message rather than a call, the compiler cannot help you. There is no type
+checking on extras, no guarantee anything will handle it, and no return value. Each of those
+gaps has a standard fix.
+
+## Two kinds
+
+<Compare
+  left={{
+    title: "Explicit",
+    subtitle: "You name the class",
+    accent: "violet",
+    points: [
+      "+ Always resolves — it is your own component",
+      "+ The only safe kind for internal navigation",
+      "+ Compile-time class reference, so renames are caught",
+      "~ Cannot reach another app",
+    ],
+  }}
+  right={{
+    title: "Implicit",
+    subtitle: "You describe the action",
+    accent: "amber",
+    points: [
+      "+ Reaches any app that declared a matching filter",
+      "+ How share, dial, view and pick all work",
+      "- May resolve to nothing, or to a chooser",
+      "- Never use it to start your own components",
+    ],
+  }}
+/>
+
+```kotlin title="Intents.kt" numbered
+// Explicit: navigation inside your app
+startActivity(Intent(this, DetailActivity::class.java).apply {
+    putExtra("orderId", "A-1042")
+})
+
+// Implicit: whoever can open a web page
+startActivity(Intent(Intent.ACTION_VIEW, "https://example.com".toUri()))
+
+// Implicit with a chooser, so the user picks every time
+val share = Intent(Intent.ACTION_SEND).apply {
+    type = "text/plain"
+    putExtra(Intent.EXTRA_TEXT, "Order A-1042 shipped")
+}
+startActivity(Intent.createChooser(share, "Share order"))
+```
+
+<Warning>
+Never send an implicit intent to your own component. Another app can declare the same filter and
+receive it instead, which turns internal navigation into a hijackable channel.
+</Warning>
+
+## Getting a result back
+
+`startActivityForResult` is deprecated and its request codes are gone. The replacement is a
+launcher registered up front, with a contract that does the type conversion for you.
+
+```kotlin title="Results.kt" numbered
+class ProfileActivity : ComponentActivity() {
+
+    // Registered during onCreate — before the activity is STARTED
+    private val pickImage = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) showAvatar(uri)     // null means the user backed out
+    }
+
+    private fun onPickClicked() = pickImage.launch("image/*")
+}
+```
+
+| Contract | Gives you |
+| --- | --- |
+| `GetContent()` | A `Uri?` for a single chosen file |
+| `TakePicture()` | A `Boolean` — you supply the destination `Uri` |
+| `RequestPermission()` | A `Boolean` for granted or denied |
+| `StartActivityForResult()` | The raw `ActivityResult`, for custom cases |
+
+<Quiz
+  question="You call `registerForActivityResult` inside a button's click listener instead of at construction. What happens?"
+  options={[
+    "It works — registration order does not matter",
+    "It throws, because registration must happen before the STARTED state",
+    "It works but the callback fires twice",
+  ]}
+  answer={1}
+  explanation="The launcher has to be registered before the component reaches STARTED, because the result can arrive during recreation — after process death the system delivers it while the activity is still starting up, and there must already be a callback waiting. Registering inside a click listener is far too late, and the framework throws rather than losing your result silently. Always register as a field or in onCreate, unconditionally."
+/>
+
+## Extras are an untyped `Bundle`
+
+```kotlin title="Extras.kt" numbered
+// Sending
+intent.putExtra("orderId", "A-1042")
+
+// Receiving — the key and the type are both unchecked
+val id = intent.getStringExtra("orderId") ?: return finish()
+```
+
+<Pitfall bare>
+A typo in the key compiles cleanly and returns `null` at runtime. Put the keys in a
+`companion object` next to the activity that reads them, and expose a `newIntent(...)` function
+so callers cannot get it wrong.
+</Pitfall>
+
+## Under the hood: how the system picks
+
+<Timeline>
+  <TimelineItem title="Action" meta="must match">
+    The filter must list the same action string, for example `ACTION_VIEW`.
+  </TimelineItem>
+  <TimelineItem title="Category" meta="all must match">
+    Every category on the intent must appear in the filter. Implicit intents get
+    `CATEGORY_DEFAULT` added automatically, which is why filters need it declared.
+  </TimelineItem>
+  <TimelineItem title="Data" meta="scheme, host, path, MIME">
+    A filter with a `<data>` element only matches intents whose URI and MIME type fit it.
+  </TimelineItem>
+  <TimelineItem title="Result" meta="zero, one or many">
+    Zero means `ActivityNotFoundException`. One starts directly. Many shows a chooser, or the
+    user's default if they set one.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Why `resolveActivity` stopped working on Android 11">
+Since API 30, your app cannot see most other installed apps. `queryIntentActivities` and
+`resolveActivity` return nothing for apps you have not declared an interest in, so the old
+"check before you launch" pattern reports *no handler* even when one exists.
+
+The fix is either to declare what you look for:
+
+```xml title="Queries.xml"
+<queries>
+    <intent>
+        <action android:name="android.intent.action.VIEW" />
+        <data android:scheme="https" />
+    </intent>
+</queries>
+```
+
+…or, more simply, to stop checking and handle the failure:
+
+```kotlin title="Safe.kt"
+try {
+    startActivity(intent)
+} catch (e: ActivityNotFoundException) {
+    showMessage("No app can open this")
+}
+```
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three that reach users">
+**Not handling "nothing can open this".** A device with no email client, no camera app or a
+locked-down profile is a real device. Wrap implicit launches in `try`/`catch`.
+
+**Large data in extras.** Extras cross a Binder transaction with a limit around 1 MB shared by
+the whole transaction. Send an id and re-read the object on the other side; never send a bitmap
+or a list of hundreds.
+
+**Registering a launcher conditionally.** Inside an `if`, inside a click listener, or only on
+first launch. Registration must happen the same way on every creation, or the callback will not
+be there when a result arrives after process death.
+</Pitfall>
+
+## Practice
+
+1. Navigate to a second activity with an explicit intent and one extra. Then misspell the key on
+   the receiving side and observe that nothing fails until runtime.
+2. Send `ACTION_VIEW` for a `tel:` URI on an emulator without a dialer. Handle the exception.
+3. Replace a `GetContent()` launcher with `StartActivityForResult()` and note how much more you
+   have to write.
+4. Move a `registerForActivityResult` call into a click listener and read the crash message.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Explicit intent | You name the component; use it inside your app |
+| Implicit intent | You describe the action; the system resolves it |
+| `createChooser` | Ask every time instead of using the default |
+| Extras | Untyped `Bundle`; wrap the keys in a factory function |
+| `registerForActivityResult` | Register unconditionally, before STARTED |
+| Contracts | Convert the raw result into a real type |
+| `ActivityNotFoundException` | The normal outcome of an unhandled implicit intent |
+| `<queries>` | Needed since API 30 to see other apps at all |
+
+<Interview title="Comes up whenever the role involves talking to other apps">
+"How do you get a result back from another activity, and what changed?"
+
+Name the old API and why it went: `startActivityForResult` with manual request codes, no type
+safety, and results arriving in a component that might have been recreated. Then name the
+replacement and the constraint that comes with it — `registerForActivityResult` must be called
+before `STARTED`, because the result can be delivered during recreation.
+</Interview>
