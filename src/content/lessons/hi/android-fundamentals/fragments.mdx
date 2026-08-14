@@ -1,0 +1,194 @@
+---
+title: Fragments और उनका अलग lifecycle
+description: Fragment के दो lifecycle होते हैं — अपना और अपनी view का — और दोनों एक साथ नहीं चलते। Fragment का लगभग हर bug गलत वाला इस्तेमाल करने से आता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Fragment` अपनी view से ज्यादा जीता है। Fragment जब भी back stack पर जाता और लौटता है, view बनती
+और खत्म होती रहती है, जबकि fragment object वहीं बना रहता है — इसलिए view से जुड़ी हर चीज को
+**`viewLifecycleOwner`** चाहिए, `this` नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+आप `onViewCreated` में कोई `LiveData` observe करते हैं या `Flow` collect करते हैं, `this` के
+साथ। User आगे जाता है और वापस आता है। अब दो observers चल रहे हैं, दोनों views update कर रहे
+हैं, और उनमें से एक ऐसे view tree की तरफ इशारा कर रहा है जो अब है ही नहीं।
+
+दिखता क्या है: एक ही update दो बार, या binding पर `NullPointerException`, या ऐसा leak जो
+दो-चार navigation के बाद ही सामने आता है। वजह हमेशा यही एक बेमेल है।
+
+## दो lifecycle, आमने-सामने
+
+<Compare
+  left={{
+    title: "Fragment lifecycle",
+    subtitle: "this",
+    accent: "violet",
+    points: [
+      "onAttach, onCreate",
+      "…",
+      "onDestroy, onDetach",
+      "~ View के खत्म होकर दोबारा बनने को झेल जाता है",
+    ],
+  }}
+  right={{
+    title: "View lifecycle",
+    subtitle: "viewLifecycleOwner",
+    accent: "emerald",
+    points: [
+      "onCreateView, onViewCreated",
+      "…",
+      "onDestroyView",
+      "~ Back stack से हर लौटने पर दोबारा चलता है",
+    ],
+  }}
+/>
+
+| आप यह कर रहे हैं | किससे बाँधिए |
+| --- | --- |
+| Arguments पढ़ना, `ViewModel` बनाना | `this` (fragment) |
+| ऐसी कोई चीज observe करना जो `View` को छूती हो | `viewLifecycleOwner` |
+| `ViewBinding` पकड़ना | View lifecycle; `onDestroyView` में null कीजिए |
+| `ActivityResultLauncher` register करना | `this`, और `onCreate` के दौरान |
+
+```kotlin title="OrderFragment.kt" numbered
+class OrderFragment : Fragment(R.layout.fragment_order) {
+
+    private val viewModel: OrderViewModel by viewModels()
+
+    private var _binding: FragmentOrderBinding? = null
+    private val binding get() = _binding!!
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        _binding = FragmentOrderBinding.bind(view)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { binding.title.text = it.title }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null          // view जा चुकी है; अब उसे मत पकड़िए
+    }
+}
+```
+
+<Quiz
+  question="आप `onViewCreated` में `lifecycleScope` और owner के तौर पर `this` लेकर Flow collect करते हैं। User आगे जाता है, फिर वापस। अब क्या चल रहा है?"
+  options={[
+    "एक collector — पुराना view के साथ cancel हो गया",
+    "दो collectors, और पुराना एक खत्म हो चुकी view में लिख रहा है",
+    "एक collector, पर अगली rotation तक update करना बंद कर देता है",
+  ]}
+  answer={1}
+  explanation="`this` fragment है, और fragment back stack पर जाकर बच गया — तो उसका scope कभी cancel हुआ ही नहीं। वापस आने पर onViewCreated दोबारा चलता है और दूसरा collector शुरू कर देता है। पुराना अब भी जिंदा है और पुरानी binding पकड़े है, यानी update दो बार होता है और पूरा पुराना view tree leak भी होता है। viewLifecycleOwner से बाँधने पर पहला collector onDestroyView पर cancel हो जाता है, जो आप चाहते ही थे।"
+/>
+
+## `add` और `replace` एक जैसे नहीं हैं
+
+```kotlin title="Transactions.kt" numbered
+supportFragmentManager.commit {
+    replace(R.id.container, DetailFragment())   // पुराने fragment की view खत्म
+    addToBackStack("detail")                    // पर fragment object रख लिया जाता है
+}
+```
+
+| काम | पुराना fragment | उसकी view |
+| --- | --- | --- |
+| `add` | रहता है, नीचे अब भी दिखता है | बनी रहती है |
+| `replace` | Container से हटा दिया जाता है | खत्म |
+| `replace` + `addToBackStack` | Memory में रहता है, screen से बाहर | खत्म, लौटने पर दोबारा बनती है |
+| Back दबाना | Pop होकर खत्म | पहले ही जा चुकी |
+
+<Note>
+`replace` के साथ `addToBackStack` वही मामला है जिसमें लोग फँसते हैं: fragment object बच जाता है
+और view नहीं। दो lifecycle होने की पूरी वजह यही है।
+</Note>
+
+## अंदर की बात: `FragmentManager` उन्हें आपके लिए दोबारा बनाता है
+
+<Timeline>
+  <TimelineItem title="Configuration change" meta="दोनों दोबारा बनते हैं">
+    Activity खत्म होती है, तो हर fragment उसके साथ जाता है। `FragmentManager` अपनी list save
+    करता है और बाद में हर fragment दोबारा बनाता है — उसके **बिना-argument वाले constructor** से।
+  </TimelineItem>
+  <TimelineItem title="इसीलिए constructor arguments नहीं चलते" meta="arguments इस्तेमाल कीजिए">
+    Constructor parameter कहीं save नहीं होता, तो दोबारा बने fragment को कुछ नहीं मिलता। Data
+    `arguments: Bundle` से भेजिए, जिसे manager save करता है।
+  </TimelineItem>
+  <TimelineItem title="Back stack" meta="fragment रहता है, view जाती है">
+    आगे जाने पर memory बचाने के लिए view खत्म होती है, fragment रहता है, और लौटने पर view दोबारा
+    बनती है। यही वह रास्ता है जहाँ `viewLifecycleOwner` सबसे ज्यादा मायने रखता है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Arguments उस तरीके से भेजना जो बचता है">
+```kotlin title="Args.kt"
+class DetailFragment : Fragment(R.layout.fragment_detail) {
+    private val orderId: String get() = requireArguments().getString(ARG_ID)!!
+
+    companion object {
+        private const val ARG_ID = "order_id"
+        fun newInstance(id: String) = DetailFragment().apply {
+            arguments = bundleOf(ARG_ID to id)
+        }
+    }
+}
+```
+
+Navigation component का Safe Args यही pattern आपके लिए बना देता है, types compile time पर जाँचे
+हुए। दोनों तरीकों में data `Bundle` में पहुँचता है, और यही उसे बचाता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, जिनसे Fragment के ज्यादातर bugs बनते हैं">
+**`viewLifecycleOwner` की जगह `this` से observe करना।** वही जो quiz में था, और Fragment का सबसे
+आम bug।
+
+**Binding पकड़कर उसे null न करना।** `onDestroyView` में `_binding = null` कोई छोड़ देने लायक
+औपचारिकता नहीं है — उसके बिना fragment जब तक back stack पर है, पूरे खत्म हो चुके view tree को
+जिंदा रखता है।
+
+**Parameters वाला constructor।** Compile होता है, testing में चलता है, और rotation के बाद fail
+हो जाता है क्योंकि `FragmentManager` खाली constructor बुलाता है। `arguments` इस्तेमाल कीजिए।
+
+**View lifecycle के बाहर views छूना।** `onCreate` में लिखी कोई चीज, या ऐसा callback जो
+`onDestroyView` के बाद आ सकता है, `_binding` को null पा सकता है। Lifecycle state जाँचिए या काम
+को ठीक से बाँधिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `this` से बँधा एक flow collect कीजिए, दो बार आगे-पीछे navigate कीजिए, और हर emission पर
+   updates गिनिए। फिर `viewLifecycleOwner` पर जाकर दोबारा गिनिए।
+2. `_binding = null` वाली line हटा दीजिए, दस बार आगे-पीछे जाइए, और profiler में memory देखिए।
+3. किसी fragment को constructor parameter दीजिए। Device घुमाइए और crash पढ़िए।
+4. एक ही transaction के लिए `add` और `replace` मिलाइए। नीचे वाले fragment पर `onDestroyView`
+   कौन सा चलाता है?
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| दो lifecycle | Fragment का, और उसकी view का |
+| `viewLifecycleOwner` | हर उस चीज के लिए जो `View` छूती है |
+| `this` | Arguments, `ViewModel`, result launchers के लिए |
+| `onDestroyView` | Binding यहीं null कीजिए, हर बार |
+| `add` बनाम `replace` | पुरानी view रखता है बनाम खत्म करता है |
+| `addToBackStack` | Fragment बचता है, view नहीं |
+| Arguments | `Bundle`, constructor parameters कभी नहीं |
+
+<Interview title="जिन्होंने Fragment वाला codebase सँभाला है और जिन्होंने सिर्फ पढ़ा है, उन्हें अलग करता है">
+"`viewLifecycleOwner` है ही क्यों?"
+
+जवाब एक वाक्य और एक नतीजा है: क्योंकि back stack पर fragment अपनी view से ज्यादा जीता है, तो
+fragment से बँधा observer दूसरी view तक बच जाता है और पहली में लिखता रहता है। Leak का नाम भी ले
+लेना — पुरानी binding पूरे पुराने view tree को जिंदा रखती है — वही दिखाता है कि आपने इसे सच में
+debug किया है।
+</Interview>

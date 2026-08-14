@@ -1,0 +1,195 @@
+---
+title: Fragments and their separate lifecycle
+description: A Fragment has two lifecycles — its own and its view's — and they do not line up. Nearly every Fragment bug is code using the wrong one.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A `Fragment` outlives its view. The view is created and destroyed every time the fragment goes
+onto and off the back stack, while the fragment object itself stays alive — so anything tied to
+the view must use **`viewLifecycleOwner`**, not `this`.
+</KeyIdea>
+
+## Why this matters
+
+You observe a `LiveData` or collect a `Flow` in `onViewCreated`, scoped to `this`. The user
+navigates forward and back. Now two observers are running, both updating views, and one of them
+points at a view tree that no longer exists.
+
+The symptom is a duplicated update, a `NullPointerException` on a binding, or a leak that only
+shows up after a few navigations. The cause is always the same mismatch.
+
+## Two lifecycles, side by side
+
+<Compare
+  left={{
+    title: "Fragment lifecycle",
+    subtitle: "this",
+    accent: "violet",
+    points: [
+      "onAttach, onCreate",
+      "…",
+      "onDestroy, onDetach",
+      "~ Survives the view being destroyed and rebuilt",
+    ],
+  }}
+  right={{
+    title: "View lifecycle",
+    subtitle: "viewLifecycleOwner",
+    accent: "emerald",
+    points: [
+      "onCreateView, onViewCreated",
+      "…",
+      "onDestroyView",
+      "~ Runs again on every return from the back stack",
+    ],
+  }}
+/>
+
+| You are doing this | Scope it to |
+| --- | --- |
+| Reading arguments, creating a `ViewModel` | `this` (the fragment) |
+| Observing anything that touches a `View` | `viewLifecycleOwner` |
+| Holding a `ViewBinding` | The view lifecycle; null it in `onDestroyView` |
+| Registering an `ActivityResultLauncher` | `this`, and do it during `onCreate` |
+
+```kotlin title="OrderFragment.kt" numbered
+class OrderFragment : Fragment(R.layout.fragment_order) {
+
+    private val viewModel: OrderViewModel by viewModels()
+
+    private var _binding: FragmentOrderBinding? = null
+    private val binding get() = _binding!!
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        _binding = FragmentOrderBinding.bind(view)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { binding.title.text = it.title }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null          // the view is gone; stop holding it
+    }
+}
+```
+
+<Quiz
+  question="You collect a Flow in `onViewCreated` using `lifecycleScope` and `this` as the owner. The user navigates forward, then back. What is running?"
+  options={[
+    "One collector — the old one was cancelled with the view",
+    "Two collectors, and the older one writes to a destroyed view",
+    "One collector, but it stops updating until the next rotation",
+  ]}
+  answer={1}
+  explanation="`this` is the fragment, and the fragment survived being put on the back stack — so its scope was never cancelled. Returning runs onViewCreated again and starts a second collector. The old one is still alive and still holds the old binding, which is both a duplicated update and a leak of the entire old view tree. Scoping to viewLifecycleOwner cancels the first collector at onDestroyView, which is exactly what you wanted."
+/>
+
+## `add` and `replace` are not interchangeable
+
+```kotlin title="Transactions.kt" numbered
+supportFragmentManager.commit {
+    replace(R.id.container, DetailFragment())   // old fragment's view is destroyed
+    addToBackStack("detail")                    // but the fragment object is kept
+}
+```
+
+| Operation | The old fragment | Its view |
+| --- | --- | --- |
+| `add` | Stays, still visible underneath | Kept |
+| `replace` | Removed from the container | Destroyed |
+| `replace` + `addToBackStack` | Kept in memory, off screen | Destroyed, rebuilt on return |
+| Back press | Popped and destroyed | Already gone |
+
+<Note>
+`replace` with `addToBackStack` is the case that catches people: the fragment object survives
+and the view does not. That is the whole reason two lifecycles exist.
+</Note>
+
+## Under the hood: the `FragmentManager` recreates them for you
+
+<Timeline>
+  <TimelineItem title="Configuration change" meta="both are recreated">
+    The activity is destroyed, so every fragment goes with it. The `FragmentManager` saves its
+    list and restores each fragment afterwards — by calling its **no-argument constructor**.
+  </TimelineItem>
+  <TimelineItem title="Which is why constructor arguments do not work" meta="use arguments">
+    A constructor parameter is not saved anywhere, so the restored fragment gets nothing. Pass
+    data through `arguments: Bundle` instead, which the manager does save.
+  </TimelineItem>
+  <TimelineItem title="Back stack" meta="fragment kept, view dropped">
+    Going forward destroys the view to free memory, keeps the fragment, and rebuilds the view on
+    return. This is the path where `viewLifecycleOwner` matters most.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Passing arguments the way that survives">
+```kotlin title="Args.kt"
+class DetailFragment : Fragment(R.layout.fragment_detail) {
+    private val orderId: String get() = requireArguments().getString(ARG_ID)!!
+
+    companion object {
+        private const val ARG_ID = "order_id"
+        fun newInstance(id: String) = DetailFragment().apply {
+            arguments = bundleOf(ARG_ID to id)
+        }
+    }
+}
+```
+
+The Navigation component's Safe Args generates this pattern for you with types checked at
+compile time. Either way the data lands in the `Bundle`, which is what makes it survive.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that account for most Fragment bugs">
+**Observing with `this` instead of `viewLifecycleOwner`.** The one from the quiz, and the most
+common Fragment bug there is.
+
+**Holding a binding without nulling it.** `_binding = null` in `onDestroyView` is not
+boilerplate you can skip — without it the fragment keeps the whole destroyed view tree alive for
+as long as it is on the back stack.
+
+**A constructor with parameters.** It compiles, works in testing, and fails after rotation
+because the `FragmentManager` calls the empty constructor. Use `arguments`.
+
+**Touching views outside the view lifecycle.** Anything in `onCreate`, or in a callback that
+can arrive after `onDestroyView`, may find `_binding` null. Check the lifecycle state or scope
+the work properly.
+</Pitfall>
+
+## Practice
+
+1. Collect a flow scoped to `this`, navigate forward and back twice, and count the updates per
+   emission. Switch to `viewLifecycleOwner` and count again.
+2. Remove the `_binding = null` line, navigate back and forth ten times, and watch memory in the
+   profiler.
+3. Give a fragment a constructor parameter. Rotate the device and read the crash.
+4. Compare `add` and `replace` for the same transaction. Which one runs `onDestroyView` on the
+   fragment underneath?
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Two lifecycles | The fragment's, and its view's |
+| `viewLifecycleOwner` | For anything that touches a `View` |
+| `this` | For arguments, `ViewModel`, result launchers |
+| `onDestroyView` | Null the binding here, every time |
+| `add` vs `replace` | Keeps the old view vs destroys it |
+| `addToBackStack` | Fragment survives, view does not |
+| Arguments | `Bundle`, never constructor parameters |
+
+<Interview title="Separates people who have maintained a Fragment codebase from people who have read about one">
+"Why does `viewLifecycleOwner` exist?"
+
+The answer is one sentence plus one consequence: because a fragment outlives its view on the
+back stack, so a fragment-scoped observer survives into a second view and writes to the first
+one. Naming the leak — the old binding keeps the whole old view tree alive — is what shows you
+have actually debugged it.
+</Interview>
