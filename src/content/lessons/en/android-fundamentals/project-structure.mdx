@@ -1,0 +1,183 @@
+---
+title: Project structure and source sets
+description: Android Studio hands you forty files you did not write. Six of them matter, and knowing which folder wins an argument answers most "where does this go?" questions.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A module's code is not one folder. Gradle stitches several **source sets** together for each
+build, and the rules for combining them are different for code than for resources.
+</KeyIdea>
+
+## Why this matters
+
+Your first project arrives fully populated. Nothing tells you which folders you own, which
+Gradle regenerates, and which are safe to delete.
+
+So people put files in the wrong place, commit generated output, and lose an afternoon to a
+duplicate class error that a one-line rule would have explained.
+
+## The tree, and who owns what
+
+<Figure caption="Two levels. The root project owns settings and plugin versions; each module owns its own code, resources and dependencies.">
+  <FileTree
+    caption="Green is yours. Anything under build/ is regenerated on every build."
+    entries={[
+      { name: "MyApp/", kind: "folder" },
+      { name: "settings.gradle.kts", kind: "gradle", depth: 1, note: "which modules exist" },
+      { name: "build.gradle.kts", kind: "gradle", depth: 1, note: "plugin versions for all modules" },
+      { name: "gradle/libs.versions.toml", kind: "text", depth: 1, note: "one place for every version" },
+      { name: "app/", kind: "folder", depth: 1, note: "a module", highlight: true },
+      { name: "build.gradle.kts", kind: "gradle", depth: 2, note: "this module's dependencies" },
+      { name: "src/", kind: "folder", depth: 2 },
+      { name: "main/", kind: "folder", depth: 3, note: "every build gets this" },
+      { name: "debug/", kind: "folder", depth: 3, note: "debug builds only" },
+      { name: "test/", kind: "folder", depth: 3, note: "JVM tests" },
+      { name: "androidTest/", kind: "folder", depth: 3, note: "tests that need a device" },
+      { name: "build/", kind: "folder", depth: 2, note: "generated — never edit, never commit" },
+    ]}
+  />
+</Figure>
+
+A **module** is the unit Gradle compiles. One module is normal for a while; the reason to add
+more is build speed and enforced boundaries, which Phase 11 covers.
+
+## Inside `src/`: the source sets
+
+```text title="app/src/" no-glossary
+main/
+  AndroidManifest.xml
+  java/com/example/myapp/     <- Kotlin lives here too
+  res/                        <- compiled resources
+  assets/                     <- raw files, untouched
+debug/
+  res/values/strings.xml      <- overrides main, debug builds only
+```
+
+| Source set | Goes into | Typical use |
+| --- | --- | --- |
+| `main` | every build | almost everything you write |
+| `debug` / `release` | that build type only | different server URL, a debug-only screen |
+| `test` | JVM test runs | unit tests, no Android framework |
+| `androidTest` | device test runs | UI tests, anything needing a real `Context` |
+
+<Quiz
+  question="`main` and `debug` both contain a file declaring `class Config`. What happens on a debug build?"
+  options={[
+    "The debug one wins, like resources",
+    "Compile error — duplicate class",
+    "Both compile; the last one alphabetically wins",
+  ]}
+  answer={1}
+  explanation="Source sets are combined for code, not overridden. Gradle puts main and debug on the same compile path, so two classes with the same fully-qualified name is a duplicate class error. Resources and manifests are different: those genuinely merge, and the more specific source set wins. To vary a class per build type, declare it in each build type's source set and in neither main, or put the difference in a resource or a BuildConfig field."
+/>
+
+That quiz is the whole lesson. **Code is combined; resources and manifests are merged.** Nearly
+every confusing build error in this area comes from expecting one rule and getting the other.
+
+## `res/` and `assets/` are not the same folder
+
+<Compare
+  left={{
+    title: "res/",
+    subtitle: "Compiled and indexed",
+    accent: "violet",
+    points: [
+      "+ Gets an `R` constant, so typos are compile errors",
+      "+ The system picks by language, density, theme",
+      "+ Checked for unused entries by R8",
+      "- Flat structure; no subfolders inside res/values",
+    ],
+  }}
+  right={{
+    title: "assets/",
+    subtitle: "Copied in as-is",
+    accent: "amber",
+    points: [
+      "+ Any folder structure you like",
+      "+ Right for a font file, a JSON seed, an ML model",
+      "- Opened by string path, so a typo is a runtime crash",
+      "- No automatic language or density selection",
+    ],
+  }}
+/>
+
+<Tip bare>
+Rule of thumb: if the system should ever pick a different version of it, put it in `res/`.
+Otherwise `assets/`.
+</Tip>
+
+## Under the hood: what a build actually merges
+
+<Timeline>
+  <TimelineItem title="Manifests" meta="merged">
+    Your manifest, every library's manifest, and the build type's manifest are merged into one.
+    Conflicting attributes are an error until you resolve them explicitly.
+  </TimelineItem>
+  <TimelineItem title="Resources" meta="merged, most specific wins">
+    Build type beats flavour, flavour beats `main`, and your module beats its libraries. Same
+    name means override, not duplicate.
+  </TimelineItem>
+  <TimelineItem title="Kotlin and Java" meta="combined">
+    All source sets for the variant land on one compile path. Same class name in two of them is
+    an error, not an override.
+  </TimelineItem>
+  <TimelineItem title="R class" meta="generated">
+    Every resource name becomes a constant under your `namespace`. This is why a renamed layout
+    breaks compilation instead of failing at runtime.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Why library resources can silently change your app">
+Library resources merge into yours, and your module wins ties. So a library that ships
+`colors.xml` with `primary` will lose to your `primary` — quietly, with no warning.
+
+That is why library authors prefix everything (`mtrl_`, `abc_`), and why you should treat a
+short resource name like `title` or `background` in a shared module as a name collision waiting
+to happen.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three that cost real time">
+**Expecting `src/debug` to override a class in `src/main`.** It combines, so you get a duplicate
+class error. Put the class in *both* build type source sets and none in `main`, or use a
+`BuildConfig` field instead.
+
+**Committing `build/`.** It is regenerated every build and enormous. It belongs in
+`.gitignore`, along with `.gradle/` and `local.properties`.
+
+**Editing a generated file.** Anything under `build/` — including the `R` class — is rewritten
+on the next build. If you need to change it, change the input that produced it.
+</Pitfall>
+
+## Practice
+
+1. Add `src/debug/res/values/strings.xml` with an `app_name` that differs from `main`. Install
+   both build types and read the launcher label.
+2. Now try the same with a Kotlin file declaring the same class in `main` and `debug`. Read the
+   error, then fix it two different ways.
+3. Put a small JSON file in `assets/` and the same data in `res/raw/`. Open each in code and
+   compare what happens when you misspell the name.
+4. Run `./gradlew :app:dependencies` and find one library whose resources merge into yours.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Module | The unit Gradle compiles; `app/` is your first one |
+| Source set | A folder of code and resources for a specific build |
+| `main` | Included in every variant |
+| Code merging | Combined — duplicate class names are errors |
+| Resource merging | Overridden — most specific source set wins |
+| `res/` vs `assets/` | Compiled and indexed, vs copied in raw |
+| `build/` | Generated; never edit, never commit |
+
+<Interview title="Asked to check whether you have shipped more than a tutorial app">
+"How would you point debug and release builds at different API servers?"
+
+A good answer names more than one mechanism and picks between them: a `buildConfigField` per
+build type is the usual choice; a resource in `src/debug/res` works too and is easier to
+localize. Adding that a *class* cannot simply be overridden per build type shows you have hit
+the source set rule for real.
+</Interview>

@@ -1,0 +1,185 @@
+---
+title: Project structure aur source sets
+description: Android Studio aapko chalis aisi files de deta hai jo aapne likhi nahi. Inmein se chhah maayne rakhti hain, aur kaun sa folder jeetta hai ye pata ho to "ise rakhun kahan" wale zyadatar sawal khatam ho jate hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Module ka code ek folder mein nahi hota. Har build ke liye Gradle kai **source sets** jodkar ek
+banata hai, aur jodne ke niyam code ke liye alag hain, resources ke liye alag.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Aapka pehla project poora bhara hua aata hai. Kahin ye nahi likha ki kaun se folders aapke
+hain, kaun se Gradle dobara banata hai, aur kaun se hatana safe hai.
+
+To log files galat jagah rakhte hain, generated output commit kar dete hain, aur duplicate
+class wali ek error mein poori dopahar chali jati hai — jabki ek line ka niyam use samjha deta.
+
+## Ped, aur kis par kiska haq
+
+<Figure caption="Do level. Root project settings aur plugin versions rakhta hai; har module apna code, resources aur dependencies.">
+  <FileTree
+    caption="Hara aapka hai. build/ ke neeche jo bhi hai wo har build par dobara banta hai."
+    entries={[
+      { name: "MyApp/", kind: "folder" },
+      { name: "settings.gradle.kts", kind: "gradle", depth: 1, note: "kaun se modules hain" },
+      { name: "build.gradle.kts", kind: "gradle", depth: 1, note: "sab modules ke liye plugin versions" },
+      { name: "gradle/libs.versions.toml", kind: "text", depth: 1, note: "har version ke liye ek hi jagah" },
+      { name: "app/", kind: "folder", depth: 1, note: "ek module", highlight: true },
+      { name: "build.gradle.kts", kind: "gradle", depth: 2, note: "is module ki dependencies" },
+      { name: "src/", kind: "folder", depth: 2 },
+      { name: "main/", kind: "folder", depth: 3, note: "har build mein jata hai" },
+      { name: "debug/", kind: "folder", depth: 3, note: "sirf debug builds mein" },
+      { name: "test/", kind: "folder", depth: 3, note: "JVM tests" },
+      { name: "androidTest/", kind: "folder", depth: 3, note: "jinhe device chahiye" },
+      { name: "build/", kind: "folder", depth: 2, note: "generated — na chhedo, na commit karo" },
+    ]}
+  />
+</Figure>
+
+**Module** wo unit hai jise Gradle compile karta hai. Shuru mein ek module hi aam baat hai; aur
+modules jodne ki wajah build speed aur saaf hadein hoti hain, jo Phase 11 mein aayega.
+
+## `src/` ke andar: source sets
+
+```text title="app/src/" no-glossary
+main/
+  AndroidManifest.xml
+  java/com/example/myapp/     <- Kotlin bhi yahin rehta hai
+  res/                        <- compile hone wale resources
+  assets/                     <- kachhi files, jaisi ki waisi
+debug/
+  res/values/strings.xml      <- main ko daba deta hai, sirf debug builds mein
+```
+
+| Source set | Kahan jata hai | Aam istemal |
+| --- | --- | --- |
+| `main` | Har build mein | Lagbhag sab kuch jo aap likhte ho |
+| `debug` / `release` | Sirf usi build type mein | Alag server URL, sirf debug wali screen |
+| `test` | JVM test chalne par | Unit tests, bina Android framework |
+| `androidTest` | Device test chalne par | UI tests, jinhe asli `Context` chahiye |
+
+<Quiz
+  question="`main` aur `debug` dono mein `class Config` declare karne wali file hai. Debug build par kya hoga?"
+  options={[
+    "Debug wali jeetegi, resources ki tarah",
+    "Compile error — duplicate class",
+    "Dono compile hongi; alphabetically aakhri wali jeetegi",
+  ]}
+  answer={1}
+  explanation="Code ke liye source sets judte hain, dabte nahi. Gradle main aur debug dono ko ek hi compile path par rakhta hai, isliye ek hi poore naam wali do classes duplicate class error hain. Resources aur manifests alag hain: wo sach mein merge hote hain aur zyada khaas source set jeetta hai. Kisi class ko build type ke hisaab se badalna ho to use har build type ke source set mein likho aur `main` mein kahin nahi, ya farak ko resource ya `BuildConfig` field mein daal do."
+/>
+
+Yahi quiz poora lesson hai. **Code judta hai; resources aur manifests merge hote hain.** Is
+ilaake ki lagbhag har uljhane wali build error ek niyam ki ummeed karke dusra milne se aati hai.
+
+## `res/` aur `assets/` ek hi folder nahi hain
+
+<Compare
+  left={{
+    title: "res/",
+    subtitle: "Compile hote hain, index hote hain",
+    accent: "violet",
+    points: [
+      "+ `R` constant milta hai, to typo compile error ban jati hai",
+      "+ System bhasha, density aur theme ke hisaab se chunta hai",
+      "+ R8 bina istemal wali entries pakad leta hai",
+      "- Sapaat structure; res/values ke andar subfolders nahi",
+    ],
+  }}
+  right={{
+    title: "assets/",
+    subtitle: "Jaisi ki waisi copy hoti hain",
+    accent: "amber",
+    points: [
+      "+ Jo folder structure chahiye wo bana lo",
+      "+ Font file, JSON seed, ML model ke liye sahi",
+      "- String path se khulti hain, to typo runtime crash hai",
+      "- Bhasha ya density apne aap nahi chuni jati",
+    ],
+  }}
+/>
+
+<Tip bare>
+Mota niyam: agar system ko kabhi uska koi dusra version chunna pad sakta hai, to `res/` mein
+rakho. Warna `assets/` mein.
+</Tip>
+
+## Andar ki baat: build asal mein merge kya karta hai
+
+<Timeline>
+  <TimelineItem title="Manifests" meta="merge hote hain">
+    Aapka manifest, har library ka manifest, aur build type ka manifest — teeno milkar ek bante
+    hain. Takrane wale attributes tab tak error hain jab tak aap saaf-saaf hal na kar do.
+  </TimelineItem>
+  <TimelineItem title="Resources" meta="merge, zyada khaas wala jeetta hai">
+    Build type flavour se jeetta hai, flavour `main` se, aur aapka module apni libraries se. Ek
+    hi naam matlab override, duplicate nahi.
+  </TimelineItem>
+  <TimelineItem title="Kotlin aur Java" meta="judte hain">
+    Us variant ke saare source sets ek hi compile path par aa jate hain. Do mein ek hi class
+    naam error hai, override nahi.
+  </TimelineItem>
+  <TimelineItem title="R class" meta="generated">
+    Har resource ka naam aapke `namespace` ke neeche ek constant ban jata hai. Isiliye layout ka
+    naam badalne par compile tootta hai, runtime par nahi.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Library ke resources chupchap aapki app kyun badal sakte hain">
+Library ke resources aapke saath merge hote hain, aur barabari mein aapka module jeetta hai. To
+jo library `colors.xml` mein `primary` bhejti hai, wo aapke `primary` se haar jayegi — chupchap,
+bina kisi warning ke.
+
+Isiliye library likhne wale har naam ke aage kuch lagate hain (`mtrl_`, `abc_`), aur isiliye
+kisi shared module mein `title` ya `background` jaisa chhota resource naam aage chalkar takrane
+wala naam maan kar chalo.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo sach mein samay khaati hain">
+**`src/debug` se `src/main` wali class ke dabne ki ummeed.** Wo judte hain, to duplicate class
+error milti hai. Class ko *dono* build type source sets mein rakho aur `main` mein kahin nahi,
+ya uski jagah `BuildConfig` field use karo.
+
+**`build/` commit kar dena.** Wo har build par dobara banta hai aur bahut bada hota hai. Uski
+jagah `.gitignore` hai, `.gradle/` aur `local.properties` ke saath.
+
+**Generated file ko edit karna.** `build/` ke neeche jo bhi hai — `R` class samet — agli build
+par dobara likh diya jata hai. Badalna ho to wo input badlo jisse wo bana.
+</Pitfall>
+
+## Practice
+
+1. `src/debug/res/values/strings.xml` jodo jismein `app_name` `main` se alag ho. Dono build
+   types install karo aur launcher ka naam padho.
+2. Ab wahi ek Kotlin file ke saath karo jo `main` aur `debug` dono mein ek hi class declare
+   kare. Error padho, phir do alag tarikon se theek karo.
+3. Ek chhoti JSON file `assets/` mein rakho aur wahi data `res/raw/` mein. Dono ko code se
+   kholo aur naam galat likhne par kya hota hai, ye milao.
+4. `./gradlew :app:dependencies` chalao aur ek aisi library dhundho jiske resources aapke saath
+   merge hote hain.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Module | Wo unit jise Gradle compile karta hai; `app/` aapka pehla |
+| Source set | Kisi khaas build ke liye code aur resources wala folder |
+| `main` | Har variant mein jata hai |
+| Code merging | Judta hai — ek jaise class naam error hain |
+| Resource merging | Dabta hai — zyada khaas source set jeetta hai |
+| `res/` vs `assets/` | Compile aur index, vs kachhi copy |
+| `build/` | Generated; na chhedo, na commit karo |
+
+<Interview title="Ye dekhne ke liye poochha jata hai ki aapne tutorial app se aage kuch ship kiya hai ya nahi">
+"Debug aur release builds ko alag API servers par kaise bhejoge?"
+
+Achha jawab ek se zyada tarike ginata hai aur unmein se chunta bhi hai: har build type par ek
+`buildConfigField` aam chunav hai; `src/debug/res` mein ek resource bhi chalta hai aur localize
+karna aasan rehta hai. Ye jod dena ki *class* ko build type ke hisaab se yun hi nahi dabaya ja
+sakta, batata hai ki aap source set wale niyam se sach mein takra chuke ho.
+</Interview>

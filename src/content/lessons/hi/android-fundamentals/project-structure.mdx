@@ -1,0 +1,184 @@
+---
+title: Project structure और source sets
+description: Android Studio आपको चालीस ऐसी files दे देता है जो आपने लिखी नहीं। इनमें से छह मायने रखती हैं, और कौन सा folder जीतता है यह पता हो तो "इसे रखूँ कहाँ" वाले ज्यादातर सवाल खत्म हो जाते हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Module का code एक folder में नहीं होता। हर build के लिए Gradle कई **source sets** जोड़कर एक
+बनाता है, और जोड़ने के नियम code के लिए अलग हैं, resources के लिए अलग।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+आपका पहला project पूरा भरा हुआ आता है। कहीं यह नहीं लिखा कि कौन से folders आपके हैं, कौन से
+Gradle दोबारा बनाता है, और कौन से हटाना safe है।
+
+तो लोग files गलत जगह रखते हैं, generated output commit कर देते हैं, और duplicate class वाली
+एक error में पूरी दोपहर चली जाती है — जबकि एक line का नियम उसे समझा देता।
+
+## पेड़, और किस पर किसका हक
+
+<Figure caption="दो level। Root project settings और plugin versions रखता है; हर module अपना code, resources और dependencies।">
+  <FileTree
+    caption="हरा आपका है। build/ के नीचे जो भी है वह हर build पर दोबारा बनता है।"
+    entries={[
+      { name: "MyApp/", kind: "folder" },
+      { name: "settings.gradle.kts", kind: "gradle", depth: 1, note: "कौन से modules हैं" },
+      { name: "build.gradle.kts", kind: "gradle", depth: 1, note: "सब modules के लिए plugin versions" },
+      { name: "gradle/libs.versions.toml", kind: "text", depth: 1, note: "हर version के लिए एक ही जगह" },
+      { name: "app/", kind: "folder", depth: 1, note: "एक module", highlight: true },
+      { name: "build.gradle.kts", kind: "gradle", depth: 2, note: "इस module की dependencies" },
+      { name: "src/", kind: "folder", depth: 2 },
+      { name: "main/", kind: "folder", depth: 3, note: "हर build में जाता है" },
+      { name: "debug/", kind: "folder", depth: 3, note: "सिर्फ debug builds में" },
+      { name: "test/", kind: "folder", depth: 3, note: "JVM tests" },
+      { name: "androidTest/", kind: "folder", depth: 3, note: "जिन्हें device चाहिए" },
+      { name: "build/", kind: "folder", depth: 2, note: "generated — न छेड़िए, न commit कीजिए" },
+    ]}
+  />
+</Figure>
+
+**Module** वह इकाई है जिसे Gradle compile करता है। शुरू में एक module ही आम बात है; और modules
+जोड़ने की वजह build speed और साफ हदें होती हैं, जो Phase 11 में आएगा।
+
+## `src/` के अंदर: source sets
+
+```text title="app/src/" no-glossary
+main/
+  AndroidManifest.xml
+  java/com/example/myapp/     <- Kotlin भी यहीं रहता है
+  res/                        <- compile होने वाले resources
+  assets/                     <- कच्ची files, जैसी की वैसी
+debug/
+  res/values/strings.xml      <- main को दबा देता है, सिर्फ debug builds में
+```
+
+| Source set | कहाँ जाता है | आम इस्तेमाल |
+| --- | --- | --- |
+| `main` | हर build में | लगभग सब कुछ जो आप लिखते हैं |
+| `debug` / `release` | सिर्फ उसी build type में | अलग server URL, सिर्फ debug वाली screen |
+| `test` | JVM test चलने पर | Unit tests, बिना Android framework |
+| `androidTest` | Device test चलने पर | UI tests, जिन्हें असली `Context` चाहिए |
+
+<Quiz
+  question="`main` और `debug` दोनों में `class Config` declare करने वाली file है। Debug build पर क्या होगा?"
+  options={[
+    "Debug वाली जीतेगी, resources की तरह",
+    "Compile error — duplicate class",
+    "दोनों compile होंगी; alphabetically आखिरी वाली जीतेगी",
+  ]}
+  answer={1}
+  explanation="Code के लिए source sets जुड़ते हैं, दबते नहीं। Gradle main और debug दोनों को एक ही compile path पर रखता है, इसलिए एक ही पूरे नाम वाली दो classes duplicate class error हैं। Resources और manifests अलग हैं: वे सच में merge होते हैं और ज्यादा खास source set जीतता है। किसी class को build type के हिसाब से बदलना हो तो उसे हर build type के source set में लिखिए और `main` में कहीं नहीं, या फर्क को resource या `BuildConfig` field में डाल दीजिए।"
+/>
+
+यही quiz पूरा पाठ है। **Code जुड़ता है; resources और manifests merge होते हैं।** इस इलाके की
+लगभग हर उलझाने वाली build error एक नियम की उम्मीद करके दूसरा मिलने से आती है।
+
+## `res/` और `assets/` एक ही folder नहीं हैं
+
+<Compare
+  left={{
+    title: "res/",
+    subtitle: "Compile होते हैं, index होते हैं",
+    accent: "violet",
+    points: [
+      "+ `R` constant मिलता है, तो typo compile error बन जाती है",
+      "+ System भाषा, density और theme के हिसाब से चुनता है",
+      "+ R8 बिना इस्तेमाल वाली entries पकड़ लेता है",
+      "- सपाट structure; res/values के अंदर subfolders नहीं",
+    ],
+  }}
+  right={{
+    title: "assets/",
+    subtitle: "जैसी की वैसी copy होती हैं",
+    accent: "amber",
+    points: [
+      "+ जो folder structure चाहिए वह बना लीजिए",
+      "+ Font file, JSON seed, ML model के लिए सही",
+      "- String path से खुलती हैं, तो typo runtime crash है",
+      "- भाषा या density अपने आप नहीं चुनी जाती",
+    ],
+  }}
+/>
+
+<Tip bare>
+मोटा नियम: अगर system को कभी उसका कोई दूसरा version चुनना पड़ सकता है, तो `res/` में रखिए।
+वरना `assets/` में।
+</Tip>
+
+## अंदर की बात: build असल में merge क्या करता है
+
+<Timeline>
+  <TimelineItem title="Manifests" meta="merge होते हैं">
+    आपका manifest, हर library का manifest, और build type का manifest — तीनों मिलकर एक बनते हैं।
+    टकराने वाले attributes तब तक error हैं जब तक आप साफ-साफ हल न कर दें।
+  </TimelineItem>
+  <TimelineItem title="Resources" meta="merge, ज्यादा खास वाला जीतता है">
+    Build type flavour से जीतता है, flavour `main` से, और आपका module अपनी libraries से। एक ही
+    नाम मतलब override, duplicate नहीं।
+  </TimelineItem>
+  <TimelineItem title="Kotlin और Java" meta="जुड़ते हैं">
+    उस variant के सारे source sets एक ही compile path पर आ जाते हैं। दो में एक ही class नाम
+    error है, override नहीं।
+  </TimelineItem>
+  <TimelineItem title="R class" meta="generated">
+    हर resource का नाम आपके `namespace` के नीचे एक constant बन जाता है। इसीलिए layout का नाम
+    बदलने पर compile टूटता है, runtime पर नहीं।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Library के resources चुपचाप आपकी app क्यों बदल सकते हैं">
+Library के resources आपके साथ merge होते हैं, और बराबरी में आपका module जीतता है। तो जो library
+`colors.xml` में `primary` भेजती है, वह आपके `primary` से हार जाएगी — चुपचाप, बिना किसी warning
+के।
+
+इसीलिए library लिखने वाले हर नाम के आगे कुछ लगाते हैं (`mtrl_`, `abc_`), और इसीलिए किसी shared
+module में `title` या `background` जैसा छोटा resource नाम आगे चलकर टकराने वाला नाम मानकर चलिए।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो सच में समय खाती हैं">
+**`src/debug` से `src/main` वाली class के दबने की उम्मीद।** वे जुड़ते हैं, तो duplicate class
+error मिलती है। Class को *दोनों* build type source sets में रखिए और `main` में कहीं नहीं, या
+उसकी जगह `BuildConfig` field इस्तेमाल कीजिए।
+
+**`build/` commit कर देना।** वह हर build पर दोबारा बनता है और बहुत बड़ा होता है। उसकी जगह
+`.gitignore` है, `.gradle/` और `local.properties` के साथ।
+
+**Generated file को edit करना।** `build/` के नीचे जो भी है — `R` class समेत — अगली build पर
+दोबारा लिख दिया जाता है। बदलना हो तो वह input बदलिए जिससे वह बना।
+</Pitfall>
+
+## अभ्यास
+
+1. `src/debug/res/values/strings.xml` जोड़िए जिसमें `app_name` `main` से अलग हो। दोनों build
+   types install कीजिए और launcher का नाम पढ़िए।
+2. अब वही एक Kotlin file के साथ कीजिए जो `main` और `debug` दोनों में एक ही class declare करे।
+   Error पढ़िए, फिर दो अलग तरीकों से ठीक कीजिए।
+3. एक छोटी JSON file `assets/` में रखिए और वही data `res/raw/` में। दोनों को code से खोलिए और
+   नाम गलत लिखने पर क्या होता है, यह मिलाइए।
+4. `./gradlew :app:dependencies` चलाइए और एक ऐसी library ढूँढ़िए जिसके resources आपके साथ merge
+   होते हैं।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Module | वह इकाई जिसे Gradle compile करता है; `app/` आपका पहला |
+| Source set | किसी खास build के लिए code और resources वाला folder |
+| `main` | हर variant में जाता है |
+| Code merging | जुड़ता है — एक जैसे class नाम error हैं |
+| Resource merging | दबता है — ज्यादा खास source set जीतता है |
+| `res/` बनाम `assets/` | Compile और index, बनाम कच्ची copy |
+| `build/` | Generated; न छेड़िए, न commit कीजिए |
+
+<Interview title="यह देखने के लिए पूछा जाता है कि आपने tutorial app से आगे कुछ ship किया है या नहीं">
+"Debug और release builds को अलग API servers पर कैसे भेजेंगे?"
+
+अच्छा जवाब एक से ज्यादा तरीके गिनाता है और उनमें से चुनता भी है: हर build type पर एक
+`buildConfigField` आम चुनाव है; `src/debug/res` में एक resource भी चलता है और localize करना
+आसान रहता है। यह जोड़ देना कि *class* को build type के हिसाब से यूँ ही नहीं दबाया जा सकता,
+बताता है कि आप source set वाले नियम से सच में टकरा चुके हैं।
+</Interview>
