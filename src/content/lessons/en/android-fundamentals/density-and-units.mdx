@@ -1,0 +1,136 @@
+---
+title: "Density buckets: dp, sp and px"
+description: A pixel is a unit of hardware, not a unit of size. Two other units exist because of that, and using the wrong one is visible on somebody else's phone.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`dp` is the unit of **size**. `sp` is the unit of size that **respects the user's font setting**.
+`px` is the unit of hardware, and it belongs almost nowhere in your code.
+</KeyIdea>
+
+## Why this matters
+
+The same 100-pixel button is a comfortable target on an old phone and a fingernail on a modern
+one, because modern screens pack three or four times as many pixels into the same physical inch.
+
+Android's answer is a unit that means "the size a pixel would be on a 160dpi screen". You design
+in that unit and the system multiplies.
+
+## The formula, and the buckets
+
+```text title="The whole conversion" no-glossary
+px = dp × (screen dpi / 160)
+```
+
+| Bucket | dpi | Multiplier | 48dp becomes |
+| --- | --- | --- | --- |
+| `mdpi` | 160 | 1.0 | 48px |
+| `hdpi` | 240 | 1.5 | 72px |
+| `xhdpi` | 320 | 2.0 | 96px |
+| `xxhdpi` | 480 | 3.0 | 144px |
+| `xxxhdpi` | 640 | 4.0 | 192px |
+
+<Note>
+Density is not resolution. A large tablet can be `mdpi` while a small phone is `xxhdpi` — what
+matters is pixels per inch, not pixels in total.
+</Note>
+
+## `sp` exists for one reason
+
+```xml title="Units.xml"
+<!-- Text: follows the user's font size setting -->
+<TextView android:textSize="16sp" />
+
+<!-- Everything else: fixed physical size -->
+<Button android:layout_height="48dp" />
+```
+
+A user who has set their font to Large has usually done it because they need it. `sp` honours
+that; `dp` overrides it.
+
+<Quiz
+  question={'You set `android:textSize="16dp"` because it made the design line up. What have you done?'}
+  options={[
+    "Nothing — dp and sp are the same for text",
+    "Opted that text out of the user's font size setting",
+    "Made the text render at a different size on every density",
+  ]}
+  answer={1}
+  explanation="dp and sp are identical at the default font setting, which is exactly why this bug survives review — it looks right on your device. They diverge the moment a user raises their font size for accessibility: sp grows and dp does not. So the text that most needs to get bigger is the text that stays small. Use sp for anything the user reads, dp for everything you position."
+/>
+
+## Under the hood: what Android actually stores
+
+<Timeline>
+  <TimelineItem title="Layouts" meta="converted at inflation">
+    `48dp` in XML is multiplied by the screen's density factor when the view is inflated, so the
+    view holds real pixels by the time it measures.
+  </TimelineItem>
+  <TimelineItem title="Bitmaps" meta="picked per bucket">
+    `drawable-xxhdpi/logo.png` is chosen on a 3x screen. Ship the wrong buckets and the system
+    scales the nearest one, which is where blurry icons come from.
+  </TimelineItem>
+  <TimelineItem title="Vectors" meta="no buckets at all">
+    A `VectorDrawable` is drawn at whatever size is asked for, so one file covers every density.
+    This is why icons should be vectors and photographs should not.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Converting in code, when you genuinely have to">
+Custom drawing and some framework APIs take raw pixels. Convert rather than guess:
+
+```kotlin title="Convert.kt"
+val Int.dpToPx: Float
+    get() = this * Resources.getSystem().displayMetrics.density
+
+// Compose does this for you inside the composition
+Modifier.padding(16.dp)
+```
+
+If you find yourself converting often, the size probably belongs in `dimens.xml` instead, where
+a qualifier can vary it per screen size.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three you can see on other people's phones">
+**`sp` for anything that is not text.** Padding and icons that scale with the font setting break
+layouts at large font sizes. Text in `sp`, everything else in `dp`.
+
+**`dp` for text.** The inverse, and the more common one, because it looks perfect on the
+developer's device.
+
+**Touch targets under 48dp.** That figure is the accessibility guideline for a fingertip. A 32dp
+icon needs padding around it, not a bigger icon.
+</Pitfall>
+
+## Practice
+
+1. Put a 48dp square and a 48px square side by side. Run on two emulators with different
+   densities and photograph both.
+2. Set the device font size to the largest option. Find every piece of text that does not grow,
+   and check its unit.
+3. Replace a PNG icon with a vector drawable and delete the density folders. Confirm it stays
+   sharp at every density.
+4. Measure the touch target of your smallest tappable view. If it is under 48dp, fix it with
+   padding rather than by enlarging the graphic.
+
+## Recap
+
+| Unit | Use for | Scales with |
+| --- | --- | --- |
+| `dp` | Sizes, spacing, touch targets | Screen density |
+| `sp` | Text sizes only | Density and the user's font setting |
+| `px` | Custom drawing, and little else | Nothing — it is the hardware |
+| Baseline | 160dpi, where 1dp = 1px | — |
+| 48dp | The minimum comfortable touch target | — |
+| Vectors | One file for every density | — |
+
+<Interview title="A quick screen for whether someone has thought about accessibility">
+"What is the difference between dp and sp?"
+
+Both scale with density; only `sp` also scales with the user's font size preference. The half
+that shows judgement is the consequence — using `dp` for text silently overrides an accessibility
+setting, and it passes review because the two are identical until somebody changes that setting.
+</Interview>

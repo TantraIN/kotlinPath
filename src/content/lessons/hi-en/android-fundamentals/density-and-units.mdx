@@ -1,0 +1,137 @@
+---
+title: "Density buckets: dp, sp aur px"
+description: Pixel hardware ki ikai hai, naap ki nahi. Isiliye do aur ikaiyan hain, aur galat wali use karna kisi aur ke phone par dikh jata hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`dp` **naap** ki ikai hai. `sp` wo ikai hai jo **user ki font setting ka lihaaz** karti hai. `px`
+hardware ki ikai hai, aur aapke code mein uski jagah lagbhag kahin nahi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Wahi 100-pixel wala button purane phone par aaram se dabta hai aur naye par naakhun jitna dikhta
+hai, kyunki nayi screens utne hi inch mein teen-chaar guna pixels bhar deti hain.
+
+Android ka jawab ek aisi ikai hai jiska matlab hai "160dpi wali screen par pixel jitna bada
+hota". Aap usi ikai mein design karte ho aur system guna kar deta hai.
+
+## Sutra, aur buckets
+
+```text title="Poora conversion yahi hai" no-glossary
+px = dp × (screen dpi / 160)
+```
+
+| Bucket | dpi | Guna | 48dp banta hai |
+| --- | --- | --- | --- |
+| `mdpi` | 160 | 1.0 | 48px |
+| `hdpi` | 240 | 1.5 | 72px |
+| `xhdpi` | 320 | 2.0 | 96px |
+| `xxhdpi` | 480 | 3.0 | 144px |
+| `xxxhdpi` | 640 | 4.0 | 192px |
+
+<Note>
+Density aur resolution ek cheez nahi hain. Koi bada tablet `mdpi` ho sakta hai aur chhota phone
+`xxhdpi` — maayne ye rakhta hai ki ek inch mein kitne pixels hain, kul kitne nahi.
+</Note>
+
+## `sp` sirf ek wajah se hai
+
+```xml title="Units.xml"
+<!-- Text: user ki font size setting ke hisaab se chalta hai -->
+<TextView android:textSize="16sp" />
+
+<!-- Baaki sab: tay bhautik naap -->
+<Button android:layout_height="48dp" />
+```
+
+Jis user ne apna font Large kar rakha hai usne aam taur par isliye kiya hai ki use zarurat hai.
+`sp` uska lihaaz karta hai; `dp` use daba deta hai.
+
+<Quiz
+  question={'Aapne `android:textSize="16dp"` likha kyunki usse design sahi baith raha tha. Aapne kiya kya?'}
+  options={[
+    "Kuch nahi — text ke liye dp aur sp ek hi hain",
+    "Us text ko user ki font size setting se bahar kar diya",
+    "Text ko har density par alag naap mein bana diya",
+  ]}
+  answer={1}
+  explanation="Default font setting par dp aur sp bilkul ek jaise hote hain, aur isiliye ye bug review se bach nikalta hai — aapke device par sahi dikhta hai. Dono usi pal alag hote hain jab koi user accessibility ke liye apna font bada karta hai: sp badhta hai, dp nahi. Yaani jis text ko sabse zyada bada hona chahiye wahi chhota reh jata hai. Jo user padhta hai uske liye sp, jo aap jamate ho uske liye dp."
+/>
+
+## Andar ki baat: Android asal mein rakhta kya hai
+
+<Timeline>
+  <TimelineItem title="Layouts" meta="inflate hote waqt badalte hain">
+    XML mein likha `48dp` view ke inflate hote waqt screen ke density factor se guna ho jata hai,
+    to measure tak aate-aate view ke paas asli pixels hote hain.
+  </TimelineItem>
+  <TimelineItem title="Bitmaps" meta="bucket ke hisaab se chune jate hain">
+    3x screen par `drawable-xxhdpi/logo.png` chuna jata hai. Galat buckets bhejo to system sabse
+    kareebi ko kheench-taan leta hai, aur dhundhle icons wahin se aate hain.
+  </TimelineItem>
+  <TimelineItem title="Vectors" meta="koi bucket nahi">
+    `VectorDrawable` jis naap mein maanga jaye usi mein banta hai, to ek file har density sambhal
+    leti hai. Isiliye icons vector hone chahiye aur tasveerein nahi.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Code mein badalna, jab sach mein zarurat ho">
+Custom drawing aur kuch framework APIs kachhe pixels leti hain. Andaza lagane ke bajaye badlo:
+
+```kotlin title="Convert.kt"
+val Int.dpToPx: Float
+    get() = this * Resources.getSystem().displayMetrics.density
+
+// Compose composition ke andar ye khud kar leta hai
+Modifier.padding(16.dp)
+```
+
+Agar baar-baar badalna pad raha hai to shayad wo naap `dimens.xml` mein hona chahiye, jahan
+qualifier use har screen size par alag kar sakta hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo dusron ke phone par dikh jati hain">
+**Text ke alawa kisi cheez ke liye `sp`.** Font setting ke saath badhne wale padding aur icons
+bade font par layout tod dete hain. Text `sp` mein, baaki sab `dp` mein.
+
+**Text ke liye `dp`.** Iska ulta, aur zyada aam, kyunki developer ke device par ekdam sahi dikhta
+hai.
+
+**48dp se chhote touch targets.** Ye aankda ungli ke liye accessibility ki sifarish hai. 32dp
+wale icon ko uske chaaron taraf padding chahiye, bada icon nahi.
+</Pitfall>
+
+## Practice
+
+1. Ek 48dp ka chaukor aur ek 48px ka chaukor agal-bagal rakho. Alag-alag density wale do
+   emulators par chalao aur dono ki tasveer lo.
+2. Device ki font size sabse badi kar do. Har wo text dhundho jo nahi badhta, aur uski ikai
+   dekho.
+3. Kisi PNG icon ki jagah vector drawable rakho aur density wale folders hata do. Confirm karo ki
+   wo har density par saaf rehta hai.
+4. Apne sabse chhote dabne wale view ka touch target naapo. 48dp se kam ho to graphic bada karne
+   ke bajaye padding se theek karo.
+
+## Recap
+
+| Ikai | Kiske liye | Kiske saath badhti hai |
+| --- | --- | --- |
+| `dp` | Naap, jagah, touch targets | Screen density |
+| `sp` | Sirf text ki naap | Density aur user ki font setting |
+| `px` | Custom drawing, aur lagbhag kuch nahi | Kuch nahi — wo hardware hai |
+| Baseline | 160dpi, jahan 1dp = 1px | — |
+| 48dp | Sabse chhota aaramdeh touch target | — |
+| Vectors | Har density ke liye ek hi file | — |
+
+<Interview title="Ye jaldi pata kar leta hai ki kisi ne accessibility ke baare mein socha hai ya nahi">
+"dp aur sp mein farak kya hai?"
+
+Dono density ke saath badhte hain; sirf `sp` user ki font size pasand ke saath bhi badhta hai.
+Samajh wala aadha hissa result hai — text ke liye `dp` use karna chupchap ek accessibility
+setting ko daba deta hai, aur review se isliye nikal jata hai kyunki jab tak koi wo setting badle
+nahi, dono ek jaise hi rehte hain.
+</Interview>
