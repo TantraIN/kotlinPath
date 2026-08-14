@@ -86,7 +86,7 @@ when started by other means, and has no icon.
 This claims `https://example.com/order/…` for your app. `autoVerify` asks Android to check
 the site really vouches for you, which is what turns the chooser dialog into a direct open.
 
-```xml title="DeepLink.xml" no-glossary
+```xml title="DeepLink.xml"
 <intent-filter android:autoVerify="true">
     <action android:name="android.intent.action.VIEW" />
     <category android:name="android.intent.category.DEFAULT" />

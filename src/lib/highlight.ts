@@ -6,7 +6,7 @@ import {
 import type { Element, ElementContent } from "hast";
 import { createHighlighter, type Highlighter, type ShikiTransformer } from "shiki";
 
-import { hasTerm } from "@/content/glossary";
+import { resolveTerm, type GlossaryScope } from "@/content/glossary";
 
 /**
  * Build-time syntax highlighting.
@@ -73,10 +73,6 @@ const LANG_ALIASES: Record<string, string> = {
 };
 
 /**
- * Marks every token that exists in the glossary so the client tooltip layer can
- * find it. Runs on the server, adds no runtime cost beyond a data attribute.
- */
-/**
  * A span that is nothing but an identifier or a dotted member chain, ignoring
  * surrounding whitespace: `Intent`, `context.applicationContext`,
  * `viewLifecycleOwner.lifecycleScope.`.
@@ -88,22 +84,33 @@ const LANG_ALIASES: Record<string, string> = {
  */
 const IDENT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.?$/;
 
-function anchor(term: string): Element {
+/**
+ * XML element and attribute names, which Kotlin's shape does not cover: they
+ * may contain hyphens (`intent-filter`, `uses-permission`), and Shiki hands
+ * back the local name on its own because `android:exported` arrives as three
+ * spans — `android`, `:`, `exported`.
+ */
+const XML_NAME = /^[A-Za-z_][\w-]*$/;
+
+function anchor(key: string, text: string): Element {
   return {
     type: "element",
     tagName: "span",
     properties: {
       class: "kw-anchor",
-      "data-kw": term,
+      "data-kw": key,
       tabIndex: 0,
       role: "button",
       "aria-haspopup": "dialog",
     },
-    children: [{ type: "text", value: term }],
+    children: [{ type: "text", value: text }],
   };
 }
 
-function glossaryTransformer(): ShikiTransformer {
+function glossaryTransformer(scope: GlossaryScope): ShikiTransformer {
+  const shape = scope === "xml" ? XML_NAME : IDENT_CHAIN;
+  const segments = scope === "xml" ? /[A-Za-z_][\w-]*/g : /[A-Za-z_$][\w$]*/g;
+
   return {
     name: "kotlinpath:glossary",
     span(node: Element) {
@@ -112,14 +119,15 @@ function glossaryTransformer(): ShikiTransformer {
 
       const raw = child.value;
       const trimmed = raw.trim();
-      if (!trimmed || !IDENT_CHAIN.test(trimmed)) return;
+      if (!trimmed || !shape.test(trimmed)) return;
 
       // The whole span is one term — annotate it in place, no extra element.
-      if (raw === trimmed && hasTerm(trimmed)) {
+      const whole = raw === trimmed ? resolveTerm(trimmed, scope) : null;
+      if (whole) {
         node.properties = {
           ...node.properties,
           class: [node.properties?.class, "kw-anchor"].filter(Boolean).join(" "),
-          "data-kw": trimmed,
+          "data-kw": whole,
           tabIndex: 0,
           role: "button",
           "aria-haspopup": "dialog",
@@ -133,14 +141,15 @@ function glossaryTransformer(): ShikiTransformer {
       let cursor = 0;
       let matched = false;
 
-      for (const m of raw.matchAll(/[A-Za-z_$][\w$]*/g)) {
+      for (const m of raw.matchAll(segments)) {
         const seg = m[0];
-        if (!hasTerm(seg)) continue;
+        const key = resolveTerm(seg, scope);
+        if (!key) continue;
         matched = true;
         if (m.index > cursor) {
           next.push({ type: "text", value: raw.slice(cursor, m.index) });
         }
-        next.push(anchor(seg));
+        next.push(anchor(key, seg));
         cursor = m.index + seg.length;
       }
 
@@ -178,7 +187,9 @@ export async function highlight(
       transformerNotationHighlight({ matchAlgorithm: "v3" }),
       transformerNotationDiff({ matchAlgorithm: "v3" }),
       transformerNotationFocus({ matchAlgorithm: "v3" }),
-      ...(options.noGlossary ? [] : [glossaryTransformer()]),
+      ...(options.noGlossary
+        ? []
+        : [glossaryTransformer(safeLang === "xml" ? "xml" : "code")]),
     ],
   });
 }

@@ -97,6 +97,7 @@ type Dict = {
     what: string;
     where: string;
     does: string;
+    values: string;
     affects: string;
     noImport: string;
     docs: string;
@@ -196,6 +197,7 @@ export const DICT: Record<Lang, Dict> = {
       what: "What it is",
       where: "Where it comes from",
       does: "What it does",
+      values: "What can go here",
       affects: "What it affects",
       noImport: "Built into the language — no import needed",
       docs: "Official docs",
@@ -300,6 +302,7 @@ export const DICT: Record<Lang, Dict> = {
       what: "यह क्या है",
       where: "कहाँ से आता है",
       does: "यह करता क्या है",
+      values: "इसमें क्या आ सकता है",
       affects: "इसका असर क्या पड़ता है",
       noImport: "भाषा में ही बना हुआ है — import की ज़रूरत नहीं",
       docs: "आधिकारिक दस्तावेज़",
@@ -404,6 +407,7 @@ export const DICT: Record<Lang, Dict> = {
       what: "Ye kya hai",
       where: "Kahan se aata hai",
       does: "Ye karta kya hai",
+      values: "Ismein kya aa sakta hai",
       affects: "Iska asar kya padta hai",
       noImport: "Language mein hi built-in hai — import ki zarurat nahi",
       docs: "Official docs",

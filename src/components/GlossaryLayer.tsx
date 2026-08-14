@@ -167,7 +167,14 @@ export function GlossaryLayer({ glossary, lang }: { glossary: FlatGlossary; lang
   if (!mounted) return null;
 
   const card = entry && (
-    <GlossaryCard entry={entry} copy={copy} onRelated={showRelated} onClose={close} sheet={sheet} />
+    <GlossaryCard
+      entry={entry}
+      copy={copy}
+      label={(key) => glossary[key]?.term ?? key}
+      onRelated={showRelated}
+      onClose={close}
+      sheet={sheet}
+    />
   );
 
   return createPortal(
@@ -243,12 +250,14 @@ const ACCENT_CLASS: Record<string, string> = {
 function GlossaryCard({
   entry,
   copy,
+  label,
   onRelated,
   onClose,
   sheet,
 }: {
   entry: FlatEntry;
   copy: ReturnType<typeof t>["glossaryCard"];
+  label: (key: string) => string;
   onRelated: (term: string) => void;
   onClose: () => void;
   sheet: boolean;
@@ -302,6 +311,12 @@ function GlossaryCard({
           <RichText value={entry.does} />
         </Field>
 
+        {entry.values && (
+          <Field label={copy.values}>
+            <RichText value={entry.values} />
+          </Field>
+        )}
+
         <Field label={copy.affects}>
           <RichText value={entry.affects} />
         </Field>
@@ -316,7 +331,7 @@ function GlossaryCard({
               onClick={() => onRelated(term)}
               className="rounded-md border border-line bg-surface px-1.5 py-0.5 font-mono text-[11.5px] text-body transition-colors hover:border-violet hover:bg-violet-soft hover:text-violet"
             >
-              {term}
+              {label(term)}
             </button>
           ))}
           {entry.docs && (
@@ -345,23 +360,46 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-/** Renders `backtick` spans in glossary prose as inline code. */
+/**
+ * Renders the small amount of markdown glossary prose actually uses:
+ * `code`, **bold** and *italic*. Entries were already written with all three —
+ * without this the markers printed literally, so "**two** lifecycles" reached
+ * the reader with the asterisks still attached.
+ *
+ * Bold is matched before italic so `**` is never read as two single stars.
+ */
+const RICH = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g;
+
 function RichText({ value }: { value: string }) {
-  const parts = value.split(/(`[^`]+`)/g);
   return (
     <p>
-      {parts.map((part, index) =>
-        part.startsWith("`") && part.endsWith("`") && part.length > 2 ? (
-          <code
-            key={index}
-            className="rounded border border-violet/25 bg-violet-soft px-1 py-px font-mono text-[12.5px] font-medium text-violet"
-          >
-            {part.slice(1, -1)}
-          </code>
-        ) : (
-          <span key={index}>{part}</span>
-        ),
-      )}
+      {value.split(RICH).map((part, index) => {
+        if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+          return (
+            <code
+              key={index}
+              className="rounded border border-violet/25 bg-violet-soft px-1 py-px font-mono text-[12.5px] font-medium text-violet"
+            >
+              {part.slice(1, -1)}
+            </code>
+          );
+        }
+        if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+          return (
+            <strong key={index} className="font-semibold text-fg">
+              {part.slice(2, -2)}
+            </strong>
+          );
+        }
+        if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+          return (
+            <em key={index} className="italic">
+              {part.slice(1, -1)}
+            </em>
+          );
+        }
+        return <span key={index}>{part}</span>;
+      })}
     </p>
   );
 }

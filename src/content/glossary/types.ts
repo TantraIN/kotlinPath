@@ -77,6 +77,12 @@ export type GlossaryEntry = {
   importLine: string | null;
   /** One sentence: what it does. */
   does: Localized;
+  /**
+   * What may legally go here, when that is a closed or nearly-closed set.
+   * Manifest attributes need this far more than Kotlin keywords do — knowing
+   * `android:exported` takes only `true` or `false` is half the answer.
+   */
+  values?: Localized;
   /** The downstream consequence — what other code this changes. */
   affects: Localized;
   /** Official documentation URL. */

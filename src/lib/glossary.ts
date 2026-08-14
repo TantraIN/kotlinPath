@@ -14,6 +14,7 @@ export type FlatEntry = {
   accent: string;
   importLine: string | null;
   does: string;
+  values?: string;
   affects: string;
   docs?: string;
   related?: string[];
@@ -33,6 +34,7 @@ export function projectGlossary(lang: Lang): FlatGlossary {
       accent: meta.accent,
       importLine: entry.importLine,
       does: pick(entry.does, lang),
+      values: entry.values ? pick(entry.values, lang) : undefined,
       affects: pick(entry.affects, lang),
       docs: entry.docs,
       related: entry.related,
