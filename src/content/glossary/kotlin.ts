@@ -87,6 +87,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       hi: "किसी value या शर्तों के आधार पर branch करता है, और expression की तरह value भी लौटा सकता है।",
       "hi-en": "Kisi value ya conditions ke basis par branch karta hai, aur expression ki tarah value bhi return kar sakta hai.",
     },
+    values: {
+      en: "A branch can be a value, several values separated by commas, `in` a range or collection, `is` a type, or — with no subject — any boolean condition. `else` covers the rest.",
+      hi: "कोई branch एक value हो सकती है, comma से अलग की हुई कई values, किसी range या collection में `in`, किसी type का `is`, या — बिना subject के — कोई भी boolean शर्त। बाकी सब `else` सँभालता है।",
+      "hi-en": "Koi branch ek value ho sakti hai, comma se alag ki hui kai values, kisi range ya collection mein `in`, kisi type ka `is`, ya — bina subject ke — koi bhi boolean shart. Baaki sab `else` sambhalta hai.",
+    },
     affects: {
       en: "When used as an expression over a `sealed` type, the compiler forces you to handle every case — add a new subclass later and every `when` that missed it fails to compile.",
       hi: "`sealed` type पर expression की तरह इस्तेमाल करने पर compiler हर case handle करवाता है — बाद में नया subclass जोड़ें तो हर छूटा हुआ `when` compile fail कर देगा।",
@@ -125,6 +130,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       hi: "किसी value को दिए गए type में cast करता है; मेल न खाए तो `ClassCastException` फेंकता है।",
       "hi-en": "Kisi value ko diye gaye type mein cast karta hai; match na ho to `ClassCastException` fenkta hai.",
     },
+    values: {
+      en: "`as` for a cast that must succeed, `as?` for one that may not — the safe form returns `null` instead of throwing, and pairs naturally with `?:`.",
+      hi: "जिस cast का सफल होना तय हो उसके लिए `as`, और जिसका न हो उसके लिए `as?` — safe रूप फेंकने के बजाय `null` लौटाता है, और `?:` के साथ अच्छा बैठता है।",
+      "hi-en": "Jis cast ka safal hona tay ho uske liye `as`, aur jiska na ho uske liye `as?` — safe roop fenkne ke bajaye `null` lautata hai, aur `?:` ke saath achha baithta hai.",
+    },
     affects: {
       en: "Use `as?` instead — it returns `null` on failure rather than crashing, and pairs naturally with the `?:` operator.",
       hi: "इसके बजाय `as?` इस्तेमाल कीजिए — यह fail होने पर crash नहीं करता, `null` लौटाता है और `?:` के साथ अच्छा चलता है।",
@@ -144,6 +154,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       hi: "Compiler से कहता है कि primary constructor से `equals`, `hashCode`, `toString`, `copy` और `componentN` खुद बना दे।",
       "hi-en": "Compiler se kehta hai ki primary constructor se `equals`, `hashCode`, `toString`, `copy` aur `componentN` khud bana de.",
     },
+    values: {
+      en: "Needs a primary constructor with at least one parameter, and every one of them must be `val` or `var`. It cannot be `abstract`, `open`, `sealed` or `inner`.",
+      hi: "Primary constructor चाहिए जिसमें कम से कम एक parameter हो, और उनमें से हर एक `val` या `var` होना चाहिए। यह `abstract`, `open`, `sealed` या `inner` नहीं हो सकती।",
+      "hi-en": "Primary constructor chahiye jismein kam se kam ek parameter ho, aur unmein se har ek `val` ya `var` hona chahiye. Ye `abstract`, `open`, `sealed` ya `inner` nahi ho sakti.",
+    },
     affects: {
       en: "Value equality changes behaviour everywhere: `DiffUtil`, `distinctUntilChanged`, `Set` membership and Compose recomposition all start comparing contents instead of references.",
       hi: "Value equality हर जगह असर डालती है: `DiffUtil`, `distinctUntilChanged`, `Set` membership और Compose recomposition सब reference के बजाय content की तुलना करने लगते हैं।",
@@ -162,6 +177,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       en: "Restricts a class or interface so that all its direct subtypes are known at compile time.",
       hi: "किसी class या interface को इस तरह सीमित करता है कि उसके सारे direct subtypes compile time पर पता हों।",
       "hi-en": "Kisi class ya interface ko is tarah limit karta hai ki uske saare direct subtypes compile time par pata hon.",
+    },
+    values: {
+      en: "`sealed interface` or `sealed class`. Prefer the interface — a subtype can implement several of those but extend only one class.",
+      hi: "`sealed interface` या `sealed class`। Interface बेहतर है — कोई subtype कई interfaces implement कर सकता है पर class सिर्फ एक बढ़ा सकता है।",
+      "hi-en": "`sealed interface` ya `sealed class`. Interface behtar hai — koi subtype kai interfaces implement kar sakta hai par class sirf ek badha sakta hai.",
     },
     affects: {
       en: "This is what makes `when` exhaustive. It is the standard way to model UI state — `Loading`, `Success`, `Error` — so an unhandled state becomes a compile error, not a bug.",
@@ -239,6 +259,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       hi: "किसी non-null `var` को बिना शुरुआती value के declare करने देता है, इस वादे पर कि पहले इस्तेमाल से पहले assign कर दिया जाएगा।",
       "hi-en": "Kisi non-null `var` ko bina initial value ke declare karne deta hai, is wade par ki pehle use se pehle assign kar diya jayega.",
     },
+    values: {
+      en: "Only on a `var`, and only for a non-null object type. Not `Int`, `Boolean` or `Double`, not a nullable type, and not a property with a custom accessor.",
+      hi: "सिर्फ `var` पर, और सिर्फ ऐसे object type पर जो null नहीं हो सकता। न `Int`, `Boolean` या `Double`, न कोई nullable type, और न ही ऐसी property जिसका अपना accessor हो।",
+      "hi-en": "Sirf `var` par, aur sirf aise object type par jo null nahi ho sakta. Na `Int`, `Boolean` ya `Double`, na koi nullable type, aur na hi aisi property jiska apna accessor ho.",
+    },
     affects: {
       en: "The compiler stops checking null for you. Reading it too early throws `UninitializedPropertyAccessException` — a common crash when a Fragment's view is accessed after `onDestroyView`.",
       hi: "Compiler आपके लिए null जाँचना बंद कर देता है। जल्दी पढ़ने पर `UninitializedPropertyAccessException` आता है — Fragment की view को `onDestroyView` के बाद छूने पर यह आम crash है।",
@@ -258,6 +283,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       hi: "किसी value को पहली बार पढ़े जाने तक बनाता नहीं, और फिर उसे हमेशा के लिए cache कर लेता है।",
       "hi-en": "Kisi value ko pehli baar padhe jane tak banata nahi, aur phir use hamesha ke liye cache kar leta hai.",
     },
+    values: {
+      en: "An optional `LazyThreadSafetyMode`: `SYNCHRONIZED` (the default), `PUBLICATION`, or `NONE` when only one thread will ever touch it.",
+      hi: "चाहें तो एक `LazyThreadSafetyMode`: `SYNCHRONIZED` (default), `PUBLICATION`, या `NONE` जब उसे सिर्फ एक ही thread छूने वाला हो।",
+      "hi-en": "Chaho to ek `LazyThreadSafetyMode`: `SYNCHRONIZED` (default), `PUBLICATION`, ya `NONE` jab use sirf ek hi thread chhoone wala ho.",
+    },
     affects: {
       en: "Moves expensive work out of the constructor, which directly improves startup time. It is thread-safe by default; pass `LazyThreadSafetyMode.NONE` when you know only one thread touches it.",
       hi: "भारी काम constructor से बाहर ले जाता है, जिससे startup time सीधे बेहतर होता है। Default रूप से thread-safe है; अगर सिर्फ एक thread छूता है तो `LazyThreadSafetyMode.NONE` दीजिए।",
@@ -276,6 +306,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       en: "Delegates a property's `get`/`set`, or an interface's implementation, to another object.",
       hi: "किसी property के `get`/`set`, या किसी interface के implementation को दूसरे object को सौंप देता है।",
       "hi-en": "Kisi property ke `get`/`set`, ya kisi interface ke implementation ko dusre object ko saunp deta hai.",
+    },
+    values: {
+      en: "Anything with `getValue` — `lazy { }`, `Delegates.observable`, `Delegates.vetoable`, `Delegates.notNull`, Android's `viewModels()`, Compose's `remember`, or a class of your own.",
+      hi: "जिस भी चीज में `getValue` है — `lazy { }`, `Delegates.observable`, `Delegates.vetoable`, `Delegates.notNull`, Android का `viewModels()`, Compose का `remember`, या आपकी अपनी कोई class।",
+      "hi-en": "Jis bhi cheez mein `getValue` hai — `lazy { }`, `Delegates.observable`, `Delegates.vetoable`, `Delegates.notNull`, Android ka `viewModels()`, Compose ka `remember`, ya aapki apni koi class.",
     },
     affects: {
       en: "It is how `by lazy`, `by viewModels()` and `by remember { mutableStateOf(...) }` all work. With `by`, reading the property gives you the value directly instead of a wrapper — no `.value` needed.",
@@ -314,6 +349,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       en: "Declares a singleton — a class and its one and only instance, in a single step.",
       hi: "एक singleton बनाता है — class और उसका इकलौता instance, एक ही स्टेप में।",
       "hi-en": "Ek singleton banata hai — class aur uska iklauta instance, ek hi step mein.",
+    },
+    values: {
+      en: "Three forms: a named `object` declaration, a `companion object` inside a class, and an `object : Type { }` expression that makes a fresh one every time.",
+      hi: "तीन रूप: नाम वाला `object` declaration, class के अंदर `companion object`, और `object : Type { }` expression जो हर बार नया बनाता है।",
+      "hi-en": "Teen roop: naam wala `object` declaration, class ke andar `companion object`, aur `object : Type { }` expression jo har baar naya banata hai.",
     },
     affects: {
       en: "It is created lazily and thread-safely on first access, and never freed. Holding a `Context` in an `object` is a classic memory leak.",
@@ -391,6 +431,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       hi: "Compiler से कहता है कि असली call करने के बजाय function का body हर call site पर copy कर दे।",
       "hi-en": "Compiler se kehta hai ki asli call karne ke bajaye function ka body har call site par copy kar de.",
     },
+    values: {
+      en: "Two companions for its lambda parameters: `noinline` to keep one as a real object you can store or pass on, and `crossinline` to allow inlining but forbid a non-local `return`.",
+      hi: "इसके lambda parameters के लिए दो साथी: `noinline`, जो एक को असली object रहने देता है ताकि आप उसे रख या आगे भेज सकें, और `crossinline`, जो inline तो होने देता है पर non-local `return` मना कर देता है।",
+      "hi-en": "Iske lambda parameters ke liye do saathi: `noinline`, jo ek ko asli object rehne deta hai taaki aap use rakh ya aage bhej sako, aur `crossinline`, jo inline to hone deta hai par non-local `return` mana kar deta hai.",
+    },
     affects: {
       en: "Removes the lambda object allocation, allows non-local `return`, and enables `reified` type parameters. Inlining a large function bloats the bytecode, so it only pays off for small functions taking lambdas.",
       hi: "Lambda object की allocation हटाता है, non-local `return` की अनुमति देता है, और `reified` type parameters संभव बनाता है। बड़ी function को inline करने से bytecode फूल जाता है, इसलिए यह सिर्फ छोटे lambda-लेने वाले functions पर फायदेमंद है।",
@@ -466,6 +511,11 @@ export const KOTLIN_GLOSSARY: Glossary = {
       en: "Marks a `val` as a compile-time constant whose value is inlined wherever it is used.",
       hi: "किसी `val` को compile-time constant बनाता है, जिसकी value हर इस्तेमाल की जगह पर inline हो जाती है।",
       "hi-en": "Kisi `val` ko compile-time constant banata hai, jiski value har use ki jagah par inline ho jati hai.",
+    },
+    values: {
+      en: "Only a `String` or a primitive, and only at the top level or inside an `object` or `companion object`. No custom getter, and nothing computed at run time.",
+      hi: "सिर्फ `String` या कोई primitive, और सिर्फ top level पर या किसी `object` या `companion object` के अंदर। न custom getter, न runtime पर बनने वाली कोई चीज।",
+      "hi-en": "Sirf `String` ya koi primitive, aur sirf top level par ya kisi `object` ya `companion object` ke andar. Na custom getter, na runtime par banne wali koi cheez.",
     },
     affects: {
       en: "No getter is generated, so there is zero runtime cost. It only works for primitives and `String` declared at the top level or inside an `object`.",

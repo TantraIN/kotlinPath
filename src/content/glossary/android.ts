@@ -69,6 +69,11 @@ export const ANDROID_GLOSSARY: Glossary = {
       hi: "एक key-value container, जिससे system छोटा-मोटा state process की सीमाओं के पार ले जाता है।",
       "hi-en": "Ek key-value container, jisse system chhota-mota state process ki seemaon ke paar le jata hai.",
     },
+    values: {
+      en: "Primitives, `String` and `CharSequence`, arrays and `ArrayList`s of those, anything `Parcelable` or `Serializable`, and nested `Bundle`s. Nothing else, and nothing large.",
+      hi: "Primitives, `String` और `CharSequence`, इनके arrays और `ArrayList`, कोई भी `Parcelable` या `Serializable`, और अंदर एक और `Bundle`। इसके अलावा कुछ नहीं, और बड़ा कुछ नहीं।",
+      "hi-en": "Primitives, `String` aur `CharSequence`, inke arrays aur `ArrayList`, koi bhi `Parcelable` ya `Serializable`, aur andar ek aur `Bundle`. Iske alawa kuch nahi, aur bada kuch nahi.",
+    },
     affects: {
       en: "It is serialized by the system and has a hard size limit of roughly 1 MB per transaction. Putting a bitmap or a large list in it throws `TransactionTooLargeException`.",
       hi: "इसे system serialize करता है और हर transaction की सीमा लगभग 1 MB है। इसमें bitmap या बड़ी list डालने पर `TransactionTooLargeException` आता है।",
@@ -145,6 +150,11 @@ export const ANDROID_GLOSSARY: Glossary = {
       hi: "किसी value को composition में रख देता है ताकि recomposition पर वह दोबारा न बने।",
       "hi-en": "Kisi value ko composition mein rakh deta hai taki recomposition par wo dobara na bane.",
     },
+    values: {
+      en: "Zero or more keys — `remember(userId) { }`. With no key the value survives every recomposition; when a key changes, the block runs again.",
+      hi: "शून्य या ज्यादा keys — `remember(userId) { }`। बिना key के value हर recomposition झेल जाती है; key बदलते ही block दोबारा चलता है।",
+      "hi-en": "Zero ya zyada keys — `remember(userId) { }`. Bina key ke value har recomposition jhel jati hai; key badalte hi block dobara chalta hai.",
+    },
     affects: {
       en: "It is forgotten when the composable leaves the composition, and it does not survive configuration change or process death — use `rememberSaveable` for that. Without `remember`, state resets on every recomposition and the UI appears frozen.",
       hi: "composable के composition से हटते ही यह भूल जाता है, और configuration change या process death नहीं झेलता — उसके लिए `rememberSaveable` है। `remember` के बिना हर recomposition पर state रीसेट हो जाता है और UI जमा हुआ लगता है।",
@@ -163,6 +173,11 @@ export const ANDROID_GLOSSARY: Glossary = {
       en: "Creates an observable state holder that tells Compose to recompose when its value changes.",
       hi: "एक observable state holder बनाता है, जो value बदलने पर Compose को recompose करने को कहता है।",
       "hi-en": "Ek observable state holder banata hai, jo value badalne par Compose ko recompose karne ko kehta hai.",
+    },
+    values: {
+      en: "An optional equality policy: `structuralEqualityPolicy()` (the default, uses `equals`), `referentialEqualityPolicy()`, or `neverEqualPolicy()` to recompose on every write.",
+      hi: "चाहें तो एक equality policy: `structuralEqualityPolicy()` (default, `equals` इस्तेमाल करती है), `referentialEqualityPolicy()`, या `neverEqualPolicy()` ताकि हर लिखाई पर recompose हो।",
+      "hi-en": "Chaho to ek equality policy: `structuralEqualityPolicy()` (default, `equals` use karti hai), `referentialEqualityPolicy()`, ya `neverEqualPolicy()` taaki har likhai par recompose ho.",
     },
     affects: {
       en: "Only the composables that actually read the value are recomposed — not the whole screen. Wrap it in `remember`, otherwise a new state object is created on every recomposition and the value never appears to change.",
@@ -202,6 +217,11 @@ export const ANDROID_GLOSSARY: Glossary = {
       hi: "composition से जुड़े coroutine में एक `suspend` block चलाता है, और keys बदलने पर उसे दोबारा शुरू करता है।",
       "hi-en": "Composition se jude coroutine mein ek `suspend` block chalata hai, aur keys badalne par use dobara shuru karta hai.",
     },
+    values: {
+      en: "One or more keys. `Unit` or `true` means run once for as long as the composable is there; passing a changing value restarts the effect each time it changes.",
+      hi: "एक या ज्यादा keys। `Unit` या `true` का मतलब है composable के रहते एक ही बार चलना; बदलती हुई value देने पर हर बदलाव पर effect दोबारा शुरू होता है।",
+      "hi-en": "Ek ya zyada keys. `Unit` ya `true` ka matlab hai composable ke rehte ek hi baar chalna; badalti hui value dene par har badlav par effect dobara shuru hota hai.",
+    },
     affects: {
       en: "The coroutine is cancelled automatically when the composable leaves. Passing `Unit` as the key runs it once; passing a changing value restarts it every time that value changes — a common source of accidental infinite loops.",
       hi: "composable के हटते ही coroutine अपने आप cancel हो जाता है। key में `Unit` देने पर यह एक बार चलता है; बदलती value देने पर हर बदलाव पर दोबारा चलता है — यहीं से अनजाने infinite loop बनते हैं।",
@@ -221,6 +241,11 @@ export const ANDROID_GLOSSARY: Glossary = {
       hi: "अपने children को एक के बाद एक, लंबवत सजाता है।",
       "hi-en": "Apne children ko ek ke baad ek, vertically sajata hai.",
     },
+    values: {
+      en: "`verticalArrangement` takes `Arrangement.Top`, `Center`, `Bottom`, `SpaceBetween`, `SpaceAround`, `SpaceEvenly` or `spacedBy(8.dp)`; `horizontalAlignment` takes `Alignment.Start`, `CenterHorizontally` or `End`.",
+      hi: "`verticalArrangement` में `Arrangement.Top`, `Center`, `Bottom`, `SpaceBetween`, `SpaceAround`, `SpaceEvenly` या `spacedBy(8.dp)` आता है; `horizontalAlignment` में `Alignment.Start`, `CenterHorizontally` या `End`।",
+      "hi-en": "`verticalArrangement` mein `Arrangement.Top`, `Center`, `Bottom`, `SpaceBetween`, `SpaceAround`, `SpaceEvenly` ya `spacedBy(8.dp)` aata hai; `horizontalAlignment` mein `Alignment.Start`, `CenterHorizontally` ya `End`.",
+    },
     affects: {
       en: "It renders every child immediately, so it must not be used for long lists — use `LazyColumn`, which only composes what is on screen. A `Column` also cannot scroll unless you add `Modifier.verticalScroll`.",
       hi: "यह हर child तुरंत बनाता है, इसलिए लंबी list के लिए इसका इस्तेमाल न करें — `LazyColumn` लीजिए, जो सिर्फ screen पर दिख रहे items बनाता है। `Column` तब तक scroll भी नहीं होता जब तक `Modifier.verticalScroll` न जोड़ें।",
@@ -239,6 +264,11 @@ export const ANDROID_GLOSSARY: Glossary = {
       en: "A vertically scrolling list that only composes the items currently visible.",
       hi: "लंबवत scroll होने वाली list, जो सिर्फ अभी दिख रहे items बनाती है।",
       "hi-en": "Vertically scroll hone wali list, jo sirf abhi dikh rahe items banati hai.",
+    },
+    values: {
+      en: "Inside the block: `item { }`, `items(list) { }`, `itemsIndexed(list) { }` and `stickyHeader { }`. Each takes a `key` and an optional `contentType`.",
+      hi: "Block के अंदर: `item { }`, `items(list) { }`, `itemsIndexed(list) { }` और `stickyHeader { }`। हर एक `key` लेता है, और चाहें तो `contentType` भी।",
+      "hi-en": "Block ke andar: `item { }`, `items(list) { }`, `itemsIndexed(list) { }` aur `stickyHeader { }`. Har ek `key` leta hai, aur chaho to `contentType` bhi.",
     },
     affects: {
       en: "It is the Compose equivalent of `RecyclerView`. Always pass a stable `key` for each item — without one, reordering or deleting causes the wrong item state to be reused, exactly like a missing `DiffUtil` id.",

@@ -31,6 +31,11 @@ export const COROUTINES_GLOSSARY: Glossary = {
       hi: "एक नया coroutine शुरू करता है जो साथ-साथ चलता है और result नहीं, `Job` handle लौटाता है।",
       "hi-en": "Ek naya coroutine shuru karta hai jo saath-saath chalta hai aur result nahi, `Job` handle lautata hai.",
     },
+    values: {
+      en: "A `CoroutineContext` — usually a dispatcher — and `start`, which takes `CoroutineStart.DEFAULT`, `LAZY`, `ATOMIC` or `UNDISPATCHED`.",
+      hi: "एक `CoroutineContext` — आम तौर पर कोई dispatcher — और `start`, जिसमें `CoroutineStart.DEFAULT`, `LAZY`, `ATOMIC` या `UNDISPATCHED` आता है।",
+      "hi-en": "Ek `CoroutineContext` — aam taur par koi dispatcher — aur `start`, jismein `CoroutineStart.DEFAULT`, `LAZY`, `ATOMIC` ya `UNDISPATCHED` aata hai.",
+    },
     affects: {
       en: "It is fire-and-forget. An exception inside `launch` propagates up and cancels the parent scope unless a `SupervisorJob` or `CoroutineExceptionHandler` stops it. Use `async` when you need the value back.",
       hi: "यह fire-and-forget है। `launch` के अंदर exception ऊपर जाकर parent scope को cancel कर देता है, जब तक `SupervisorJob` या `CoroutineExceptionHandler` न रोके। Value चाहिए तो `async` इस्तेमाल कीजिए।",
@@ -49,6 +54,11 @@ export const COROUTINES_GLOSSARY: Glossary = {
       en: "Starts a concurrent coroutine that produces a value, returned as a `Deferred<T>`.",
       hi: "एक concurrent coroutine शुरू करता है जो value बनाता है, और उसे `Deferred<T>` की तरह लौटाता है।",
       "hi-en": "Ek concurrent coroutine shuru karta hai jo value banata hai, aur use `Deferred<T>` ki tarah lautata hai.",
+    },
+    values: {
+      en: "The same context and `start` values as `launch`. `CoroutineStart.LAZY` holds the work back until the first `await`.",
+      hi: "`launch` जैसे ही context और `start` की values। `CoroutineStart.LAZY` काम को पहले `await` तक रोके रखता है।",
+      "hi-en": "`launch` jaise hi context aur `start` ki values. `CoroutineStart.LAZY` kaam ko pehle `await` tak roke rakhta hai.",
     },
     affects: {
       en: "Nothing runs in parallel unless you start both `async` blocks before calling `await` on either. Calling `await` immediately makes it sequential — the single most common coroutine mistake.",
@@ -69,6 +79,11 @@ export const COROUTINES_GLOSSARY: Glossary = {
       hi: "किसी block को अलग dispatcher पर चलाता है और उसके पूरा होने तक रुका रहता है, फिर result लौटाता है।",
       "hi-en": "Kisi block ko alag dispatcher par chalata hai aur uske poora hone tak ruka rehta hai, phir result lautata hai.",
     },
+    values: {
+      en: "Any `CoroutineContext`: a dispatcher, a `CoroutineName` for the debugger, or `NonCancellable` for cleanup that must finish.",
+      hi: "कोई भी `CoroutineContext`: कोई dispatcher, debugger के लिए `CoroutineName`, या ऐसी सफाई के लिए `NonCancellable` जो पूरी होनी ही चाहिए।",
+      "hi-en": "Koi bhi `CoroutineContext`: koi dispatcher, debugger ke liye `CoroutineName`, ya aisi safai ke liye `NonCancellable` jo poori honi hi chahiye.",
+    },
     affects: {
       en: "This is how you move blocking work off the main thread. It does not create concurrency — the caller waits. Put it inside the repository, not at the call site, so callers never have to think about threads.",
       hi: "Blocking काम को main thread से हटाने का यही तरीका है। यह concurrency नहीं बनाता — caller इंतजार करता है। इसे repository के अंदर रखिए, call site पर नहीं, ताकि caller को thread की चिंता ही न करनी पड़े।",
@@ -88,6 +103,11 @@ export const COROUTINES_GLOSSARY: Glossary = {
       hi: "वे thread pools देता है जिन पर coroutine चल सकता है: `Main`, `IO`, `Default` और `Unconfined`।",
       "hi-en": "Wo thread pools deta hai jin par coroutine chal sakta hai: `Main`, `IO`, `Default` aur `Unconfined`.",
     },
+    values: {
+      en: "`Main` for UI, `IO` for waiting work, `Default` for computation, `Main.immediate` to skip a re-dispatch when already on Main, and `Unconfined` which you almost never want.",
+      hi: "UI के लिए `Main`, इंतजार वाले काम के लिए `IO`, गिनती के लिए `Default`, पहले से Main पर हों तो दोबारा भेजने से बचने के लिए `Main.immediate`, और `Unconfined` जो लगभग कभी नहीं चाहिए।",
+      "hi-en": "UI ke liye `Main`, intezaar wale kaam ke liye `IO`, ginti ke liye `Default`, pehle se Main par ho to dobara bhejne se bachne ke liye `Main.immediate`, aur `Unconfined` jo lagbhag kabhi nahi chahiye.",
+    },
     affects: {
       en: "`Main` touches the UI, `IO` is for network and disk (many threads, mostly waiting), `Default` is for CPU work (one thread per core). Choosing wrongly either freezes the UI or starves the CPU pool.",
       hi: "`Main` UI छूता है, `IO` network और disk के लिए है (कई threads, ज्यादातर इंतजार में), `Default` CPU काम के लिए है (हर core पर एक thread)। गलत चुनने पर या तो UI जम जाता है या CPU pool भूखा रह जाता है।",
@@ -106,6 +126,11 @@ export const COROUTINES_GLOSSARY: Glossary = {
       en: "Defines the lifetime of the coroutines started inside it, so they can all be cancelled together.",
       hi: "अपने अंदर शुरू हुए coroutines की उम्र तय करता है, ताकि सबको एक साथ cancel किया जा सके।",
       "hi-en": "Apne andar shuru huye coroutines ki umar tay karta hai, taki sabko ek saath cancel kiya ja sake.",
+    },
+    values: {
+      en: "Context elements joined with `+`: a `Job` or `SupervisorJob`, a dispatcher, a `CoroutineName`, and a `CoroutineExceptionHandler`.",
+      hi: "`+` से जुड़े हुए context के हिस्से: `Job` या `SupervisorJob`, कोई dispatcher, `CoroutineName`, और `CoroutineExceptionHandler`।",
+      "hi-en": "`+` se jude hue context ke hisse: `Job` ya `SupervisorJob`, koi dispatcher, `CoroutineName`, aur `CoroutineExceptionHandler`.",
     },
     affects: {
       en: "This is what structured concurrency means: no coroutine outlives its scope. On Android you almost never create one by hand — use `viewModelScope` or `lifecycleScope`, which cancel automatically.",
@@ -163,6 +188,11 @@ export const COROUTINES_GLOSSARY: Glossary = {
       en: "A hot `Flow` that always holds exactly one current value and replays it to every new collector.",
       hi: "एक hot `Flow` जो हमेशा एक मौजूदा value रखता है और हर नए collector को वही तुरंत दे देता है।",
       "hi-en": "Ek hot `Flow` jo hamesha ek current value rakhta hai aur har naye collector ko wahi turant de deta hai.",
+    },
+    values: {
+      en: "When built with `stateIn`, the sharing policy is `SharingStarted.Eagerly`, `Lazily`, or `WhileSubscribed(stopTimeoutMillis)` — 5000 being the usual Android choice.",
+      hi: "`stateIn` से बनाते वक्त sharing की नीति `SharingStarted.Eagerly`, `Lazily`, या `WhileSubscribed(stopTimeoutMillis)` होती है — Android पर आम चुनाव 5000 है।",
+      "hi-en": "`stateIn` se banate waqt sharing ki niti `SharingStarted.Eagerly`, `Lazily`, ya `WhileSubscribed(stopTimeoutMillis)` hoti hai — Android par aam chunav 5000 hai.",
     },
     affects: {
       en: "It conflates and de-duplicates: emitting the same value twice notifies nobody, so your `data class` must implement `equals` correctly or updates will be silently dropped. This is the standard type for UI state.",
