@@ -1,0 +1,117 @@
+---
+title: Channels, and when you actually need them
+description: A Channel is a queue between coroutines. Most of the time you wanted a Flow — but the exceptions are worth knowing.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+A `Channel` delivers each value to **exactly one** receiver, and delivers it once. A `Flow`
+broadcasts to every collector. That single difference decides which one you want.
+</KeyIdea>
+
+## A queue with a coroutine on each end
+
+```kotlin title="Channel.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+
+fun main() = runBlocking {
+    val channel = Channel<Int>()
+
+    launch {
+        repeat(3) { channel.send(it); delay(50) }
+        channel.close()
+    }
+
+    for (value in channel) println("received $value")
+    println("channel closed")
+}
+```
+
+`send` suspends until a receiver takes the value. `close` ends the loop. Values are consumed,
+not observed.
+
+<Quiz
+  question="Two coroutines receive from the same Channel, and one value is sent. How many see it?"
+  options={[
+    "Both — like a broadcast",
+    "Exactly one — whichever receives first; the value is consumed",
+    "Neither, until both are ready",
+  ]}
+  answer={1}
+  explanation="A Channel distributes work rather than broadcasting state. Each value goes to a single receiver, which is exactly what you want for a work queue and exactly wrong for UI state. If you want every collector to see every value, that is a SharedFlow."
+/>
+
+## Capacity is the interesting part
+
+| Capacity | Behaviour of `send` |
+| --- | --- |
+| `RENDEZVOUS` (default) | Suspends until a receiver is ready |
+| `BUFFERED` | Suspends only when the buffer is full |
+| `CONFLATED` | Never suspends; replaces the pending value |
+| `UNLIMITED` | Never suspends; grows without bound |
+
+<Pitfall bare>
+`UNLIMITED` removes back-pressure entirely. If the producer is faster than the consumer, the
+queue grows until the app runs out of memory.
+</Pitfall>
+
+## Why you probably want a Flow instead
+
+```kotlin title="Prefer.kt" numbered
+// A Channel you have to create, own and close
+private val events = Channel<Event>()
+
+// A Flow that manages its own lifetime
+val events: SharedFlow<Event> = _events.asSharedFlow()
+```
+
+| Want | Use |
+| --- | --- |
+| Screen state | `StateFlow` |
+| One-off UI events, many observers | `SharedFlow` |
+| Distribute work across N workers | `Channel` |
+| A producer and a consumer with back-pressure | `Channel` |
+| Anything you would otherwise have to remember to `close` | A `Flow` |
+
+<Detail summary="channelFlow — the bridge you will actually use">
+Wrapping a callback API is the common real case. `callbackFlow` gives you a Channel inside a
+Flow: you `trySend` from the callback, and `awaitClose` unregisters it when the collector goes
+away. You get Channel mechanics with Flow lifetime management.
+
+```kotlin
+fun locations(): Flow<Location> = callbackFlow {
+    val listener = LocationListener { trySend(it) }
+    manager.register(listener)
+    awaitClose { manager.unregister(listener) }
+}
+```
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Two that are easy to hit">
+**Forgetting to `close`.** A `for` loop over an unclosed Channel waits forever, and the
+coroutine never completes. A Flow has no equivalent trap.
+
+**Using a Channel for state.** Only one receiver sees each value, so a second observer gets
+nothing and rotation loses the value entirely.
+</Pitfall>
+
+## Practice
+
+1. Send from two producers into one Channel and receive from one consumer. Note the ordering.
+2. Set `capacity = CONFLATED`, send faster than you receive, and see which values survive.
+3. Wrap a listener-based API with `callbackFlow` and confirm `awaitClose` runs on cancellation.
+4. Use a Channel where a `SharedFlow` belongs, add a second collector, and observe what breaks.
+
+## Recap
+
+| Point | Detail |
+| --- | --- |
+| Delivery | One value, one receiver — consumed, not observed |
+| `send` / `receive` | Both suspend; that is the back-pressure |
+| `close` | Required, or receivers wait forever |
+| Capacity | `RENDEZVOUS`, `BUFFERED`, `CONFLATED`, `UNLIMITED` |
+| `callbackFlow` | The Channel use you will actually reach for |
+| Default choice | A Flow, unless you are distributing work |

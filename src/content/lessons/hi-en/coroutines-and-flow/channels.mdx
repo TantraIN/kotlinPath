@@ -1,0 +1,119 @@
+---
+title: Channels, aur inki zarurat sach mein kab padti hai
+description: Channel do coroutines ke beech ki qatar hai. Zyadatar aapko Flow chahiye tha — par jo apwaad hain wo jaanne laayak hain.
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`Channel` har value **theek ek** receiver ko deta hai, aur ek hi baar deta hai. `Flow` har
+collector ko bhejta hai. Bas yahi ek farq tay karta hai ki aapko kaun sa chahiye.
+</KeyIdea>
+
+## Aisi qatar jiske dono siron par coroutine hai
+
+```kotlin title="Channel.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+
+fun main() = runBlocking {
+    val channel = Channel<Int>()
+
+    launch {
+        repeat(3) { channel.send(it); delay(50) }
+        channel.close()
+    }
+
+    for (value in channel) println("received $value")
+    println("channel closed")
+}
+```
+
+`send` tab tak suspend rehta hai jab tak koi receiver value na le le. `close` loop khatam karta
+hai. Values dekhi nahi jatin, khap jati hain.
+
+<Quiz
+  question="Do coroutines ek hi Channel se receive karte hain, aur ek value bheji jati hai. Kitno ko dikhti hai?"
+  options={[
+    "Dono ko — broadcast ki tarah",
+    "Theek ek ko — jo pehle le le; value khap jati hai",
+    "Kisi ko nahi, jab tak dono taiyaar na hon",
+  ]}
+  answer={1}
+  explanation="Channel state baantta nahi, kaam baantta hai. Har value ek hi receiver ko jati hai, jo work queue ke liye bilkul theek hai aur UI state ke liye bilkul galat. Agar har collector ko har value chahiye, to wo SharedFlow hai."
+/>
+
+## Maza capacity mein hai
+
+| Capacity | `send` ka vyavhaar |
+| --- | --- |
+| `RENDEZVOUS` (default) | Receiver taiyaar hone tak suspend |
+| `BUFFERED` | Sirf buffer bharne par suspend |
+| `CONFLATED` | Kabhi suspend nahi; rakhi hui value ki jagah le leta hai |
+| `UNLIMITED` | Kabhi suspend nahi; bina seema badhta hai |
+
+<Pitfall bare>
+`UNLIMITED` back-pressure poori tarah hata deta hai. Agar banane wala khapane wale se tez hai,
+to qatar tab tak badhti hai jab tak app ki memory khatam na ho jaye.
+</Pitfall>
+
+## Aapko shayad Flow hi chahiye
+
+```kotlin title="Prefer.kt" numbered
+// Channel jise aapko banana, rakhna aur band karna padta hai
+private val events = Channel<Event>()
+
+// Flow jo apni umar khud sambhalta hai
+val events: SharedFlow<Event> = _events.asSharedFlow()
+```
+
+| Chahiye | Kya use karo |
+| --- | --- |
+| Screen state | `StateFlow` |
+| Ek baar wale UI events, kai dekhne wale | `SharedFlow` |
+| N workers mein kaam baantna | `Channel` |
+| Back-pressure ke saath ek producer aur ek consumer | `Channel` |
+| Jo bhi cheez `close` karna yaad rakhna pade | `Flow` |
+
+<Detail summary="channelFlow — wo pul jo aap sach mein use karoge">
+Asli aam zarurat kisi callback API ko lapetne ki hoti hai. `callbackFlow` aapko Flow ke andar ek
+Channel deta hai: callback se aap `trySend` karte ho, aur collector ke jaane par `awaitClose`
+listener hata deta hai. Channel ka tarika milta hai, Flow ki umar sambhalne ke saath.
+
+```kotlin
+fun locations(): Flow<Location> = callbackFlow {
+    val listener = LocationListener { trySend(it) }
+    manager.register(listener)
+    awaitClose { manager.unregister(listener) }
+}
+```
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Do jo aasani se lag jati hain">
+**`close` karna bhool jana.** Bina band kiye Channel par `for` loop hamesha ke liye intezaar
+karta rehta hai, aur coroutine kabhi khatam nahi hota. Flow mein aisa koi jaal hai hi nahi.
+
+**State ke liye Channel use karna.** Har value sirf ek receiver ko dikhti hai, isliye doosre
+dekhne wale ko kuch nahi milta aur phone ghumane par value poori tarah kho jati hai.
+</Pitfall>
+
+## Practice
+
+1. Do producers se ek Channel mein bhejo aur ek consumer se receive karo. Kram dhyan se dekho.
+2. `capacity = CONFLATED` rakho, receive se tez bhejo, aur dekho kaun si values bachti hain.
+3. Listener wale kisi API ko `callbackFlow` se lapeto aur confirm karo ki cancel par
+   `awaitClose` chalta hai.
+4. Jahan `SharedFlow` chahiye tha wahan Channel use karo, ek aur collector jodo, aur dekho kya
+   tootta hai.
+
+## Recap
+
+| Baat | Vivran |
+| --- | --- |
+| Pahunchana | Ek value, ek receiver — khap jati hai, dekhi nahi jati |
+| `send` / `receive` | Dono suspend hote hain; yahi back-pressure hai |
+| `close` | Zaroori, warna receivers hamesha intezaar karte rehte hain |
+| Capacity | `RENDEZVOUS`, `BUFFERED`, `CONFLATED`, `UNLIMITED` |
+| `callbackFlow` | Channel ka wahi istemal jo sach mein kaam aayega |
+| Default chunav | Flow, jab tak aap kaam baant na rahe ho |

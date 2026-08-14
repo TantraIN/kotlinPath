@@ -1,0 +1,119 @@
+---
+title: Channels, और इनकी ज़रूरत सच में कब पड़ती है
+description: Channel दो coroutines के बीच की क़तार है। ज़्यादातर आपको Flow चाहिए था — पर जो अपवाद हैं वे जानने लायक़ हैं।
+updated: 2026-08-12
+---
+
+<KeyIdea>
+`Channel` हर value **ठीक एक** receiver को देता है, और एक ही बार देता है। `Flow` हर collector को भेजता
+है। बस यही एक फ़र्क़ तय करता है कि आपको कौन सा चाहिए।
+</KeyIdea>
+
+## ऐसी क़तार जिसके दोनों सिरों पर coroutine है
+
+```kotlin title="Channel.kt" numbered runnable
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+
+fun main() = runBlocking {
+    val channel = Channel<Int>()
+
+    launch {
+        repeat(3) { channel.send(it); delay(50) }
+        channel.close()
+    }
+
+    for (value in channel) println("received $value")
+    println("channel closed")
+}
+```
+
+`send` तब तक suspend रहता है जब तक कोई receiver value न ले ले। `close` loop ख़त्म करता है। Values देखी
+नहीं जातीं, खप जाती हैं।
+
+<Quiz
+  question="दो coroutines एक ही Channel से receive करते हैं, और एक value भेजी जाती है। कितनों को दिखती है?"
+  options={[
+    "दोनों को — broadcast की तरह",
+    "ठीक एक को — जो पहले ले ले; value खप जाती है",
+    "किसी को नहीं, जब तक दोनों तैयार न हों",
+  ]}
+  answer={1}
+  explanation="Channel state बाँटता नहीं, काम बाँटता है। हर value एक ही receiver को जाती है, जो work queue के लिए बिलकुल ठीक है और UI state के लिए बिलकुल ग़लत। अगर हर collector को हर value चाहिए, तो वह SharedFlow है।"
+/>
+
+## मज़ा capacity में है
+
+| Capacity | `send` का व्यवहार |
+| --- | --- |
+| `RENDEZVOUS` (default) | Receiver तैयार होने तक suspend |
+| `BUFFERED` | सिर्फ़ buffer भरने पर suspend |
+| `CONFLATED` | कभी suspend नहीं; रखी हुई value की जगह ले लेता है |
+| `UNLIMITED` | कभी suspend नहीं; बिना सीमा बढ़ता है |
+
+<Pitfall bare>
+`UNLIMITED` back-pressure पूरी तरह हटा देता है। अगर बनाने वाला खपाने वाले से तेज़ है, तो क़तार तब तक
+बढ़ती है जब तक app की memory ख़त्म न हो जाए।
+</Pitfall>
+
+## आपको शायद Flow ही चाहिए
+
+```kotlin title="Prefer.kt" numbered
+// Channel जिसे आपको बनाना, रखना और बंद करना पड़ता है
+private val events = Channel<Event>()
+
+// Flow जो अपनी उम्र ख़ुद सँभालता है
+val events: SharedFlow<Event> = _events.asSharedFlow()
+```
+
+| चाहिए | क्या इस्तेमाल करें |
+| --- | --- |
+| Screen state | `StateFlow` |
+| एक बार वाले UI events, कई देखने वाले | `SharedFlow` |
+| N workers में काम बाँटना | `Channel` |
+| Back-pressure के साथ एक producer और एक consumer | `Channel` |
+| जो भी चीज़ `close` करना याद रखना पड़े | `Flow` |
+
+<Detail summary="channelFlow — वह पुल जो आप सच में इस्तेमाल करेंगे">
+असली आम ज़रूरत किसी callback API को लपेटने की होती है। `callbackFlow` आपको Flow के अंदर एक Channel देता
+है: callback से आप `trySend` करते हैं, और collector के जाने पर `awaitClose` listener हटा देता है।
+Channel का तरीक़ा मिलता है, Flow की उम्र सँभालने के साथ।
+
+```kotlin
+fun locations(): Flow<Location> = callbackFlow {
+    val listener = LocationListener { trySend(it) }
+    manager.register(listener)
+    awaitClose { manager.unregister(listener) }
+}
+```
+</Detail>
+
+## आम ग़लतियाँ
+
+<Pitfall title="दो जो आसानी से लग जाती हैं">
+**`close` करना भूल जाना।** बिना बंद किए Channel पर `for` loop हमेशा के लिए इंतज़ार करता रहता है, और
+coroutine कभी ख़त्म नहीं होता। Flow में ऐसा कोई जाल है ही नहीं।
+
+**State के लिए Channel इस्तेमाल करना।** हर value सिर्फ़ एक receiver को दिखती है, इसलिए दूसरे देखने वाले
+को कुछ नहीं मिलता और phone घुमाने पर value पूरी तरह खो जाती है।
+</Pitfall>
+
+## अभ्यास
+
+1. दो producers से एक Channel में भेजिए और एक consumer से receive कीजिए। क्रम ध्यान से देखिए।
+2. `capacity = CONFLATED` रखिए, receive से तेज़ भेजिए, और देखिए कौन सी values बचती हैं।
+3. Listener वाले किसी API को `callbackFlow` से लपेटिए और confirm कीजिए कि cancel पर `awaitClose`
+   चलता है।
+4. जहाँ `SharedFlow` चाहिए था वहाँ Channel इस्तेमाल कीजिए, एक और collector जोड़िए, और देखिए क्या टूटता
+   है।
+
+## सारांश
+
+| बात | विवरण |
+| --- | --- |
+| पहुँचाना | एक value, एक receiver — खप जाती है, देखी नहीं जाती |
+| `send` / `receive` | दोनों suspend होते हैं; यही back-pressure है |
+| `close` | ज़रूरी, वरना receivers हमेशा इंतज़ार करते रहते हैं |
+| Capacity | `RENDEZVOUS`, `BUFFERED`, `CONFLATED`, `UNLIMITED` |
+| `callbackFlow` | Channel का वही इस्तेमाल जो सच में काम आएगा |
+| Default चुनाव | Flow, जब तक आप काम बाँट न रहे हों |
