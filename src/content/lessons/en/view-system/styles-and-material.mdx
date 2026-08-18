@@ -1,0 +1,228 @@
+---
+title: Styles, themes and Material 3 components
+description: A style dresses one view. A theme answers questions every view asks. Knowing which one you are editing is the difference between a two-line dark mode and two hundred edits.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A **style** is a bundle of attributes applied to one view. A **theme** is a set of named
+attributes that any view underneath it can ask for. Widgets are written to ask, which is why
+changing a theme changes an entire app.
+</KeyIdea>
+
+## Why this matters
+
+Write `android:textColor="#111111"` on forty views and you have written dark mode out of your
+own app. The screen will be readable today and unreadable the first night a user opens it.
+
+The alternative is one line per view — `?attr/colorOnSurface` — and one file that decides what
+that means in light and in dark.
+
+## Style and theme are not the same thing
+
+| | Style | Theme |
+| --- | --- | --- |
+| Applied with | `style="@style/…"` on a view | `android:theme` on the app, activity, or a view |
+| Reaches | That one view | That view and everything under it |
+| Holds | Real attributes: `textSize`, `padding` | Named answers: `colorPrimary`, `colorSurface` |
+| Read with | Nothing — applied directly | `?attr/colorPrimary` |
+| Good for | A repeated widget's look | Colour, shape and typography for the whole app |
+
+```xml title="res/values/themes.xml" numbered
+<style name="Theme.MyApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <item name="colorPrimary">@color/brand_600</item>
+    <item name="colorOnPrimary">@color/white</item>
+    <item name="colorSurface">@color/surface</item>
+    <item name="colorOnSurface">@color/ink</item>
+</style>
+```
+
+```xml title="res/layout/item_price.xml"
+<TextView
+    android:textAppearance="?attr/textAppearanceTitleMedium"
+    android:textColor="?attr/colorOnSurface" />
+```
+
+<Note>
+`@color/x` is a fixed value. `?attr/x` is a question the view asks its theme at inflation time.
+Only the second one can answer differently in light and dark, so prefer it everywhere in
+layouts.
+</Note>
+
+## The mistake everybody makes once
+
+<Quiz
+  question="You set `android:background` on a `MaterialButton` to give it a brand colour. It loses its rounded corners, its ripple and its elevation. Why?"
+  options={[
+    "The colour is opaque, so it covers the shape underneath",
+    "MaterialButton draws its shape *in* the background drawable, and you replaced it",
+    "Background is not supported on Material components at all",
+  ]}
+  answer={1}
+  explanation="MaterialButton builds a shaped, rippled, tinted drawable and installs it as the background. Setting android:background throws that whole drawable away and puts a flat colour in its place, taking corners, ripple, elevation and the disabled state with it. Use app:backgroundTint for the fill, app:strokeColor and app:strokeWidth for the outline, and app:cornerRadius or a shapeAppearance for the corners. The same rule holds for every Material component that has a shape."
+/>
+
+## Material 3 thinks in roles, not colours
+
+You do not pick "blue". You say what a colour is *for*, and the theme decides.
+
+| Role | Used for | Its partner |
+| --- | --- | --- |
+| `colorPrimary` | The main action, brand emphasis | `colorOnPrimary` |
+| `colorSecondaryContainer` | Tonal buttons, selected chips | `colorOnSecondaryContainer` |
+| `colorSurface` | Cards, sheets, the page itself | `colorOnSurface` |
+| `colorSurfaceVariant` | Quiet fills, dividers' backdrop | `colorOnSurfaceVariant` |
+| `colorError` | Error text and states | `colorOnError` |
+
+Every `colorX` has a matching `colorOnX` that is guaranteed to be legible on it. Use the pair,
+and contrast is handled for you.
+
+## Components come with styles already written
+
+<Tabs>
+  <Tab label="Buttons">
+
+One class, four looks, chosen by style. Nothing else changes.
+
+```xml title="Buttons.xml"
+<com.google.android.material.button.MaterialButton
+    android:text="@string/pay" />
+
+<com.google.android.material.button.MaterialButton
+    style="@style/Widget.Material3.Button.TonalButton" />
+
+<com.google.android.material.button.MaterialButton
+    style="@style/Widget.Material3.Button.OutlinedButton" />
+
+<com.google.android.material.button.MaterialButton
+    style="@style/Widget.Material3.Button.TextButton" />
+```
+
+  </Tab>
+  <Tab label="Text fields">
+
+`TextInputLayout` owns the label, the box and the error; the `TextInputEditText` inside owns
+only the text.
+
+```xml title="Field.xml"
+<com.google.android.material.textfield.TextInputLayout
+    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+    android:hint="@string/email"
+    app:helperText="@string/email_help">
+
+    <com.google.android.material.textfield.TextInputEditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="textEmailAddress" />
+</com.google.android.material.textfield.TextInputLayout>
+```
+
+```kotlin title="Errors.kt"
+layout.error = if (valid) null else getString(R.string.email_invalid)
+```
+
+Put the `hint` on the layout, not the edit text — on the edit text it cannot float, and you get
+two hints stacked on each other.
+
+  </Tab>
+</Tabs>
+
+## Under the hood: who wins
+
+<Timeline>
+  <TimelineItem title="1. The attribute on the view" meta="highest priority">
+    Anything written directly in the layout tag beats everything else.
+  </TimelineItem>
+  <TimelineItem title="2. The view's `style`" meta="the bundle you named">
+    Attributes from `style="@style/…"`, for anything step 1 did not set.
+  </TimelineItem>
+  <TimelineItem title="3. The theme's default style for that widget" meta="e.g. materialButtonStyle">
+    This is how a theme restyles every button in the app without touching a layout.
+  </TimelineItem>
+  <TimelineItem title="4. The widget's own default style" meta="shipped with the library">
+    The look you get when you set nothing at all.
+  </TimelineItem>
+  <TimelineItem title="5. The theme" meta="only for `?attr/…` lookups">
+    Reached last, and only where something asked a question rather than stated a value.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Restyling one subtree without a new theme">
+`android:theme` on any view creates a **theme overlay** for that view and its children. An
+overlay only overrides the attributes it names and inherits the rest, so a dark card inside a
+light screen is a few lines:
+
+```xml title="Overlay.xml"
+<style name="ThemeOverlay.MyApp.DarkCard" parent="">
+    <item name="colorSurface">@color/ink_900</item>
+    <item name="colorOnSurface">@color/white</item>
+</style>
+```
+
+```xml title="Usage.xml"
+<com.google.android.material.card.MaterialCardView
+    android:theme="@style/ThemeOverlay.MyApp.DarkCard" />
+```
+
+Everything inside now resolves `?attr/colorOnSurface` to white, including components you did not
+write yourself.
+</Detail>
+
+## Dark mode is a folder, not a flag
+
+```xml title="res/values-night/themes.xml"
+<style name="Theme.MyApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <item name="colorSurface">@color/ink_900</item>
+    <item name="colorOnSurface">@color/paper</item>
+</style>
+```
+
+If every layout asks with `?attr/`, this file is the entire feature. If any layout states a
+colour with `@color/`, that view stays wrong and no theme can save it.
+
+## Common mistakes
+
+<Pitfall title="Three that cost real time">
+**Hardcoded colours in layouts.** `#FFFFFF` and `@color/black` in a layout are dark mode bugs
+that have not happened yet. Ask with `?attr/`.
+
+**Using a non-Material parent theme.** Material components throw at inflation with *"The style
+on this component requires your app theme to be Theme.MaterialComponents"* — the fix is the app
+theme's `parent`, never the component.
+
+**Duplicating a style instead of extending it.** `parent="Widget.Material3.Button"` keeps you
+current when the library updates; a copied block freezes at the version you copied it from.
+</Pitfall>
+
+## Practice
+
+1. Replace every hardcoded colour in one screen with `?attr/` roles, then add `values-night` and
+   check the screen without touching the layout again.
+2. Give a `MaterialButton` a colour with `android:background`, look at what breaks, then fix it
+   with `app:backgroundTint`.
+3. Set `materialButtonStyle` in your theme to an outlined style and watch every button change.
+4. Wrap one card in a theme overlay so it renders dark inside a light screen.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Style | Attributes for one view |
+| Theme | Named answers for a whole subtree |
+| `@color/` | A fixed value |
+| `?attr/` | A question the theme answers |
+| `colorX` / `colorOnX` | A pair guaranteed to be legible together |
+| Material background | Use `app:backgroundTint`, never `android:background` |
+| Precedence | View attribute, style, theme default style, widget default, theme |
+| Theme overlay | Override a few attributes for one subtree |
+| Dark mode | `values-night`, and only works if layouts ask with `?attr/` |
+
+<Interview title="A question that separates copied XML from understood XML">
+"What is the difference between a style and a theme?"
+
+A style is a set of attribute values applied to a single view. A theme is a set of named
+attributes that every view beneath it can resolve with `?attr/`. The sentence worth adding is
+the consequence: because Material widgets are written to ask rather than to hardcode, replacing
+a theme restyles an entire app, and that is exactly why hardcoding a colour in a layout is the
+one thing that breaks it.
+</Interview>

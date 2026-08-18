@@ -1,0 +1,231 @@
+---
+title: Styles, themes aur Material 3 components
+description: Style ek view ko kapde pehnata hai. Theme un sawalon ke jawab rakhta hai jo har view puchta hai. Aap kise badal rahe hain, ye jaanna hi do line ke dark mode aur do sau badlawon ke beech ka farak hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+**Style** attributes ka ek gatthar hai jo ek view par lagta hai. **Theme** naam wale attributes
+ka ek samooh hai jise uske neeche ki koi bhi view maang sakti hai. Widgets maangne ke hisab se
+likhe gaye hain, isi wajah se theme badalne se poori app badal jati hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Chalees views par `android:textColor="#111111"` likh dijiye aur aapne apni hi app se dark mode
+mita diya. Screen aaj padhi ja sakegi aur jis pehli raat koi user use kholega, nahi padhi ja
+sakegi.
+
+Doosra raasta hai har view par ek line — `?attr/colorOnSurface` — aur ek file jo tay karti hai
+ki light aur dark mein uska matlab kya hai.
+
+## Style aur theme ek cheez nahi hain
+
+| | Style | Theme |
+| --- | --- | --- |
+| Lagta hai | view par `style="@style/…"` se | app, activity ya kisi view par `android:theme` se |
+| Pahunch | Sirf usi ek view tak | Us view aur uske neeche sab tak |
+| Rakhta hai | Asli attributes: `textSize`, `padding` | Naam wale jawab: `colorPrimary`, `colorSurface` |
+| Padha jata hai | Kuch nahi — seedhe lagta hai | `?attr/colorPrimary` se |
+| Kiske liye achha | Baar-baar aane wale widget ki shakal | Poori app ka rang, shape aur typography |
+
+```xml title="res/values/themes.xml" numbered
+<style name="Theme.MyApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <item name="colorPrimary">@color/brand_600</item>
+    <item name="colorOnPrimary">@color/white</item>
+    <item name="colorSurface">@color/surface</item>
+    <item name="colorOnSurface">@color/ink</item>
+</style>
+```
+
+```xml title="res/layout/item_price.xml"
+<TextView
+    android:textAppearance="?attr/textAppearanceTitleMedium"
+    android:textColor="?attr/colorOnSurface" />
+```
+
+<Note>
+`@color/x` ek tay value hai. `?attr/x` ek sawal hai jo view inflate hote waqt apni theme se
+puchti hai. Sirf doosra hi light aur dark mein alag jawab de sakta hai, isliye layouts mein har
+jagah wahi rakhiye.
+</Note>
+
+## Wo galti jo har koi ek baar karta hai
+
+<Quiz
+  question="Aapne `MaterialButton` ko brand ka rang dene ke liye us par `android:background` laga diya. Uske gol kone, ripple aur elevation chale gaye. Kyun?"
+  options={[
+    "Rang gaadha hai, isliye wo neeche wali shape ko dhak leta hai",
+    "MaterialButton apni shape background drawable ke *andar* hi banata hai, aur aapne use badal diya",
+    "Material components par background chalta hi nahi",
+  ]}
+  answer={1}
+  explanation="MaterialButton ek shape wala, ripple wala, tint kiya hua drawable banata hai aur use background ki jagah laga deta hai. android:background lagane se wo poora drawable phenk diya jata hai aur uski jagah ek sapat rang aa jata hai, jo kone, ripple, elevation aur disabled haalat sab saath le jata hai. Bharne ke liye app:backgroundTint, bahari lakeer ke liye app:strokeColor aur app:strokeWidth, aur kono ke liye app:cornerRadius ya shapeAppearance istemal kijiye. Yahi niyam har us Material component par lagu hai jiski apni shape hai."
+/>
+
+## Material 3 rangon mein nahi, bhumikaon mein sochta hai
+
+Aap "neela" nahi chunte. Aap batate hain ki rang *kis kaam* ka hai, aur theme tay karti hai.
+
+| Bhumika | Kiske liye | Uska jodidar |
+| --- | --- | --- |
+| `colorPrimary` | Mukhya kaam, brand ka zor | `colorOnPrimary` |
+| `colorSecondaryContainer` | Tonal buttons, chune hue chips | `colorOnSecondaryContainer` |
+| `colorSurface` | Cards, sheets, khud page | `colorOnSurface` |
+| `colorSurfaceVariant` | Halki bharai, dividers ke peeche ka tal | `colorOnSurfaceVariant` |
+| `colorError` | Error ka text aur haalat | `colorOnError` |
+
+Har `colorX` ka ek jodidar `colorOnX` hai jiski us par padhe jane ki guarantee hai. Jodi istemal
+kijiye, contrast apne aap sambhal jata hai.
+
+## Components ke styles pehle se likhe hue aate hain
+
+<Tabs>
+  <Tab label="Buttons">
+
+Ek class, chaar shaklein, style se chuni hui. Aur kuch nahi badalta.
+
+```xml title="Buttons.xml"
+<com.google.android.material.button.MaterialButton
+    android:text="@string/pay" />
+
+<com.google.android.material.button.MaterialButton
+    style="@style/Widget.Material3.Button.TonalButton" />
+
+<com.google.android.material.button.MaterialButton
+    style="@style/Widget.Material3.Button.OutlinedButton" />
+
+<com.google.android.material.button.MaterialButton
+    style="@style/Widget.Material3.Button.TextButton" />
+```
+
+  </Tab>
+  <Tab label="Text fields">
+
+Label, box aur error `TextInputLayout` ke paas hain; andar wale `TextInputEditText` ke paas sirf
+text hai.
+
+```xml title="Field.xml"
+<com.google.android.material.textfield.TextInputLayout
+    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+    android:hint="@string/email"
+    app:helperText="@string/email_help">
+
+    <com.google.android.material.textfield.TextInputEditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="textEmailAddress" />
+</com.google.android.material.textfield.TextInputLayout>
+```
+
+```kotlin title="Errors.kt"
+layout.error = if (valid) null else getString(R.string.email_invalid)
+```
+
+`hint` layout par rakhiye, edit text par nahi — edit text par wo upar tair nahi sakta, aur do
+hints ek doosre par chadhe hue dikhte hain.
+
+  </Tab>
+</Tabs>
+
+## Andar ki baat: jeetta kaun hai
+
+<Timeline>
+  <TimelineItem title="1. View par likha attribute" meta="sabse upar">
+    Layout ke tag mein seedhe likhi hui koi bhi cheez baaki sabse upar hai.
+  </TimelineItem>
+  <TimelineItem title="2. View ka `style`" meta="wo gatthar jo aapne naam se diya">
+    `style="@style/…"` wale attributes, us har cheez ke liye jo pehla kadam tay nahi kar gaya.
+  </TimelineItem>
+  <TimelineItem title="3. Us widget ke liye theme ka default style" meta="jaise materialButtonStyle">
+    Isi se theme bina kisi layout ko chhue app ke har button ki shakal badal deti hai.
+  </TimelineItem>
+  <TimelineItem title="4. Khud widget ka default style" meta="library ke saath aata hai">
+    Wo shakal jo aapko tab milti hai jab aap kuch bhi tay nahi karte.
+  </TimelineItem>
+  <TimelineItem title="5. Theme" meta="sirf `?attr/…` wali maangon ke liye">
+    Sabse aakhir mein, aur wahin jahan kisi ne value batai nahi balki sawal pucha hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Bina nai theme ke ek hisse ki shakal badalna">
+Kisi bhi view par `android:theme` us view aur uske bachchon ke liye ek **theme overlay** bana
+deta hai. Overlay sirf unhin attributes ko badalta hai jinka naam usmein hai aur baaki virasat
+mein leta hai, to light screen ke andar ek dark card kuch hi lines ka kaam hai:
+
+```xml title="Overlay.xml"
+<style name="ThemeOverlay.MyApp.DarkCard" parent="">
+    <item name="colorSurface">@color/ink_900</item>
+    <item name="colorOnSurface">@color/white</item>
+</style>
+```
+
+```xml title="Usage.xml"
+<com.google.android.material.card.MaterialCardView
+    android:theme="@style/ThemeOverlay.MyApp.DarkCard" />
+```
+
+Ab andar ki har cheez `?attr/colorOnSurface` ka jawab safed pati hai, un components samet jo
+aapne khud nahi likhe.
+</Detail>
+
+## Dark mode ek folder hai, koi switch nahi
+
+```xml title="res/values-night/themes.xml"
+<style name="Theme.MyApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <item name="colorSurface">@color/ink_900</item>
+    <item name="colorOnSurface">@color/paper</item>
+</style>
+```
+
+Agar har layout `?attr/` se puchta hai, to poora feature yahi ek file hai. Agar koi layout
+`@color/` se rang bata deta hai, to wo view galat hi rahegi aur koi theme use nahi bacha sakti.
+
+## Common galtiyan
+
+<Pitfall title="Teen jo sach mein waqt khati hain">
+**Layouts mein seedhe likhe rang.** Layout mein `#FFFFFF` aur `@color/black` dark mode ke wo
+bugs hain jo abhi hue nahi hain. `?attr/` se puchiye.
+
+**Material ke alawa kisi parent theme ka istemal.** Material components inflate hote hi
+*"The style on this component requires your app theme to be Theme.MaterialComponents"* phenkte
+hain — ilaaj app theme ka `parent` hai, component kabhi nahi.
+
+**Style ko badhane ke bajaye uski nakal kar lena.** `parent="Widget.Material3.Button"` library
+ke update hone par aapko saath le chalta hai; nakal kiya hua hissa usi version par jam jata hai
+jahan se aapne nakal ki thi.
+</Pitfall>
+
+## Practice
+
+1. Ek screen ke har seedhe likhe rang ki jagah `?attr/` bhumikayein rakhiye, phir
+   `values-night` jodiye aur layout ko dobara chhue bina screen dekhiye.
+2. Kisi `MaterialButton` ko `android:background` se rang dijiye, dekhiye kya tootta hai, phir
+   `app:backgroundTint` se theek kijiye.
+3. Apni theme mein `materialButtonStyle` ko outlined style par lagaiye aur har button ko badalte
+   dekhiye.
+4. Ek card ko theme overlay mein lapetiye taki wo light screen ke andar dark dikhe.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Style | Ek view ke liye attributes |
+| Theme | Poore ek hisse ke liye naam wale jawab |
+| `@color/` | Ek tay value |
+| `?attr/` | Ek sawal, jiska jawab theme deti hai |
+| `colorX` / `colorOnX` | Ek jodi, jinka saath mein padha jana tay hai |
+| Material background | `app:backgroundTint` lagaiye, `android:background` kabhi nahi |
+| Kaun jeetta hai | View ka attribute, style, theme ka default style, widget ka default, theme |
+| Theme overlay | Ek hisse ke liye kuch hi attributes badalna |
+| Dark mode | `values-night`, aur tabhi chalta hai jab layouts `?attr/` se puchein |
+
+<Interview title="Ye sawal nakal kiye XML aur samjhe hue XML ko alag kar deta hai">
+"Style aur theme mein farak kya hai?"
+
+Style attribute values ka ek samooh hai jo ek hi view par lagta hai. Theme naam wale attributes
+ka ek samooh hai jise uske neeche ki har view `?attr/` se hal kar sakti hai. Jodne layak baat uska asar hai:
+chunki Material widgets rang tay karne ke bajaye puchne ke hisab se likhe gaye hain,
+theme badal dene se poori app ki shakal badal jati hai — aur theek isiliye layout mein rang
+seedhe likh dena wo iklauti cheez hai jo ise tod deti hai.
+</Interview>
