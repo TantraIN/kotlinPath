@@ -1,0 +1,202 @@
+---
+title: "WorkManager: constraints, chaining and periodic work"
+description: WorkManager is not a scheduler you reach for when a coroutine feels too small. It is the only way to say "this must finish, even if the user leaves and the phone reboots" — and that guarantee is the whole API.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Use WorkManager when work must **survive** — the screen closing, the app being killed, a reboot. That
+is the one thing it offers that a coroutine cannot, and everything else in the API exists to describe
+when the surviving work is allowed to run.
+</KeyIdea>
+
+## Why this matters
+
+The offline-first lesson ended with a sync that had nowhere good to live:
+
+```kotlin title="WrongHome.kt" numbered
+fun sync() = viewModelScope.launch {          // dies when the user leaves the screen
+    repository.sync()
+}
+```
+
+`viewModelScope` is exactly right for work that belongs to a screen and wrong for work that must
+finish. A user who taps save and immediately backs out has cancelled their own upload, and nothing
+will retry it.
+
+```kotlin title="SyncWorker.kt" numbered
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted params: WorkerParameters,
+    private val repository: OrderRepository,
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = when (repository.sync()) {
+        is Outcome.Success -> Result.success()
+        is Outcome.Failure -> Result.retry()      // backs off, survives reboot
+    }
+}
+```
+
+`CoroutineWorker` is the one to use: `doWork` is `suspend`, so everything from the coroutines phase
+applies, and cancellation works properly.
+
+## The three results, and what each promises
+
+| Return | Meaning | What the system does |
+| --- | --- | --- |
+| `Result.success()` | Done | Runs any chained work that follows |
+| `Result.failure()` | Done, and it did not work | Stops the chain; no retry |
+| `Result.retry()` | Try again later | Reschedules with exponential backoff |
+
+`retry()` versus `failure()` is the decision that matters, and it is the same question the network
+lesson answered: a `5xx` or an I/O failure is worth retrying, a `400` never will be. Returning
+`retry()` for something permanently broken is how a worker runs every fifteen minutes forever.
+
+## Constraints are the point
+
+```kotlin title="Enqueue.kt" numbered
+val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    .setConstraints(
+        Constraints(
+            requiredNetworkType = NetworkType.UNMETERED,   // Wi-Fi, not the user's data
+            requiresBatteryNotLow = true,
+        )
+    )
+    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+    .build()
+
+WorkManager.getInstance(context).enqueueUniqueWork(
+    "sync",
+    ExistingWorkPolicy.KEEP,        // already queued? leave it alone
+    request,
+)
+```
+
+The constraint is doing the work you would otherwise write badly. Without it you would register a
+connectivity listener, hold it correctly across process death, and re-check on boot. With it, the
+system simply does not run the worker until the conditions hold — and it survives a reboot for free.
+
+`enqueueUniqueWork` with a name is what stops five taps from queueing five syncs. `KEEP` ignores the
+new request if one is pending; `REPLACE` cancels the old one; `APPEND` runs them in order.
+
+<Quiz
+  question="A periodic worker is set to run every 5 minutes. In testing it runs every 15 minutes at best, and sometimes much less often. Is this a bug?"
+  options={[
+    "Yes — the interval is being ignored and the request needs `setInitialDelay`",
+    "No. The minimum periodic interval is 15 minutes, and even then it is a target, not a guarantee — Doze and App Standby batch and delay background work to save battery",
+    "Yes — periodic work needs a foreground service to run on time",
+  ]}
+  answer={1}
+  explanation="WorkManager enforces a 15-minute floor on periodic work, so an interval of 5 minutes is silently rounded up rather than rejected. More importantly, even 15 minutes is a target: the system batches deferrable work into maintenance windows, and under Doze the gaps grow to an hour or more on an idle device. That is the deal WorkManager makes — it guarantees the work eventually runs, not when. If something genuinely must happen at a precise moment, periodic work is the wrong tool: a user-visible ongoing task wants a foreground service, and a real alarm wants AlarmManager, both covered later in this phase. The common design mistake is treating periodic work as a clock; it is a way of saying 'roughly this often, whenever it is cheap'."
+/>
+
+## Chaining
+
+```kotlin title="Chain.kt" numbered
+WorkManager.getInstance(context)
+    .beginWith(listOf(compressImages, uploadThumbnails))   // these two in parallel
+    .then(uploadFullSize)                                  // after both succeed
+    .then(notifyServer)
+    .enqueue()
+```
+
+Each `then` waits for everything before it to succeed. A `Result.failure()` anywhere stops the rest
+of the chain, which is usually what you want — there is no point notifying a server about an upload
+that did not happen.
+
+Data passes along the chain through `Data`, which is a small key-value bundle:
+
+```kotlin title="Data.kt" numbered
+override suspend fun doWork(): Result {
+    val url = uploadFile() ?: return Result.retry()
+    return Result.success(workDataOf("url" to url))       // the next worker reads it
+}
+```
+
+`Data` has a **10 KB limit** and throws above it. It is for ids and short strings; a bitmap or a
+document goes to a file and the path — or better, an id — travels through `Data`. This is the same
+size discipline as `Bundle` in the configuration-changes lesson, for the same reason.
+
+<Detail summary="Observing work, and testing it">
+A worker's progress is observable, which is how a screen shows an upload without owning it:
+
+```kotlin title="Observe.kt" numbered
+val syncState: Flow<WorkInfo?> = WorkManager.getInstance(context)
+    .getWorkInfosForUniqueWorkFlow("sync")
+    .map { it.firstOrNull() }
+```
+
+`WorkInfo` carries the state — `ENQUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `BLOCKED`, `CANCELLED` —
+and any progress data the worker published. The screen observes it and stays correct across
+rotation, because the work never belonged to the screen in the first place.
+
+For tests, `WorkManagerTestInitHelper` gives you a driver that lets you satisfy constraints and
+advance time manually:
+
+```kotlin title="WorkerTest.kt" numbered
+val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
+workManager.enqueue(request).result.get()
+driver.setAllConstraintsMet(request.id)          // pretend Wi-Fi arrived
+val info = workManager.getWorkInfoById(request.id).get()
+assertEquals(WorkInfo.State.SUCCEEDED, info.state)
+```
+
+Without it you would be waiting on real constraints in a test, which is how a suite becomes slow and
+flaky.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that make work run too often, or never">
+**Using it for work that belongs to a screen.** If it does not need to survive the screen closing, a
+`viewModelScope` coroutine is simpler and immediate.
+
+**`Result.retry()` for a permanent failure.** A `400` will fail identically forever, so the worker
+runs on backoff until the app is uninstalled.
+
+**Expecting a periodic interval to be honoured.** The floor is 15 minutes and even that is a target.
+
+**No unique work name.** Five taps queue five syncs, all doing the same thing at once.
+
+**Large payloads in `Data`.** The limit is 10 KB and it throws. Pass an id.
+</Pitfall>
+
+## Practice
+
+1. Move a sync out of `viewModelScope` into a worker, then close the app mid-sync and confirm it
+   finishes.
+2. Add an `UNMETERED` constraint and watch the worker wait on mobile data.
+3. Return `Result.retry()` unconditionally and observe the backoff intervals grow.
+4. Enqueue the same unique work five times with `KEEP`, then with `REPLACE`, and compare.
+5. Observe a worker's `WorkInfo` from a screen, rotate the device, and confirm the state survives.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Use it when | The work must survive the screen, the process and a reboot |
+| `CoroutineWorker` | `doWork` is `suspend`; cancellation works properly |
+| `Result.success` | Done; the chain continues |
+| `Result.failure` | Done and broken; the chain stops |
+| `Result.retry` | Reschedules with exponential backoff |
+| `Constraints` | The system waits for network, charge or idle — no listener to write |
+| `enqueueUniqueWork` | One named job, so taps do not queue duplicates |
+| Chaining | `then` waits for everything before it to succeed |
+| `Data` | 10 KB limit — pass an id, not a payload |
+| Periodic | 15-minute floor, and a target rather than a promise |
+
+<Interview title="A question about a guarantee, not a scheduler">
+"When would you use WorkManager instead of a coroutine?"
+
+When the work has to outlive the thing that started it. A `viewModelScope` coroutine is cancelled
+when the user leaves the screen, which is correct for loading a list and wrong for an upload — so
+anything that must finish, and must survive process death and a reboot, belongs in a worker.
+
+The part I would emphasise is constraints, because that is where the real saving is: instead of
+registering a connectivity listener and re-checking after boot, I declare `UNMETERED` and the system
+does not run the worker until Wi-Fi is available. What I would not expect is precise timing. Periodic
+work has a 15-minute floor and even that is a target, since Doze batches deferrable work — so if
+something must happen at an exact moment, that is `AlarmManager` or a foreground service, not this.
+</Interview>

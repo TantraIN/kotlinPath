@@ -1,0 +1,203 @@
+---
+title: "WorkManager: constraints, chaining और periodic work"
+description: WorkManager कोई ऐसा scheduler नहीं है जिसे तब उठाएँ जब coroutine छोटा लगे। यह कहने का इकलौता तरीका है कि "यह पूरा होना ही चाहिए, चाहे user चला जाए और phone दोबारा चालू हो" — और वही गारंटी पूरी API है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+WorkManager तब लीजिए जब काम को **बचना** है — screen बंद होने पर, ऐप के मारे जाने पर, दोबारा चालू होने
+पर। यही वह इकलौती चीज है जो वह देता है और कोई coroutine नहीं दे सकता, और API की बाकी हर चीज यह बताने
+के लिए है कि वह बचा हुआ काम कब चलने की इजाजत रखता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Offline-first वाला पाठ ऐसी sync पर खत्म हुआ था जिसके रहने की कोई अच्छी जगह नहीं थी:
+
+```kotlin title="WrongHome.kt" numbered
+fun sync() = viewModelScope.launch {          // user के screen छोड़ते ही मर जाता है
+    repository.sync()
+}
+```
+
+`viewModelScope` उस काम के लिए ठीक-ठीक सही है जो किसी screen का है, और उस काम के लिए गलत जिसे पूरा
+होना ही है। जो user save दबाकर तुरंत पीछे लौट जाता है उसने अपना ही upload रोक दिया, और उसे कोई दोबारा
+नहीं भेजेगा।
+
+```kotlin title="SyncWorker.kt" numbered
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted params: WorkerParameters,
+    private val repository: OrderRepository,
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = when (repository.sync()) {
+        is Outcome.Success -> Result.success()
+        is Outcome.Failure -> Result.retry()      // रुक-रुककर दोबारा, reboot के बाद भी
+    }
+}
+```
+
+`CoroutineWorker` ही लेने लायक है: `doWork` `suspend` है, तो coroutines वाले phase की हर बात लागू
+होती है, और रुकना ठीक से चलता है।
+
+## तीन नतीजे, और हर एक क्या वादा करता है
+
+| लौटाइए | मतलब | System क्या करता है |
+| --- | --- | --- |
+| `Result.success()` | हो गया | आगे जुड़ा कोई भी काम चलाता है |
+| `Result.failure()` | हो गया, और चला नहीं | कड़ी रोक देता है; दोबारा नहीं |
+| `Result.retry()` | बाद में दोबारा | बढ़ते अंतराल के साथ फिर से लगाता है |
+
+`retry()` बनाम `failure()` वही फैसला है जो मायने रखता है, और यह वही सवाल है जिसका जवाब network वाले
+पाठ ने दिया था: `5xx` या कोई I/O नाकामी दोबारा भेजने लायक है, `400` कभी नहीं होगा। जो चीज पक्की टूटी
+हुई है उसके लिए `retry()` लौटाना ही वह तरीका है जिससे कोई worker हमेशा हर पंद्रह मिनट में चलता रहता
+है।
+
+## Constraints ही असली बात हैं
+
+```kotlin title="Enqueue.kt" numbered
+val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    .setConstraints(
+        Constraints(
+            requiredNetworkType = NetworkType.UNMETERED,   // Wi-Fi, user का data नहीं
+            requiresBatteryNotLow = true,
+        )
+    )
+    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+    .build()
+
+WorkManager.getInstance(context).enqueueUniqueWork(
+    "sync",
+    ExistingWorkPolicy.KEEP,        // पहले से कतार में है? रहने दीजिए
+    request,
+)
+```
+
+वह शर्त वही काम कर रही है जो आप वरना बुरी तरह लिखते। उसके बिना आप connectivity सुनने वाला दर्ज करते,
+उसे process मरने के आर-पार ठीक से पकड़े रहते, और boot पर दोबारा देखते। उसके साथ, जब तक हालात पूरे न
+हों system उस worker को चलाता ही नहीं — और वह reboot के बाद भी मुफ्त में बचा रहता है।
+
+नाम के साथ `enqueueUniqueWork` ही पाँच taps को पाँच syncs बनने से रोकता है। `KEEP` कोई काम बाकी हो तो
+नई माँग अनदेखी कर देता है; `REPLACE` पुराने को रोक देता है; `APPEND` उन्हें क्रम से चलाता है।
+
+<Quiz
+  question="कोई periodic worker हर 5 मिनट पर चलने के लिए लगाया गया है। Testing में वह अच्छे से अच्छा हर 15 मिनट पर चलता है, और कभी-कभी उससे भी कम बार। क्या यह bug है?"
+  options={[
+    "हाँ — वह अंतराल अनदेखा हो रहा है और उस request को `setInitialDelay` चाहिए",
+    "नहीं। Periodic काम का कम से कम अंतराल 15 मिनट है, और वह भी निशाना है, गारंटी नहीं — Doze और App Standby battery बचाने के लिए पीछे का काम इकट्ठा करके टालते हैं",
+    "हाँ — periodic काम को वक्त पर चलने के लिए foreground service चाहिए",
+  ]}
+  answer={1}
+  explanation="WorkManager periodic काम पर 15 मिनट की फर्श लगाता है, तो 5 मिनट का अंतराल नामंजूर होने के बजाय चुपचाप बढ़ाकर 15 कर दिया जाता है। इससे अहम बात यह है कि 15 मिनट भी एक निशाना है: system टाले जा सकने वाले कामों को रखरखाव की खिड़कियों में इकट्ठा करता है, और खाली पड़े device पर Doze में वे अंतराल घंटे या उससे ज्यादा हो जाते हैं। WorkManager का सौदा यही है — वह गारंटी देता है कि काम आखिरकार चलेगा, यह नहीं कि कब। अगर किसी चीज को सच में ठीक किसी पल होना ही है, तो periodic काम गलत औजार है: user को दिखता चलता हुआ काम foreground service चाहता है, और असली alarm को AlarmManager, दोनों इसी phase में आगे हैं। Design की आम गलती है periodic काम को घड़ी मान लेना; वह "मोटे तौर पर इतनी बार, जब भी सस्ता पड़े" कहने का तरीका है।"
+/>
+
+## कड़ी बनाना
+
+```kotlin title="Chain.kt" numbered
+WorkManager.getInstance(context)
+    .beginWith(listOf(compressImages, uploadThumbnails))   // ये दोनों साथ-साथ
+    .then(uploadFullSize)                                  // दोनों के सफल होने के बाद
+    .then(notifyServer)
+    .enqueue()
+```
+
+हर `then` अपने से पहले की हर चीज के सफल होने का इंतजार करता है। कहीं भी `Result.failure()` बाकी कड़ी
+रोक देता है, और आमतौर पर आप यही चाहते हैं — जो upload हुआ ही नहीं उसकी खबर server को देने का कोई
+मतलब नहीं।
+
+Data कड़ी के साथ `Data` से चलता है, जो एक छोटा key-value bundle है:
+
+```kotlin title="Data.kt" numbered
+override suspend fun doWork(): Result {
+    val url = uploadFile() ?: return Result.retry()
+    return Result.success(workDataOf("url" to url))       // अगला worker इसे पढ़ेगा
+}
+```
+
+`Data` की **10 KB की हद** है और उससे ऊपर वह फेंकता है। वह ids और छोटी strings के लिए है; कोई bitmap
+या दस्तावेज किसी file में जाता है और उसका path — या उससे बेहतर, कोई id — `Data` से सफर करती है। यह
+वही नाप वाला अनुशासन है जो configuration बदलने वाले पाठ में `Bundle` पर था, उसी वजह से।
+
+<Detail summary="काम पर नजर रखना, और उसका test करना">
+Worker की प्रगति देखी जा सकती है, और इसी से कोई screen upload दिखाती है बिना उसकी मालिक हुए:
+
+```kotlin title="Observe.kt" numbered
+val syncState: Flow<WorkInfo?> = WorkManager.getInstance(context)
+    .getWorkInfosForUniqueWorkFlow("sync")
+    .map { it.firstOrNull() }
+```
+
+`WorkInfo` हालत लेकर चलता है — `ENQUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `BLOCKED`, `CANCELLED` —
+और worker की भेजी कोई भी प्रगति। Screen उसे देखती रहती है और rotation के आर-पार सही रहती है, क्योंकि
+वह काम कभी screen का था ही नहीं।
+
+Tests के लिए `WorkManagerTestInitHelper` ऐसा driver देता है जिससे आप शर्तें पूरी करा सकते हैं और
+समय हाथ से आगे बढ़ा सकते हैं:
+
+```kotlin title="WorkerTest.kt" numbered
+val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
+workManager.enqueue(request).result.get()
+driver.setAllConstraintsMet(request.id)          // मान लीजिए Wi-Fi आ गया
+val info = workManager.getWorkInfoById(request.id).get()
+assertEquals(WorkInfo.State.SUCCEEDED, info.state)
+```
+
+उसके बिना आप test में असली शर्तों का इंतजार कर रहे होते, और इसी से कोई suite धीमी तथा
+गैर-भरोसेमंद बनती है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जिनसे काम या तो बहुत बार चलता है या कभी नहीं">
+**उस काम के लिए लेना जो screen का है।** अगर उसे screen बंद होने पर बचना ही नहीं है, तो
+`viewModelScope` वाला coroutine आसान भी है और तुरंत भी।
+
+**पक्की नाकामी पर `Result.retry()`।** `400` हमेशा वैसे ही नाकाम होगा, तो worker ऐप के uninstall होने
+तक बढ़ते अंतराल पर चलता रहता है।
+
+**Periodic अंतराल के माने जाने की उम्मीद।** फर्श 15 मिनट है और वह भी एक निशाना।
+
+**कोई unique नाम न होना।** पाँच taps पाँच syncs कतार में लगा देते हैं, सब एक साथ वही काम करते हुए।
+
+**`Data` में बड़ा सामान।** हद 10 KB है और वह फेंकता है। कोई id भेजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी sync को `viewModelScope` से हटाकर worker में ले जाइए, फिर बीच में ऐप बंद कीजिए और पक्का
+   कीजिए कि वह पूरा होता है।
+2. `UNMETERED` वाली शर्त जोड़िए और worker को mobile data पर इंतजार करते देखिए।
+3. बिना शर्त `Result.retry()` लौटाइए और backoff के अंतरालों को बढ़ते देखिए।
+4. वही unique काम पाँच बार `KEEP` से कतार में लगाइए, फिर `REPLACE` से, और दोनों मिलाइए।
+5. किसी screen से worker का `WorkInfo` देखिए, device घुमाइए, और पक्का कीजिए कि हालत बची रहती है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| कब लीजिए | जब काम को screen, process और reboot के आर-पार बचना है |
+| `CoroutineWorker` | `doWork` `suspend` है; रुकना ठीक से चलता है |
+| `Result.success` | हो गया; कड़ी आगे बढ़ती है |
+| `Result.failure` | हो गया और टूटा; कड़ी रुक जाती है |
+| `Result.retry` | बढ़ते अंतराल के साथ फिर से लगाता है |
+| `Constraints` | System network, charge या खालीपन का इंतजार करता है — कोई listener नहीं लिखना |
+| `enqueueUniqueWork` | एक नाम वाला काम, ताकि taps से नकलें कतार में न लगें |
+| कड़ी | `then` अपने से पहले की हर चीज के सफल होने का इंतजार करता है |
+| `Data` | 10 KB की हद — सामान नहीं, id भेजिए |
+| Periodic | 15 मिनट की फर्श, और वादा नहीं बल्कि निशाना |
+
+<Interview title="एक सवाल, जो scheduler का नहीं, गारंटी का है">
+"Coroutine के बजाय WorkManager कब लेंगे?"
+
+जब काम को उस चीज से ज्यादा जीना है जिसने उसे शुरू किया। `viewModelScope` वाला coroutine user के
+screen छोड़ते ही रुक जाता है, जो किसी list लाने के लिए सही है और किसी upload के लिए गलत — तो जो भी
+पूरा होना ही चाहिए, और जिसे process मरने तथा reboot के आर-पार बचना है, वह worker की जगह है।
+
+जिस हिस्से पर मैं जोर दूँगा वह constraints है, क्योंकि असली बचत वहीं है: connectivity सुनने वाला
+दर्ज करके boot के बाद दोबारा देखने के बजाय मैं `UNMETERED` लिख देता हूँ और Wi-Fi आने तक system उस
+worker को चलाता ही नहीं। जिसकी मैं उम्मीद नहीं करूँगा वह है ठीक-ठीक समय। Periodic काम पर 15 मिनट की
+फर्श है और वह भी निशाना है, क्योंकि Doze टाले जा सकने वाले कामों को इकट्ठा करता है — तो अगर किसी चीज
+को ठीक किसी पल होना ही है, तो वह `AlarmManager` है या कोई foreground service, यह नहीं।
+</Interview>

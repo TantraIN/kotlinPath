@@ -1,0 +1,210 @@
+---
+title: "WorkManager: constraints, chaining aur periodic work"
+description: WorkManager koi aisa scheduler nahi hai jise tab uthao jab coroutine chhota lage. Ye kehne ka iklauta tarika hai ki "ye poora hona hi chahiye, chahe user chala jaye aur phone dobara chalu ho" — aur wahi guarantee poori API hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+WorkManager tab lijiye jab kaam ko **bachna** hai — screen band hone par, app ke maare jane par,
+dobara chalu hone par. Yahi wo iklauti cheez hai jo wo deta hai aur koi coroutine nahi de sakta, aur
+API ki baaki har cheez ye batane ke liye hai ki wo bacha hua kaam kab chalne ki ijazat rakhta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Offline-first wala lesson aisi sync par khatam hua tha jiske rehne ki koi achhi jagah nahi thi:
+
+```kotlin title="WrongHome.kt" numbered
+fun sync() = viewModelScope.launch {          // user ke screen chhodte hi mar jata hai
+    repository.sync()
+}
+```
+
+`viewModelScope` us kaam ke liye theek-theek sahi hai jo kisi screen ka hai, aur us kaam ke liye galat
+jise poora hona hi hai. Jo user save dabakar turant peeche laut jata hai usne apna hi upload rok
+diya, aur use koi dobara nahi bhejega.
+
+```kotlin title="SyncWorker.kt" numbered
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted params: WorkerParameters,
+    private val repository: OrderRepository,
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = when (repository.sync()) {
+        is Outcome.Success -> Result.success()
+        is Outcome.Failure -> Result.retry()      // ruk-rukkar dobara, reboot ke baad bhi
+    }
+}
+```
+
+`CoroutineWorker` hi lene layak hai: `doWork` `suspend` hai, to coroutines wale phase ki har baat lagu
+hoti hai, aur rukna theek se chalta hai.
+
+## Teen result, aur har ek kya wada karta hai
+
+| Lautaiye | Matlab | System kya karta hai |
+| --- | --- | --- |
+| `Result.success()` | Ho gaya | Aage juda koi bhi kaam chalata hai |
+| `Result.failure()` | Ho gaya, aur chala nahi | Kadi rok deta hai; dobara nahi |
+| `Result.retry()` | Baad mein dobara | Badhte antaral ke saath phir se lagata hai |
+
+`retry()` banam `failure()` wahi faisla hai jo maayne rakhta hai, aur ye wahi sawal hai jiska jawab
+network wale lesson ne diya tha: `5xx` ya koi I/O nakami dobara bhejne layak hai, `400` kabhi nahi
+hoga. Jo cheez pakki tooti hui hai uske liye `retry()` lautana hi wo tarika hai jisse koi worker
+hamesha har pandrah minute mein chalta rehta hai.
+
+## Constraints hi asli baat hain
+
+```kotlin title="Enqueue.kt" numbered
+val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    .setConstraints(
+        Constraints(
+            requiredNetworkType = NetworkType.UNMETERED,   // Wi-Fi, user ka data nahi
+            requiresBatteryNotLow = true,
+        )
+    )
+    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+    .build()
+
+WorkManager.getInstance(context).enqueueUniqueWork(
+    "sync",
+    ExistingWorkPolicy.KEEP,        // pehle se line mein hai? rehne dijiye
+    request,
+)
+```
+
+Wo shart wahi kaam kar rahi hai jo aap warna buri tarah likhte. Uske bina aap connectivity sunne wala
+darj karte, use process marne ke aar-paar theek se pakde rehte, aur boot par dobara dekhte. Uske
+saath, jab tak haalat poore na hon system us worker ko chalata hi nahi — aur wo reboot ke baad bhi
+muft mein bacha rehta hai.
+
+Naam ke saath `enqueueUniqueWork` hi paanch taps ko paanch syncs banne se rokta hai. `KEEP` koi kaam
+baaki ho to nai maang andekhi kar deta hai; `REPLACE` purane ko rok deta hai; `APPEND` unhe order se
+chalata hai.
+
+<Quiz
+  question="Koi periodic worker har 5 minute par chalne ke liye lagaya gaya hai. Testing mein wo achhe se achha har 15 minute par chalta hai, aur kabhi-kabhi usse bhi kam baar. Kya ye bug hai?"
+  options={[
+    "Haan — wo antaral andekha ho raha hai aur us request ko `setInitialDelay` chahiye",
+    "Nahi. Periodic kaam ka kam se kam antaral 15 minute hai, aur wo bhi nishana hai, guarantee nahi — Doze aur App Standby battery bachane ke liye peeche ka kaam ikattha karke taalte hain",
+    "Haan — periodic kaam ko waqt par chalne ke liye foreground service chahiye",
+  ]}
+  answer={1}
+  explanation="WorkManager periodic kaam par 15 minute ki farsh lagata hai, to 5 minute ka antaral namanzoor hone ke bajaye chupchap badhakar 15 kar diya jata hai. Isse ahem baat ye hai ki 15 minute bhi ek nishana hai: system taale ja sakne wale kaamon ko rakhrakhav ki khidkiyon mein ikattha karta hai, aur khaali pade device par Doze mein wo antaral ghante ya usse zyada ho jate hain. WorkManager ka sauda yahi hai — wo guarantee deta hai ki kaam aakhirkar chalega, ye nahi ki kab. Agar kisi cheez ko sach mein theek kisi pal hona hi hai, to periodic kaam galat auzar hai: user ko dikhta chalta hua kaam foreground service chahta hai, aur asli alarm ko AlarmManager, dono isi phase mein aage hain. Design ki aam galti hai periodic kaam ko ghadi maan lena; wo 'mote taur par itni baar, jab bhi sasta pade' kehne ka tarika hai."
+/>
+
+## Kadi banana
+
+```kotlin title="Chain.kt" numbered
+WorkManager.getInstance(context)
+    .beginWith(listOf(compressImages, uploadThumbnails))   // ye dono saath-saath
+    .then(uploadFullSize)                                  // dono ke safal hone ke baad
+    .then(notifyServer)
+    .enqueue()
+```
+
+Har `then` apne se pehle ki har cheez ke safal hone ka intezar karta hai. Kahin bhi `Result.failure()`
+baaki kadi rok deta hai, aur aam taur par aap yahi chahte ho — jo upload hua hi nahi uski khabar server
+ko dene ka koi matlab nahi.
+
+Data kadi ke saath `Data` se chalta hai, jo ek chhota key-value bundle hai:
+
+```kotlin title="Data.kt" numbered
+override suspend fun doWork(): Result {
+    val url = uploadFile() ?: return Result.retry()
+    return Result.success(workDataOf("url" to url))       // agla worker ise padhega
+}
+```
+
+`Data` ki **10 KB ki had** hai aur usse upar wo phenkta hai. Wo ids aur chhoti strings ke liye hai;
+koi bitmap ya dastavez kisi file mein jata hai aur uska path — ya usse behtar, koi id — `Data` se safar
+karti hai. Ye wahi naap wala anushasan hai jo configuration badalne wale lesson mein `Bundle` par tha,
+usi wajah se.
+
+<Detail summary="Kaam par nazar rakhna, aur uska test karna">
+Worker ki pragati dekhi ja sakti hai, aur isi se koi screen upload dikhati hai bina uski maalik hue:
+
+```kotlin title="Observe.kt" numbered
+val syncState: Flow<WorkInfo?> = WorkManager.getInstance(context)
+    .getWorkInfosForUniqueWorkFlow("sync")
+    .map { it.firstOrNull() }
+```
+
+`WorkInfo` haalat lekar chalta hai — `ENQUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `BLOCKED`,
+`CANCELLED` — aur worker ki bheji koi bhi pragati. Screen use dekhti rehti hai aur rotation ke aar-paar
+sahi rehti hai, kyunki wo kaam kabhi screen ka tha hi nahi.
+
+Tests ke liye `WorkManagerTestInitHelper` aisa driver deta hai jisse aap sharten poori kara sakte ho
+aur samay haath se aage badha sakte ho:
+
+```kotlin title="WorkerTest.kt" numbered
+val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
+workManager.enqueue(request).result.get()
+driver.setAllConstraintsMet(request.id)          // maan lijiye Wi-Fi aa gaya
+val info = workManager.getWorkInfoById(request.id).get()
+assertEquals(WorkInfo.State.SUCCEEDED, info.state)
+```
+
+Uske bina aap test mein asli sharton ka intezar kar rahe hote, aur isi se koi suite dheemi tatha
+gair-bharosemand banti hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jinse kaam ya to bahut baar chalta hai ya kabhi nahi">
+**Us kaam ke liye lena jo screen ka hai.** Agar use screen band hone par bachna hi nahi hai, to
+`viewModelScope` wala coroutine aasan bhi hai aur turant bhi.
+
+**Pakki nakami par `Result.retry()`.** `400` hamesha waise hi nakaam hoga, to worker app ke uninstall
+hone tak badhte antaral par chalta rehta hai.
+
+**Periodic antaral ke maane jane ki ummid.** Farsh 15 minute hai aur wo bhi ek nishana.
+
+**Koi unique naam na hona.** Paanch taps paanch syncs line mein laga dete hain, sab ek saath wahi kaam
+karte hue.
+
+**`Data` mein bada saaman.** Had 10 KB hai aur wo phenkta hai. Koi id bhejiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi sync ko `viewModelScope` se hatakar worker mein le jaiye, phir beech mein app band kijiye aur
+   pakka kijiye ki wo poora hota hai.
+2. `UNMETERED` wali shart jodiye aur worker ko mobile data par intezar karte dekhiye.
+3. Bina shart `Result.retry()` lautaiye aur backoff ke antaralon ko badhte dekhiye.
+4. Wahi unique kaam paanch baar `KEEP` se line mein lagaiye, phir `REPLACE` se, aur dono milaiye.
+5. Kisi screen se worker ka `WorkInfo` dekhiye, device ghumaiye, aur pakka kijiye ki haalat bachi
+   rehti hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Kab lijiye | Jab kaam ko screen, process aur reboot ke aar-paar bachna hai |
+| `CoroutineWorker` | `doWork` `suspend` hai; rukna theek se chalta hai |
+| `Result.success` | Ho gaya; kadi aage badhti hai |
+| `Result.failure` | Ho gaya aur toota; kadi ruk jati hai |
+| `Result.retry` | Badhte antaral ke saath phir se lagata hai |
+| `Constraints` | System network, charge ya khaalipan ka intezar karta hai — koi listener nahi likhna |
+| `enqueueUniqueWork` | Ek naam wala kaam, taki taps se naklein line mein na lagein |
+| Kadi | `then` apne se pehle ki har cheez ke safal hone ka intezar karta hai |
+| `Data` | 10 KB ki had — saaman nahi, id bhejiye |
+| Periodic | 15 minute ki farsh, aur wada nahi balki nishana |
+
+<Interview title="Ek sawal, jo scheduler ka nahi, guarantee ka hai">
+"Coroutine ke bajaye WorkManager kab loge?"
+
+Jab kaam ko us cheez se zyada jeena hai jisne use shuru kiya. `viewModelScope` wala coroutine user ke
+screen chhodte hi ruk jata hai, jo kisi list lane ke liye sahi hai aur kisi upload ke liye galat — to
+jo bhi poora hona hi chahiye, aur jise process marne tatha reboot ke aar-paar bachna hai, wo worker ki
+jagah hai.
+
+Jis hisse par main zor doonga wo constraints hai, kyunki asli bachat wahin hai: connectivity sunne
+wala darj karke boot ke baad dobara dekhne ke bajaye main `UNMETERED` likh deta hoon aur Wi-Fi aane
+tak system us worker ko chalata hi nahi. Jiski main ummid nahi karunga wo hai theek-theek samay.
+Periodic kaam par 15 minute ki farsh hai aur wo bhi nishana hai, kyunki Doze taale ja sakne wale
+kaamon ko ikattha karta hai — to agar kisi cheez ko theek kisi pal hona hi hai, to wo `AlarmManager`
+hai ya koi foreground service, ye nahi.
+</Interview>
