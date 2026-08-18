@@ -1,0 +1,271 @@
+---
+title: OkHttp interceptors, auth और timeouts
+description: Retrofit एक endpoint बताता है। OkHttp वह जगह है जहाँ वह सब रहता है जो सब पर लागू होता है — token, logging, retries, cache, और वे चार timeouts जो तय करते हैं कि ऐप कब हार माने।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Retrofit request बनाता है; **OkHttp उसे भेजता है**। जो भी बात हर call पर सच है — आप कौन हैं, क्या
+log होगा, कब हार मानें, cache से क्या दिया जा सकता है — वह चालीस endpoints पर दोहराने के बजाय एक
+interceptor की कड़ी में रहती है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+हर endpoint पर auth token, सीधा तरीका:
+
+```kotlin title="Everywhere.kt" numbered
+@GET("v1/orders")
+suspend fun orders(@Header("Authorization") auth: String): List<OrderDto>
+
+@GET("v1/orders/{id}")
+suspend fun order(@Header("Authorization") auth: String, @Path("id") id: String): OrderDto
+```
+
+अब हर बुलाने वाली जगह एक token पकड़े है, repository उसे ऐसे functions से गुजार रहा है जिनका उससे
+कोई लेना-देना नहीं, और जिस दिन token की मियाद खत्म होगी उसे refresh करने की कोई एक जगह नहीं है।
+
+वही चीज, एक बार:
+
+```kotlin title="AuthInterceptor.kt" numbered
+class AuthInterceptor(private val tokens: TokenStore) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val token = tokens.current() ?: return chain.proceed(chain.request())
+        val authed = chain.request().newBuilder()
+            .header("Authorization", "Bearer $token")
+            .build()
+        return chain.proceed(authed)
+    }
+}
+```
+
+अब इस client से जाने वाली हर request वह header लेकर चलती है, और किसी endpoint को पता ही नहीं कि
+ऐसा हुआ।
+
+## कड़ी
+
+Interceptor को request नीचे जाते वक्त मिलती है और response वापस ऊपर आते वक्त। `chain.proceed()`
+अगली कड़ी को बुलाना है, तो उससे पहले जो लिखा है वह request बदलता है और बाद में जो लिखा है वह
+response देखता है।
+
+<Figure caption="हर interceptor request को नीचे जाते और response को ऊपर आते देखता है। क्रम वही है जिसमें आपने उन्हें जोड़ा।">
+  <PipelineDiagram
+    title="Interceptor की कड़ी"
+    description="पहले आपके application interceptors, फिर OkHttp की अपनी retry और redirect वाली सँभाल तथा cache, फिर network interceptors, फिर तार।"
+    stages={[
+      { label: "Application", sub: "आपके auth, logging", accent: "violet" },
+      { label: "Retry / cache", sub: "OkHttp के अपने", accent: "emerald" },
+      { label: "Network", sub: "हर तार वाली call पर", accent: "sky" },
+      { label: "Socket", sub: "असली bytes", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+यही तस्वीर वह फर्क समझाती है जो लोग गलत करते हैं।
+
+<Compare
+  left={{
+    title: "addInterceptor",
+    subtitle: "Application interceptor",
+    accent: "violet",
+    points: [
+      "+ आपकी बुलाई हर call पर ठीक एक बार",
+      "+ Cache के जवाब देने पर भी चलता है, तो हर call दिखती है",
+      "+ Redirect से पहले वही URL देखता है जो आपने माँगा",
+      "- कोई redirect या अपने आप हुई retry नहीं देख सकता",
+    ],
+  }}
+  right={{
+    title: "addNetworkInterceptor",
+    subtitle: "Network interceptor",
+    accent: "sky",
+    points: [
+      "+ तार पर गई हर request पर एक बार",
+      "+ Redirects और retries अलग calls की तरह दिखते हैं",
+      "+ OkHttp ने जो असली headers जोड़े वे दिखते हैं",
+      "- Cache से response मिलने पर पूरा छूट जाता है",
+    ],
+  }}
+/>
+
+Auth application interceptor में जाता है: आप उसे हर तार्किक call पर एक बार चाहते हैं, और चाहते हैं
+कि redirect हो या न हो, वह चले। जो logger तार पर सच में गया हुआ दिखाना चाहिए — `Content-Length` और
+OkHttp की चुनी encoding समेत — उसे network interceptor होना ही पड़ेगा, और cache से जवाब मिलने पर वह
+चुप रहेगा।
+
+## Token refresh करना interceptor का काम नहीं है
+
+लुभावना तरीका interceptor के अंदर ही `401` देखता है और दोबारा भेज देता है। OkHttp के पास इसके लिए
+अलग कुर्सी है, और वह उन तरीकों से बेहतर है जिन्हें हाथ से दोहराना मुश्किल है:
+
+```kotlin title="TokenAuthenticator.kt" numbered
+class TokenAuthenticator(private val tokens: TokenStore) : Authenticator {
+    override fun authenticate(route: Route?, response: Response): Request? {
+        if (responseCount(response) >= 2) return null      // घूमते रहने के बजाय हार मानिए
+
+        val fresh = synchronized(this) {
+            val current = tokens.current()
+            // हो सकता है हमारे इंतजार में किसी और thread ने refresh कर लिया हो
+            if (current != null && current != response.request.header("Authorization")?.removePrefix("Bearer "))
+                current
+            else
+                tokens.refreshBlocking() ?: return null    // null यानी: रुकिए, user को लॉग आउट कीजिए
+        }
+
+        return response.request.newBuilder()
+            .header("Authorization", "Bearer $fresh")
+            .build()
+    }
+
+    private fun responseCount(response: Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) { count++; prior = prior.priorResponse }
+        return count
+    }
+}
+```
+
+OkHttp `authenticate` को सिर्फ `401` पर बुलाता है, जो request वह लौटाए उसे दोबारा भेजता है, और
+`null` लौटने को "रुक जाओ" मानता है। `priorResponse` की कड़ी ही वह तरीका है जिससे आप हमेशा घूमते
+रहने से इनकार करते हैं जब refresh किया हुआ token भी नामंजूर हो — उसके बिना, रद्द हो चुका कोई खाता
+कभी न रुकने वाला refresh का तूफान बना देता है।
+
+<Quiz
+  question="कोई screen एक साथ पाँच requests भेजती है। Token की मियाद खत्म है, तो पाँचों 401 लौटती हैं। सीधे-सादे refresh के साथ क्या होता है, और इलाज क्या है?"
+  options={[
+    "कुछ गलत नहीं होता — OkHttp 401 को कतार में लगाकर एक ही बार refresh करता है",
+    "पाँच refresh आपस में दौड़ पड़ते हैं; उनमें से चार tokens तुरंत बासी हो जाते हैं, और जो server पुराना refresh token रद्द कर देता है वहाँ user लॉग आउट हो जाता है",
+    "Requests हमेशा के लिए नाकाम हो जाती हैं — refresh सिर्फ एक चलती request के लिए काम करता है",
+  ]}
+  answer={1}
+  explanation="OkHttp यह आपके लिए नहीं सँभालता: पाँचों calls अलग-अलग Authenticator तक पहुँचती हैं और हर एक अपना refresh शुरू कर देती है। जो server refresh tokens बदलता रहता है, वहाँ पहला refresh उस token को रद्द कर देता है जिसे बाकी चार इस्तेमाल कर रहे थे, तो वे चार नाकाम होती हैं — और वह नाकामी auth वाली नाकामी जैसी दिखती है, तो ऐप बिलकुल ठीक चल रहे session पर user को लॉग आउट कर देता है। इलाज के दो हिस्से हैं। Refresh को एक-एक करके चलाइए, ताकि सिर्फ एक चले और बाकी उसका इंतजार करें; `synchronized` वाला block यही करता है। फिर, अंदर पहुँचकर देखिए कि request भेजने के बाद से token पहले ही बदल तो नहीं गया — अगर आपके इंतजार में किसी और thread ने refresh कर लिया, तो दोबारा refresh करने के बजाय उसी का token लीजिए। दूसरा हिस्सा छोड़ देने पर एक refresh पाँच बन जाते हैं, बस साथ-साथ के बजाय एक के बाद एक — यानी वही bug, ताला पहनकर।"
+/>
+
+## Timeouts, और वह जो सच में call की हद बाँधता है
+
+```kotlin title="OkHttpModule.kt" numbered
+val okHttpClient: OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(10.seconds.toJavaDuration())   // TCP और TLS का handshake
+    .readTimeout(15.seconds.toJavaDuration())      // दो bytes आने के बीच का अंतर
+    .writeTimeout(15.seconds.toJavaDuration())     // दो bytes भेजने के बीच का अंतर
+    .callTimeout(30.seconds.toJavaDuration())      // पूरी चीज, सिरे से सिरे तक
+    .addInterceptor(AuthInterceptor(tokens))
+    .authenticator(TokenAuthenticator(tokens))
+    .cache(Cache(context.cacheDir.resolve("http"), 10L * 1024 * 1024))
+    .build()
+```
+
+| Timeout | किसकी हद | Default |
+| --- | --- | --- |
+| `connectTimeout` | Connection जुड़ने की | 10s |
+| `readTimeout` | दो bytes आने के बीच के अंतर की | 10s |
+| `writeTimeout` | दो bytes भेजने के बीच के अंतर की | 10s |
+| `callTimeout` | पूरी call की, redirects और retries समेत | कोई नहीं |
+
+जिन तीन को लोग जानते हैं वे सब **हर अंतर पर** हैं, पूरी call पर नहीं: जो server हर नौ सेकंड में एक
+byte टपकाता है वह दस सेकंड वाला read timeout कभी नहीं छूता, और request अनंत काल तक लटकी रहती है।
+`callTimeout` अकेला है जो पूरे काम की हद बाँधता है, वह default से बंद है, और उसे लगाना उस spinner
+और इस spinner का फर्क है जो कभी खत्म ही नहीं होता।
+
+<Note>
+`callTimeout` user की नजर से तय कीजिए — कोई इंसान spinner को कितनी देर देखेगा उससे पहले ऐप को हार
+मान लेनी चाहिए — और बाकी तीन network की नजर से। सिरे से सिरे तक तीस सेकंड, साथ में दस सेकंड का
+connect timeout, शुरू करने के लिए ठीक जोड़ी है।
+</Note>
+
+<Detail summary="वह cache वाली लाइन दिखने से ज्यादा कर रही है">
+`Cache(dir, size)` ही पहले पाठ वाली `ETag` और `304` की मशीनरी को सच में चलाता है। Cache लगा हो तो
+OkHttp cache वाले headers लिए हुए responses रख लेता है, अगली request पर `If-None-Match` खुद जोड़ता
+है, और `304` को आपके code तक पहुँचने से पहले ही रखी हुई body बना देता है — तो `List<OrderDto>` के
+लिए लिखे repository को cache से जवाब मिलता है और उसे पता तक नहीं चलता।
+
+दो बातें जानने लायक हैं। यह HTTP का cache है, तो यह server की मानता है: अगर server
+`Cache-Control: no-store` भेजे तो कुछ भी cache नहीं होता और client की कोई setting उसे नहीं पलट
+सकती। और यह URL के हिसाब से रखा जाता है, जो इसे offline के लिए गलत औजार बनाता है — cache की मियाद
+खत्म हो सकती है और जगह की तंगी में वह हटाया जा सकता है, तो "offline चलता है" database की बात है,
+जिधर अगले पाठ जा रहे हैं।
+</Detail>
+
+## Logging, और वह हिस्सा जो bug report में पहुँच जाता है
+
+```kotlin title="Logging.kt" numbered
+if (BuildConfig.DEBUG) {
+    builder.addInterceptor(
+        HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+            redactHeader("Authorization")
+            redactHeader("Cookie")
+        }
+    )
+}
+```
+
+`Level.BODY` request और response दोनों की bodies छापता है, जो बनाते वक्त ठीक वही है जो आप चाहते हैं
+और भेजते वक्त ठीक वही जो आपको नहीं भेजना चाहिए: यह tokens, निजी जानकारी और payment की बातें Logcat
+में लिख देता है, जहाँ से पढ़ने की इजाजत वाला कोई भी ऐप — और हर crash reporter — उन्हें उठा सकता है।
+`DEBUG` वाला पहरा और वे redactions, दोनों बोझ उठा रहे हैं।
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो सिर्फ production में दिखती हैं">
+**Interceptor के अंदर token refresh करना।** न घूमने से बचाव, न साथ-साथ चलती calls के बीच तालमेल।
+`Authenticator` इसी के लिए है।
+
+**`callTimeout` न होना।** बाकी तीन हर अंतर पर हैं, तो bytes की धीमी टपक आपके लगाए हर timeout को पार
+करके request लटकाए रखती है।
+
+**हर request पर नया client।** Connection pool और cache client में रहते हैं, तो हर बार नया बनाने का
+मतलब है न connection दोबारा, न cache — वही गलती जो हर call पर नया Retrofit बनाने की थी, बस एक परत
+नीचे।
+
+**Release में `Level.BODY`।** Logcat में tokens और निजी जानकारी, जिन्हें ऐप का हर crash reporter
+बटोर लेता है।
+
+**HTTP cache को offline वाली सुविधा मान लेना।** वह हटाया जा सकता है और URL से बँधा है। Offline
+database का फैसला है, cache की setting नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी `Authorization` header को `@Header` parameters से हटाकर interceptor में ले जाइए, और जिन
+   endpoints पर वह था उन सबसे वह parameter मिटा दीजिए।
+2. वही logging interceptor दो बार जोड़िए — एक बार `addInterceptor` से, एक बार
+   `addNetworkInterceptor` से — और redirect होने वाली किसी request पर दोनों का output मिलाइए।
+3. Client को cache की जगह दीजिए, वही endpoint दो बार माँगिए, और network interceptor के log में
+   `304` ढूँढ़िए जबकि application interceptor आम response दिखा रहा हो।
+4. `readTimeout` दो सेकंड कीजिए और कोई `callTimeout` मत रखिए, फिर ऐप को किसी धीमे endpoint पर
+   लगाइए और उसे फिर भी लटकते देखिए।
+5. मियाद खत्म हो चुके token के साथ पाँच requests एक साथ भेजिए और गिनिए कि आपका refresh कितनी बार
+   चला।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| OkHttp | Retrofit के नीचे का वह client जो request सच में भेजता है |
+| Interceptor | नीचे जाती request बदलिए, ऊपर आता response देखिए |
+| `addInterceptor` | हर तार्किक call पर एक बार; cache से जवाब मिलने पर भी चलता है |
+| `addNetworkInterceptor` | तार पर गई हर request पर एक बार; cache वाले जवाब पर छूट जाता है |
+| `Authenticator` | `401` पर बुलाया जाता है, जो लौटाए उसे दोबारा भेजता है, `null` यानी हार |
+| `priorResponse` | जिससे authenticator घूमते रहने से इनकार करता है |
+| साथ-साथ आए `401` | Refresh को एक-एक करके चलाइए, फिर ताले के अंदर token दोबारा देखिए |
+| `connect` / `read` / `write` | हर अंतर के timeouts, पूरी call के नहीं |
+| `callTimeout` | सिरे से सिरे तक की इकलौती हद, और default से बंद |
+| `Cache` | `ETag` और `304` को चलाता है; offline वाली सुविधा नहीं |
+
+<Interview title="एक सवाल, जो auth भेज चुके लोगों को अलग कर देता है">
+"किसी Android ऐप में token refresh आप कैसे सँभालेंगे?"
+
+`Authenticator` से, interceptor से नहीं। Interceptor का काम है हर request पर मौजूदा token लगाना;
+`Authenticator` वह है जिसे OkHttp तब बुलाता है जब कोई request `401` लौटाए, और मैं जो request वापस
+दूँ उसे वह अपने आप दोबारा भेज देता है। `null` लौटाने का मतलब है रुक जाना, और मैं `priorResponse` की
+कड़ी से दूसरी कोशिश के बाद `null` लौटाऊँगा, ताकि रद्द हो चुका कोई खाता कभी न रुकने वाला refresh का
+चक्कर न बना सके।
+
+जो बात मैं बिना पूछे उठाऊँगा वह है साथ-साथ चलना। साथ-साथ गई पाँच calls को `401` मिलता है और पाँचों
+`Authenticator` तक पहुँचती हैं, तो refresh को एक-एक करके चलाना ही पड़ेगा — और ताले के अंदर पहुँचकर
+हर एक को यह दोबारा देखना पड़ेगा कि उसके इंतजार में token पहले ही बदल तो नहीं गया। उस दूसरी जाँच के
+बिना आपको साथ-साथ पाँच के बजाय एक के बाद एक पाँच refresh मिलते हैं, और जो server refresh tokens
+बदलता रहता है वहाँ यह बिलकुल ठीक चल रहे session से user को लॉग आउट कर देता है।
+</Interview>

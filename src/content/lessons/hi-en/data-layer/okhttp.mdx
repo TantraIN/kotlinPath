@@ -1,0 +1,274 @@
+---
+title: OkHttp interceptors, auth aur timeouts
+description: Retrofit ek endpoint batata hai. OkHttp wo jagah hai jahan wo sab rehta hai jo sab par lagu hota hai — token, logging, retries, cache, aur wo chaar timeouts jo tay karte hain ki app kab haar mane.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Retrofit request banata hai; **OkHttp use bhejta hai**. Jo bhi baat har call par sach hai — aap kaun
+ho, kya log hoga, kab haar mano, cache se kya diya ja sakta hai — wo chaalis endpoints par doharane
+ke bajaye ek interceptor ki kadi mein rehti hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Har endpoint par auth token, seedha tarika:
+
+```kotlin title="Everywhere.kt" numbered
+@GET("v1/orders")
+suspend fun orders(@Header("Authorization") auth: String): List<OrderDto>
+
+@GET("v1/orders/{id}")
+suspend fun order(@Header("Authorization") auth: String, @Path("id") id: String): OrderDto
+```
+
+Ab har bulane wali jagah ek token pakde hai, repository use aise functions se guzar raha hai jinka
+usse koi lena-dena nahi, aur jis din token ki miyad khatam hogi use refresh karne ki koi ek jagah
+nahi hai.
+
+Wahi cheez, ek baar:
+
+```kotlin title="AuthInterceptor.kt" numbered
+class AuthInterceptor(private val tokens: TokenStore) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val token = tokens.current() ?: return chain.proceed(chain.request())
+        val authed = chain.request().newBuilder()
+            .header("Authorization", "Bearer $token")
+            .build()
+        return chain.proceed(authed)
+    }
+}
+```
+
+Ab is client se jane wali har request wo header lekar chalti hai, aur kisi endpoint ko pata hi nahi
+ki aisa hua.
+
+## Kadi
+
+Interceptor ko request neeche jate waqt milti hai aur response wapas upar aate waqt.
+`chain.proceed()` agli kadi ko bulana hai, to usse pehle jo likha hai wo request badalta hai aur
+baad mein jo likha hai wo response dekhta hai.
+
+<Figure caption="Har interceptor request ko neeche jate aur response ko upar aate dekhta hai. Order wahi hai jisme aapne unhe joda.">
+  <PipelineDiagram
+    title="Interceptor ki kadi"
+    description="Pehle aapke application interceptors, phir OkHttp ki apni retry aur redirect wali sambhal tatha cache, phir network interceptors, phir taar."
+    stages={[
+      { label: "Application", sub: "aapke auth, logging", accent: "violet" },
+      { label: "Retry / cache", sub: "OkHttp ke apne", accent: "emerald" },
+      { label: "Network", sub: "har taar wali call par", accent: "sky" },
+      { label: "Socket", sub: "asli bytes", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+Yahi tasveer wo farak samjhati hai jo log galat karte hain.
+
+<Compare
+  left={{
+    title: "addInterceptor",
+    subtitle: "Application interceptor",
+    accent: "violet",
+    points: [
+      "+ Aapki bulai har call par theek ek baar",
+      "+ Cache ke jawab dene par bhi chalta hai, to har call dikhti hai",
+      "+ Redirect se pehle wahi URL dekhta hai jo aapne maanga",
+      "- Koi redirect ya apne aap hui retry nahi dekh sakta",
+    ],
+  }}
+  right={{
+    title: "addNetworkInterceptor",
+    subtitle: "Network interceptor",
+    accent: "sky",
+    points: [
+      "+ Taar par gayi har request par ek baar",
+      "+ Redirects aur retries alag calls ki tarah dikhte hain",
+      "+ OkHttp ne jo asli headers jode wo dikhte hain",
+      "- Cache se response milne par poora chhoot jata hai",
+    ],
+  }}
+/>
+
+Auth application interceptor mein jata hai: aap use har tarkik call par ek baar chahte ho, aur
+chahte ho ki redirect ho ya na ho, wo chale. Jo logger taar par sach mein gaya hua dikhana chahiye —
+`Content-Length` aur OkHttp ki chuni encoding samet — use network interceptor hona hi padega, aur
+cache se jawab milne par wo chup rahega.
+
+## Token refresh karna interceptor ka kaam nahi hai
+
+Lubhawana tarika interceptor ke andar hi `401` dekhta hai aur dobara bhej deta hai. OkHttp ke paas
+iske liye alag kursi hai, aur wo un tarikon se behtar hai jinhe haath se doharana mushkil hai:
+
+```kotlin title="TokenAuthenticator.kt" numbered
+class TokenAuthenticator(private val tokens: TokenStore) : Authenticator {
+    override fun authenticate(route: Route?, response: Response): Request? {
+        if (responseCount(response) >= 2) return null      // ghoomte rehne ke bajaye haar maniye
+
+        val fresh = synchronized(this) {
+            val current = tokens.current()
+            // ho sakta hai hamare intezar mein kisi aur thread ne refresh kar liya ho
+            if (current != null && current != response.request.header("Authorization")?.removePrefix("Bearer "))
+                current
+            else
+                tokens.refreshBlocking() ?: return null    // null yani: rukiye, user ko log out kijiye
+        }
+
+        return response.request.newBuilder()
+            .header("Authorization", "Bearer $fresh")
+            .build()
+    }
+
+    private fun responseCount(response: Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) { count++; prior = prior.priorResponse }
+        return count
+    }
+}
+```
+
+OkHttp `authenticate` ko sirf `401` par bulata hai, jo request wo lautaye use dobara bhejta hai, aur
+`null` lautne ko "ruk jao" manta hai. `priorResponse` ki kadi hi wo tarika hai jisse aap hamesha
+ghoomte rehne se inkaar karte ho jab refresh kiya hua token bhi namanzoor ho — uske bina, radd ho
+chuka koi account kabhi na rukne wala refresh ka toofan bana deta hai.
+
+<Quiz
+  question="Koi screen ek saath paanch requests bhejti hai. Token ki miyad khatam hai, to paanchon 401 lautti hain. Seedhe-saade refresh ke saath kya hota hai, aur ilaaj kya hai?"
+  options={[
+    "Kuch galat nahi hota — OkHttp 401 ko line mein lagakar ek hi baar refresh karta hai",
+    "Paanch refresh aapas mein daud padte hain; unmein se chaar tokens turant baasi ho jate hain, aur jo server purana refresh token radd kar deta hai wahan user log out ho jata hai",
+    "Requests hamesha ke liye nakaam ho jati hain — refresh sirf ek chalti request ke liye kaam karta hai",
+  ]}
+  answer={1}
+  explanation="OkHttp ye aapke liye nahi sambhalta: paanchon calls alag-alag Authenticator tak pahunchti hain aur har ek apna refresh shuru kar deti hai. Jo server refresh tokens badalta rehta hai, wahan pehla refresh us token ko radd kar deta hai jise baaki chaar istemal kar rahe the, to wo chaar nakaam hoti hain — aur wo nakami auth wali nakami jaisi dikhti hai, to app bilkul theek chal rahe session par user ko log out kar deta hai. Ilaaj ke do hisse hain. Refresh ko ek-ek karke chalaiye, taki sirf ek chale aur baaki uska intezar karein; `synchronized` wala block yahi karta hai. Phir, andar pahunchkar dekhiye ki request bhejne ke baad se token pehle hi badal to nahi gaya — agar aapke intezar mein kisi aur thread ne refresh kar liya, to dobara refresh karne ke bajaye usi ka token lijiye. Doosra hissa chhod dene par ek refresh paanch ban jate hain, bas saath-saath ke bajaye ek ke baad ek — yani wahi bug, taala pehankar."
+/>
+
+## Timeouts, aur wo jo sach mein call ki had baandhta hai
+
+```kotlin title="OkHttpModule.kt" numbered
+val okHttpClient: OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(10.seconds.toJavaDuration())   // TCP aur TLS ka handshake
+    .readTimeout(15.seconds.toJavaDuration())      // do bytes aane ke beech ka antar
+    .writeTimeout(15.seconds.toJavaDuration())     // do bytes bhejne ke beech ka antar
+    .callTimeout(30.seconds.toJavaDuration())      // poori cheez, sire se sire tak
+    .addInterceptor(AuthInterceptor(tokens))
+    .authenticator(TokenAuthenticator(tokens))
+    .cache(Cache(context.cacheDir.resolve("http"), 10L * 1024 * 1024))
+    .build()
+```
+
+| Timeout | Kiski had | Default |
+| --- | --- | --- |
+| `connectTimeout` | Connection judne ki | 10s |
+| `readTimeout` | Do bytes aane ke beech ke antar ki | 10s |
+| `writeTimeout` | Do bytes bhejne ke beech ke antar ki | 10s |
+| `callTimeout` | Poori call ki, redirects aur retries samet | Koi nahi |
+
+Jin teen ko log jante hain wo sab **har antar par** hain, poori call par nahi: jo server har nau
+second mein ek byte tapkata hai wo das second wala read timeout kabhi nahi chhoota, aur request anant
+kaal tak latki rehti hai. `callTimeout` akela hai jo poore kaam ki had baandhta hai, wo default se
+band hai, aur use lagana us spinner aur is spinner ka farak hai jo kabhi khatam hi nahi hota.
+
+<Note>
+`callTimeout` user ki nazar se tay kijiye — koi insaan spinner ko kitni der dekhega usse pehle app
+ko haar maan leni chahiye — aur baaki teen network ki nazar se. Sire se sire tak tees second, saath
+mein das second ka connect timeout, shuru karne ke liye theek jodi hai.
+</Note>
+
+<Detail summary="Wo cache wali line dikhne se zyada kar rahi hai">
+`Cache(dir, size)` hi pehle lesson wali `ETag` aur `304` ki machinery ko sach mein chalata hai. Cache
+laga ho to OkHttp cache wale headers liye hue responses rakh leta hai, agli request par
+`If-None-Match` khud jodta hai, aur `304` ko aapke code tak pahunchne se pehle hi rakhi hui body bana
+deta hai — to `List<OrderDto>` ke liye likhe repository ko cache se jawab milta hai aur use pata tak
+nahi chalta.
+
+Do baatein janne layak hain. Ye HTTP ka cache hai, to ye server ki manta hai: agar server
+`Cache-Control: no-store` bheje to kuch bhi cache nahi hota aur client ki koi setting use nahi palat
+sakti. Aur ye URL ke hisab se rakha jata hai, jo ise offline ke liye galat auzar banata hai — cache
+ki miyad khatam ho sakti hai aur jagah ki tangi mein wo hataya ja sakta hai, to "offline chalta hai"
+database ki baat hai, jidhar agle lesson ja rahe hain.
+</Detail>
+
+## Logging, aur wo hissa jo bug report mein pahunch jata hai
+
+```kotlin title="Logging.kt" numbered
+if (BuildConfig.DEBUG) {
+    builder.addInterceptor(
+        HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+            redactHeader("Authorization")
+            redactHeader("Cookie")
+        }
+    )
+}
+```
+
+`Level.BODY` request aur response dono ki bodies chhapta hai, jo banate waqt theek wahi hai jo aap
+chahte ho aur bhejte waqt theek wahi jo aapko nahi bhejna chahiye: ye tokens, niji jankari aur
+payment ki baatein Logcat mein likh deta hai, jahan se padhne ki ijazat wala koi bhi app — aur har
+crash reporter — unhe utha sakta hai. `DEBUG` wala pehra aur wo redactions, dono bojh utha rahe hain.
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo sirf production mein dikhti hain">
+**Interceptor ke andar token refresh karna.** Na ghoomne se bachav, na saath-saath chalti calls ke
+beech taalmel. `Authenticator` isi ke liye hai.
+
+**`callTimeout` na hona.** Baaki teen har antar par hain, to bytes ki dheemi tapak aapke lagaye har
+timeout ko paar karke request latkaye rakhti hai.
+
+**Har request par naya client.** Connection pool aur cache client mein rehte hain, to har baar naya
+banane ka matlab hai na connection dobara, na cache — wahi galti jo har call par naya Retrofit banane
+ki thi, bas ek parat neeche.
+
+**Release mein `Level.BODY`.** Logcat mein tokens aur niji jankari, jinhe app ka har crash reporter
+bator leta hai.
+
+**HTTP cache ko offline wali suvidha maan lena.** Wo hataya ja sakta hai aur URL se bandha hai.
+Offline database ka faisla hai, cache ki setting nahi.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi `Authorization` header ko `@Header` parameters se hatakar interceptor mein le jaiye, aur jin
+   endpoints par wo tha un sabse wo parameter mita dijiye.
+2. Wahi logging interceptor do baar jodiye — ek baar `addInterceptor` se, ek baar
+   `addNetworkInterceptor` se — aur redirect hone wali kisi request par dono ka output milaiye.
+3. Client ko cache ki jagah dijiye, wahi endpoint do baar maangiye, aur network interceptor ke log
+   mein `304` dhoondhiye jabki application interceptor aam response dikha raha ho.
+4. `readTimeout` do second kijiye aur koi `callTimeout` mat rakhiye, phir app ko kisi dheeme endpoint
+   par lagaiye aur use phir bhi latakte dekhiye.
+5. Miyad khatam ho chuke token ke saath paanch requests ek saath bhejiye aur giniye ki aapka refresh
+   kitni baar chala.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| OkHttp | Retrofit ke neeche ka wo client jo request sach mein bhejta hai |
+| Interceptor | Neeche jati request badliye, upar aata response dekhiye |
+| `addInterceptor` | Har tarkik call par ek baar; cache se jawab milne par bhi chalta hai |
+| `addNetworkInterceptor` | Taar par gayi har request par ek baar; cache wale jawab par chhoot jata hai |
+| `Authenticator` | `401` par bulaya jata hai, jo lautaye use dobara bhejta hai, `null` yani haar |
+| `priorResponse` | Jisse authenticator ghoomte rehne se inkaar karta hai |
+| Saath-saath aaye `401` | Refresh ko ek-ek karke chalaiye, phir taale ke andar token dobara dekhiye |
+| `connect` / `read` / `write` | Har antar ke timeouts, poori call ke nahi |
+| `callTimeout` | Sire se sire tak ki iklauti had, aur default se band |
+| `Cache` | `ETag` aur `304` ko chalata hai; offline wali suvidha nahi |
+
+<Interview title="Ek sawal, jo auth bhej chuke logon ko alag kar deta hai">
+"Kisi Android app mein token refresh aap kaise sambhaloge?"
+
+`Authenticator` se, interceptor se nahi. Interceptor ka kaam hai har request par maujooda token
+lagana; `Authenticator` wo hai jise OkHttp tab bulata hai jab koi request `401` lautaye, aur main jo
+request wapas doon use wo apne aap dobara bhej deta hai. `null` lautane ka matlab hai ruk jana, aur
+main `priorResponse` ki kadi se doosri koshish ke baad `null` lautaunga, taki radd ho chuka koi
+account kabhi na rukne wala refresh ka chakkar na bana sake.
+
+Jo baat main bina puche uthaunga wo hai saath-saath chalna. Saath-saath gayi paanch calls ko `401`
+milta hai aur paanchon `Authenticator` tak pahunchti hain, to refresh ko ek-ek karke chalana hi
+padega — aur taale ke andar pahunchkar har ek ko ye dobara dekhna padega ki uske intezar mein token
+pehle hi badal to nahi gaya. Us doosre check ke bina aapko saath-saath paanch ke bajaye ek ke baad
+ek paanch refresh milte hain, aur jo server refresh tokens badalta rehta hai wahan ye bilkul theek
+chal rahe session se user ko log out kar deta hai.
+</Interview>
