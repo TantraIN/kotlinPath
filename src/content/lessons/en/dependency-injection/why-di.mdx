@@ -1,0 +1,219 @@
+---
+title: Why DI — the pain of manual wiring
+description: Dependency injection is not a library. It is the decision to pass a dependency in rather than construct it, and by the end of the last phase your app already needed it.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Dependency injection means a class **receives** what it needs instead of **building** it. That is the
+whole idea, and it costs nothing — you can do it today with constructor parameters. A framework only
+automates the wiring that follows, and it is worth understanding the problem before reaching for one.
+</KeyIdea>
+
+## Why this matters
+
+Here is a `ViewModel` that constructs its own world:
+
+```kotlin title="Constructs.kt" numbered
+class OrderViewModel : ViewModel() {
+    private val repository = OfflineFirstOrderRepository(
+        api = Retrofit.Builder()
+            .baseUrl("https://api.example.com/")
+            .addConverterFactory(Json.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(OrderApi::class.java),
+        dao = Room.databaseBuilder(MyApp.instance, AppDatabase::class.java, "app.db")
+            .build()
+            .orderDao(),
+    )
+}
+```
+
+It works. Every problem with it is a consequence of one fact: this class decided *what* its
+dependencies are, so nobody else can change them.
+
+**It cannot be tested.** A test of this `ViewModel` opens a real database and makes real network
+calls. There is no seam to put a fake in, so the test needs an emulator and a server, and it is slow
+and flaky for reasons that have nothing to do with what you were testing.
+
+**It builds a second Retrofit and a second database.** Each is a singleton by intention and neither
+is one in practice — a new connection pool, an empty cache, a second open handle on the SQLite file.
+Every mistake from the last phase, caused not by carelessness but by construction happening in the
+wrong place.
+
+**It reaches for a global.** `MyApp.instance` exists only because this class needed a `Context` it
+was never given.
+
+## The fix is a parameter
+
+```kotlin title="Injected.kt" numbered
+class OrderViewModel(
+    private val repository: OrderRepository,      // an interface, given to me
+) : ViewModel()
+```
+
+That is dependency injection. No annotations, no library. The class now states what it needs and
+says nothing about where it comes from, so a test hands it a fake and production hands it the real
+one.
+
+<Compare
+  left={{
+    title: "Constructing",
+    subtitle: "The class decides",
+    accent: "rose",
+    points: [
+      "- Depends on concrete types, so nothing can be swapped",
+      "- Untestable without a real network and database",
+      "- Duplicates objects that were meant to be shared",
+      "+ Nothing to wire up — it just works when you write it",
+    ],
+  }}
+  right={{
+    title: "Receiving",
+    subtitle: "The caller decides",
+    accent: "emerald",
+    points: [
+      "+ Depends on an interface, so anything can be swapped",
+      "+ Tests pass a fake; no emulator, no server",
+      "+ Shared objects are genuinely shared",
+      "- Somebody now has to do the wiring",
+    ],
+  }}
+/>
+
+That last point is the honest cost, and it is what the rest of this phase is about.
+
+## What inversion of control actually inverts
+
+The name sounds abstract and describes something concrete: **who decides**.
+
+Constructing means the low-level detail is chosen by the high-level policy — `OrderViewModel` picks
+Retrofit. Receiving means the policy states a need and something outside chooses how to meet it. The
+dependency arrow flips, which is the same move as the repository interface living in the domain layer
+back in the architecture phase.
+
+<Quiz
+  question="A team adopts DI but keeps `object NetworkModule { val api = Retrofit... }` and has classes read `NetworkModule.api` directly. Have they solved the problem?"
+  options={[
+    "Yes — construction now happens in one place, which was the point",
+    "Partly: sharing is fixed, but classes still reach out for dependencies rather than receiving them, so they cannot be swapped in a test and the dependency stays hidden from the signature",
+    "No — a singleton object is never acceptable in Kotlin",
+  ]}
+  answer={1}
+  explanation="This is the service locator pattern, and it is a genuine improvement on constructing in place: there is now one Retrofit, so the duplicate connection pools and caches are gone. But the direction of control did not change. A class that calls NetworkModule.api still chose its own dependency, so a test cannot substitute a fake without mutating global state — and mutable global state shared between tests is how you get failures that depend on execution order. The subtler cost is that the dependency is invisible: the constructor says the class needs nothing, so you only discover what it actually touches by reading the whole body. With constructor injection the signature is the list. A singleton object is fine as the place where things are built; the problem is classes reaching into it rather than being handed what they need."
+/>
+
+## Doing it by hand, and where that stops working
+
+For a small app, manual DI is a real answer. One container builds everything once:
+
+```kotlin title="AppContainer.kt" numbered
+class AppContainer(context: Context) {
+
+    private val okHttpClient = OkHttpClient.Builder()
+        .addInterceptor(AuthInterceptor(tokenStore))
+        .build()
+
+    private val api: OrderApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.BASE_URL)
+        .client(okHttpClient)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+        .create(OrderApi::class.java)
+
+    private val database = Room
+        .databaseBuilder(context.applicationContext, AppDatabase::class.java, "app.db")
+        .build()
+
+    val orderRepository: OrderRepository =
+        OfflineFirstOrderRepository(api, database.orderDao())
+}
+```
+
+One `OkHttpClient`, one Retrofit, one database — the sharing the last phase kept insisting on, now
+structural rather than a rule to remember.
+
+Where it stops working is scale and lifetime. Every new dependency edits this file. Anything that
+should live as long as a screen rather than the app needs a second container, and something has to
+create and destroy it at the right moment. Constructing a `ViewModel` with arguments needs a
+factory, written per `ViewModel`. None of that is hard; it is just a lot of code whose only job is
+to hand objects to each other — which is exactly the code a framework can generate.
+
+<Detail summary="What a DI framework actually contributes">
+Given constructor injection everywhere, a framework reads your constructors and works out the order
+to build things in. That is the whole trick, and three things follow.
+
+**The graph is checked at compile time.** Hilt and Dagger generate the wiring during the build, so a
+missing dependency is a compile error naming the type. A runtime-resolved container instead throws
+when the screen opens, which means a rarely-visited screen can ship broken.
+
+**Lifetimes become declarations.** "One per app" and "one per screen" turn into annotations rather
+than containers you create and remember to destroy.
+
+**`ViewModel` factories disappear.** Every `ViewModel` taking constructor arguments needs a factory;
+the framework writes them.
+
+What it does not do is make an untestable class testable. That came from the constructor parameter,
+which you can have without any of this — and it is why the first step in adopting DI is never
+installing the library.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that keep the pain while adding the ceremony">
+**Calling it DI when it is a service locator.** Objects reaching into a global still choose their own
+dependencies. See the quiz.
+
+**Injecting concrete types.** `OfflineFirstOrderRepository` rather than `OrderRepository` gives you
+the wiring with none of the substitutability.
+
+**A `Context` from a global.** `MyApp.instance` is the symptom of a class that was never handed what
+it needed.
+
+**Injecting the container.** Passing `AppContainer` into a class returns to hidden dependencies with
+extra steps.
+
+**Reaching for a framework first.** The testability comes from the constructor parameter. Adopt that,
+then automate the wiring if the wiring hurts.
+</Pitfall>
+
+## Practice
+
+1. Take a class that builds its own repository and move the repository to a constructor parameter.
+   Write a unit test with a fake — note that no emulator is involved.
+2. Count how many `OkHttpClient` instances your app creates. It should be one.
+3. Write an `AppContainer` for a small app and wire one screen through it.
+4. Add a dependency to a class three levels deep and count the files you have to edit. That number is
+   the argument for a framework.
+5. Find every global singleton the app reads directly, and list which of them a test would need to
+   replace.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| DI | Receive dependencies, do not construct them |
+| Cost | Somebody has to do the wiring |
+| Inversion of control | The caller decides, not the class |
+| Constructor injection | The signature is the list of what a class needs |
+| Interfaces | What makes a dependency substitutable |
+| Service locator | Reaching into a global — sharing fixed, control not inverted |
+| Manual DI | One container; genuinely fine for a small app |
+| Where it breaks | Scoped lifetimes and `ViewModel` factories |
+| A framework | Automates wiring and checks the graph at compile time |
+| First step | The constructor parameter, not the library |
+
+<Interview title="A question that is not about Hilt">
+"Why use dependency injection?"
+
+Because a class that constructs its own dependencies has decided what they are, and nobody can
+change that — so testing it means a real network and a real database, and objects that were meant to
+be shared get duplicated. Moving them to constructor parameters fixes both: the class states what it
+needs, a test hands it a fake, and there is one `OkHttpClient` instead of one per caller.
+
+I would separate that from the framework question. Constructor injection is the part that buys
+testability, and it needs no library at all — manual DI with a single container is genuinely fine for
+a small app. A framework earns its place when the wiring gets expensive: scoped lifetimes,
+`ViewModel` factories, and a graph large enough that you want a missing dependency to be a compile
+error rather than a crash on a screen nobody opened during testing.
+</Interview>

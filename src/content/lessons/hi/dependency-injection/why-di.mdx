@@ -1,0 +1,217 @@
+---
+title: DI क्यों — हाथ से wiring करने का दर्द
+description: Dependency injection कोई library नहीं है। वह यह फैसला है कि dependency बनाई नहीं, बाहर से ली जाए, और पिछले phase के आखिर तक आपके ऐप को उसकी जरूरत पड़ ही चुकी थी।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Dependency injection का मतलब है कि class को जो चाहिए वह वह **बनाती** नहीं, **पाती** है। पूरा विचार
+यही है, और इसकी कोई कीमत नहीं — आप इसे आज ही constructor के parameters से कर सकते हैं। कोई framework
+सिर्फ उसके बाद की wiring अपने आप कर देता है, और framework उठाने से पहले दिक्कत समझ लेना ठीक रहता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+यह रहा एक `ViewModel` जो अपनी पूरी दुनिया खुद बनाता है:
+
+```kotlin title="Constructs.kt" numbered
+class OrderViewModel : ViewModel() {
+    private val repository = OfflineFirstOrderRepository(
+        api = Retrofit.Builder()
+            .baseUrl("https://api.example.com/")
+            .addConverterFactory(Json.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(OrderApi::class.java),
+        dao = Room.databaseBuilder(MyApp.instance, AppDatabase::class.java, "app.db")
+            .build()
+            .orderDao(),
+    )
+}
+```
+
+यह चलता है। इसकी हर दिक्कत एक ही बात का नतीजा है: इस class ने खुद तय किया कि उसकी dependencies *क्या*
+हैं, तो अब कोई और उन्हें बदल नहीं सकता।
+
+**इसका test हो ही नहीं सकता।** इस `ViewModel` का test असली database खोलता है और असली network calls
+करता है। कोई नकली चीज रखने की जगह ही नहीं है, तो test को emulator और server चाहिए, और वह उन वजहों से
+धीमा और गैर-भरोसेमंद है जिनका आपके जाँचे जाने वाले काम से कोई लेना-देना नहीं।
+
+**यह दूसरा Retrofit और दूसरा database बनाता है।** इरादे से दोनों singleton हैं और असल में कोई नहीं —
+नया connection pool, खाली cache, SQLite file पर दूसरा खुला हाथ। पिछले phase की हर गलती, लापरवाही से
+नहीं बल्कि इसलिए कि बनाना गलत जगह हो रहा है।
+
+**यह किसी global तक हाथ बढ़ाता है।** `MyApp.instance` सिर्फ इसलिए है कि इस class को ऐसा `Context`
+चाहिए था जो उसे कभी दिया ही नहीं गया।
+
+## इलाज एक parameter है
+
+```kotlin title="Injected.kt" numbered
+class OrderViewModel(
+    private val repository: OrderRepository,      // एक interface, जो मुझे दिया गया
+) : ViewModel()
+```
+
+Dependency injection यही है। न कोई annotation, न कोई library. अब class बताती है कि उसे क्या चाहिए
+और यह कुछ नहीं कहती कि वह आता कहाँ से है, तो test उसे नकली चीज थमाता है और production असली।
+
+<Compare
+  left={{
+    title: "बनाना",
+    subtitle: "Class तय करती है",
+    accent: "rose",
+    points: [
+      "- पक्के types पर टिका है, तो कुछ बदला नहीं जा सकता",
+      "- बिना असली network और database के test नहीं हो सकता",
+      "- जो चीजें साझा होनी थीं उनकी नकलें बनती हैं",
+      "+ Wire करने को कुछ नहीं — लिखते ही चल जाता है",
+    ],
+  }}
+  right={{
+    title: "पाना",
+    subtitle: "बुलाने वाला तय करता है",
+    accent: "emerald",
+    points: [
+      "+ किसी interface पर टिका है, तो कुछ भी बदला जा सकता है",
+      "+ Test नकली चीज देता है; न emulator, न server",
+      "+ साझा चीजें सच में साझा होती हैं",
+      "- अब wiring किसी को करनी पड़ती है",
+    ],
+  }}
+/>
+
+आखिरी बात ही असली कीमत है, और इस phase का बाकी हिस्सा उसी के बारे में है।
+
+## Inversion of control उलटता क्या है
+
+नाम सुनने में गूढ़ लगता है और बताता ठोस बात है: **तय कौन करता है**।
+
+बनाने का मतलब है कि नीचे की बारीकी ऊपर की नीति चुनती है — `OrderViewModel` Retrofit चुनता है। पाने
+का मतलब है कि नीति अपनी जरूरत बताती है और बाहर की कोई चीज तय करती है कि उसे कैसे पूरा करना है।
+निर्भरता का तीर पलट जाता है, और यह वही चाल है जो architecture वाले phase में repository के interface
+का domain परत में रहना थी।
+
+<Quiz
+  question="कोई team DI अपनाती है पर `object NetworkModule { val api = Retrofit... }` रखे रहती है, और classes सीधे `NetworkModule.api` पढ़ती हैं। क्या उन्होंने दिक्कत सुलझा ली?"
+  options={[
+    "हाँ — अब बनाना एक ही जगह होता है, बात यही थी",
+    "कुछ हद तक: साझा होना ठीक हो गया, पर classes अब भी dependencies बाहर से पाने के बजाय उन तक हाथ बढ़ाती हैं, तो test में उन्हें बदला नहीं जा सकता और वह dependency signature से छिपी रहती है",
+    "नहीं — Kotlin में singleton object कभी सही नहीं है",
+  ]}
+  answer={1}
+  explanation="यह service locator वाला तरीका है, और जगह पर बनाने के मुकाबले यह सच में सुधार है: अब एक ही Retrofit है, तो connection pools और caches की नकलें चली गईं। पर अख्तियार की दिशा नहीं बदली। जो class NetworkModule.api बुलाती है उसने अपनी dependency खुद चुनी, तो कोई test बिना global हालत बदले नकली चीज नहीं रख सकता — और tests के बीच साझा बदलती हुई global हालत ही वह चीज है जिससे नाकामियाँ इस पर टिक जाती हैं कि tests किस क्रम में चले। बारीक कीमत यह है कि वह dependency दिखती ही नहीं: constructor कहता है कि class को कुछ नहीं चाहिए, तो वह सच में क्या छूती है यह आपको पूरी body पढ़कर ही पता चलता है। Constructor injection के साथ signature ही वह सूची है। बनाने की जगह के तौर पर singleton object ठीक है; दिक्कत तब है जब classes उस तक हाथ बढ़ाएँ, बजाय इसके कि उन्हें थमाया जाए।"
+/>
+
+## हाथ से करना, और वह कहाँ काम करना बंद कर देता है
+
+छोटे ऐप के लिए हाथ से की गई DI असली जवाब है। एक container सब कुछ एक बार बनाता है:
+
+```kotlin title="AppContainer.kt" numbered
+class AppContainer(context: Context) {
+
+    private val okHttpClient = OkHttpClient.Builder()
+        .addInterceptor(AuthInterceptor(tokenStore))
+        .build()
+
+    private val api: OrderApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.BASE_URL)
+        .client(okHttpClient)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+        .create(OrderApi::class.java)
+
+    private val database = Room
+        .databaseBuilder(context.applicationContext, AppDatabase::class.java, "app.db")
+        .build()
+
+    val orderRepository: OrderRepository =
+        OfflineFirstOrderRepository(api, database.orderDao())
+}
+```
+
+एक `OkHttpClient`, एक Retrofit, एक database — वही साझा होना जिस पर पिछला phase बार-बार जोर देता रहा,
+अब याद रखने वाले नियम के बजाय ढाँचे में।
+
+यह पैमाने और उम्र पर काम करना बंद करता है। हर नई dependency इसी file को बदलती है। जिस चीज को ऐप के
+बजाय किसी screen जितना जीना है उसके लिए दूसरा container चाहिए, और किसी को उसे सही पल पर बनाना और
+खत्म करना है। Arguments वाले `ViewModel` को factory चाहिए, हर `ViewModel` के लिए अलग लिखी हुई। इनमें
+से कुछ भी मुश्किल नहीं है; यह बस बहुत सारा ऐसा code है जिसका इकलौता काम है objects को एक-दूसरे को
+थमाना — यानी ठीक वह code जो कोई framework खुद बना सकता है।
+
+<Detail summary="DI framework सच में देता क्या है">
+जब हर जगह constructor injection हो, तो framework आपके constructors पढ़कर निकाल लेता है कि चीजें किस
+क्रम में बनानी हैं। पूरा जादू यही है, और उससे तीन बातें निकलती हैं।
+
+**Graph compile वक्त जाँचा जाता है।** Hilt और Dagger wiring build के दौरान बनाते हैं, तो कोई गायब
+dependency उस type का नाम लेती compile error है। चलते वक्त हल करने वाला container उसकी जगह तब फेंकता
+है जब वह screen खुले — यानी कम खुलने वाली screen टूटी हुई भेजी जा सकती है।
+
+**उम्र घोषणा बन जाती है।** "ऐप भर में एक" और "हर screen पर एक" containers के बजाय annotations बन
+जाते हैं, जिन्हें आपको बनाना और खत्म करना याद नहीं रखना पड़ता।
+
+**`ViewModel` की factories गायब हो जाती हैं।** Arguments लेते हर `ViewModel` को factory चाहिए;
+framework उन्हें खुद लिख देता है।
+
+जो वह नहीं करता वह है किसी न-जाँचे जा सकने वाली class को जाँचने लायक बनाना। वह constructor वाले
+parameter से आया था, जो आपको इस सब के बिना भी मिल सकता है — और इसीलिए DI अपनाने का पहला कदम कभी भी
+library लगाना नहीं होता।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो दर्द बनाए रखकर ऊपर से रस्म जोड़ देती हैं">
+**Service locator को DI कहना।** किसी global तक हाथ बढ़ाती चीजें अब भी अपनी dependencies खुद चुनती
+हैं। ऊपर वाला quiz देखिए।
+
+**पक्के types inject करना।** `OrderRepository` के बजाय `OfflineFirstOrderRepository` लेने पर wiring
+मिलती है और बदल पाने की सुविधा बिलकुल नहीं।
+
+**किसी global से `Context`।** `MyApp.instance` उस class का लक्षण है जिसे कभी वह दिया ही नहीं गया जो
+उसे चाहिए था।
+
+**Container को ही inject करना।** किसी class में `AppContainer` भेजना छिपी हुई dependencies पर वापस
+लौटना है, बस कुछ और कदमों के साथ।
+
+**पहले framework उठाना।** जाँचे जा सकना constructor वाले parameter से आता है। पहले उसे अपनाइए, फिर
+अगर wiring चुभे तो उसे अपने आप कराइए।
+</Pitfall>
+
+## अभ्यास
+
+1. ऐसी class लीजिए जो अपना repository खुद बनाती है और उस repository को constructor के parameter में
+   ले जाइए। नकली चीज के साथ एक unit test लिखिए — गौर कीजिए कि उसमें कोई emulator नहीं है।
+2. गिनिए कि आपका ऐप कितने `OkHttpClient` बनाता है। एक होना चाहिए।
+3. किसी छोटे ऐप के लिए `AppContainer` लिखिए और एक screen उससे होकर wire कीजिए।
+4. तीन परत नीचे की किसी class में एक dependency जोड़िए और गिनिए कि कितनी files बदलनी पड़ीं। वही
+   संख्या framework के हक में दलील है।
+5. ऐप जिन globals को सीधे पढ़ता है उन सबको ढूँढ़िए, और लिखिए कि test को उनमें से किन्हें बदलना पड़ेगा।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| DI | Dependencies पाइए, बनाइए मत |
+| कीमत | Wiring किसी को करनी पड़ती है |
+| Inversion of control | बुलाने वाला तय करता है, class नहीं |
+| Constructor injection | Signature ही उसकी सूची है जो class को चाहिए |
+| Interfaces | जिनसे कोई dependency बदली जा सकती है |
+| Service locator | Global तक हाथ बढ़ाना — साझा होना ठीक, अख्तियार नहीं पलटा |
+| हाथ से DI | एक container; छोटे ऐप के लिए सच में ठीक |
+| कहाँ टूटता है | Scope वाली उम्रें और `ViewModel` की factories |
+| Framework | Wiring अपने आप, और graph compile वक्त जाँचा हुआ |
+| पहला कदम | Constructor वाला parameter, library नहीं |
+
+<Interview title="एक सवाल, जो Hilt के बारे में नहीं है">
+"Dependency injection क्यों?"
+
+क्योंकि जो class अपनी dependencies खुद बनाती है उसने तय कर लिया कि वे क्या हैं, और कोई उसे बदल नहीं
+सकता — तो उसे जाँचने का मतलब है असली network और असली database, और जिन चीजों को साझा होना था उनकी
+नकलें बन जाती हैं। उन्हें constructor के parameters में ले जाना दोनों ठीक करता है: class बताती है कि
+उसे क्या चाहिए, test उसे नकली चीज थमाता है, और हर बुलाने वाले के लिए एक-एक के बजाय एक ही
+`OkHttpClient` होता है।
+
+इसे मैं framework वाले सवाल से अलग रखूँगा। जाँचे जा सकना constructor injection से आता है, और उसके
+लिए कोई library चाहिए ही नहीं — एक container वाली हाथ से की गई DI छोटे ऐप के लिए सच में ठीक है।
+Framework तब अपनी जगह बनाता है जब wiring महँगी हो जाए: scope वाली उम्रें, `ViewModel` की factories,
+और इतना बड़ा graph कि आप चाहें कि कोई गायब dependency compile की error हो, न कि ऐसी screen पर crash
+जिसे test करते वक्त किसी ने खोला ही नहीं।
+</Interview>

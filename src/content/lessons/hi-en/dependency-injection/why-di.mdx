@@ -1,0 +1,223 @@
+---
+title: DI kyun — haath se wiring karne ka dard
+description: Dependency injection koi library nahi hai. Wo ye faisla hai ki dependency banai nahi, bahar se li jaye, aur pichhle phase ke aakhir tak aapke app ko uski zarurat pad hi chuki thi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Dependency injection ka matlab hai ki class ko jo chahiye wo wo **banati** nahi, **paati** hai. Poora
+vichaar yahi hai, aur iski koi keemat nahi — aap ise aaj hi constructor ke parameters se kar sakte ho.
+Koi framework sirf uske baad ki wiring apne aap kar deta hai, aur framework uthane se pehle mushkil
+samajh lena theek rehta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Ye raha ek `ViewModel` jo apni poori duniya khud banata hai:
+
+```kotlin title="Constructs.kt" numbered
+class OrderViewModel : ViewModel() {
+    private val repository = OfflineFirstOrderRepository(
+        api = Retrofit.Builder()
+            .baseUrl("https://api.example.com/")
+            .addConverterFactory(Json.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(OrderApi::class.java),
+        dao = Room.databaseBuilder(MyApp.instance, AppDatabase::class.java, "app.db")
+            .build()
+            .orderDao(),
+    )
+}
+```
+
+Ye chalta hai. Iski har mushkil ek hi baat ka anjaam hai: is class ne khud tay kiya ki uski
+dependencies *kya* hain, to ab koi aur unhe badal nahi sakta.
+
+**Iska test ho hi nahi sakta.** Is `ViewModel` ka test asli database kholta hai aur asli network calls
+karta hai. Koi nakli cheez rakhne ki jagah hi nahi hai, to test ko emulator aur server chahiye, aur wo
+un wajahon se dheema aur gair-bharosemand hai jinka aapke jaanche jane wale kaam se koi lena-dena
+nahi.
+
+**Ye doosra Retrofit aur doosra database banata hai.** Iraade se dono singleton hain aur asal mein koi
+nahi — naya connection pool, khaali cache, SQLite file par doosra khula haath. Pichhle phase ki har
+galti, laparwahi se nahi balki isliye ki banana galat jagah ho raha hai.
+
+**Ye kisi global tak haath badhata hai.** `MyApp.instance` sirf isliye hai ki is class ko aisa
+`Context` chahiye tha jo use kabhi diya hi nahi gaya.
+
+## Ilaaj ek parameter hai
+
+```kotlin title="Injected.kt" numbered
+class OrderViewModel(
+    private val repository: OrderRepository,      // ek interface, jo mujhe diya gaya
+) : ViewModel()
+```
+
+Dependency injection yahi hai. Na koi annotation, na koi library. Ab class batati hai ki use kya
+chahiye aur ye kuch nahi kehti ki wo aata kahan se hai, to test use nakli cheez thamata hai aur
+production asli.
+
+<Compare
+  left={{
+    title: "Banana",
+    subtitle: "Class tay karti hai",
+    accent: "rose",
+    points: [
+      "- Pakke types par tika hai, to kuch badla nahi ja sakta",
+      "- Bina asli network aur database ke test nahi ho sakta",
+      "- Jo cheezein share honi thin unki naklein banti hain",
+      "+ Wire karne ko kuch nahi — likhte hi chal jata hai",
+    ],
+  }}
+  right={{
+    title: "Paana",
+    subtitle: "Bulane wala tay karta hai",
+    accent: "emerald",
+    points: [
+      "+ Kisi interface par tika hai, to kuch bhi badla ja sakta hai",
+      "+ Test nakli cheez deta hai; na emulator, na server",
+      "+ Share hone wali cheezein sach mein share hoti hain",
+      "- Ab wiring kisi ko karni padti hai",
+    ],
+  }}
+/>
+
+Aakhri baat hi asli keemat hai, aur is phase ka baaki hissa usi ke baare mein hai.
+
+## Inversion of control ulatta kya hai
+
+Naam sunne mein gooth lagta hai aur batata thos baat hai: **tay kaun karta hai**.
+
+Banane ka matlab hai ki neeche ki bareeki upar ki neeti chunti hai — `OrderViewModel` Retrofit chunta
+hai. Pane ka matlab hai ki neeti apni zarurat batati hai aur bahar ki koi cheez tay karti hai ki use
+kaise poora karna hai. Nirbharta ka teer palat jata hai, aur ye wahi chaal hai jo architecture wale
+phase mein repository ke interface ka domain parat mein rehna thi.
+
+<Quiz
+  question="Koi team DI apnati hai par `object NetworkModule { val api = Retrofit... }` rakhe rehti hai, aur classes seedhe `NetworkModule.api` padhti hain. Kya unhone mushkil suljha li?"
+  options={[
+    "Haan — ab banana ek hi jagah hota hai, baat yahi thi",
+    "Kuch had tak: share hona theek ho gaya, par classes ab bhi dependencies bahar se pane ke bajaye un tak haath badhati hain, to test mein unhe badla nahi ja sakta aur wo dependency signature se chhupi rehti hai",
+    "Nahi — Kotlin mein singleton object kabhi sahi nahi hai",
+  ]}
+  answer={1}
+  explanation="Ye service locator wala tarika hai, aur jagah par banane ke muqable ye sach mein sudhaar hai: ab ek hi Retrofit hai, to connection pools aur caches ki naklein chali gayin. Par akhtiyaar ki disha nahi badli. Jo class NetworkModule.api bulati hai usne apni dependency khud chuni, to koi test bina global haalat badle nakli cheez nahi rakh sakta — aur tests ke beech share badalti hui global haalat hi wo cheez hai jisse nakamiyan is par tik jati hain ki tests kis order mein chale. Bareek keemat ye hai ki wo dependency dikhti hi nahi: constructor kehta hai ki class ko kuch nahi chahiye, to wo sach mein kya chhooti hai ye aapko poori body padhkar hi pata chalta hai. Constructor injection ke saath signature hi wo list hai. Banane ki jagah ke taur par singleton object theek hai; mushkil tab hai jab classes us tak haath badhayein, bajaye iske ki unhe thamaya jaye."
+/>
+
+## Haath se karna, aur wo kahan kaam karna band kar deta hai
+
+Chhote app ke liye haath se ki gayi DI asli jawab hai. Ek container sab kuch ek baar banata hai:
+
+```kotlin title="AppContainer.kt" numbered
+class AppContainer(context: Context) {
+
+    private val okHttpClient = OkHttpClient.Builder()
+        .addInterceptor(AuthInterceptor(tokenStore))
+        .build()
+
+    private val api: OrderApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.BASE_URL)
+        .client(okHttpClient)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+        .create(OrderApi::class.java)
+
+    private val database = Room
+        .databaseBuilder(context.applicationContext, AppDatabase::class.java, "app.db")
+        .build()
+
+    val orderRepository: OrderRepository =
+        OfflineFirstOrderRepository(api, database.orderDao())
+}
+```
+
+Ek `OkHttpClient`, ek Retrofit, ek database — wahi share hona jis par pichhla phase baar-baar zor deta
+raha, ab yaad rakhne wale niyam ke bajaye dhanche mein.
+
+Ye paimane aur umar par kaam karna band karta hai. Har nai dependency isi file ko badalti hai. Jis
+cheez ko app ke bajaye kisi screen jitna jeena hai uske liye doosra container chahiye, aur kisi ko use
+sahi pal par banana aur khatam karna hai. Arguments wale `ViewModel` ko factory chahiye, har
+`ViewModel` ke liye alag likhi hui. Inmein se kuch bhi mushkil nahi hai; ye bas bahut saara aisa code
+hai jiska iklauta kaam hai objects ko ek-doosre ko thamana — yani theek wo code jo koi framework khud
+bana sakta hai.
+
+<Detail summary="DI framework sach mein deta kya hai">
+Jab har jagah constructor injection ho, to framework aapke constructors padhkar nikal leta hai ki
+cheezein kis order mein banani hain. Poora jadoo yahi hai, aur usse teen baatein nikalti hain.
+
+**Graph compile waqt check hota hai.** Hilt aur Dagger wiring build ke dauran banate hain, to koi
+gayab dependency us type ka naam leti compile error hai. Chalte waqt hal karne wala container uski
+jagah tab phenkta hai jab wo screen khule — yani kam khulne wali screen tooti hui bheji ja sakti hai.
+
+**Umar ghoshna ban jati hai.** "App bhar mein ek" aur "har screen par ek" containers ke bajaye
+annotations ban jate hain, jinhe aapko banana aur khatam karna yaad nahi rakhna padta.
+
+**`ViewModel` ki factories gayab ho jati hain.** Arguments lete har `ViewModel` ko factory chahiye;
+framework unhe khud likh deta hai.
+
+Jo wo nahi karta wo hai kisi na-jaanche ja sakne wali class ko jaanchne layak banana. Wo constructor
+wale parameter se aaya tha, jo aapko is sab ke bina bhi mil sakta hai — aur isiliye DI apnane ka pehla
+kadam kabhi bhi library lagana nahi hota.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo dard banaye rakhkar upar se rasm jod deti hain">
+**Service locator ko DI kehna.** Kisi global tak haath badhati cheezein ab bhi apni dependencies khud
+chunti hain. Upar wala quiz dekhiye.
+
+**Pakke types inject karna.** `OrderRepository` ke bajaye `OfflineFirstOrderRepository` lene par
+wiring milti hai aur badal pane ki suvidha bilkul nahi.
+
+**Kisi global se `Context`.** `MyApp.instance` us class ka lakshan hai jise kabhi wo diya hi nahi gaya
+jo use chahiye tha.
+
+**Container ko hi inject karna.** Kisi class mein `AppContainer` bhejna chhupi hui dependencies par
+wapas lautna hai, bas kuch aur kadmon ke saath.
+
+**Pehle framework uthana.** Jaanche ja sakna constructor wale parameter se aata hai. Pehle use
+apnaiye, phir agar wiring chubhe to use apne aap karaiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Aisi class lijiye jo apna repository khud banati hai aur us repository ko constructor ke parameter
+   mein le jaiye. Nakli cheez ke saath ek unit test likhiye — gaur kijiye ki usmein koi emulator nahi
+   hai.
+2. Giniye ki aapka app kitne `OkHttpClient` banata hai. Ek hona chahiye.
+3. Kisi chhote app ke liye `AppContainer` likhiye aur ek screen usse hokar wire kijiye.
+4. Teen parat neeche ki kisi class mein ek dependency jodiye aur giniye ki kitni files badalni padin.
+   Wahi sankhya framework ke haq mein daleel hai.
+5. App jin globals ko seedhe padhta hai un sabko dhoondhiye, aur likhiye ki test ko unmein se kinhe
+   badalna padega.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| DI | Dependencies paiye, banaiye mat |
+| Keemat | Wiring kisi ko karni padti hai |
+| Inversion of control | Bulane wala tay karta hai, class nahi |
+| Constructor injection | Signature hi uski list hai jo class ko chahiye |
+| Interfaces | Jinse koi dependency badli ja sakti hai |
+| Service locator | Global tak haath badhana — share hona theek, akhtiyaar nahi palta |
+| Haath se DI | Ek container; chhote app ke liye sach mein theek |
+| Kahan tootta hai | Scope wali umrein aur `ViewModel` ki factories |
+| Framework | Wiring apne aap, aur graph compile waqt checked |
+| Pehla kadam | Constructor wala parameter, library nahi |
+
+<Interview title="Ek sawal, jo Hilt ke baare mein nahi hai">
+"Dependency injection kyun?"
+
+Kyunki jo class apni dependencies khud banati hai usne tay kar liya ki wo kya hain, aur koi use badal
+nahi sakta — to use jaanchne ka matlab hai asli network aur asli database, aur jin cheezon ko share
+hona tha unki naklein ban jati hain. Unhe constructor ke parameters mein le jana dono theek karta hai:
+class batati hai ki use kya chahiye, test use nakli cheez thamata hai, aur har bulane wale ke liye
+ek-ek ke bajaye ek hi `OkHttpClient` hota hai.
+
+Ise main framework wale sawal se alag rakhunga. Jaanche ja sakna constructor injection se aata hai,
+aur uske liye koi library chahiye hi nahi — ek container wali haath se ki gayi DI chhote app ke liye
+sach mein theek hai. Framework tab apni jagah banata hai jab wiring mehngi ho jaye: scope wali umrein,
+`ViewModel` ki factories, aur itna bada graph ki aap chaho ki koi gayab dependency compile ki error
+ho, na ki aisi screen par crash jise test karte waqt kisi ne khola hi nahi.
+</Interview>
