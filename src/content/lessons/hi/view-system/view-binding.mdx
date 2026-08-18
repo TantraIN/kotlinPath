@@ -1,0 +1,173 @@
+---
+title: ViewBinding, और findViewById क्यों चला गया
+description: findViewById पेड़ में ढूँढ़ना है और साथ में एक बिना जाँच वाला cast। ViewBinding इन दोनों नाकामियों को compile error बना देता है, Gradle की एक line के बदले।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`ViewBinding` हर layout के लिए एक class बनाता है जिसमें **हर id पहले से एक typed field है**। Id का
+नाम बदलना या type गलत होना अब चलते वक्त का crash नहीं, editor में लाल लकीर है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+`findViewById<TextView>(R.id.price)` तब भी compile हो जाता है जब `price` असल में `Button` हो, और
+तब भी जब कोई आपके तीन layout रूपों में से किसी एक में id का नाम बदल दे। दोनों नाकामियाँ चलते वक्त
+आती हैं, किसी device पर, `ClassCastException` या `NullPointerException` बनकर।
+
+इनमें से कोई ठीक करने में मुश्किल नहीं है। दोनों बिलकुल आसानी से टाली जा सकती हैं।
+
+## इसे चालू करना
+
+```kotlin title="app/build.gradle.kts"
+android {
+    buildFeatures {
+        viewBinding = true
+    }
+}
+```
+
+पूरा setup बस इतना है। अब हर layout को file के नाम पर एक class मिलती है: `activity_main.xml`
+`ActivityMainBinding` बन जाती है, `item_order.xml` `ItemOrderBinding`।
+
+```kotlin title="MainActivity.kt" numbered
+class MainActivity : ComponentActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        binding.price.text = "₹1,240"     // typed, जाँचा हुआ, कोई cast नहीं
+    }
+}
+```
+
+<Note>
+Field सिर्फ उन views को मिलता है जिन पर `android:id` है। जिस view का जिक्र आप कभी नहीं करते उसे id
+की जरूरत ही नहीं, और उसे छोड़ देने से generated class छोटी रहती है और layout ईमानदारी से बताता है
+कि असल में इस्तेमाल क्या हो रहा है।
+</Note>
+
+## वह मामला जिसकी लोग उम्मीद नहीं करते
+
+<Quiz
+  question="किसी view की id `layout/screen.xml` में है पर `layout-land/screen.xml` में वह view है ही नहीं। Generated binding में उसका type क्या होगा?"
+  options={[
+    "वही type — landscape वाला layout अनदेखा कर दिया जाता है",
+    "Nullable, क्योंकि कम से कम एक configuration में वह है ही नहीं",
+    "वह बनेगा ही नहीं, क्योंकि दोनों layouts में मेल नहीं है",
+  ]}
+  answer={1}
+  explanation="Generator किसी layout के सारे configuration रूपों को एक साथ देखता है। जो id सब में है वह non-null field बनती है; जो सिर्फ कुछ में है वह nullable, क्योंकि चलते वक्त system वही रूप inflate कर सकता है जिसमें वह नहीं है। यह ViewBinding का आपको आपके अपने layouts का सच बताना है — वही code findViewById के साथ landscape में null लौटाता और crash कर जाता। इसे null check से सँभालिए, या अगर वह view हमेशा होनी चाहिए तो उसे दोनों रूपों में जोड़ दीजिए।"
+/>
+
+## Fragment में उम्र अलग है
+
+```kotlin title="OrderFragment.kt" numbered
+class OrderFragment : Fragment(R.layout.fragment_order) {
+
+    private var _binding: FragmentOrderBinding? = null
+    private val binding get() = _binding!!
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        _binding = FragmentOrderBinding.bind(view)
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+}
+```
+
+Fragment अपनी view से ज्यादा जीता है, इसलिए `onDestroyView` के बाद भी binding पकड़े रहना पूरे खत्म
+हो चुके view tree को रोक लेता है — वही leak जो Fragments वाले पाठ में था, अपने सबसे आम रूप में।
+
+<Compare
+  left={{
+    title: "ViewBinding",
+    subtitle: "जो आपको default से चाहिए",
+    accent: "emerald",
+    points: [
+      "+ Gradle की एक line, कोई annotation processor नहीं",
+      "+ Layout से ही null और type की सुरक्षा",
+      "+ तेज — चलते वक्त कुछ नहीं बनता",
+      "- Layout अब भी XML में ही रहता है",
+    ],
+  }}
+  right={{
+    title: "DataBinding",
+    subtitle: "सिर्फ तब जब expressions चाहिए",
+    accent: "amber",
+    points: [
+      "+ XML के अंदर ही values और logic तक बाँध देता है",
+      "- Annotation processor चाहिए, तो builds धीमी होती हैं",
+      "- XML में logic पढ़ना मुश्किल और debug करना नामुमकिन",
+      "~ जिस वजह से लोग इसे उठाते थे, Compose उसकी जगह ले चुका है",
+    ],
+  }}
+/>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="Build के वक्त बनती है" meta="हर layout की एक class">
+    वह class XML से बनी सादी Java है, हर id के लिए एक field और सबसे ऊपर वाली view के लिए `root`।
+    न reflection, न चलते वक्त कोई ढूँढ़-खोज।
+  </TimelineItem>
+  <TimelineItem title="`bind` बनाम `inflate`" meta="view का मालिक कौन है, उससे चुनिए">
+    `inflate` view का पेड़ बनाता है; `bind` पहले से मौजूद पेड़ से जुड़ता है। जिस `Fragment` को
+    constructor में layout दिया गया है उसके पास view पहले से है, इसलिए वह `bind` इस्तेमाल करता है।
+  </TimelineItem>
+  <TimelineItem title="किसी layout को छोड़ना" meta="tools:viewBindingIgnore">
+    Layout की सबसे बाहरी view पर `tools:viewBindingIgnore="true"` लगा देने से उसके लिए class बनती
+    ही नहीं — उन layouts के लिए काम का जो सिर्फ दूसरों के अंदर टुकड़े की तरह जाते हैं।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो मायने रखती हैं">
+**`onDestroyView` के बाद भी binding पकड़े रहना।** हर बार null कीजिए। Fragment का सबसे आम leak यही
+है।
+
+**Adapter में `inflate(inflater, parent, true)`।** `true` देने से row तुरंत parent से जुड़ जाती
+है, और फिर `RecyclerView` वही काम दोबारा करता है। वहाँ हमेशा `false`।
+
+**आदत से DataBinding उठा लेना।** अगर आप XML में expressions नहीं लिख रहे, तो annotation processor
+की कीमत चुका रहे हैं और बदले में कुछ नहीं मिल रहा।
+</Pitfall>
+
+## अभ्यास
+
+1. Layout में id का नाम बदलिए और Kotlin वैसा ही रहने दीजिए। जो error मिलती है उसे `findViewById`
+   और `ViewBinding` दोनों के साथ मिलाइए।
+2. `layout/` में एक view जोड़िए पर `layout-land/` में नहीं। Generated field का type देखिए।
+3. `_binding = null` वाली line हटा दीजिए, दस बार आगे-पीछे navigate कीजिए, और profiler देखिए।
+4. ऐसा layout ढूँढ़िए जिसमें उन views पर भी ids हैं जिनका जिक्र कोई नहीं करता। वे ids हटाइए और
+   generated class को छोटा होते देखिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Setup | `viewBinding = true`, और कुछ नहीं |
+| Class का नाम | Layout file का नाम, camel-case में, आगे `Binding` |
+| Fields | हर `android:id` के लिए एक; बिना id वाली views शामिल नहीं |
+| Nullable field | वह id कम से कम एक configuration में नहीं है |
+| `inflate` | जब आप view का पेड़ बना रहे हों |
+| `bind` | जब view पहले से मौजूद हो |
+| Fragments | `onDestroyView` में binding null कीजिए |
+| DataBinding | सिर्फ XML expressions के लिए; वरना बिना वजह धीमा |
+
+<Interview title="छोटा सवाल, जिसका दूसरा आधा हिस्सा बहुत कुछ बता देता है">
+"findViewById के मुकाबले ViewBinding क्या देता है?"
+
+Type की और null की सुरक्षा, जो layouts से ही बनती है। असली इस्तेमाल वाला आधा हिस्सा configuration
+का मामला है: जो id `layout/` में है पर `layout-land/` में नहीं, वह nullable निकलती है — यानी
+generator आपको उस crash के बारे में बता रहा है जिसे `findViewById` landscape वाले किसी user के लिए
+बचाकर रख लेता।
+</Interview>
