@@ -1,0 +1,205 @@
+---
+title: Files, scoped storage और MediaStore
+description: Android ने सालों लगाकर ऐप से filesystem तक का रास्ता बंद किया। जो उसकी जगह आया वह घुमाकर पार करने वाली पाबंदी नहीं है — वह एक अलग सवाल है, और पुराना सवाल पूछना ही वजह है कि file वाला code हर OS release पर टूटता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+यह पूछिए कि **इस file का मालिक कौन है** और API खुद चुन जाती है। आपकी अपनी files को कोई permission
+नहीं चाहिए और वे app-specific storage में रहती हैं। जो media user को रखना है वह **MediaStore** से
+जाता है। बाकी जो कुछ user चुनता है वह **document picker** से आता है, और shared storage में कोई सादा
+path मिलता ही नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+कुछ साल से पुराने हर tutorial में यह है:
+
+```kotlin title="Legacy.kt" numbered
+val file = File(Environment.getExternalStorageDirectory(), "MyApp/report.pdf")
+file.writeBytes(bytes)                              // WRITE_EXTERNAL_STORAGE चाहिए
+```
+
+यह Android 10 से नहीं चलता, `WRITE_EXTERNAL_STORAGE` Android 11 और उसके बाद कुछ नहीं करता, और
+`getExternalStorageDirectory()` हटाया जा चुका है। यह code compile होता है और चलते वक्त नाकाम होता है,
+इसीलिए storage वह इलाका है जहाँ पुराने जवाब सबसे ज्यादा नुकसान करते हैं।
+
+उसकी जगह एक API नहीं आई, एक सवाल आया जिसके तीन जवाब हैं।
+
+## File किसकी जगह है
+
+| File है | कहाँ रखिए | Permission | Uninstall पर मिटती है |
+| --- | --- | --- | --- |
+| आपकी, टिकनी चाहिए | `context.filesDir` | कोई नहीं | हाँ |
+| आपकी, फेंकी जा सकती है | `context.cacheDir` | कोई नहीं | हाँ |
+| आपकी, बड़ी और फेंकी जा सकती है | `context.externalCacheDir` | कोई नहीं | हाँ |
+| ऐसी तस्वीर या video जो user रखेगा | `MediaStore` | अपनी बनाई पर कोई नहीं | नहीं |
+| User की चुनी या सहेजी हुई | Document picker (SAF) | कोई नहीं | नहीं |
+
+उस table की दो लाइनें ज्यादातर काम करती हैं।
+
+**App-specific storage को कोई permission चाहिए ही नहीं।** "ऐसी permission जो आमतौर पर मिल जाती है"
+नहीं — कोई नहीं। अगर कोई file सच में आपके ऐप की है, तो `filesDir` और `cacheDir` ही पूरा जवाब हैं,
+और जो code अपनी ही files के लिए storage वाली permission माँगता है वह ऐसी दिक्कत सुलझा रहा है जो उसे
+है ही नहीं।
+
+**`cacheDir` को system कभी भी मिटा सकता है,** बिना बताए, जब जगह कम पड़े। यह करार है, कोई bug नहीं।
+जो चीज आप दोबारा नहीं बना सकते वह वहाँ की नहीं — और जो आप दोबारा बना *सकते* हैं वह `filesDir` के
+बजाय वहीं की है, क्योंकि Settings की "4 GB घेर रखी है" वाली सूची से आपका ऐप इसी से बाहर रहता है।
+
+<Quiz
+  question="कोई ऐप user के export किए PDF `context.cacheDir` में लिखता है ताकि storage वाली permission न माँगनी पड़े। गलत क्या होता है, और कब?"
+  options={[
+    "कुछ नहीं — ऐप की files के लिए बिना permission वाली सही जगह cacheDir ही है",
+    "जगह कम पड़ने पर system cacheDir को कभी भी मिटा सकता है, तो exports दो sessions के बीच बिना किसी error के गायब हो जाते हैं और उन्हें वापस पाने का कोई रास्ता नहीं",
+    "दूसरे ऐप cacheDir पढ़ सकते हैं, तो वे PDF लीक होते हैं",
+  ]}
+  answer={1}
+  explanation="Permission वाली सोच सही है और directory गलत। cacheDir को permission नहीं चाहिए, पर उसकी पहचान ही यह है कि जब भी जगह चाहिए, system उसे साफ कर सकता है — चुपचाप, बिना किसी callback के और logs में कुछ छोड़े बिना। जिस user ने कोई report export की, फिर storage कम होने की चेतावनी देखी, और लौटकर खाली सूची पाई, उसने वह काम खोया जिसके बारे में ऐप ने कभी आगाह किया ही नहीं। इलाज इस पर टिका है कि वह file किसके लिए है: अगर वह export सिर्फ ऐप के अंदर मायने रखता है तो filesDir उसे ऐप जितनी उम्र तक रखता है; अगर user को उसे रखना, भेजना या कहीं और खोलना है तो उसे document picker या MediaStore से बाहर जाना चाहिए, ताकि वह uninstall के बाद भी बचे। दोनों को ढकने वाला नियम यह है कि cacheDir उन चीजों के लिए है जो आप दोबारा बना सकते हैं, और user का export किया दस्तावेज उनमें से नहीं है।"
+/>
+
+## MediaStore, उन चीजों के लिए जो user रखता है
+
+आपके ऐप की बनाई तस्वीर user की gallery की है, आपके ऐप के अंदर की नहीं:
+
+```kotlin title="SaveImage.kt" numbered
+val values = ContentValues().apply {
+    put(MediaStore.Images.Media.DISPLAY_NAME, "receipt.jpg")
+    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MyApp")
+    put(MediaStore.Images.Media.IS_PENDING, 1)          // पूरी लिखे जाने तक छिपी रहे
+}
+
+val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)!!
+resolver.openOutputStream(uri)!!.use { it.write(bytes) }
+
+values.clear()
+values.put(MediaStore.Images.Media.IS_PENDING, 0)       // अब दूसरे ऐप को दिखेगी
+resolver.update(uri, values, null, null)
+```
+
+आप कोई path बनाते ही नहीं। आप file का हुलिया बताते हैं, बदले में एक `Uri` पाते हैं, और resolver से
+लिखते हैं। `RELATIVE_PATH` यह गुजारिश है कि वह कहाँ दिखे, वह filesystem की जगह नहीं जिस पर आपका
+अख्तियार हो।
+
+`IS_PENDING` वह हिस्सा है जिसे लोग छोड़ देते हैं। उसके बिना gallery आधी लिखी file को अपनी सूची में
+ले सकती है और user को टूटा हुआ thumbnail दिखा सकती है। उसके साथ, जब तक आप पूरा होने की खबर न दें तब
+तक वह entry दिखती ही नहीं।
+
+<Note>
+अपना media लिखने के लिए कोई permission नहीं चाहिए। `READ_MEDIA_IMAGES` **दूसरे ऐप** की बनाई files
+पढ़ने के लिए है, और Android 14 तथा उसके बाद photo picker user की चुनी तस्वीरें बिना किसी permission
+के दे देता है — जो कम code भी है और पूरी gallery माँगने से बेहतर सवाल भी।
+</Note>
+
+## Document picker, उन files के लिए जो user चुनता है
+
+```kotlin title="Picker.kt" numbered
+val open = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    uri ?: return@registerForActivityResult
+    contentResolver.takePersistableUriPermission(       // reboot के बाद भी बचती है
+        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+    )
+    contentResolver.openInputStream(uri)?.use { /* इसे पढ़िए */ }
+}
+
+open.launch(arrayOf("application/pdf"))
+```
+
+User का file चुनना **ही** permission है — माँगने को कुछ है ही नहीं, और वह इजाजत ठीक उसी file की
+है। सहेजने के लिए `CreateDocument` उसी का आईना है।
+
+पेच यह है कि `takePersistableUriPermission` बुलाए बिना वह इजाजत reboot पर मर जाती है, तो जो ऐप कोई
+`Uri` रखकर उसे अगले हफ्ते पढ़ेगा उसे टिकाऊ इजाजत अभी माँगनी है। कल चलते हुए `Uri` पर आया
+`SecurityException` लगभग हमेशा यही होता है।
+
+<Detail summary="FileProvider: अपनी file किसी दूसरे ऐप को थमाना">
+आपका `filesDir` निजी है, तो उसके अंदर इशारा करता कोई `file://` URI किसी दूसरे ऐप के किसी काम का नहीं
+— और Android 7 से उसे भेजने पर चुपचाप नाकाम होने के बजाय `FileUriExposedException` आता है।
+
+`FileProvider` उसकी जगह एक `content://` URI देता है, थोड़े वक्त की इजाजत के साथ:
+
+```xml title="AndroidManifest.xml" numbered
+<provider
+    android:name="androidx.core.content.FileProvider"
+    android:authorities="${applicationId}.fileprovider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+    <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths" />
+</provider>
+```
+
+```kotlin title="Share.kt" numbered
+val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
+val intent = Intent(Intent.ACTION_SEND).apply {
+    type = "application/pdf"
+    putExtra(Intent.EXTRA_STREAM, uri)
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)     // इसके बिना लेने वाला पढ़ नहीं सकता
+}
+startActivity(Intent.createChooser(intent, null))
+```
+
+`grantUriPermissions="true"` के साथ `exported="false"` पर गौर कीजिए। वह provider सबके लिए खुला नहीं
+है; हर इजाजत एक URI, एक लेने वाले और थोड़े वक्त की है, और पूरी बात यही है। Intent पर वह flag भूलना
+ही उस share sheet की आम वजह है जो खुलती है और फिर दूसरा ऐप file पढ़ने में नाकाम दिखता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली हर पुराने tutorial में है">
+**`Environment.getExternalStorageDirectory()` और सादा path।** Android 10 से मरा हुआ। किसी आम ऐप के
+लिए ऐसा कोई flag नहीं जो उसे वापस ले आए।
+
+**अपनी ही files के लिए storage वाली permission माँगना।** App-specific storage को कोई नहीं चाहिए, तो
+वह prompt सिर्फ अड़चन है और review करने वालों की उस पर नजर पड़ती है।
+
+**`cacheDir` में कोई जरूरी चीज।** जगह की तंगी में system उसे चुपचाप मिटा देता है।
+
+**बिना `takePersistableUriPermission` के रखा गया `Uri`।** आज चलता है, reboot के बाद
+`SecurityException`।
+
+**Intent में `file://` URI।** `FileUriExposedException`। `FileProvider` लीजिए, और वह grant वाला flag
+याद रखिए।
+</Pitfall>
+
+## अभ्यास
+
+1. Manifest में बिना किसी permission के `filesDir` में एक file लिखिए, और पक्का कीजिए कि यह चलता है।
+2. `MediaStore` से कोई तस्वीर सहेजिए और उसे gallery में ढूँढ़िए। फिर किसी बड़ी file पर `IS_PENDING`
+   छोड़ दीजिए और अधूरा thumbnail देखिए।
+3. कोई document चुनिए, `Uri` रखिए, reboot कीजिए, और उसे पढ़िए — पहले बिना इजाजत टिकाए, फिर टिकाकर।
+4. `FileProvider` से `filesDir` की कोई file भेजिए, फिर grant वाला flag हटाइए और लेने वाले ऐप को
+   नाकाम होते देखिए।
+5. Device की storage भर दीजिए और पक्का कीजिए कि `cacheDir` का क्या होता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| सवाल | इस file का मालिक कौन है |
+| `filesDir` | आपकी, टिकाऊ, बिना permission |
+| `cacheDir` | आपकी, फेंकी जा सकने वाली, system बिना बताए मिटा देता है |
+| `MediaStore` | तस्वीरें और videos जो user रखता है; अपनी बनाई पर कोई permission नहीं |
+| `IS_PENDING` | पूरी लिखे जाने तक entry छिपाए रखता है |
+| Photo picker | User की चुनी तस्वीरें, बिना किसी permission के |
+| `OpenDocument` | User का file चुनना ही permission है |
+| `takePersistableUriPermission` | उसके बिना इजाजत reboot पर मर जाती है |
+| `FileProvider` | एक `content://` URI और थोड़े वक्त की इजाजत |
+| मरा हुआ | `getExternalStorageDirectory` और shared के सादे paths |
+
+<Interview title="एक सवाल, जो APIs नहीं, मॉडल का नाम लेने पर इनाम देता है">
+"आजकल के Android पर file storage कैसे चलता है?"
+
+मॉडल paths से बदलकर मालिकाने पर आ गया। कोई ऐप अब shared storage में घूम नहीं सकता, तो पहला सवाल यह
+है कि वह file किसकी है। अगर वह ऐप की अपनी है तो वह `filesDir` या `cacheDir` में जाती है और उसे कोई
+permission चाहिए ही नहीं — और `cacheDir` सिर्फ उन चीजों के लिए जो मैं दोबारा बना सकता हूँ, क्योंकि
+जगह कम पड़ने पर system उसे चुपचाप साफ कर देता है।
+
+अगर वह ऐसा media है जो user को रखना है, तो वह `MediaStore` से जाता है, जहाँ मैं path बनाने के बजाय
+file का हुलिया बताकर एक `Uri` पाता हूँ, और पूरी लिखे जाने तक उसे pending रखता हूँ। अगर file user
+चुनता है, तो document picker ही permission है — माँगने को कुछ नहीं, और वह इजाजत उसी एक file की है,
+हालाँकि टिकाए बिना वह reboot पर मर जाती है। और किसी दूसरे ऐप को file थमाने का मतलब है `FileProvider`,
+क्योंकि `file://` URI Android 7 से फेंकता आ रहा है।
+</Interview>

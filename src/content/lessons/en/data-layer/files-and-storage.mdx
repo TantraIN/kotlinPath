@@ -1,0 +1,205 @@
+---
+title: Files, scoped storage and MediaStore
+description: Android spent years closing the path from an app to the filesystem. What replaced it is not a restriction to work around — it is a different question, and asking the old one is why file code breaks on every OS release.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Ask **who owns this file** and the API chooses itself. Your own files need no permission and live in
+app-specific storage. Media the user should keep goes through **MediaStore**. Anything else the user
+picks comes through the **document picker**, and a raw path into shared storage is not available at
+all.
+</KeyIdea>
+
+## Why this matters
+
+Every tutorial older than a few years contains this:
+
+```kotlin title="Legacy.kt" numbered
+val file = File(Environment.getExternalStorageDirectory(), "MyApp/report.pdf")
+file.writeBytes(bytes)                              // needs WRITE_EXTERNAL_STORAGE
+```
+
+It has not worked since Android 10, `WRITE_EXTERNAL_STORAGE` does nothing on Android 11 and above,
+and `getExternalStorageDirectory()` is deprecated. The code compiles and fails at run time, which is
+why storage is the area where old answers do the most damage.
+
+The replacement is not one API but a question with three answers.
+
+## Where a file belongs
+
+| The file is | Put it in | Permission | Deleted on uninstall |
+| --- | --- | --- | --- |
+| Yours, must persist | `context.filesDir` | None | Yes |
+| Yours, disposable | `context.cacheDir` | None | Yes |
+| Yours, large and disposable | `context.externalCacheDir` | None | Yes |
+| A photo or video the user keeps | `MediaStore` | None for your own entries | No |
+| Chosen or saved by the user | Document picker (SAF) | None | No |
+
+Two lines in that table do most of the work.
+
+**App-specific storage needs no permission at all.** Not "a permission that is usually granted" —
+none. If a file is genuinely your app's, `filesDir` and `cacheDir` are the whole answer, and any
+code requesting a storage permission for its own files is solving a problem it does not have.
+
+**`cacheDir` can be deleted by the system at any time,** without telling you, when storage runs low.
+That is the contract, not a bug. Anything you cannot regenerate does not belong there — and anything
+you *can* regenerate belongs there rather than in `filesDir`, because that is what keeps your app off
+the "using 4 GB" list in Settings.
+
+<Quiz
+  question="An app writes user-exported PDFs to `context.cacheDir` so it does not need a storage permission. What goes wrong, and when?"
+  options={[
+    "Nothing — cacheDir is the correct permission-free location for app files",
+    "The system can delete cacheDir at any time when storage is low, so exports vanish between sessions with no error and no way to recover them",
+    "Other apps can read cacheDir, so the PDFs leak",
+  ]}
+  answer={1}
+  explanation="The permission reasoning is right and the directory is wrong. cacheDir is permission-free, but its defining property is that the system may clear it whenever it needs space — silently, with no callback and nothing in the logs. A user who exports a report, gets a low-storage warning, and comes back to an empty list has lost work the app never warned them about. The fix depends on who the file is for: if the export is only meaningful inside the app, filesDir keeps it for the app's lifetime; if the user is meant to keep, share or open it elsewhere, it should go out through the document picker or MediaStore so it survives uninstall too. The rule that covers both is that cacheDir is for things you can regenerate, and a user's exported document is not one of them."
+/>
+
+## MediaStore, for things the user keeps
+
+A photo your app produces belongs in the user's gallery, not inside your app:
+
+```kotlin title="SaveImage.kt" numbered
+val values = ContentValues().apply {
+    put(MediaStore.Images.Media.DISPLAY_NAME, "receipt.jpg")
+    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MyApp")
+    put(MediaStore.Images.Media.IS_PENDING, 1)          // hide until fully written
+}
+
+val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)!!
+resolver.openOutputStream(uri)!!.use { it.write(bytes) }
+
+values.clear()
+values.put(MediaStore.Images.Media.IS_PENDING, 0)       // now visible to other apps
+resolver.update(uri, values, null, null)
+```
+
+You never build a path. You describe the file, get a `Uri` back, and write through the resolver.
+`RELATIVE_PATH` is a request for where it should appear, not a filesystem location you control.
+
+`IS_PENDING` is the part people skip. Without it, the gallery can index a half-written file and show
+the user a broken thumbnail. With it, the entry is invisible until you say it is complete.
+
+<Note>
+Writing your own media needs no permission. `READ_MEDIA_IMAGES` is for reading files **other apps**
+created, and on Android 14 and above the photo picker gives you user-chosen images with no permission
+at all — which is both less code and a better prompt than asking for the whole gallery.
+</Note>
+
+## The document picker, for files the user chooses
+
+```kotlin title="Picker.kt" numbered
+val open = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    uri ?: return@registerForActivityResult
+    contentResolver.takePersistableUriPermission(       // survives a reboot
+        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+    )
+    contentResolver.openInputStream(uri)?.use { /* read it */ }
+}
+
+open.launch(arrayOf("application/pdf"))
+```
+
+The user picking a file **is** the permission — there is nothing to request, and the grant covers
+exactly that file. `CreateDocument` is the mirror image for saving.
+
+The catch is that the grant dies on reboot unless you call `takePersistableUriPermission`, so an app
+that stores a `Uri` and reads it next week must ask for persistence now. A `SecurityException` on a
+`Uri` that worked yesterday is almost always this.
+
+<Detail summary="FileProvider: handing your file to another app">
+Your `filesDir` is private, so a `file://` URI pointing into it is useless to another app — and since
+Android 7 passing one throws `FileUriExposedException` rather than failing quietly.
+
+`FileProvider` gives out a `content://` URI with a temporary grant instead:
+
+```xml title="AndroidManifest.xml" numbered
+<provider
+    android:name="androidx.core.content.FileProvider"
+    android:authorities="${applicationId}.fileprovider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+    <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths" />
+</provider>
+```
+
+```kotlin title="Share.kt" numbered
+val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
+val intent = Intent(Intent.ACTION_SEND).apply {
+    type = "application/pdf"
+    putExtra(Intent.EXTRA_STREAM, uri)
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)     // without this the receiver cannot read it
+}
+startActivity(Intent.createChooser(intent, null))
+```
+
+Note `exported="false"` with `grantUriPermissions="true"`. The provider is not open to anyone; each
+grant is per-URI, per-recipient and temporary, which is the whole point. Forgetting the flag on the
+intent is the usual cause of a share sheet that opens and then shows the other app failing to read
+the file.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is in every old tutorial">
+**`Environment.getExternalStorageDirectory()` and a raw path.** Dead since Android 10. There is no
+flag that brings it back for a normal app.
+
+**Requesting a storage permission for your own files.** App-specific storage needs none, so the
+prompt is pure friction and reviewers notice.
+
+**Anything important in `cacheDir`.** The system deletes it silently under storage pressure.
+
+**A `Uri` stored without `takePersistableUriPermission`.** Works today, `SecurityException` after a
+reboot.
+
+**A `file://` URI in an intent.** `FileUriExposedException`. Use `FileProvider`, and remember the
+grant flag.
+</Pitfall>
+
+## Practice
+
+1. Write a file to `filesDir` with no permission in the manifest, and confirm it works.
+2. Save an image through `MediaStore` and find it in the gallery. Then skip `IS_PENDING` on a large
+   file and watch for the partial thumbnail.
+3. Pick a document, store the `Uri`, reboot, and read it — first without persisting the permission,
+   then with.
+4. Share a `filesDir` file with `FileProvider`, then remove the grant flag and observe the receiving
+   app fail.
+5. Fill the device's storage and confirm what happens to `cacheDir`.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The question | Who owns this file |
+| `filesDir` | Yours, persistent, no permission |
+| `cacheDir` | Yours, disposable, deleted by the system without warning |
+| `MediaStore` | Photos and videos the user keeps; no permission for your own |
+| `IS_PENDING` | Hides an entry until it is fully written |
+| Photo picker | User-chosen images with no permission at all |
+| `OpenDocument` | The user picking the file is the permission |
+| `takePersistableUriPermission` | Without it the grant dies on reboot |
+| `FileProvider` | A `content://` URI plus a temporary grant |
+| Dead | `getExternalStorageDirectory` and raw shared paths |
+
+<Interview title="A question that rewards naming the model, not the APIs">
+"How does file storage work on modern Android?"
+
+The model changed from paths to ownership. An app can no longer walk shared storage, so the first
+question is who the file belongs to. If it is the app's own, it goes in `filesDir` or `cacheDir` and
+needs no permission at all — and `cacheDir` only for things I can regenerate, because the system
+clears it silently when storage is low.
+
+If it is media the user should keep, it goes through `MediaStore`, where I describe the file and get
+a `Uri` rather than building a path, and mark it pending until it is fully written. If the user
+chooses the file, the document picker is the permission — nothing to request, and the grant covers
+that one file, though it dies on reboot unless I persist it. And handing a file to another app means
+`FileProvider`, because a `file://` URI has thrown since Android 7.
+</Interview>

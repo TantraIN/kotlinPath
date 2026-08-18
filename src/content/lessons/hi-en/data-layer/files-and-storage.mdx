@@ -1,0 +1,210 @@
+---
+title: Files, scoped storage aur MediaStore
+description: Android ne saalon lagakar app se filesystem tak ka raasta band kiya. Jo uski jagah aaya wo ghumakar paar karne wali pabandi nahi hai — wo ek alag sawal hai, aur purana sawal puchna hi wajah hai ki file wala code har OS release par tootta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Ye puchiye ki **is file ka maalik kaun hai** aur API khud chun jati hai. Aapki apni files ko koi
+permission nahi chahiye aur wo app-specific storage mein rehti hain. Jo media user ko rakhna hai wo
+**MediaStore** se jata hai. Baaki jo kuch user chunta hai wo **document picker** se aata hai, aur
+shared storage mein koi saada path milta hi nahi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Kuch saal se purane har tutorial mein ye hai:
+
+```kotlin title="Legacy.kt" numbered
+val file = File(Environment.getExternalStorageDirectory(), "MyApp/report.pdf")
+file.writeBytes(bytes)                              // WRITE_EXTERNAL_STORAGE chahiye
+```
+
+Ye Android 10 se nahi chalta, `WRITE_EXTERNAL_STORAGE` Android 11 aur uske baad kuch nahi karta, aur
+`getExternalStorageDirectory()` hataya ja chuka hai. Ye code compile hota hai aur chalte waqt nakaam
+hota hai, isiliye storage wo ilaka hai jahan purane jawab sabse zyada nuksan karte hain.
+
+Uski jagah ek API nahi aayi, ek sawal aaya jiske teen jawab hain.
+
+## File kiski jagah hai
+
+| File hai | Kahan rakhiye | Permission | Uninstall par mitti hai |
+| --- | --- | --- | --- |
+| Aapki, tikni chahiye | `context.filesDir` | Koi nahi | Haan |
+| Aapki, phenki ja sakti hai | `context.cacheDir` | Koi nahi | Haan |
+| Aapki, badi aur phenki ja sakti hai | `context.externalCacheDir` | Koi nahi | Haan |
+| Aisi tasveer ya video jo user rakhega | `MediaStore` | Apni banai par koi nahi | Nahi |
+| User ki chuni ya saheji hui | Document picker (SAF) | Koi nahi | Nahi |
+
+Us table ki do lines zyadatar kaam karti hain.
+
+**App-specific storage ko koi permission chahiye hi nahi.** "Aisi permission jo aam taur par mil jati
+hai" nahi — koi nahi. Agar koi file sach mein aapke app ki hai, to `filesDir` aur `cacheDir` hi poora
+jawab hain, aur jo code apni hi files ke liye storage wali permission maangta hai wo aisi mushkil
+suljha raha hai jo use hai hi nahi.
+
+**`cacheDir` ko system kabhi bhi mita sakta hai,** bina bataye, jab jagah kam pade. Ye karaar hai,
+koi bug nahi. Jo cheez aap dobara nahi bana sakte wo wahan ki nahi — aur jo aap dobara bana *sakte*
+ho wo `filesDir` ke bajaye wahin ki hai, kyunki Settings ki "4 GB gher rakhi hai" wali list se aapka
+app isi se bahar rehta hai.
+
+<Quiz
+  question="Koi app user ke export kiye PDF `context.cacheDir` mein likhta hai taki storage wali permission na maangni pade. Galat kya hota hai, aur kab?"
+  options={[
+    "Kuch nahi — app ki files ke liye bina permission wali sahi jagah cacheDir hi hai",
+    "Jagah kam padne par system cacheDir ko kabhi bhi mita sakta hai, to exports do sessions ke beech bina kisi error ke gayab ho jate hain aur unhe wapas pane ka koi raasta nahi",
+    "Doosre app cacheDir padh sakte hain, to wo PDF leak hote hain",
+  ]}
+  answer={1}
+  explanation="Permission wali soch sahi hai aur directory galat. cacheDir ko permission nahi chahiye, par uski pehchan hi ye hai ki jab bhi jagah chahiye, system use saaf kar sakta hai — chupchap, bina kisi callback ke aur logs mein kuch chhode bina. Jis user ne koi report export ki, phir storage kam hone ki chetavani dekhi, aur lautkar khaali list paayi, usne wo kaam khoya jiske baare mein app ne kabhi aagah kiya hi nahi. Ilaaj is par tika hai ki wo file kiske liye hai: agar wo export sirf app ke andar maayne rakhta hai to filesDir use app jitni umar tak rakhta hai; agar user ko use rakhna, bhejna ya kahin aur kholna hai to use document picker ya MediaStore se bahar jana chahiye, taki wo uninstall ke baad bhi bache. Dono ko dhakne wala niyam ye hai ki cacheDir un cheezon ke liye hai jo aap dobara bana sakte ho, aur user ka export kiya document unmein se nahi hai."
+/>
+
+## MediaStore, un cheezon ke liye jo user rakhta hai
+
+Aapke app ki banai tasveer user ki gallery ki hai, aapke app ke andar ki nahi:
+
+```kotlin title="SaveImage.kt" numbered
+val values = ContentValues().apply {
+    put(MediaStore.Images.Media.DISPLAY_NAME, "receipt.jpg")
+    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MyApp")
+    put(MediaStore.Images.Media.IS_PENDING, 1)          // poori likhe jane tak chhupi rahe
+}
+
+val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)!!
+resolver.openOutputStream(uri)!!.use { it.write(bytes) }
+
+values.clear()
+values.put(MediaStore.Images.Media.IS_PENDING, 0)       // ab doosre app ko dikhegi
+resolver.update(uri, values, null, null)
+```
+
+Aap koi path banate hi nahi. Aap file ka huliya batate ho, badle mein ek `Uri` paate ho, aur resolver
+se likhte ho. `RELATIVE_PATH` ye guzarish hai ki wo kahan dikhe, wo filesystem ki jagah nahi jis par
+aapka akhtiyaar ho.
+
+`IS_PENDING` wo hissa hai jise log chhod dete hain. Uske bina gallery aadhi likhi file ko apni list
+mein le sakti hai aur user ko toota hua thumbnail dikha sakti hai. Uske saath, jab tak aap poora hone
+ki khabar na do tab tak wo entry dikhti hi nahi.
+
+<Note>
+Apna media likhne ke liye koi permission nahi chahiye. `READ_MEDIA_IMAGES` **doosre app** ki banai
+files padhne ke liye hai, aur Android 14 tatha uske baad photo picker user ki chuni tasveerein bina
+kisi permission ke de deta hai — jo kam code bhi hai aur poori gallery maangne se behtar sawal bhi.
+</Note>
+
+## Document picker, un files ke liye jo user chunta hai
+
+```kotlin title="Picker.kt" numbered
+val open = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    uri ?: return@registerForActivityResult
+    contentResolver.takePersistableUriPermission(       // reboot ke baad bhi bachti hai
+        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+    )
+    contentResolver.openInputStream(uri)?.use { /* ise padhiye */ }
+}
+
+open.launch(arrayOf("application/pdf"))
+```
+
+User ka file chunna **hi** permission hai — maangne ko kuch hai hi nahi, aur wo ijazat theek usi file
+ki hai. Sahejne ke liye `CreateDocument` usi ka aaina hai.
+
+Pech ye hai ki `takePersistableUriPermission` bulaye bina wo ijazat reboot par mar jati hai, to jo
+app koi `Uri` rakhkar use agle hafte padhega use tikau ijazat abhi maangni hai. Kal chalte hue `Uri`
+par aaya `SecurityException` lagbhag hamesha yahi hota hai.
+
+<Detail summary="FileProvider: apni file kisi doosre app ko thamana">
+Aapka `filesDir` niji hai, to uske andar ishara karta koi `file://` URI kisi doosre app ke kisi kaam
+ka nahi — aur Android 7 se use bhejne par chupchap nakaam hone ke bajaye `FileUriExposedException`
+aata hai.
+
+`FileProvider` uski jagah ek `content://` URI deta hai, thode waqt ki ijazat ke saath:
+
+```xml title="AndroidManifest.xml" numbered
+<provider
+    android:name="androidx.core.content.FileProvider"
+    android:authorities="${applicationId}.fileprovider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+    <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths" />
+</provider>
+```
+
+```kotlin title="Share.kt" numbered
+val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
+val intent = Intent(Intent.ACTION_SEND).apply {
+    type = "application/pdf"
+    putExtra(Intent.EXTRA_STREAM, uri)
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)     // iske bina lene wala padh nahi sakta
+}
+startActivity(Intent.createChooser(intent, null))
+```
+
+`grantUriPermissions="true"` ke saath `exported="false"` par gaur kijiye. Wo provider sabke liye
+khula nahi hai; har ijazat ek URI, ek lene wale aur thode waqt ki hai, aur poori baat yahi hai. Intent
+par wo flag bhoolna hi us share sheet ki aam wajah hai jo khulti hai aur phir doosra app file padhne
+mein nakaam dikhta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli har purane tutorial mein hai">
+**`Environment.getExternalStorageDirectory()` aur saada path.** Android 10 se mara hua. Kisi aam app
+ke liye aisa koi flag nahi jo use wapas le aaye.
+
+**Apni hi files ke liye storage wali permission maangna.** App-specific storage ko koi nahi chahiye,
+to wo prompt sirf adchan hai aur review karne walon ki us par nazar padti hai.
+
+**`cacheDir` mein koi zaruri cheez.** Jagah ki tangi mein system use chupchap mita deta hai.
+
+**Bina `takePersistableUriPermission` ke rakha gaya `Uri`.** Aaj chalta hai, reboot ke baad
+`SecurityException`.
+
+**Intent mein `file://` URI.** `FileUriExposedException`. `FileProvider` lijiye, aur wo grant wala
+flag yaad rakhiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Manifest mein bina kisi permission ke `filesDir` mein ek file likhiye, aur pakka kijiye ki ye
+   chalta hai.
+2. `MediaStore` se koi tasveer sahejiye aur use gallery mein dhoondhiye. Phir kisi badi file par
+   `IS_PENDING` chhod dijiye aur adhoora thumbnail dekhiye.
+3. Koi document chuniye, `Uri` rakhiye, reboot kijiye, aur use padhiye — pehle bina ijazat tikaye,
+   phir tikakar.
+4. `FileProvider` se `filesDir` ki koi file bhejiye, phir grant wala flag hataiye aur lene wale app ko
+   nakaam hote dekhiye.
+5. Device ki storage bhar dijiye aur pakka kijiye ki `cacheDir` ka kya hota hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Sawal | Is file ka maalik kaun hai |
+| `filesDir` | Aapki, tikau, bina permission |
+| `cacheDir` | Aapki, phenki ja sakne wali, system bina bataye mita deta hai |
+| `MediaStore` | Tasveerein aur videos jo user rakhta hai; apni banai par koi permission nahi |
+| `IS_PENDING` | Poori likhe jane tak entry chhupaye rakhta hai |
+| Photo picker | User ki chuni tasveerein, bina kisi permission ke |
+| `OpenDocument` | User ka file chunna hi permission hai |
+| `takePersistableUriPermission` | Uske bina ijazat reboot par mar jati hai |
+| `FileProvider` | Ek `content://` URI aur thode waqt ki ijazat |
+| Mara hua | `getExternalStorageDirectory` aur shared ke saade paths |
+
+<Interview title="Ek sawal, jo APIs nahi, model ka naam lene par inaam deta hai">
+"Aajkal ke Android par file storage kaise chalta hai?"
+
+Model paths se badalkar maalikane par aa gaya. Koi app ab shared storage mein ghoom nahi sakta, to
+pehla sawal ye hai ki wo file kiski hai. Agar wo app ki apni hai to wo `filesDir` ya `cacheDir` mein
+jati hai aur use koi permission chahiye hi nahi — aur `cacheDir` sirf un cheezon ke liye jo main
+dobara bana sakta hoon, kyunki jagah kam padne par system use chupchap saaf kar deta hai.
+
+Agar wo aisa media hai jo user ko rakhna hai, to wo `MediaStore` se jata hai, jahan main path banane
+ke bajaye file ka huliya batakar ek `Uri` paata hoon, aur poori likhe jane tak use pending rakhta
+hoon. Agar file user chunta hai, to document picker hi permission hai — maangne ko kuch nahi, aur wo
+ijazat usi ek file ki hai, halanki tikaye bina wo reboot par mar jati hai. Aur kisi doosre app ko
+file thamane ka matlab hai `FileProvider`, kyunki `file://` URI Android 7 se phenkta aa raha hai.
+</Interview>
