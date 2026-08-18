@@ -38,7 +38,7 @@ sealed interface OrderIntent {
     data class Select(val id: String) : OrderIntent
     data object DismissMessage : OrderIntent
 
-    // natije bhi usi darwaze se wapas aate hain
+    // results bhi usi darwaze se wapas aate hain
     data class Loaded(val orders: List<Order>) : OrderIntent
     data class Failed(val message: UiText) : OrderIntent
 }
@@ -71,7 +71,7 @@ Ek saaf-suthra function, jiska test ek line mein ho jata hai:
     "UI mein, jo phir result doosri intent banakar wapas bhejta hai",
   ]}
   answer={1}
-  explanation="Reducer ko saaf-suthra rehna hi hai, kyunki yahi poora faayda hai: isi se badlaav do values se jaancha ja sakta hai, dobara chalaya ja sakta hai, aur do baar chalne par bhi surakshit rehta hai. Uske andar network call hone se wahi input alag-alag natije dene lagta aur ek aise function mein coroutine ghaseet lata jo asal mein ganit bhar hona chahiye. To reducer Refresh ko loading wali state mein badalta hai, aur ViewModel — wahi intent dekhkar — kaam shuru karta hai aur baad mein Loaded ya Failed intent usi darwaze se wapas bhejta hai. Teesra vikalp chakkar ke baare mein galat nahi hai, par wo lane ka faisla UI mein rakh deta hai, jis parat ko sabse kam pata hona chahiye."
+  explanation="Reducer ko saaf-suthra rehna hi hai, kyunki yahi poora faayda hai: isi se badlaav do values se jaancha ja sakta hai, dobara chalaya ja sakta hai, aur do baar chalne par bhi surakshit rehta hai. Uske andar network call hone se wahi input alag-alag results dene lagta aur ek aise function mein coroutine ghaseet lata jo asal mein ganit bhar hona chahiye. To reducer Refresh ko loading wali state mein badalta hai, aur ViewModel — wahi intent dekhkar — kaam shuru karta hai aur baad mein Loaded ya Failed intent usi darwaze se wapas bhejta hai. Teesra vikalp chakkar ke baare mein galat nahi hai, par wo lane ka faisla UI mein rakh deta hai, jis parat ko sabse kam pata hona chahiye."
 />
 
 ```kotlin title="ViewModel.kt" numbered
@@ -205,7 +205,7 @@ matlab hai ki har screen ke reducer mein aisi shakhayein hain jahan wo kabhi pah
 | --- | --- |
 | MVI | Ek raasta andar (intent), ek bahar (state), beech mein saaf-suthra function |
 | Reducer | `(state, intent) -> state`; na IO, na coroutines |
-| Kaam kahan | `ViewModel` mein, reduce ke baad; natije intents bankar lautte hain |
+| Kaam kahan | `ViewModel` mein, reduce ke baad; results intents bankar lautte hain |
 | Effects | Ek baar hone wali cheezein `Channel` par, state mein kabhi nahi |
 | State | Rotation ke baad dobara bheji jati hai — wahi to uska kaam hai |
 | Test | Do values aur ek dawa |
