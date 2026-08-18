@@ -1,0 +1,234 @@
+---
+title: "Animations: animate*AsState, transitions, Animatable"
+description: पाँच APIs, और उनमें से चुनना ही लगभग पूरा हुनर है। चिकनी screen और अटकती screen में फर्क इस बात से पड़ता है कि animate होती value आप पढ़ते कहाँ हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Compose में animation **ऐसी state है जो हर frame पर बदलती है**। इसी से इसे लिखना बेहद आसान हो जाता
+है और महँगा बनाना भी: जो भी composable उस value को पढ़ता है वह सेकंड में साठ बार recompose होता है,
+तो पूरा हुनर यही है कि उसे जितना नीचे और जितनी देर से पढ़ा जा सके, उतना अच्छा।
+</KeyIdea>
+
+## एक value वाला मामला
+
+```kotlin title="Simple.kt" numbered
+val corner by animateDpAsState(
+    targetValue = if (selected) 24.dp else 8.dp,
+    label = "corner",
+)
+
+Card(shape = RoundedCornerShape(corner)) { }
+```
+
+एक निशाना तय कीजिए, और value वहाँ तक चल पड़ती है। बीच रास्ते में निशाना बदल दीजिए तो वह जहाँ है
+वहीं से मुड़ जाती है, कूदकर दोबारा शुरू नहीं होती — user के दो बार जल्दी-जल्दी tap करने पर यही
+बरताव चाहिए होता है।
+
+हर type के लिए इनमें से एक है: `animateDpAsState`, `animateColorAsState`, `animateFloatAsState`,
+`animateIntOffsetAsState` वगैरह।
+
+## वह गलती जो frames की कीमत माँगती है
+
+<Quiz
+  question="आप किसी card का खड़ा offset `animateDpAsState` से animate करते हैं और उसे `Modifier.offset(y = offset)` में पढ़ते हैं। Layout Inspector दिखाता है कि हर frame पर पूरी screen recompose हो रही है। गलत क्या है?"
+  options={[
+    "Animation का spec बहुत तेज है; लंबा `tween` कम recompose कराएगा",
+    "Animate होती value को composition में पढ़ना उस दायरे को हर frame पर बेकार कर देता है — पढ़ना `Modifier.offset { }` से layout में ले जाइए",
+    "`animateDpAsState` को दोबारा शुरू होने से बचाने के लिए `remember` में लपेटना चाहिए",
+  ]}
+  answer={1}
+  explanation="Animate होती value एक state है, और composable में state पढ़ना उस composable को उससे जोड़ देता है। वह value हर frame पर बदलती है, तो बाहर वाला दायरा हर frame पर बेकार होता है — animation सही है, बस वह composition को भी अपने साथ घसीट रही है। Modifier का lambda वाला रूप उसे layout के दौरान पढ़ता है, तो कुछ recompose नहीं होता और सिर्फ जगह बदलती है। यही बात alpha, scale और rotation के लिए graphicsLayer पर और रंग के लिए drawBehind पर लागू है। नियम यह है: जो value हर frame पर बदलती है उसे composition में नहीं, किसी lambda में पढ़ा जाना चाहिए।"
+/>
+
+```kotlin title="Deferred.kt"
+// हर frame पर recompose होता है
+Box(Modifier.offset(y = offset))
+
+// Layout वाले चरण में पढ़ता है — कोई recomposition नहीं
+Box(Modifier.offset { IntOffset(0, offsetPx.roundToInt()) })
+
+// Draw वाले चरण में पढ़ता है — न recomposition, न दोबारा layout
+Box(Modifier.graphicsLayer { alpha = progress })
+```
+
+## कौन सी API चुनें
+
+| आप क्या animate कर रहे हैं | क्या लें |
+| --- | --- |
+| एक value जो state के पीछे चले | `animate*AsState` |
+| कई values जो साथ बदलें | `updateTransition` |
+| कोई चीज आती या जाती हुई | `AnimatedVisibility` |
+| एक content की जगह दूसरा | `AnimatedContent`, या `Crossfade` |
+| Content की वजह से नाप का बदलना | `Modifier.animateContentSize` |
+| कोई इशारा, या जिसमें पूरा काबू चाहिए | `Animatable` |
+| जो कभी रुके ही नहीं | `rememberInfiniteTransition` |
+
+```kotlin title="Visibility.kt" numbered
+AnimatedVisibility(
+    visible = hasError,
+    enter = fadeIn() + expandVertically(),
+    exit = fadeOut() + shrinkVertically(),
+) {
+    ErrorBanner(message)
+}
+```
+
+```kotlin title="Content.kt" numbered
+AnimatedContent(targetState = uiState, label = "screen") { state ->
+    when (state) {
+        is Loading -> Spinner()
+        is Ready -> OrderList(state.orders)
+        is Failed -> ErrorBanner(state.message)
+    }
+}
+```
+
+<Warning>
+`AnimatedContent` के अंदर वही `state` इस्तेमाल कीजिए जो lambda आपको देता है, बाहर वाला variable
+नहीं। बदलाव के दौरान पुराना और नया दोनों content screen पर होते हैं, और बाहर वाली value पढ़ने से
+जाता हुआ content आने वाला data दिखाने लगता है — हर बदलाव पर गलत screen की एक झलक।
+</Warning>
+
+## कई values, एक ही स्रोत
+
+```kotlin title="Transition.kt" numbered
+val transition = updateTransition(targetState = expanded, label = "card")
+
+val corner by transition.animateDp(label = "corner") { if (it) 24.dp else 8.dp }
+val elevation by transition.animateDp(label = "elevation") { if (it) 12.dp else 2.dp }
+val alpha by transition.animateFloat(label = "alpha") { if (it) 1f else 0.6f }
+```
+
+तीन अलग `animate*AsState` calls अपनी-अपनी घड़ी चलातीं और बोझ पड़ने पर आपस में बिखर जातीं।
+`Transition` उन्हें एक ही घड़ी से चलाता है, तो वे साथ शुरू होती हैं और साथ खत्म — और Android Studio
+का animation वाला औजार उन्हें एक ही चीज की तरह देख पाता है।
+
+## जब काबू चाहिए
+
+<Compare
+  left={{
+    title: "animate*AsState",
+    subtitle: "बयान करने वाला",
+    accent: "violet",
+    points: [
+      "+ एक line; state जो कहे उसके पीछे चलती है",
+      "+ निशाना बदलने पर चिकनाई से मुड़ जाती है",
+      "- उसे किसी value पर तुरंत कुदाया नहीं जा सकता",
+      "- न रोकने का तरीका, न उसकी रफ्तार जानने का",
+    ],
+  }}
+  right={{
+    title: "Animatable",
+    subtitle: "हुक्म देने वाला, किसी coroutine के अंदर",
+    accent: "amber",
+    points: [
+      "+ इशारे के लिए `snapTo`, छोड़ने पर `animateTo`",
+      "+ रफ्तार साथ रखता है, तो fling सहज आगे बढ़ता है",
+      "+ User दोबारा छुए तो `stop()`",
+      "- Coroutine और state का जिम्मा आपका",
+    ],
+  }}
+/>
+
+```kotlin title="Animatable.kt" numbered
+val offsetX = remember { Animatable(0f) }
+
+Modifier.pointerInput(Unit) {
+    detectHorizontalDragGestures(
+        onHorizontalDrag = { _, delta ->
+            launch { offsetX.snapTo(offsetX.value + delta) }
+        },
+        onDragEnd = {
+            launch { offsetX.animateTo(0f, spring()) }
+        },
+    )
+}
+```
+
+<Detail summary="Specs: spring, tween और keyframes">
+```kotlin title="Specs.kt" numbered
+spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+tween(durationMillis = 300, easing = FastOutSlowInEasing)
+keyframes {
+    durationMillis = 400
+    0.dp at 0
+    30.dp at 150
+    24.dp at 400
+}
+```
+
+`spring` default है, और आमतौर पर वही सही जवाब भी है: उसकी कोई तय अवधि नहीं होती, तो बीच में टोकी
+गई animation दोबारा शुरू होने के बजाय अपनी रफ्तार लेकर नए निशाने की तरफ मुड़ जाती है। `tween` तब
+लीजिए जब अवधि सच में design का हिस्सा हो — कोई progress bar, कोई समय से खुलने वाली चीज — और
+`keyframes` तब जब रास्ता मायने रखता हो, जैसे निशाने से थोड़ा आगे जाकर लौटना।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="सबको एक ही घड़ी चलाती है" meta="frame की घड़ी">
+    Animations `withFrameNanos` से चलती हैं, तो वे frame के साथ और आपस में एक सुर में रहती हैं, और
+    composition न बन रही हो तो रुक जाती हैं।
+  </TimelineItem>
+  <TimelineItem title="हर frame एक state लिखना है" meta="इसीलिए पढ़ना मायने रखता है">
+    नई value state में लिखी जाती है, और हर पढ़ने वाला बेकार हो जाता है। आप कहाँ पढ़ते हैं यह तय
+    करता है कि इसका मतलब recomposition है, दोबारा layout, या सिर्फ दोबारा बनाना।
+  </TimelineItem>
+  <TimelineItem title="Transition एक parent है" meta="अंदर की animations उसकी state साझा करती हैं">
+    अंदर की animations transition को खबर देती हैं, तो उसे पता रहता है कि सब खत्म हुईं या नहीं —
+    `transition.isRunning` यही पढ़ता है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, और पहली सबसे महँगी">
+**Animate होती value composition में पढ़ना।** उस चीज के लिए सेकंड में साठ recompositions जिसे layout
+या draw वाला चरण अकेले सँभाल सकता था।
+
+**हर जगह `tween`।** तय अवधि का मतलब है कि टोकी गई animation मुड़ने के बजाय दोबारा शुरू होती है, और
+जल्दी-जल्दी taps पर UI का सुस्त लगना इसी से आता है।
+
+**`AnimatedContent` के अंदर बाहर वाली state।** जाता हुआ content आने वाला data दिखाने लगता है।
+
+**बिना माँगी अंतहीन animations।** Screen के किसी कोने में चलता कोई चक्कर हमेशा battery खाता है और
+system की कम-motion वाली setting से भिड़ता है। `Settings.Global.ANIMATOR_DURATION_SCALE` देखिए या
+एक setting दीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `animateDpAsState` से कोई corner radius animate कीजिए और दो बार जल्दी tap कीजिए। उसे दोबारा
+   शुरू होने के बजाय मुड़ते देखिए।
+2. Composition में पढ़ा जाने वाला offset animate कीजिए, recomposition की गिनती देखिए, फिर
+   `Modifier.offset { }` पर जाइए और दोबारा देखिए।
+3. तीन `animate*AsState` calls की जगह एक `updateTransition` रखिए और उनके खत्म होने का ढंग मिलाइए।
+4. `Animatable`, `snapTo` और `animateTo` से swipe-to-dismiss वाली row बनाइए।
+5. एक ही state बदलाव के लिए `Crossfade` और `AnimatedContent` अगल-बगल रखिए और तय कीजिए कौन सा बेहतर
+   पढ़ा जाता है।
+6. किसी टोकी जा सकने वाली animation पर `spring` की जगह `tween` रखिए और उसे बीच में टोकिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Animation | ऐसी state जो हर frame पर बदलती है |
+| `animate*AsState` | State के पीछे चलती एक value; निशाना बदलने पर मुड़ जाती है |
+| `updateTransition` | एक ही स्रोत से कई values, एक सुर में |
+| `AnimatedVisibility` | आते-जाते content के लिए enter और exit |
+| `AnimatedContent` | एक content की जगह दूसरा; lambda वाली state लीजिए |
+| `Animatable` | पूरा काबू, रफ्तार, और इशारे |
+| `animateContentSize` | Content की वजह से नाप बदलने को चिकना करता है |
+| `spring` | Default; बीच में टोकी जा सकने वाली, कोई तय अवधि नहीं |
+| `tween` / `keyframes` | जब अवधि या ठीक रास्ता design का हिस्सा हो |
+| देर से पढ़ना | Lambda वाले modifiers animation को composition से बाहर रखते हैं |
+
+<Interview title="वह सवाल जिसका अच्छा जवाब APIs का नहीं, performance का है">
+"Animation को हर frame पर recomposition कराने से कैसे रोकेंगे?"
+
+Animate होती value composition में नहीं, किसी lambda में पढ़ेंगे — `Modifier.offset { }` layout के
+दौरान पढ़ता है, `graphicsLayer` draw के दौरान — तो frame recompose होने के बजाय सिर्फ जगह बदलता है
+या दोबारा बनता है। समझ दिखाने वाली बात यह है कि animation बस सेकंड में साठ बार बदलती state है, तो
+सवाल कभी यह नहीं कि animation कितनी तेज है, सिर्फ यह कि उसे पढ़ कौन सा चरण रहा है।
+</Interview>

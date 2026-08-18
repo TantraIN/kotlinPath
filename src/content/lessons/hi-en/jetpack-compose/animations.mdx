@@ -1,0 +1,240 @@
+---
+title: "Animations: animate*AsState, transitions, Animatable"
+description: Paanch APIs, aur unmein se chunna hi lagbhag poora hunar hai. Chikni screen aur atakti screen mein farak is baat se padta hai ki animate hoti value aap padhte kahan hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Compose mein animation **aisi state hai jo har frame par badalti hai**. Isi se ise likhna behad
+aasan ho jata hai aur mehnga banana bhi: jo bhi composable us value ko padhta hai wo ek second mein
+60 baar recompose hota hai, to poora hunar yahi hai ki use jitna neeche aur jitni der se padha ja
+sake, utna achha.
+</KeyIdea>
+
+## Ek value wala mamla
+
+```kotlin title="Simple.kt" numbered
+val corner by animateDpAsState(
+    targetValue = if (selected) 24.dp else 8.dp,
+    label = "corner",
+)
+
+Card(shape = RoundedCornerShape(corner)) { }
+```
+
+Ek nishana tay kijiye, aur value wahan tak chal padti hai. Beech raste mein nishana badal dijiye to
+wo jahan hai wahin se mud jati hai, koodkar dobara shuru nahi hoti — user ke do baar jaldi-jaldi tap
+karne par yahi bartaav chahiye hota hai.
+
+Har type ke liye inmein se ek hai: `animateDpAsState`, `animateColorAsState`, `animateFloatAsState`,
+`animateIntOffsetAsState` waghairah.
+
+## Wo galti jo frames ki keemat maangti hai
+
+<Quiz
+  question="Aap kisi card ka khada offset `animateDpAsState` se animate karte hain aur use `Modifier.offset(y = offset)` mein padhte hain. Layout Inspector dikhata hai ki har frame par poori screen recompose ho rahi hai. Galat kya hai?"
+  options={[
+    "Animation ka spec bahut tez hai; lamba `tween` kam recompose karayega",
+    "Animate hoti value ko composition mein padhna us dayre ko har frame par bekar kar deta hai — padhna `Modifier.offset { }` se layout mein le jaiye",
+    "`animateDpAsState` ko dobara shuru hone se bachane ke liye `remember` mein lapetna chahiye",
+  ]}
+  answer={1}
+  explanation="Animate hoti value ek state hai, aur composable mein state padhna us composable ko usse jod deta hai. Wo value har frame par badalti hai, to bahar wala dayra har frame par bekar hota hai — animation sahi hai, bas wo composition ko bhi apne saath ghaseet rahi hai. Modifier ka lambda wala roop use layout ke dauran padhta hai, to kuch recompose nahi hota aur sirf jagah badalti hai. Yahi baat alpha, scale aur rotation ke liye graphicsLayer par aur rang ke liye drawBehind par lagu hai. Niyam ye hai: jo value har frame par badalti hai use composition mein nahi, kisi lambda mein padha jana chahiye."
+/>
+
+```kotlin title="Deferred.kt"
+// Har frame par recompose hota hai
+Box(Modifier.offset(y = offset))
+
+// Layout wale charan mein padhta hai — koi recomposition nahi
+Box(Modifier.offset { IntOffset(0, offsetPx.roundToInt()) })
+
+// Draw wale charan mein padhta hai — na recomposition, na dobara layout
+Box(Modifier.graphicsLayer { alpha = progress })
+```
+
+## Kaun si API chunein
+
+| Aap kya animate kar rahe hain | Kya lein |
+| --- | --- |
+| Ek value jo state ke peeche chale | `animate*AsState` |
+| Kai values jo saath badlein | `updateTransition` |
+| Koi cheez aati ya jati hui | `AnimatedVisibility` |
+| Ek content ki jagah doosra | `AnimatedContent`, ya `Crossfade` |
+| Content ki wajah se naap ka badalna | `Modifier.animateContentSize` |
+| Koi ishara, ya jismein poora kaabu chahiye | `Animatable` |
+| Jo kabhi ruke hi nahi | `rememberInfiniteTransition` |
+
+```kotlin title="Visibility.kt" numbered
+AnimatedVisibility(
+    visible = hasError,
+    enter = fadeIn() + expandVertically(),
+    exit = fadeOut() + shrinkVertically(),
+) {
+    ErrorBanner(message)
+}
+```
+
+```kotlin title="Content.kt" numbered
+AnimatedContent(targetState = uiState, label = "screen") { state ->
+    when (state) {
+        is Loading -> Spinner()
+        is Ready -> OrderList(state.orders)
+        is Failed -> ErrorBanner(state.message)
+    }
+}
+```
+
+<Warning>
+`AnimatedContent` ke andar wahi `state` istemal kijiye jo lambda aapko deta hai, bahar wala variable
+nahi. Badlaav ke dauran purana aur naya dono content screen par hote hain, aur bahar wali value
+padhne se jata hua content aane wala data dikhane lagta hai — har badlaav par galat screen ki ek
+jhalak.
+</Warning>
+
+## Kai values, ek hi srot
+
+```kotlin title="Transition.kt" numbered
+val transition = updateTransition(targetState = expanded, label = "card")
+
+val corner by transition.animateDp(label = "corner") { if (it) 24.dp else 8.dp }
+val elevation by transition.animateDp(label = "elevation") { if (it) 12.dp else 2.dp }
+val alpha by transition.animateFloat(label = "alpha") { if (it) 1f else 0.6f }
+```
+
+Teen alag `animate*AsState` calls apni-apni ghadi chalatin aur bojh padne par aapas mein bikhar
+jatin. `Transition` unhe ek hi ghadi se chalata hai, to wo saath shuru hoti hain aur saath khatam —
+aur Android Studio ka animation wala auzar unhe ek hi cheez ki tarah dekh pata hai.
+
+## Jab kaabu chahiye
+
+<Compare
+  left={{
+    title: "animate*AsState",
+    subtitle: "Bayan karne wala",
+    accent: "violet",
+    points: [
+      "+ Ek line; state jo kahe uske peeche chalti hai",
+      "+ Nishana badalne par chiknai se mud jati hai",
+      "- Use kisi value par turant kudaya nahi ja sakta",
+      "- Na rokne ka tarika, na uski raftar jaanne ka",
+    ],
+  }}
+  right={{
+    title: "Animatable",
+    subtitle: "Hukm dene wala, kisi coroutine ke andar",
+    accent: "amber",
+    points: [
+      "+ Ishare ke liye `snapTo`, chhodne par `animateTo`",
+      "+ Raftar saath rakhta hai, to fling sehaj aage badhta hai",
+      "+ User dobara chhue to `stop()`",
+      "- Coroutine aur state ka zimma aapka",
+    ],
+  }}
+/>
+
+```kotlin title="Animatable.kt" numbered
+val offsetX = remember { Animatable(0f) }
+
+Modifier.pointerInput(Unit) {
+    detectHorizontalDragGestures(
+        onHorizontalDrag = { _, delta ->
+            launch { offsetX.snapTo(offsetX.value + delta) }
+        },
+        onDragEnd = {
+            launch { offsetX.animateTo(0f, spring()) }
+        },
+    )
+}
+```
+
+<Detail summary="Specs: spring, tween aur keyframes">
+```kotlin title="Specs.kt" numbered
+spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+tween(durationMillis = 300, easing = FastOutSlowInEasing)
+keyframes {
+    durationMillis = 400
+    0.dp at 0
+    30.dp at 150
+    24.dp at 400
+}
+```
+
+`spring` default hai, aur aam taur par wahi sahi jawab bhi hai: uski koi tay avadhi nahi hoti, to
+beech mein toki gayi animation dobara shuru hone ke bajaye apni raftar lekar naye nishane ki taraf
+mud jati hai. `tween` tab lijiye jab avadhi sach mein design ka hissa ho — koi progress bar, koi
+samay se khulne wali cheez — aur `keyframes` tab jab raasta maayne rakhta ho, jaise nishane se
+thoda aage jakar lautna.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Sabko ek hi ghadi chalati hai" meta="frame ki ghadi">
+    Animations `withFrameNanos` se chalti hain, to wo frame ke saath aur aapas mein ek sur mein
+    rehti hain, aur composition na ban rahi ho to ruk jati hain.
+  </TimelineItem>
+  <TimelineItem title="Har frame ek state likhna hai" meta="isiliye padhna maayne rakhta hai">
+    Nai value state mein likhi jati hai, aur har padhne wala bekar ho jata hai. Aap kahan padhte
+    hain ye tay karta hai ki iska matlab recomposition hai, dobara layout, ya sirf dobara banana.
+  </TimelineItem>
+  <TimelineItem title="Transition ek parent hai" meta="andar ki animations uski state share karti hain">
+    Andar ki animations transition ko khabar deti hain, to use pata rehta hai ki sab khatam huin ya
+    nahi — `transition.isRunning` yahi padhta hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, aur pehli sabse mehngi">
+**Animate hoti value composition mein padhna.** Us cheez ke liye ek second mein 60 recompositions
+jise layout ya draw wala charan akele sambhal sakta tha.
+
+**Har jagah `tween`.** Tay avadhi ka matlab hai ki toki gayi animation mudne ke bajaye dobara shuru
+hoti hai, aur jaldi-jaldi taps par UI ka sust lagna isi se aata hai.
+
+**`AnimatedContent` ke andar bahar wali state.** Jata hua content aane wala data dikhane lagta hai.
+
+**Bina maangi antheen animations.** Screen ke kisi kone mein chalta koi chakkar hamesha battery
+khata hai aur system ki kam-motion wali setting se bhidta hai.
+`Settings.Global.ANIMATOR_DURATION_SCALE` dekhiye ya ek setting dijiye.
+</Pitfall>
+
+## Practice
+
+1. `animateDpAsState` se koi corner radius animate kijiye aur do baar jaldi tap kijiye. Use dobara
+   shuru hone ke bajaye mudte dekhiye.
+2. Composition mein padha jane wala offset animate kijiye, recomposition ki ginti dekhiye, phir
+   `Modifier.offset { }` par jaiye aur dobara dekhiye.
+3. Teen `animate*AsState` calls ki jagah ek `updateTransition` rakhiye aur unke khatam hone ka
+   dhang milaiye.
+4. `Animatable`, `snapTo` aur `animateTo` se swipe-to-dismiss wali row banaiye.
+5. Ek hi state badlaav ke liye `Crossfade` aur `AnimatedContent` agal-bagal rakhiye aur tay kijiye
+   kaun sa behtar padha jata hai.
+6. Kisi toki ja sakne wali animation par `spring` ki jagah `tween` rakhiye aur use beech mein
+   tokiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Animation | Aisi state jo har frame par badalti hai |
+| `animate*AsState` | State ke peeche chalti ek value; nishana badalne par mud jati hai |
+| `updateTransition` | Ek hi srot se kai values, ek sur mein |
+| `AnimatedVisibility` | Aate-jate content ke liye enter aur exit |
+| `AnimatedContent` | Ek content ki jagah doosra; lambda wali state lijiye |
+| `Animatable` | Poora kaabu, raftar, aur ishare |
+| `animateContentSize` | Content ki wajah se naap badalne ko chikna karta hai |
+| `spring` | Default; beech mein toki ja sakne wali, koi tay avadhi nahi |
+| `tween` / `keyframes` | Jab avadhi ya theek raasta design ka hissa ho |
+| Der se padhna | Lambda wale modifiers animation ko composition se bahar rakhte hain |
+
+<Interview title="Wo sawal jiska achha jawab APIs ka nahi, performance ka hai">
+"Animation ko har frame par recomposition karane se kaise rokenge?"
+
+Animate hoti value composition mein nahi, kisi lambda mein padhenge — `Modifier.offset { }` layout
+ke dauran padhta hai, `graphicsLayer` draw ke dauran — to frame recompose hone ke bajaye sirf jagah
+badalta hai ya dobara banta hai. Samajh dikhane wali baat ye hai ki animation bas ek second mein 60
+baar badalti state hai, to sawal kabhi ye nahi ki animation kitni tez hai, sirf ye ki use padh kaun
+sa charan raha hai.
+</Interview>

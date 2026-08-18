@@ -1,0 +1,234 @@
+---
+title: "Animations: animate*AsState, transitions, Animatable"
+description: Five APIs, and choosing between them is almost the whole skill. What separates a smooth screen from a stuttering one is where you read the animated value.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+An animation in Compose is **state that changes every frame**. That makes it trivial to write and
+easy to make expensive: whichever composable reads the animated value recomposes sixty times a
+second, so the whole craft is reading it as low and as late as possible.
+</KeyIdea>
+
+## The one-value case
+
+```kotlin title="Simple.kt" numbered
+val corner by animateDpAsState(
+    targetValue = if (selected) 24.dp else 8.dp,
+    label = "corner",
+)
+
+Card(shape = RoundedCornerShape(corner)) { }
+```
+
+Set a target, and the value walks there. Change the target mid-flight and it redirects from where
+it currently is, rather than jumping and starting again — that is the behaviour you want when a
+user taps twice quickly.
+
+There is one of these per type: `animateDpAsState`, `animateColorAsState`, `animateFloatAsState`,
+`animateIntOffsetAsState` and so on.
+
+## The mistake that costs frames
+
+<Quiz
+  question="You animate a card's vertical offset with `animateDpAsState` and read it as `Modifier.offset(y = offset)`. The Layout Inspector shows the whole screen recomposing every frame. What is wrong?"
+  options={[
+    "The animation spec is too fast; a longer `tween` recomposes less",
+    "Reading the animated value in composition invalidates that scope every frame — move the read into layout with `Modifier.offset { }`",
+    "`animateDpAsState` must be wrapped in `remember` to avoid restarting",
+  ]}
+  answer={1}
+  explanation="An animated value is state, and reading state in a composable subscribes that composable to it. Since the value changes on every frame, the enclosing scope is invalidated on every frame — the animation is correct, but it is dragging composition along with it. The lambda form of the modifier reads the value during layout instead, so nothing recomposes and only placement changes. The same applies to graphicsLayer for alpha, scale and rotation, and to drawBehind for colour. As a rule: if the value changes every frame, it should be read in a lambda, not in the composition."
+/>
+
+```kotlin title="Deferred.kt"
+// Recomposes every frame
+Box(Modifier.offset(y = offset))
+
+// Reads in the layout phase — no recomposition
+Box(Modifier.offset { IntOffset(0, offsetPx.roundToInt()) })
+
+// Reads in the draw phase — no recomposition, no relayout
+Box(Modifier.graphicsLayer { alpha = progress })
+```
+
+## Choosing the API
+
+| You are animating | Use |
+| --- | --- |
+| One value that follows state | `animate*AsState` |
+| Several values that change together | `updateTransition` |
+| Something appearing or disappearing | `AnimatedVisibility` |
+| One piece of content replacing another | `AnimatedContent`, or `Crossfade` |
+| A size change caused by content | `Modifier.animateContentSize` |
+| A gesture, or anything needing manual control | `Animatable` |
+| Something that never stops | `rememberInfiniteTransition` |
+
+```kotlin title="Visibility.kt" numbered
+AnimatedVisibility(
+    visible = hasError,
+    enter = fadeIn() + expandVertically(),
+    exit = fadeOut() + shrinkVertically(),
+) {
+    ErrorBanner(message)
+}
+```
+
+```kotlin title="Content.kt" numbered
+AnimatedContent(targetState = uiState, label = "screen") { state ->
+    when (state) {
+        is Loading -> Spinner()
+        is Ready -> OrderList(state.orders)
+        is Failed -> ErrorBanner(state.message)
+    }
+}
+```
+
+<Warning>
+Inside `AnimatedContent`, use the `state` the lambda gives you, not the outer variable. During the
+transition both the old and new content are on screen, and reading the outer value makes the
+outgoing content show the incoming data — a flash of the wrong screen on every change.
+</Warning>
+
+## Several values, one source
+
+```kotlin title="Transition.kt" numbered
+val transition = updateTransition(targetState = expanded, label = "card")
+
+val corner by transition.animateDp(label = "corner") { if (it) 24.dp else 8.dp }
+val elevation by transition.animateDp(label = "elevation") { if (it) 12.dp else 2.dp }
+val alpha by transition.animateFloat(label = "alpha") { if (it) 1f else 0.6f }
+```
+
+Three separate `animate*AsState` calls would each run their own clock and drift apart under load.
+A `Transition` drives them from one, so they start together and finish together — and the animation
+tooling in Android Studio can inspect it as one thing.
+
+## When you need control
+
+<Compare
+  left={{
+    title: "animate*AsState",
+    subtitle: "Declarative",
+    accent: "violet",
+    points: [
+      "+ One line; follows whatever the state says",
+      "+ Redirects smoothly when the target changes",
+      "- You cannot jump it to a value instantly",
+      "- No way to stop it, or to know its velocity",
+    ],
+  }}
+  right={{
+    title: "Animatable",
+    subtitle: "Imperative, inside a coroutine",
+    accent: "amber",
+    points: [
+      "+ `snapTo` for a gesture, `animateTo` for the release",
+      "+ Carries velocity, so a fling continues naturally",
+      "+ `stop()` when the user touches it again",
+      "- You own the coroutine and the state",
+    ],
+  }}
+/>
+
+```kotlin title="Animatable.kt" numbered
+val offsetX = remember { Animatable(0f) }
+
+Modifier.pointerInput(Unit) {
+    detectHorizontalDragGestures(
+        onHorizontalDrag = { _, delta ->
+            launch { offsetX.snapTo(offsetX.value + delta) }
+        },
+        onDragEnd = {
+            launch { offsetX.animateTo(0f, spring()) }
+        },
+    )
+}
+```
+
+<Detail summary="Specs: spring, tween and keyframes">
+```kotlin title="Specs.kt" numbered
+spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+tween(durationMillis = 300, easing = FastOutSlowInEasing)
+keyframes {
+    durationMillis = 400
+    0.dp at 0
+    30.dp at 150
+    24.dp at 400
+}
+```
+
+`spring` is the default, and it is usually the right answer: it has no fixed duration, so an
+interrupted animation carries its velocity into the new target instead of restarting. Reach for
+`tween` when a duration is genuinely part of the design — a progress bar, a timed reveal — and for
+`keyframes` when the path matters, such as an overshoot.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="One clock drives everything" meta="the frame clock">
+    Animations are driven by `withFrameNanos`, so they are all in step with the frame and with each
+    other, and they pause when the composition is not being drawn.
+  </TimelineItem>
+  <TimelineItem title="Each frame is a state write" meta="which is why reads matter">
+    The new value is written to state, and every reader is invalidated. Where you read decides
+    whether that means a recomposition, a relayout or only a redraw.
+  </TimelineItem>
+  <TimelineItem title="A Transition is a parent" meta="child animations share its state">
+    Child animations report to the transition, which knows when all of them have finished — that is
+    what `transition.isRunning` reads.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four, and the first is the expensive one">
+**Reading an animated value in composition.** Sixty recompositions a second for something the
+layout or draw phase could have handled alone.
+
+**`tween` everywhere.** A fixed duration means an interrupted animation restarts instead of
+redirecting, which is exactly what makes a UI feel unresponsive under fast taps.
+
+**The outer state inside `AnimatedContent`.** The outgoing content shows the incoming data.
+
+**Infinite animations that nobody asked for.** A loop in the corner of the screen costs battery
+forever and fights the system's reduced-motion setting. Check `Settings.Global.ANIMATOR_DURATION_SCALE`
+or offer a preference.
+</Pitfall>
+
+## Practice
+
+1. Animate a corner radius with `animateDpAsState` and tap twice quickly. Watch it redirect rather
+   than restart.
+2. Animate an offset read in composition, check the recomposition count, then switch to
+   `Modifier.offset { }` and check again.
+3. Replace three `animate*AsState` calls with one `updateTransition` and compare how they finish.
+4. Build a swipe-to-dismiss row with `Animatable`, `snapTo` and `animateTo`.
+5. Put `Crossfade` and `AnimatedContent` side by side for the same state change and decide which
+   reads better.
+6. Swap a `spring` for a `tween` on an interruptible animation and interrupt it.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Animation | State that changes every frame |
+| `animate*AsState` | One value following state; redirects on target change |
+| `updateTransition` | Several values from one source, in step |
+| `AnimatedVisibility` | Enter and exit for appearing content |
+| `AnimatedContent` | One content replacing another; use the lambda's state |
+| `Animatable` | Manual control, velocity, and gestures |
+| `animateContentSize` | Smooths a size change caused by content |
+| `spring` | The default; interruptible, no fixed duration |
+| `tween` / `keyframes` | When duration or the exact path is part of the design |
+| Deferred reads | Lambda modifiers keep animation out of composition |
+
+<Interview title="A question whose good answer is about performance, not APIs">
+"How do you keep an animation from causing a recomposition every frame?"
+
+Read the animated value in a lambda rather than in composition — `Modifier.offset { }` reads during
+layout, `graphicsLayer` during draw — so the frame only replaces or redraws instead of recomposing.
+The framing that shows understanding is that an animation is just state changing sixty times a
+second, so the question is never how fast the animation is, only which phase is reading it.
+</Interview>
