@@ -1,0 +1,183 @@
+---
+title: Why architecture — the spaghetti problem
+description: Architecture is not folder names. It is the answer to one question — how much of this codebase must I understand before I can safely change one line?
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Architecture exists to **limit how far a change travels**. A well-arranged codebase is not one that
+looks tidy; it is one where changing the date format touches the date formatting and nothing else.
+</KeyIdea>
+
+## Why this matters
+
+Here is the screen everyone has met, compressed:
+
+```kotlin title="OrderActivity.kt" numbered
+class OrderActivity : AppCompatActivity() {
+
+    private val client = OkHttpClient()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        Thread {
+            val json = client.newCall(Request.Builder().url(URL).build())
+                .execute().body!!.string()
+            val orders = JSONArray(json).let { array ->
+                (0 until array.length()).map { parseOrder(array.getJSONObject(it)) }
+            }
+            val open = orders.filter { it.status != "DELIVERED" }
+                .sortedByDescending { it.placedAt }
+
+            runOnUiThread {
+                binding.total.text = "₹" + open.sumOf { it.amount } / 100
+                adapter.submitList(open)
+            }
+        }.start()
+    }
+}
+```
+
+It works. The problem is what it costs to change.
+
+| You want to | You must edit | You must retest |
+| --- | --- | --- |
+| Change the currency format | `OrderActivity` | The whole screen, on a device |
+| Cache orders offline | `OrderActivity` | The whole screen |
+| Show the same list on a widget | Copy all of it | Both copies, forever |
+| Test the "which orders are open" rule | You cannot | — |
+
+Every one of those is the same failure: unrelated decisions ended up in one place.
+
+## Two words that describe the whole problem
+
+<Compare
+  left={{
+    title: "Coupling",
+    subtitle: "How much one thing depends on another",
+    accent: "rose",
+    points: [
+      "- High: the screen knows about JSON, threads and HTTP",
+      "- A change in any of them reaches the screen",
+      "+ Low: the screen knows only what to display",
+      "~ You want this low",
+    ],
+  }}
+  right={{
+    title: "Cohesion",
+    subtitle: "How much one thing is about one job",
+    accent: "emerald",
+    points: [
+      "- Low: one class parses, filters, formats and draws",
+      "- Nobody can name what the class is for",
+      "+ High: everything in the file is about the same decision",
+      "~ You want this high",
+    ],
+  }}
+/>
+
+## The symptom people report, and the cause underneath
+
+<Quiz
+  question="Somebody says the order screen cannot be unit tested. What is the actual cause?"
+  options={[
+    "Android classes cannot be tested without an emulator, so it is unavoidable",
+    "The class builds its own dependencies, so a test cannot substitute a fake network",
+    "There are no test cases written for it yet",
+  ]}
+  answer={1}
+  explanation="Untestable is a symptom, not a cause. The cause is that the class constructs what it needs — an OkHttpClient here — so a test has no way to hand it a fake, and running it means running real network calls on a real device. This is why 'make it testable' and 'make it changeable' turn out to be the same instruction: both need the class to receive its collaborators rather than create them. Note the second option is not about tests at all. It is about substitution, and substitution is also what lets you swap the network for a cache, or reuse the logic in a widget."
+/>
+
+## The arrangement almost everyone converges on
+
+<Figure caption="Dependencies point downward only. The UI knows about the ViewModel, which knows about the domain, which knows about data — and never the other way around.">
+  <LayerStack
+    title="The layers of an Android app"
+    description="From the bottom: the data layer fetches and stores, the domain layer holds the rules, the presentation layer holds screen state, and the UI displays it. Dependencies point downward only."
+    youWriteThis="closest to the user"
+    topLabel="what the user sees"
+    bottomLabel="where the data lives"
+    layers={[
+      { label: "Data", sub: "repositories, network, database", accent: "amber", detail: "Fetches, caches and stores. It decides where a value comes from, and it is the only layer that knows a network or a database exists." },
+      { label: "Domain", sub: "plain Kotlin rules", accent: "emerald", detail: "The rules that would still be true on a server or a watch — which orders count as open, how a total is worked out. No Android imports at all, so it tests in milliseconds." },
+      { label: "Presentation", sub: "ViewModel", accent: "sky", detail: "Holds the state one screen needs and survives rotation. It knows about the layers below it and nothing about views, composables or Android UI classes." },
+      { label: "UI", sub: "composables and views", accent: "violet", detail: "Displays state and reports events. It should contain no decision that could be made without a screen attached." },
+    ]}
+  />
+</Figure>
+
+The rule is the arrow, not the names. **Dependencies point one way.** The `ViewModel` may know
+about the repository; the repository must never know a `ViewModel` exists. As soon as an arrow
+points back, you have a cycle, and a cycle means neither side can be understood or changed alone.
+
+<Note>
+Domain being plain Kotlin is not purity for its own sake. It means the rule "an order is open until
+it is delivered" can be tested in milliseconds on your laptop, with no emulator, and reused by a
+widget, a Wear app or a server.
+</Note>
+
+## Architecture is not free
+
+<Detail summary="What it costs, and when to skip it">
+Every boundary you add is indirection: one more file to open, one more interface to read, one more
+hop between the button and the network call. On a screen that shows three static strings, that cost
+buys nothing.
+
+Reach for structure when at least one of these is true:
+
+- More than one person changes this code.
+- The same rule is needed in more than one place.
+- The logic is worth testing without a device.
+- The screen will outlive the current design.
+
+A prototype you will throw away in a week should stay in one file. Applying four layers to it is
+not discipline; it is ceremony, and it makes the prototype slower to change, which was the only
+thing it was for.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three that look like architecture and are not">
+**Folders instead of boundaries.** Creating `data/`, `domain/` and `ui/` and then having the
+`ViewModel` build a `Retrofit` instance changes nothing. The arrows are what matter, not the paths.
+
+**Abstracting before there is a second case.** An interface with exactly one implementation, written
+in case there is ever another, is a file everyone has to read and nobody benefits from.
+
+**One class per method.** A `UseCase` that calls one repository method and returns it adds a hop and
+no decision. Add it when there is a rule to hold; not before.
+</Pitfall>
+
+## Practice
+
+1. Take the `OrderActivity` above and list every reason it might change. Group the reasons — each
+   group is a class you are missing.
+2. Find the one rule in it that is genuinely business logic, and move it to a plain Kotlin function.
+   Write a test for that function without an emulator.
+3. Draw the dependency arrows in a screen you already have. Look for one that points backwards.
+4. Find an interface in your project with exactly one implementation and ask what it buys.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Architecture | Limits how far a change travels |
+| Coupling | How much one thing depends on another — keep it low |
+| Cohesion | How much one thing is about one job — keep it high |
+| Untestable | A symptom; the cause is usually constructing your own dependencies |
+| Layers | UI, presentation, domain, data |
+| The dependency rule | Arrows point one way; a cycle means neither side stands alone |
+| Domain | Plain Kotlin, so rules run in milliseconds and travel anywhere |
+| The cost | Indirection — worth paying only when something above is true |
+
+<Interview title="A question where the confident wrong answer is a list of layer names">
+"Why do we bother with architecture?"
+
+To limit blast radius: so that a change has a single obvious home and does not require understanding
+the rest of the app. The answer that shows judgement adds the cost — every boundary is indirection,
+so a throwaway prototype is genuinely better in one file — and names the real test of a design,
+which is not how it looks in the folder tree but whether the dependency arrows all point the same
+way.
+</Interview>

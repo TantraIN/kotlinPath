@@ -1,0 +1,184 @@
+---
+title: Architecture क्यों — spaghetti वाली दिक्कत
+description: Architecture folders के नाम नहीं है। वह एक ही सवाल का जवाब है — इस codebase का कितना हिस्सा समझे बिना मैं एक line सुरक्षित तरीके से बदल नहीं सकता?
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Architecture इसलिए है कि **कोई बदलाव कितनी दूर तक जाता है, उसे बाँधा जा सके**। अच्छी तरह जमा हुआ
+codebase वह नहीं जो सुथरा दिखे; वह है जिसमें date का format बदलने पर सिर्फ date का format बदलता है
+और कुछ नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+यह रही वह screen जो सबको मिली है, दबाकर छोटी की हुई:
+
+```kotlin title="OrderActivity.kt" numbered
+class OrderActivity : AppCompatActivity() {
+
+    private val client = OkHttpClient()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        Thread {
+            val json = client.newCall(Request.Builder().url(URL).build())
+                .execute().body!!.string()
+            val orders = JSONArray(json).let { array ->
+                (0 until array.length()).map { parseOrder(array.getJSONObject(it)) }
+            }
+            val open = orders.filter { it.status != "DELIVERED" }
+                .sortedByDescending { it.placedAt }
+
+            runOnUiThread {
+                binding.total.text = "₹" + open.sumOf { it.amount } / 100
+                adapter.submitList(open)
+            }
+        }.start()
+    }
+}
+```
+
+यह चलता है। दिक्कत यह है कि इसे बदलने की कीमत क्या है।
+
+| आपको क्या करना है | क्या बदलना पड़ेगा | दोबारा क्या जाँचना पड़ेगा |
+| --- | --- | --- |
+| Currency का format बदलना | `OrderActivity` | पूरी screen, किसी device पर |
+| Orders offline रखना | `OrderActivity` | पूरी screen |
+| वही list किसी widget पर दिखाना | सब कुछ copy करना | दोनों copies, हमेशा |
+| "कौन से orders खुले हैं" वाला नियम जाँचना | जाँच ही नहीं सकते | — |
+
+इनमें से हर एक वही एक नाकामी है: बिना आपस में मतलब वाले फैसले एक ही जगह आ बैठे।
+
+## दो शब्द जो पूरी दिक्कत कह देते हैं
+
+<Compare
+  left={{
+    title: "Coupling",
+    subtitle: "एक चीज दूसरी पर कितनी टिकी है",
+    accent: "rose",
+    points: [
+      "- ज्यादा: screen को JSON, threads और HTTP सबका पता है",
+      "- इनमें से किसी में भी बदलाव screen तक पहुँचता है",
+      "+ कम: screen को सिर्फ इतना पता कि दिखाना क्या है",
+      "~ इसे कम रखना है",
+    ],
+  }}
+  right={{
+    title: "Cohesion",
+    subtitle: "एक चीज कितनी एक ही काम की है",
+    accent: "emerald",
+    points: [
+      "- कम: एक ही class parse भी करती है, छाँटती भी, format भी और बनाती भी",
+      "- कोई नहीं बता सकता कि वह class है किसलिए",
+      "+ ज्यादा: file में जो कुछ है वह एक ही फैसले का है",
+      "~ इसे ज्यादा रखना है",
+    ],
+  }}
+/>
+
+## लोग जो शिकायत बताते हैं, और उसके नीचे की वजह
+
+<Quiz
+  question="कोई कहता है कि order वाली screen का unit test नहीं हो सकता। असली वजह क्या है?"
+  options={[
+    "Android की classes बिना emulator के test हो ही नहीं सकतीं, तो यह टाला नहीं जा सकता",
+    "वह class अपनी dependencies खुद बनाती है, तो test उसे नकली network थमा ही नहीं सकता",
+    "अभी उसके लिए कोई test cases लिखे ही नहीं गए हैं",
+  ]}
+  answer={1}
+  explanation="Test न हो पाना शिकायत है, वजह नहीं। वजह यह है कि class अपनी जरूरत की चीजें खुद बनाती है — यहाँ एक OkHttpClient — तो test के पास उसे नकली चीज देने का कोई रास्ता ही नहीं, और उसे चलाने का मतलब है किसी असली device पर असली network calls। इसीलिए 'इसे test होने लायक बनाओ' और 'इसे बदलने लायक बनाओ' एक ही हिदायत निकलती है: दोनों के लिए class को अपने साथी खुद बनाने के बजाय बाहर से लेने पड़ते हैं। गौर कीजिए कि दूसरा विकल्प tests के बारे में है ही नहीं। वह बदलकर कुछ और रख सकने के बारे में है, और वही बदल सकना network की जगह cache रखने या उसी logic को widget में दोबारा इस्तेमाल करने देता है।"
+/>
+
+## वह जमावट जिस पर लगभग सब पहुँचते हैं
+
+<Figure caption="निर्भरता सिर्फ नीचे की तरफ जाती है। UI को ViewModel का पता है, ViewModel को domain का, domain को data का — और उल्टा कभी नहीं।">
+  <LayerStack
+    title="Android app की परतें"
+    description="नीचे से: data वाली परत लाती और रखती है, domain वाली नियम रखती है, presentation वाली screen की state, और UI उसे दिखाता है। निर्भरता सिर्फ नीचे की तरफ जाती है।"
+    youWriteThis="user के सबसे पास"
+    topLabel="user जो देखता है"
+    bottomLabel="data जहाँ रहता है"
+    layers={[
+      { label: "Data", sub: "repositories, network, database", accent: "amber", detail: "लाती है, cache करती है, रखती है। कोई value कहाँ से आएगी यह वही तय करती है, और network या database है भी, यह सिर्फ उसी परत को पता है।" },
+      { label: "Domain", sub: "सादे Kotlin के नियम", accent: "emerald", detail: "वे नियम जो किसी server या घड़ी पर भी उतने ही सच होते — कौन से orders खुले माने जाएँ, कुल कैसे निकले। एक भी Android import नहीं, तो test milliseconds में हो जाता है।" },
+      { label: "Presentation", sub: "ViewModel", accent: "sky", detail: "एक screen को जो state चाहिए वह रखता है और rotation झेल जाता है। उसे अपने नीचे की परतों का पता है, और views, composables या Android की UI classes का कुछ नहीं।" },
+      { label: "UI", sub: "composables और views", accent: "violet", detail: "State दिखाता है और घटनाएँ बताता है। उसमें ऐसा कोई फैसला नहीं होना चाहिए जो बिना screen के भी लिया जा सकता हो।" },
+    ]}
+  />
+</Figure>
+
+नियम तीर है, नाम नहीं। **निर्भरता एक ही तरफ जाती है।** `ViewModel` को repository का पता हो सकता
+है; repository को कभी पता नहीं चलना चाहिए कि कोई `ViewModel` है भी। जैसे ही कोई तीर वापस मुड़ता है,
+एक चक्कर बन जाता है, और चक्कर का मतलब है कि दोनों में से किसी को अकेले न समझा जा सकता है न बदला जा
+सकता है।
+
+<Note>
+Domain का सादा Kotlin होना सिर्फ सफाई के लिए नहीं है। इसका मतलब है कि "order तब तक खुला है जब तक
+पहुँचा नहीं" वाला नियम आपके laptop पर milliseconds में जाँचा जा सकता है, बिना किसी emulator के, और
+कोई widget, कोई Wear app या कोई server उसे दोबारा इस्तेमाल कर सकता है।
+</Note>
+
+## Architecture मुफ्त नहीं है
+
+<Detail summary="इसकी कीमत क्या है, और कब छोड़ देना चाहिए">
+आपकी जोड़ी हुई हर सरहद एक घुमाव है: खोलने को एक और file, पढ़ने को एक और interface, button और
+network call के बीच एक और पड़ाव। जिस screen पर तीन जमी हुई lines दिखती हैं, वहाँ इस कीमत से कुछ
+नहीं मिलता।
+
+ढाँचे की तरफ तब जाइए जब इनमें से कम से कम एक सच हो:
+
+- यह code एक से ज्यादा लोग बदलते हैं।
+- वही नियम एक से ज्यादा जगह चाहिए।
+- वह logic बिना device के जाँचने लायक है।
+- वह screen आज के design से ज्यादा जिएगी।
+
+जिस prototype को आप हफ्ते भर में फेंक देंगे वह एक ही file में रहे। उस पर चार परतें लगाना अनुशासन
+नहीं, रस्म है, और इससे वह prototype बदलने में धीमा हो जाता है — जबकि वह बना ही इसीलिए था।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो architecture जैसी दिखती हैं और हैं नहीं">
+**सरहदों की जगह folders।** `data/`, `domain/` और `ui/` बना देना और फिर `ViewModel` में ही
+`Retrofit` बनाना कुछ नहीं बदलता। मायने तीर रखते हैं, रास्ते नहीं।
+
+**दूसरा मामला आने से पहले ही abstract कर देना।** ठीक एक implementation वाला interface, जो इसलिए
+लिखा गया कि शायद कभी दूसरा आए, वह file है जिसे सबको पढ़ना पड़ता है और फायदा किसी को नहीं होता।
+
+**हर method के लिए एक class।** ऐसा `UseCase` जो repository का एक method बुलाकर उसी को लौटा देता है
+वह एक पड़ाव जोड़ता है और कोई फैसला नहीं। जब कोई नियम रखने को हो तब जोड़िए; उससे पहले नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. ऊपर वाली `OrderActivity` लीजिए और वे सारी वजहें लिखिए जिनसे वह बदल सकती है। वजहों को समूहों में
+   बाँटिए — हर समूह वह class है जो आपके पास नहीं है।
+2. उसमें वह एक नियम ढूँढ़िए जो सच में कारोबार का नियम है, और उसे एक सादे Kotlin function में ले
+   जाइए। उस function का test बिना emulator के लिखिए।
+3. अपनी किसी मौजूदा screen में निर्भरता के तीर खींचिए। कोई तीर उल्टा जाता हुआ ढूँढ़िए।
+4. अपने project में ठीक एक implementation वाला कोई interface ढूँढ़िए और पूछिए कि उससे मिलता क्या
+   है।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Architecture | बदलाव कितनी दूर तक जाए, यह बाँधती है |
+| Coupling | एक चीज दूसरी पर कितनी टिकी है — कम रखिए |
+| Cohesion | एक चीज कितनी एक ही काम की है — ज्यादा रखिए |
+| Test न हो पाना | शिकायत है; वजह आमतौर पर अपनी dependencies खुद बनाना |
+| परतें | UI, presentation, domain, data |
+| निर्भरता का नियम | तीर एक ही तरफ; चक्कर का मतलब कोई भी पक्ष अकेला नहीं खड़ा |
+| Domain | सादा Kotlin, तो नियम milliseconds में चलते हैं और कहीं भी जाते हैं |
+| कीमत | घुमाव — तभी चुकाइए जब ऊपर वाली कोई बात सच हो |
+
+<Interview title="वह सवाल जिसका आत्मविश्वास से दिया गया गलत जवाब परतों के नामों की सूची होता है">
+"Architecture की जहमत क्यों उठाते हैं?"
+
+ताकि बदलाव का दायरा बँधा रहे: किसी बदलाव का एक ही साफ ठिकाना हो और उसके लिए बाकी पूरी app समझनी न
+पड़े। समझदारी दिखाने वाला जवाब उसकी कीमत भी जोड़ता है — हर सरहद एक घुमाव है, तो फेंक देने वाला
+prototype सच में एक ही file में बेहतर है — और design की असली कसौटी बताता है, जो folder के पेड़ में
+उसकी शक्ल नहीं बल्कि यह है कि निर्भरता के सारे तीर एक ही तरफ जाते हैं या नहीं।
+</Interview>

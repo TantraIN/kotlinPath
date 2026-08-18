@@ -1,0 +1,188 @@
+---
+title: Architecture kyun — spaghetti wali dikkat
+description: Architecture folders ke naam nahi hai. Wo ek hi sawal ka jawab hai — is codebase ka kitna hissa samjhe bina main ek line surakshit tarike se badal nahi sakta?
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Architecture isliye hai ki **koi badlaav kitni door tak jata hai, use bandha ja sake**. Achhi tarah
+jama hua codebase wo nahi jo suthra dikhe; wo hai jismein date ka format badalne par sirf date ka
+format badalta hai aur kuch nahi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Ye rahi wo screen jo sabko mili hai, dabakar chhoti ki hui:
+
+```kotlin title="OrderActivity.kt" numbered
+class OrderActivity : AppCompatActivity() {
+
+    private val client = OkHttpClient()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        Thread {
+            val json = client.newCall(Request.Builder().url(URL).build())
+                .execute().body!!.string()
+            val orders = JSONArray(json).let { array ->
+                (0 until array.length()).map { parseOrder(array.getJSONObject(it)) }
+            }
+            val open = orders.filter { it.status != "DELIVERED" }
+                .sortedByDescending { it.placedAt }
+
+            runOnUiThread {
+                binding.total.text = "₹" + open.sumOf { it.amount } / 100
+                adapter.submitList(open)
+            }
+        }.start()
+    }
+}
+```
+
+Ye chalta hai. Dikkat ye hai ki ise badalne ki keemat kya hai.
+
+| Aapko kya karna hai | Kya badalna padega | Dobara kya parakhna padega |
+| --- | --- | --- |
+| Currency ka format badalna | `OrderActivity` | Poori screen, kisi device par |
+| Orders offline rakhna | `OrderActivity` | Poori screen |
+| Wahi list kisi widget par dikhana | Sab kuch copy karna | Dono copies, hamesha |
+| "Kaun se orders khule hain" wala niyam parakhna | Parakh hi nahi sakte | — |
+
+Inmein se har ek wahi ek nakami hai: bina aapas mein matlab wale faisle ek hi jagah aa baithe.
+
+## Do shabd jo poori dikkat keh dete hain
+
+<Compare
+  left={{
+    title: "Coupling",
+    subtitle: "Ek cheez doosri par kitni tiki hai",
+    accent: "rose",
+    points: [
+      "- Zyada: screen ko JSON, threads aur HTTP sabka pata hai",
+      "- Inmein se kisi mein bhi badlaav screen tak pahunchta hai",
+      "+ Kam: screen ko sirf itna pata ki dikhana kya hai",
+      "~ Ise kam rakhna hai",
+    ],
+  }}
+  right={{
+    title: "Cohesion",
+    subtitle: "Ek cheez kitni ek hi kaam ki hai",
+    accent: "emerald",
+    points: [
+      "- Kam: ek hi class parse bhi karti hai, chhaantti bhi, format bhi aur banati bhi",
+      "- Koi nahi bata sakta ki wo class hai kisliye",
+      "+ Zyada: file mein jo kuch hai wo ek hi faisle ka hai",
+      "~ Ise zyada rakhna hai",
+    ],
+  }}
+/>
+
+## Log jo shikayat batate hain, aur uske neeche ki wajah
+
+<Quiz
+  question="Koi kehta hai ki order wali screen ka unit test nahi ho sakta. Asli wajah kya hai?"
+  options={[
+    "Android ki classes bina emulator ke test ho hi nahi saktin, to ye tala nahi ja sakta",
+    "Wo class apni dependencies khud banati hai, to test use nakli network thama hi nahi sakta",
+    "Abhi uske liye koi test cases likhe hi nahi gaye hain",
+  ]}
+  answer={1}
+  explanation="Test na ho pana shikayat hai, wajah nahi. Wajah ye hai ki class apni zarurat ki cheezein khud banati hai — yahan ek OkHttpClient — to test ke paas use nakli cheez dene ka koi raasta hi nahi, aur use chalane ka matlab hai kisi asli device par asli network calls. Isiliye 'ise test hone layak banao' aur 'ise badalne layak banao' ek hi hidayat nikalti hai: dono ke liye class ko apne saathi khud banane ke bajaye bahar se lene padte hain. Gaur kijiye ki doosra vikalp tests ke baare mein hai hi nahi. Wo badalkar kuch aur rakh sakne ke baare mein hai, aur wahi badal sakna network ki jagah cache rakhne ya usi logic ko widget mein dobara istemal karne deta hai."
+/>
+
+## Wo jamavat jis par lagbhag sab pahunchte hain
+
+<Figure caption="Nirbharta sirf neeche ki taraf jati hai. UI ko ViewModel ka pata hai, ViewModel ko domain ka, domain ko data ka — aur ulta kabhi nahi.">
+  <LayerStack
+    title="Android app ki paratein"
+    description="Neeche se: data wali parat lati aur rakhti hai, domain wali niyam rakhti hai, presentation wali screen ki state, aur UI use dikhata hai. Nirbharta sirf neeche ki taraf jati hai."
+    youWriteThis="user ke sabse paas"
+    topLabel="user jo dekhta hai"
+    bottomLabel="data jahan rehta hai"
+    layers={[
+      { label: "Data", sub: "repositories, network, database", accent: "amber", detail: "Lati hai, cache karti hai, rakhti hai. Koi value kahan se aayegi ye wahi tay karti hai, aur network ya database hai bhi, ye sirf usi parat ko pata hai." },
+      { label: "Domain", sub: "saade Kotlin ke niyam", accent: "emerald", detail: "Wo niyam jo kisi server ya ghadi par bhi utne hi sach hote — kaun se orders khule mane jayein, kul kaise nikle. Ek bhi Android import nahi, to test milliseconds mein ho jata hai." },
+      { label: "Presentation", sub: "ViewModel", accent: "sky", detail: "Ek screen ko jo state chahiye wo rakhta hai aur rotation jhel jata hai. Use apne neeche ki paraton ka pata hai, aur views, composables ya Android ki UI classes ka kuch nahi." },
+      { label: "UI", sub: "composables aur views", accent: "violet", detail: "State dikhata hai aur ghatnayein batata hai. Usmein aisa koi faisla nahi hona chahiye jo bina screen ke bhi liya ja sakta ho." },
+    ]}
+  />
+</Figure>
+
+Niyam teer hai, naam nahi. **Nirbharta ek hi taraf jati hai.** `ViewModel` ko repository ka pata ho
+sakta hai; repository ko kabhi pata nahi chalna chahiye ki koi `ViewModel` hai bhi. Jaise hi koi
+teer wapas mudta hai, ek chakkar ban jata hai, aur chakkar ka matlab hai ki dono mein se kisi ko
+akele na samjha ja sakta hai na badla ja sakta hai.
+
+<Note>
+Domain ka saada Kotlin hona sirf safai ke liye nahi hai. Iska matlab hai ki "order tab tak khula hai
+jab tak pahuncha nahi" wala niyam aapke laptop par milliseconds mein parkha ja sakta hai, bina kisi
+emulator ke, aur koi widget, koi Wear app ya koi server use dobara istemal kar sakta hai.
+</Note>
+
+## Architecture muft nahi hai
+
+<Detail summary="Iski keemat kya hai, aur kab chhod dena chahiye">
+Aapki jodi hui har sarhad ek ghumav hai: kholne ko ek aur file, padhne ko ek aur interface, button
+aur network call ke beech ek aur padav. Jis screen par teen jami hui lines dikhti hain, wahan is
+keemat se kuch nahi milta.
+
+Dhanche ki taraf tab jaiye jab inmein se kam se kam ek sach ho:
+
+- Ye code ek se zyada log badalte hain.
+- Wahi niyam ek se zyada jagah chahiye.
+- Wo logic bina device ke parakhne layak hai.
+- Wo screen aaj ke design se zyada jiyegi.
+
+Jis prototype ko aap hafte bhar mein phenk denge wo ek hi file mein rahe. Us par chaar paratein
+lagana anushasan nahi, rasm hai, aur isse wo prototype badalne mein dheema ho jata hai — jabki wo
+bana hi isiliye tha.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo architecture jaisi dikhti hain aur hain nahi">
+**Sarhadon ki jagah folders.** `data/`, `domain/` aur `ui/` bana dena aur phir `ViewModel` mein hi
+`Retrofit` banana kuch nahi badalta. Maayne teer rakhte hain, raaste nahi.
+
+**Doosra mamla aane se pehle hi abstract kar dena.** Theek ek implementation wala interface, jo
+isliye likha gaya ki shayad kabhi doosra aaye, wo file hai jise sabko padhna padta hai aur faayda
+kisi ko nahi hota.
+
+**Har method ke liye ek class.** Aisa `UseCase` jo repository ka ek method bulakar usi ko lauta deta
+hai wo ek padav jodta hai aur koi faisla nahi. Jab koi niyam rakhne ko ho tab jodiye; usse pehle
+nahi.
+</Pitfall>
+
+## Practice
+
+1. Upar wali `OrderActivity` lijiye aur wo saari wajahein likhiye jinse wo badal sakti hai. Wajahon
+   ko samoohon mein baantiye — har samooh wo class hai jo aapke paas nahi hai.
+2. Usmein wo ek niyam dhundhiye jo sach mein karobar ka niyam hai, aur use ek saade Kotlin function
+   mein le jaiye. Us function ka test bina emulator ke likhiye.
+3. Apni kisi maujooda screen mein nirbharta ke teer kheenchiye. Koi teer ulta jata hua dhundhiye.
+4. Apne project mein theek ek implementation wala koi interface dhundhiye aur puchiye ki usse milta
+   kya hai.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Architecture | Badlaav kitni door tak jaye, ye baandhti hai |
+| Coupling | Ek cheez doosri par kitni tiki hai — kam rakhiye |
+| Cohesion | Ek cheez kitni ek hi kaam ki hai — zyada rakhiye |
+| Test na ho pana | Shikayat hai; wajah aam taur par apni dependencies khud banana |
+| Paratein | UI, presentation, domain, data |
+| Nirbharta ka niyam | Teer ek hi taraf; chakkar ka matlab koi bhi paksh akela nahi khada |
+| Domain | Saada Kotlin, to niyam milliseconds mein chalte hain aur kahin bhi jate hain |
+| Keemat | Ghumav — tabhi chukaiye jab upar wali koi baat sach ho |
+
+<Interview title="Wo sawal jiska atmavishwas se diya gaya galat jawab paraton ke naamon ki list hota hai">
+"Architecture ki zehmat kyun uthate hain?"
+
+Taki badlaav ka dayra bandha rahe: kisi badlaav ka ek hi saaf thikana ho aur uske liye baaki poori
+app samajhni na pade. Samajhdari dikhane wala jawab uski keemat bhi jodta hai — har sarhad ek ghumav
+hai, to phenk dene wala prototype sach mein ek hi file mein behtar hai — aur design ki asli kasauti
+batata hai, jo folder ke ped mein uski shakal nahi balki ye hai ki nirbharta ke saare teer ek hi
+taraf jate hain ya nahi.
+</Interview>
