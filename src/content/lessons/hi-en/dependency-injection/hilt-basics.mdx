@@ -1,0 +1,264 @@
+---
+title: "Hilt: @HiltAndroidApp, @Inject, @Module"
+description: Hilt aapke constructors padhta hai aur wahi container likh deta hai jo aap haath se likhte. Annotations ginti mein kam hain; baat ye janne ki hai ki kaunsa kis sawal ka jawab hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Hilt pichhle lesson wala `AppContainer` khud bana deta hai. Aap constructor injection likhte rehte
+ho; Hilt nikal leta hai ki cheezein kis order mein banani hain. Chaar sawal lagbhag sab kuch dhak lete
+hain: **graph rehta kahan hai**, **inject kya ho sakta hai**, **jo type mera nahi hai use kaise
+doon**, aur **kisi interface ka kaunsa implementation**.
+</KeyIdea>
+
+## Graph rehta kahan hai
+
+```kotlin title="MyApp.kt" numbered
+@HiltAndroidApp
+class MyApp : Application()
+```
+
+```xml title="AndroidManifest.xml" numbered
+<application android:name=".MyApp" ... >
+```
+
+`@HiltAndroidApp` application ke level wala component banata hai — graph ki jad, aur wahi cheez jo
+aapke haath se likhe container ki jagah leti hai. Manifest mein `android:name` bhoolna pehli
+jani-pehchani nakami hai: annotation compile ho jata hai, wo class kabhi banti hi nahi, aur har
+injection chalte waqt aisi class par nakaam hota hai jo dekhne mein theek-thaak annotate ki hui lagti
+hai.
+
+## Inject kya ho sakta hai
+
+Do annotations, aur unka farak hi poora model hai.
+
+```kotlin title="Injectable.kt" numbered
+// Aisi class jise Hilt bana sakta hai: use constructor pata hai, to wo use bana lega
+class OfflineFirstOrderRepository @Inject constructor(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository
+
+// Aisi class jise Android banata hai, to Hilt banne ke baad sirf fields bhar sakta hai
+@AndroidEntryPoint
+class OrderActivity : ComponentActivity()
+
+@HiltViewModel
+class OrderViewModel @Inject constructor(
+    private val repository: OrderRepository,
+) : ViewModel()
+```
+
+`@Inject constructor` kehta hai *aap ise bana sakte ho*. `@AndroidEntryPoint` kehta hai *ise system
+banata hai, to ban jane ke baad ismein inject kijiye* — aur theek isiliye activities, fragments,
+services tatha broadcast receivers ko baaki sabse alag annotation chahiye. Unka koi constructor aapke
+haath mein hai hi nahi.
+
+`@HiltViewModel` wo hai jo sach mein kaam ghatata hai: arguments wale `ViewModel` ko aam taur par har
+class ke liye alag factory chahiye, aur ye un sabko mita deta hai. Compose mein phir `hiltViewModel()`
+use de deta hai.
+
+<Note>
+Jis `@AndroidEntryPoint` activity mein fragments hain un fragments par bhi annotation lagana padega —
+annotation neeche apne aap nahi utarta. Aur koi `@HiltViewModel` sirf `@AndroidEntryPoint` wale maalik
+se hi mil sakta hai, aur yahi wo error hai jo `ViewModel` par annotation lagakar activity bhool jane
+par milti hai.
+</Note>
+
+## Jo type aapka nahi hai use dena
+
+`Retrofit` aur `RoomDatabase` ke paas koi `@Inject constructor` nahi hai — wo bahar ki classes hain jo
+builders se banti hain. Module wo jagah hai jahan aap wo banana likhte ho:
+
+```kotlin title="NetworkModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+
+    @Provides
+    @Singleton
+    fun okHttpClient(authInterceptor: AuthInterceptor): OkHttpClient =
+        OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
+            .callTimeout(30.seconds.toJavaDuration())
+            .build()
+
+    @Provides
+    @Singleton
+    fun retrofit(client: OkHttpClient, json: Json): Retrofit =
+        Retrofit.Builder()
+            .baseUrl(BuildConfig.BASE_URL)
+            .client(client)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+
+    @Provides
+    fun orderApi(retrofit: Retrofit): OrderApi = retrofit.create(OrderApi::class.java)
+}
+```
+
+Kisi `@Provides` function ko nuskhe ki tarah padhiye: return type wo hai jo wo banata hai, aur uske
+parameters wo hain jo use chahiye. Hilt un signatures ko padhkar order nikal leta hai — aapko kabhi
+"pehle client banao" likhna nahi padta.
+
+`@InstallIn` batata hai ki wo nuskha kis component ka hai, aur isliye uska result kitna jiyega.
+`SingletonComponent` poore application wala hai; baaki agle lesson mein.
+
+## Kisi interface ka kaunsa implementation
+
+Koi `ViewModel` `OrderRepository` maangta hai, jo ek interface hai. Kisi ko implementation ka naam lena
+padega:
+
+```kotlin title="RepositoryModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule {
+
+    @Binds
+    abstract fun orderRepository(impl: OfflineFirstOrderRepository): OrderRepository
+}
+```
+
+`@Binds` bina body wala abstract function hai, kyunki yahan chalane ko kuch hai hi nahi — wo sirf Hilt
+ko batata hai ki us interface ki maang ye implementation poori karta hai, jise Hilt pehle se uske
+`@Inject constructor` se banana janta hai.
+
+<Compare
+  left={{
+    title: "@Provides",
+    subtitle: "Banane wala code",
+    accent: "sky",
+    points: [
+      "+ Un types ke liye jin par annotation nahi lag sakta — Retrofit, Room, bahar ki cheezein",
+      "+ Body kuch bhi kar sakti hai: builders, settings, sharten",
+      "~ Kisi object module mein rehta hai",
+      "- Ek method call banata hai, to @Binds se thoda zyada code",
+    ],
+  }}
+  right={{
+    title: "@Binds",
+    subtitle: "Pehle se maujood nuskhe ko ek naam",
+    accent: "violet",
+    points: [
+      "+ Kisi interface ko uske implementation se baandhne ke liye",
+      "+ Abstract, bina body — galat hone ko kuch nahi",
+      "+ Kam code banata hai aur tez compile hota hai",
+      "- Tabhi chalta hai jab Hilt us implementation ko pehle se bana sake",
+    ],
+  }}
+/>
+
+<Quiz
+  question="Kisi repository par `@Inject constructor` hai aur uska interface `@Binds` se bandha hai. Build nakaam hota hai: `OrderApi cannot be provided without an @Provides-annotated method`. Gayab kya hai?"
+  options={[
+    "`OrderApi` ko `@Inject constructor` chahiye",
+    "`OrderApi` ek Retrofit wala interface hai jiska koi constructor hai hi nahi, to use `retrofit.create()` bulata ek `@Provides` function chahiye",
+    "Us repository ko `@Binds` ke bajaye `@Provides` lena chahiye",
+  ]}
+  answer={1}
+  explanation="Yahan @Inject constructor mumkin hi nahi hai — OrderApi ek interface hai, aur uska implementation wo reflection wala proxy hai jo Retrofit chalte waqt banata hai, to Hilt ke bulane ko koi constructor hai hi nahi. Graph ko ek nuskha chahiye: OrderApi lautata ek @Provides function, jiski body retrofit.create(OrderApi::class.java) hai. @Binds bhi usi wajah se galat hai, kyunki wo sirf us cheez ko naya naam deta hai jise Hilt pehle se bana sakta hai. Is error ki keemti baat ye hai ki wo aati kahan hai: compile waqt, theek us gayab type ka naam lete hue, kisi ke app chalane se pehle. Chalte waqt hal karne wala container iski jagah tab phenkta jab koi pehli baar orders wali screen kholta, jo release ke baad bhi ho sakta tha."
+/>
+
+## Testing, jo asli maksad tha
+
+```kotlin title="OrderViewModelTest.kt" numbered
+@HiltAndroidTest
+@UninstallModules(RepositoryModule::class)          // asli binding hataiye
+class OrderViewModelTest {
+
+    @Module
+    @InstallIn(SingletonComponent::class)
+    object FakeRepositoryModule {
+        @Provides fun orderRepository(): OrderRepository = FakeOrderRepository()
+    }
+}
+```
+
+`@UninstallModules` ek test class bhar ke liye asli module hata deta hai aur uski jagah nakli rakhne
+deta hai, to graph us ek jod ko chhodkar har jagah asli rehta hai.
+
+Imandari se kehna chahiye ki saade unit test ko ismein se kuch nahi chahiye. Agar `ViewModel` apne
+constructor mein `OrderRepository` leta hai, to test seedhe `OrderViewModel(FakeOrderRepository())`
+bula sakta hai — na Hilt, na test runner, na annotations. Hilt wali test machinery tab uthaiye jab aap
+wiring ko hi check kar rahe ho ya instrumented test chala rahe ho; tark ke liye wo jod ab bhi constructor
+hi hai.
+
+<Detail summary="Hilt ki error padhna, aur usne banaya kya">
+Hilt, Dagger ke upar ek annotation processor hai, to errors build waqt aati hain aur shakal jaan lene
+ke baad aam taur par saaf hoti hain. Do jo milengi:
+
+**"cannot be provided without an @Provides-annotated method"** — koi type maanga gaya hai aur graph ke
+paas uska nuskha nahi. Wo message us type ka naam leta hai aur wo kadi chhapta hai jisne use maanga,
+aur dekhna wahin hai.
+
+**"@InstallIn(...) is not allowed on a module installed in a different component"** — ek component
+mein bandhi cheez kisi doosre se maangi ja rahi hai jo use dekh hi nahi sakta. Yahi agle lesson ka
+vishay hai.
+
+Bana hua code `build/generated` mein rehta hai: `MyApp_HiltComponents` mein components hote hain, aur
+har `@AndroidEntryPoint` class ko `Hilt_` se shuru hoti ek superclass milti hai, jise extend karne ke
+liye Hilt aapki class dobara likh deta hai. Isi dobara likhne se `@AndroidEntryPoint` bina aapke
+superclass badle chalta hai, aur isiliye aadha nakaam hua koi build kisi `Hilt_` class ke baare mein
+uljhane wali errors chhod sakta hai jo ab mel nahi khati — saaf build unhe hata deta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo graph ko banne hi nahi detin">
+**`<application>` par `android:name` na hona.** `@HiltAndroidApp` wali class kabhi chalti hi nahi, aur
+har injection chalte waqt nakaam hota hai.
+
+**`@AndroidEntryPoint` se neeche tak utarne ki ummid.** Annotate ki hui activity ke andar fragment ko
+apna annotation chahiye.
+
+**Aise type par `@Binds` jise Hilt bana hi nahi sakta.** Wo sirf maujood nuskhe ko naam deta hai;
+Retrofit wale interface ko `@Provides` chahiye.
+
+**Pakka type inject karna.** Interface ke bajaye `OfflineFirstOrderRepository` maangne par wiring
+milti hai aur badal pane ki suvidha nahi — pichhle lesson wali baat, ab annotations ke saath.
+
+**Saade tark ke liye Hilt wale tests uthana.** Jis `ViewModel` ke constructor mein parameter hai use
+constructor bulakar check kiya ja sakta hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi app mein Hilt jodiye aur ek repository ko ek `ViewModel` mein inject kijiye. Jo factory ab
+   nahi chahiye use mitaiye.
+2. Manifest se `android:name` hataiye aur chalte waqt ki nakami padhiye, taki aage use pehchan sako.
+3. Aisa type maangiye jiska koi nuskha nahi hai aur compile ki error padhiye — gaur kijiye ki wo type
+   aur kadi dono batati hai.
+4. Aise `@Provides` ko, jo sirf apna parameter lautata hai, `@Binds` mein badliye aur pakka kijiye ki
+   build ab bhi hota hai.
+5. Bina kisi Hilt ke, nakli repository wala ek saada unit test likhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `@HiltAndroidApp` | Jad wala component; manifest mein `android:name` chahiye |
+| `@Inject constructor` | Hilt is class ko bana sakta hai |
+| `@AndroidEntryPoint` | Android banata hai; Hilt baad mein inject karta hai |
+| `@HiltViewModel` | Har `ViewModel` ki factory mita deta hai |
+| `@Module` | Jahan nuskhe rehte hain |
+| `@InstallIn` | Kaunsa component, aur isliye kitna jiyega |
+| `@Provides` | Aisa function jo aapka na hone wala type banata hai |
+| `@Binds` | Kisi interface ke liye implementation ka naam leta hai |
+| Errors | Compile waqt, gayab type ka naam lete hue |
+| Saade unit tests | Ab bhi sirf constructor |
+
+<Interview title="Ek sawal, jiske achhe jawab mein do annotations ka farak aata hai">
+"`@Provides` aur `@Binds` mein farak kya hai?"
+
+`@Provides` aisa function hai jiski body kuch banati hai — main use un types ke liye leta hoon jin par
+annotation nahi laga sakta, jaise koi `Retrofit` instance ya `RoomDatabase`, jahan cheez kisi builder
+se aati hai. `@Binds` bina body wala abstract hai, aur wo sirf Hilt ko batata hai ki kisi interface ki
+maang koi khaas implementation poori karta hai, jise Hilt pehle se uske `@Inject constructor` se banana
+janta hai. Wo kam code banata hai, to jahan chal jaye wahan wahi sahi chunaav hai.
+
+Jo maamla logon ko phansata hai wo Retrofit wala API interface hai. Wo `@Binds` jaisa lagta hai kyunki
+wo interface hai, par baandhne ko kuch hai hi nahi: uska implementation chalte waqt bana reflection
+wala proxy hai, to use `retrofit.create()` bulata `@Provides` chahiye. Aur kaam ki baat ye hai ki ise
+galat karna us type ka naam leti compile error hai, na ki us screen par crash jisne use istemal kiya
+tha.
+</Interview>

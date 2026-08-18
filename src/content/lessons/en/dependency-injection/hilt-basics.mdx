@@ -1,0 +1,259 @@
+---
+title: "Hilt: @HiltAndroidApp, @Inject, @Module"
+description: Hilt reads your constructors and writes the container you would have written by hand. The annotations are small in number; what matters is knowing which one answers which question.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Hilt generates the `AppContainer` from the last lesson. You keep writing constructor injection; Hilt
+works out the order to build things in. Four questions cover almost everything: **where does the
+graph live**, **what can be injected**, **how do I provide a type I do not own**, and **which
+implementation of an interface**.
+</KeyIdea>
+
+## Where the graph lives
+
+```kotlin title="MyApp.kt" numbered
+@HiltAndroidApp
+class MyApp : Application()
+```
+
+```xml title="AndroidManifest.xml" numbered
+<application android:name=".MyApp" ... >
+```
+
+`@HiltAndroidApp` generates the application-level component — the root of the graph and the thing
+that replaces your hand-written container. Forgetting the `android:name` in the manifest is the
+classic first failure: the annotation compiles, the class is never instantiated, and every injection
+fails at run time on a class that looks correctly annotated.
+
+## What can be injected
+
+Two annotations, and the distinction between them is the whole model.
+
+```kotlin title="Injectable.kt" numbered
+// A class Hilt can construct: it knows the constructor, so it can build it
+class OfflineFirstOrderRepository @Inject constructor(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository
+
+// A class Android constructs, so Hilt can only fill in fields afterwards
+@AndroidEntryPoint
+class OrderActivity : ComponentActivity()
+
+@HiltViewModel
+class OrderViewModel @Inject constructor(
+    private val repository: OrderRepository,
+) : ViewModel()
+```
+
+`@Inject constructor` says *you may build this*. `@AndroidEntryPoint` says *the system builds this,
+so inject into it once it exists* — which is exactly why activities, fragments, services and
+broadcast receivers need a different annotation from everything else. They have no constructor you
+control.
+
+`@HiltViewModel` is the one that removes real work: a `ViewModel` with constructor arguments normally
+needs a factory written per class, and this deletes all of them. In Compose, `hiltViewModel()` then
+supplies it.
+
+<Note>
+An `@AndroidEntryPoint` activity hosting fragments means those fragments must be annotated too — the
+annotation does not cascade. And a `@HiltViewModel` can only be retrieved from an
+`@AndroidEntryPoint` owner, which is the error people hit when they annotate the `ViewModel` and
+forget the activity.
+</Note>
+
+## Providing a type you do not own
+
+`Retrofit` and `RoomDatabase` have no `@Inject constructor` — they are third-party classes built with
+builders. A module is where you write that construction:
+
+```kotlin title="NetworkModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+
+    @Provides
+    @Singleton
+    fun okHttpClient(authInterceptor: AuthInterceptor): OkHttpClient =
+        OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
+            .callTimeout(30.seconds.toJavaDuration())
+            .build()
+
+    @Provides
+    @Singleton
+    fun retrofit(client: OkHttpClient, json: Json): Retrofit =
+        Retrofit.Builder()
+            .baseUrl(BuildConfig.BASE_URL)
+            .client(client)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+
+    @Provides
+    fun orderApi(retrofit: Retrofit): OrderApi = retrofit.create(OrderApi::class.java)
+}
+```
+
+Read a `@Provides` function as a recipe: the return type is what it makes, and its parameters are
+what it needs. Hilt reads those signatures and works out the order — you never write "build the
+client first".
+
+`@InstallIn` says which component the recipe belongs to, and therefore how long the result lives.
+`SingletonComponent` is the application-wide one; the next lesson covers the rest.
+
+## Which implementation of an interface
+
+A `ViewModel` asks for `OrderRepository`, an interface. Something has to name the implementation:
+
+```kotlin title="RepositoryModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule {
+
+    @Binds
+    abstract fun orderRepository(impl: OfflineFirstOrderRepository): OrderRepository
+}
+```
+
+`@Binds` is an abstract function with no body, because there is nothing to run — it only tells Hilt
+that a request for the interface is satisfied by the implementation, which Hilt already knows how to
+build from its `@Inject constructor`.
+
+<Compare
+  left={{
+    title: "@Provides",
+    subtitle: "Code that constructs",
+    accent: "sky",
+    points: [
+      "+ For types you cannot annotate — Retrofit, Room, third-party",
+      "+ The body can do anything: builders, config, conditionals",
+      "~ Lives in an object module",
+      "- Generates a method call, so slightly more code than @Binds",
+    ],
+  }}
+  right={{
+    title: "@Binds",
+    subtitle: "A name for an existing recipe",
+    accent: "violet",
+    points: [
+      "+ For binding an interface to its implementation",
+      "+ Abstract, no body — nothing to get wrong",
+      "+ Generates less code and compiles faster",
+      "- Only works when Hilt can already build the implementation",
+    ],
+  }}
+/>
+
+<Quiz
+  question="A repository has `@Inject constructor` and its interface is bound with `@Binds`. The build fails: `OrderApi cannot be provided without an @Provides-annotated method`. What is missing?"
+  options={[
+    "`OrderApi` needs an `@Inject constructor`",
+    "`OrderApi` is a Retrofit interface with no constructor at all, so it needs a `@Provides` function calling `retrofit.create()`",
+    "The repository should use `@Provides` instead of `@Binds`",
+  ]}
+  answer={1}
+  explanation="An @Inject constructor is impossible here — OrderApi is an interface, and its implementation is a reflection proxy Retrofit creates at run time, so there is no constructor for Hilt to call. The graph needs a recipe: a @Provides function returning OrderApi whose body is retrofit.create(OrderApi::class.java). @Binds is also wrong for the same underlying reason, since it only renames something Hilt can already build. The valuable part of this error is where it appears: at compile time, naming the exact type that is missing, before anyone runs the app. A runtime-resolved container would instead have thrown the first time someone opened the orders screen, which might have been after release."
+/>
+
+## Testing, which was the point
+
+```kotlin title="OrderViewModelTest.kt" numbered
+@HiltAndroidTest
+@UninstallModules(RepositoryModule::class)          // remove the real binding
+class OrderViewModelTest {
+
+    @Module
+    @InstallIn(SingletonComponent::class)
+    object FakeRepositoryModule {
+        @Provides fun orderRepository(): OrderRepository = FakeOrderRepository()
+    }
+}
+```
+
+`@UninstallModules` removes a real module for one test class and lets you install a fake in its
+place, so the graph is real everywhere except the one seam you are replacing.
+
+It is worth being honest that a plain unit test needs none of this. If the `ViewModel` takes an
+`OrderRepository` in its constructor, a test can just call `OrderViewModel(FakeOrderRepository())` —
+no Hilt, no test runner, no annotations. Reach for the Hilt test machinery when you are testing the
+wiring itself or running an instrumented test; for logic, the constructor is still the seam.
+
+<Detail summary="Reading a Hilt error, and what it generated">
+Hilt is an annotation processor over Dagger, so errors arrive at build time and are usually precise
+once you know the shape. Two you will meet:
+
+**"cannot be provided without an @Provides-annotated method"** — a type is requested and the graph
+has no recipe. The message names the type and prints the chain that asked for it, which is where to
+look.
+
+**"@InstallIn(...) is not allowed on a module installed in a different component"** — a binding
+scoped to one component is being requested from another that cannot see it. That is the subject of
+the next lesson.
+
+The generated code lives in `build/generated`: `MyApp_HiltComponents` holds the components, and
+each `@AndroidEntryPoint` class gets a `Hilt_`-prefixed superclass that Hilt rewrites your class to
+extend. That rewriting is why `@AndroidEntryPoint` works without you changing the superclass
+yourself, and why a build that half-fails can leave confusing errors about a `Hilt_` class that no
+longer matches — a clean build resolves those.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that stop the graph from building">
+**No `android:name` on `<application>`.** The `@HiltAndroidApp` class never runs, and every injection
+fails at run time.
+
+**Expecting `@AndroidEntryPoint` to cascade.** A fragment inside an annotated activity needs its own
+annotation.
+
+**`@Binds` for a type Hilt cannot build.** It only names an existing recipe; a Retrofit interface
+needs `@Provides`.
+
+**Injecting a concrete type.** Asking for `OfflineFirstOrderRepository` rather than the interface
+gives you wiring with no substitutability — the previous lesson's point, now with annotations.
+
+**Reaching for Hilt tests for plain logic.** A `ViewModel` with a constructor parameter can be tested
+by calling the constructor.
+</Pitfall>
+
+## Practice
+
+1. Add Hilt to an app and inject one repository into one `ViewModel`. Delete the factory you no
+   longer need.
+2. Remove `android:name` from the manifest and read the run-time failure, so you recognise it later.
+3. Ask for a type with no recipe and read the compile error — note that it names the type and the
+   chain.
+4. Convert a `@Provides` that only returns its parameter into a `@Binds` and confirm it still builds.
+5. Write a plain unit test with a fake repository and no Hilt at all.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `@HiltAndroidApp` | The root component; needs `android:name` in the manifest |
+| `@Inject constructor` | Hilt may build this class |
+| `@AndroidEntryPoint` | Android builds it; Hilt injects afterwards |
+| `@HiltViewModel` | Deletes the per-`ViewModel` factory |
+| `@Module` | Where recipes live |
+| `@InstallIn` | Which component, and therefore how long it lives |
+| `@Provides` | A function that constructs a type you do not own |
+| `@Binds` | Names the implementation for an interface |
+| Errors | At compile time, naming the missing type |
+| Plain unit tests | Still just the constructor |
+
+<Interview title="A question where the good answer distinguishes two annotations">
+"What is the difference between `@Provides` and `@Binds`?"
+
+`@Provides` is a function whose body constructs something — that is what I use for types I cannot
+annotate, like a `Retrofit` instance or a `RoomDatabase`, where the object comes from a builder.
+`@Binds` is abstract with no body, and it only tells Hilt that a request for an interface is
+satisfied by a particular implementation, which Hilt already knows how to build from its `@Inject
+constructor`. It generates less code, so it is the right choice whenever it applies.
+
+The case that catches people is a Retrofit API interface. It looks like a `@Binds` situation because
+it is an interface, but there is nothing to bind to: the implementation is a reflection proxy created
+at run time, so it needs a `@Provides` calling `retrofit.create()`. And the useful part is that
+getting it wrong is a compile error naming the type, rather than a crash on whichever screen used it.
+</Interview>
