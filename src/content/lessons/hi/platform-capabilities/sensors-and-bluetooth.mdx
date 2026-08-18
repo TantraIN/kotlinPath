@@ -1,0 +1,178 @@
+---
+title: Sensors, Bluetooth और BLE की बुनियाद
+description: Sensors आपकी खपत से तेज data धकेलते हैं, और BLE एक ऐसी state machine है जिसकी कतार माननी पड़ती है। दोनों एक ही गलती की सजा देते हैं — किसी asynchronous device को function call की तरह लेना।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Sensor callbacks भेजता रहता है, आप तैयार हों या न हों, और BLE का connection **एक बार में एक ही काम**
+लेता है। इस पाठ की हर बात इन्हीं दो बातों से निकलती है: जितना चाहिए उतना ही दर्ज कीजिए, रुकते ही हटा
+दीजिए, और पहला GATT call वापस आने से पहले दूसरा कभी मत भेजिए।
+</KeyIdea>
+
+## Sensors
+
+```kotlin title="Sensors.kt" numbered
+fun steps(): Flow<Int> = callbackFlow {
+    val manager = context.getSystemService<SensorManager>()!!
+    val sensor = manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        ?: run { close(); return@callbackFlow }        // हर device में यह होता नहीं
+
+    val listener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) { trySend(event.values[0].toInt()) }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+    awaitClose { manager.unregisterListener(listener) }        // वरना हमेशा चलता रहता है
+}
+```
+
+वहाँ दो चीजें वैकल्पिक नहीं हैं।
+
+**`getDefaultSensor` `null` लौटा सकता है।** Sensors hardware हैं, और सस्ते phone में gyroscope,
+barometer या step counter हो ही न। जो code उनके होने की मान लेता है वह ठीक उन devices पर crash करता
+है जो सबसे कम सद्भावना गँवा सकते हैं।
+
+**वह delay एक रफ्तार है जिसकी कीमत आप चुन रहे हैं।** `SENSOR_DELAY_NORMAL` करीब 200ms है;
+`SENSOR_DELAY_FASTEST` एक सेकंड में सैकड़ों घटनाएँ दे सकता है, हर एक CPU जगाती हुई। `GAME` या
+`FASTEST` तभी माँगिए जब कोई चीज सच में उस रफ्तार से उन्हें खपाती हो।
+
+`SensorEvent` वाली चीजें callbacks के बीच दोबारा इस्तेमाल होती हैं, तो एक रखकर बाद में पढ़ने पर आपको
+वह मिलता है जो अगली घटना ने उस पर लिख दिया। जो values चाहिए उनकी नकल कर लीजिए।
+
+<Quiz
+  question="कोई step counter screen खुली रहते ठीक पढ़ता है। कोई user बताता है कि कुछ घंटों बाद गिनती कहीं ज्यादा है, और phone गर्म हो जाता है। क्या गलत हो सकता है?"
+  options={[
+    "`TYPE_STEP_COUNTER` boot से जोड़ता जाता है और उसे हर session में शून्य करना पड़ता है",
+    "Listener कभी हटाया ही नहीं गया — कई screens ने एक-एक दर्ज किया, तो callbacks जमा होते गए और screens के जाने के बहुत बाद तक sensor CPU को जगाए रखता है",
+    "उस sensor को ठीक बताने के लिए `ACTIVITY_RECOGNITION` permission चाहिए"
+  ]}
+  answer={1}
+  explanation="Sensor का listener SensorManager पर दर्ज होता है, आपकी screen पर नहीं, तो screen के जाने पर उसे कुछ हटाता नहीं — और onStop में हटाए बिना onStart में दोबारा दर्ज करना एक और जोड़ देता है, फिर तीसरा। हर नकल वही घटनाएँ पाती है, तो जो चीज गिन रही है वह हर दर्ज हुए listener पर एक बार बढ़ती है, इसीलिए ऐप जितनी देर चले संख्या उतनी तेज चढ़ती है। गर्मी वही bug बाहर से देखा हुआ है: चलता हुआ listener sensor को सुस्ताने नहीं देता और CPU जगाता रहता है। ऊपर वाले flow का awaitClose इसे सँभालता है, और onStop में हटाना भी। अलग रखने लायक: TYPE_STEP_COUNTER सच में boot से जोड़ता जाता है, तो आप एक शुरुआती नाप रखकर घटाते हैं — पर उससे गिनती लगातार उतनी ही ज्यादा रहती है, वक्त के साथ तेज नहीं चढ़ती, और उससे phone गर्म नहीं होता।"
+/>
+
+## Bluetooth की permissions बदल गईं
+
+```xml title="AndroidManifest.xml" numbered
+<!-- Android 12 और उसके ऊपर -->
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- Android 11 और उससे नीचे -->
+<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+```
+
+Android 12 से पहले scan करने के लिए **location** वाली permission चाहिए थी, क्योंकि BLE का scan बता
+सकता है कि आप कहाँ हैं। Android 12 से उसकी जगह अलग runtime permissions हैं, और
+`usesPermissionFlags="neverForLocation"` यह घोषणा है कि आप scan के नतीजों से location नहीं निकालेंगे
+— जिससे location की माँग पूरी तरह हट जाती है।
+
+जब वह सच हो तो वह flag लगाने लायक है। दिल की धड़कन नापने वाले monitor से बात करने के लिए location
+माँगना उसी किस्म की माँग है जिससे users मना करते हैं और समीक्षा करने वाले सवाल उठाते हैं।
+
+## BLE एक कतार है
+
+```kotlin title="Gatt.kt" numbered
+private val callback = object : BluetoothGattCallback() {
+    override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        if (newState == BluetoothProfile.STATE_CONNECTED) gatt.discoverServices()
+    }
+
+    override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+        val characteristic = gatt.getService(SERVICE_UUID)?.getCharacteristic(CHAR_UUID) ?: return
+        gatt.readCharacteristic(characteristic)          // एक काम
+    }
+
+    override fun onCharacteristicRead(
+        gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
+        value: ByteArray, status: Int,
+    ) {
+        // अब जाकर अगला काम शुरू हो सकता है
+        gatt.setCharacteristicNotification(characteristic, true)
+    }
+}
+```
+
+शक्ल पढ़िए: हर callback अगला कदम शुरू करता है। यह सजावट का चुनाव नहीं है — कोई `BluetoothGatt` एक ही
+बकाया काम लेता है, और पहला callback आने से पहले दूसरा भेजने पर वह `false` लौटाकर चुपचाप कुछ नहीं करता।
+"मेरे phone पर चलता है, उनके पर नहीं" वाला हर BLE bug कोई ऐसी दौड़ है जिसे तेज या धीमा device उजागर
+कर देता है।
+
+व्यावहारिक जवाब कामों की एक कतार है जिसे आप एक-एक callback करके खाली करते हैं, या ऐसी library जो यह
+पहले से करती है।
+
+<Detail summary="Battery बिछाए बिना scan करना">
+```kotlin title="Scan.kt" numbered
+val filters = listOf(
+    ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build(),
+)
+val settings = ScanSettings.Builder()
+    .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+    .build()
+
+scanner.startScan(filters, settings, scanCallback)
+// और हमेशा
+scanner.stopScan(scanCallback)
+```
+
+Filters सिर्फ सुविधा नहीं हैं। बिना filter वाला scan आपके ऐप को दायरे के हर advertising packet पर
+जगाता है — भीड़ वाली जगह में सेकंड में दर्जनों — और जो ऐप लगातार scan करता है उसे Android धीमा कर देता
+है, तो आक्रामक scan आखिर में *कम* ढूँढ़ता है।
+
+जो चाहिए वह मिलते ही scan बंद कीजिए। चलता छोड़ा गया scan किसी ऐप की पैदा की हुई सबसे बड़ी battery की
+कीमत है, GPS से भी बड़ी, और छोटे test में वह दिखती ही नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और उनमें से दो phone गर्म करती हैं">
+**Sensor का listener न हटाना।** नकलें जमा होती हैं और CPU कभी सुस्ताता नहीं।
+
+**Sensor के होने की मान लेना।** बहुत सारे devices पर `getDefaultSensor` `null` लौटाता है।
+
+**`SensorEvent` को रख लेना।** वे दोबारा इस्तेमाल होते हैं; values की नकल कीजिए।
+
+**पहले callback से पहले दूसरा GATT काम।** वह `false` लौटाता है और कुछ नहीं करता।
+
+**बिना filter का, बिना रुका scan।** मौजूद सबसे बड़ी battery की कीमत, और Android उसे धीमा कर देता है।
+</Pitfall>
+
+## अभ्यास
+
+1. `onStart` में sensor का listener दर्ज कीजिए बिना हटाए, दस बार घुमाइए, और callbacks गिनिए।
+2. जिस device में barometer नहीं है उस पर वह माँगिए और `null` सँभालिए।
+3. दस सेकंड में `SENSOR_DELAY_NORMAL` और `SENSOR_DELAY_FASTEST` की घटनाएँ गिनकर मिलाइए।
+4. एक के बाद एक दो GATT reads भेजिए और दूसरे की लौटाई value log कीजिए।
+5. भीड़ वाली जगह में एक मिनट बिना filter के scan कीजिए और नतीजे गिनिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `getDefaultSensor` | `null` हो सकता है; sensors hardware हैं |
+| Delay वाला constant | एक रफ्तार, जिसकी कीमत CPU के जगने में चुकती है |
+| `SensorEvent` | Callbacks के बीच दोबारा इस्तेमाल — values की नकल कीजिए |
+| हटाना | `onStop` में या `awaitClose` में, वरना हमेशा चलता है |
+| `BLUETOOTH_SCAN` / `CONNECT` | Android 12+ की runtime permissions |
+| `neverForLocation` | Scan से location की जरूरत हटा देता है |
+| GATT | एक बकाया काम; उन्हें कतार में लगाइए |
+| Callbacks की कड़ी | हर callback अगला कदम शुरू करता है |
+| Scan के filters | कम जगना, और आक्रामक scan को Android धीमा करता है |
+| Scan रोकिए | ऐप की छोड़ी हुई सबसे बड़ी battery की कीमत |
+
+<Interview title="एक सवाल, किसी asynchronous device के बारे में">
+"BLE को आम API की तरह लेने पर गलत क्या होता है?"
+
+कोई `BluetoothGatt` एक बार में एक ही काम लेता है। अगर आप `readCharacteristic` बुलाकर पहले callback का
+इंतजार किए बिना `writeDescriptor` बुलाते हैं, तो दूसरा `false` लौटाकर चुपचाप कुछ नहीं करता — तो code
+सही दिखता है, उस एक phone पर चलता है जहाँ समय संयोग से बैठ जाता है, और दूसरे पर नाकाम होता है। इलाज
+है कामों को उनके callbacks से जोड़ना, या साफ-साफ एक कतार रखना जो एक-एक करके खाली होती है।
+
+Sensor वाला जोड़ीदार है listener हटाना भूलना। Listener `SensorManager` पर दर्ज होता है, screen पर
+नहीं, तो `onStart` में दर्ज करके `onStop` में न हटाने से नकलें जमा होती जाती हैं जो सब वही घटनाएँ
+पाती हैं — गिनती चढ़ती है और phone गर्म होता है, और दोनों में से कोई लक्षण उस screen की तरफ इशारा नहीं
+करता जिसने यह किया।
+</Interview>

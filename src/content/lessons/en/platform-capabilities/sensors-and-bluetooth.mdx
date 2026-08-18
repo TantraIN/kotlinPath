@@ -1,0 +1,181 @@
+---
+title: Sensors, Bluetooth and BLE basics
+description: Sensors push data at you faster than you can use it, and BLE is a state machine with a queue you must respect. Both punish the same mistake — treating an asynchronous device as if it were a function call.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A sensor delivers callbacks whether you are ready or not, and a BLE connection accepts **one
+operation at a time**. Everything in this lesson follows from those two facts: register for as little
+as you need, unregister the moment you stop, and never issue a second GATT call before the first has
+called back.
+</KeyIdea>
+
+## Sensors
+
+```kotlin title="Sensors.kt" numbered
+fun steps(): Flow<Int> = callbackFlow {
+    val manager = context.getSystemService<SensorManager>()!!
+    val sensor = manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        ?: run { close(); return@callbackFlow }        // not every device has one
+
+    val listener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) { trySend(event.values[0].toInt()) }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+    awaitClose { manager.unregisterListener(listener) }        // or it runs forever
+}
+```
+
+Two things there are not optional.
+
+**`getDefaultSensor` can return `null`.** Sensors are hardware, and a cheap phone may have no
+gyroscope, no barometer, no step counter. Code that assumes one crashes on exactly the devices least
+able to spare the goodwill.
+
+**The delay is a rate you are choosing to pay for.** `SENSOR_DELAY_NORMAL` is about 200ms;
+`SENSOR_DELAY_FASTEST` can be hundreds of events a second, each waking the CPU. Ask for `GAME` or
+`FASTEST` only if something genuinely consumes them at that rate.
+
+`SensorEvent` objects are reused between callbacks, so keeping one and reading it later gives you
+whatever the next event overwrote it with. Copy the values you need.
+
+<Quiz
+  question="A step counter reads correctly while a screen is open. A user reports that after a few hours the count is far too high, and the phone gets warm. What is likely wrong?"
+  options={[
+    "`TYPE_STEP_COUNTER` accumulates since boot and must be reset each session",
+    "The listener is never unregistered — several screens each registered one, so callbacks pile up and the sensor keeps the CPU awake long after the screens are gone",
+    "The sensor needs `ACTIVITY_RECOGNITION` permission to report accurately"
+  ]}
+  answer={1}
+  explanation="A sensor listener is registered against the SensorManager, not against your screen, so nothing removes it when the screen goes — and registering again in onStart without unregistering in onStop adds a second, then a third. Each duplicate receives the same events, so anything counting increments once per registration, which is why the number climbs faster the longer the app is used. The warmth is the same bug seen from outside: an active listener prevents the sensor from idling and keeps waking the CPU. awaitClose in the flow above handles it, as does unregistering in onStop. Worth separating: TYPE_STEP_COUNTER genuinely does accumulate since boot, so you store a baseline and subtract — but that produces a consistently offset count, not one that grows faster over time, and it does not make the phone warm."
+/>
+
+## Bluetooth permissions changed
+
+```xml title="AndroidManifest.xml" numbered
+<!-- Android 12 and above -->
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- Android 11 and below -->
+<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+```
+
+Before Android 12, scanning required **location** permission, because a BLE scan can reveal where you
+are. From Android 12 there are dedicated runtime permissions instead, and
+`usesPermissionFlags="neverForLocation"` is a declaration that you will not use scan results to derive
+location — which lets you drop the location request entirely.
+
+That flag is worth setting when it is true. Asking for location to talk to a heart rate monitor is
+the kind of request users refuse and reviewers question.
+
+## BLE is a queue
+
+```kotlin title="Gatt.kt" numbered
+private val callback = object : BluetoothGattCallback() {
+    override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        if (newState == BluetoothProfile.STATE_CONNECTED) gatt.discoverServices()
+    }
+
+    override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+        val characteristic = gatt.getService(SERVICE_UUID)?.getCharacteristic(CHAR_UUID) ?: return
+        gatt.readCharacteristic(characteristic)          // one operation
+    }
+
+    override fun onCharacteristicRead(
+        gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
+        value: ByteArray, status: Int,
+    ) {
+        // only now may the next operation start
+        gatt.setCharacteristicNotification(characteristic, true)
+    }
+}
+```
+
+Read the shape: each callback starts the next step. That is not a style choice — a `BluetoothGatt`
+accepts one outstanding operation, and issuing a second before the first calls back makes it return
+`false` and silently do nothing. Every "it works on my phone but not on theirs" BLE bug is a timing
+race that a faster or slower device exposes.
+
+The practical answer is a queue of operations that you drain one callback at a time, or a library that
+already does it.
+
+<Detail summary="Scanning without flattening the battery">
+```kotlin title="Scan.kt" numbered
+val filters = listOf(
+    ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build(),
+)
+val settings = ScanSettings.Builder()
+    .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+    .build()
+
+scanner.startScan(filters, settings, scanCallback)
+// and always
+scanner.stopScan(scanCallback)
+```
+
+Filters are not just convenience. An unfiltered scan wakes your app for every advertising packet in
+range — dozens per second in a public place — and Android throttles an app that scans continuously,
+so an aggressive scan ends up finding *less*.
+
+Stop scanning as soon as you have what you need. A scan left running is the single largest battery
+cost an app can create, larger than GPS, and it is invisible in a short test.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and two of them heat the phone">
+**Not unregistering a sensor listener.** Duplicates accumulate and the CPU never idles.
+
+**Assuming a sensor exists.** `getDefaultSensor` returns `null` on plenty of devices.
+
+**Keeping a `SensorEvent`.** They are reused; copy the values.
+
+**A second GATT operation before the first callback.** It returns `false` and does nothing.
+
+**An unfiltered, unstopped scan.** The largest battery cost available, and Android throttles it.
+</Pitfall>
+
+## Practice
+
+1. Register a sensor listener in `onStart` without unregistering, rotate ten times, and count the
+   callbacks.
+2. Ask for a barometer on a device without one and handle the `null`.
+3. Compare `SENSOR_DELAY_NORMAL` and `SENSOR_DELAY_FASTEST` event counts over ten seconds.
+4. Issue two GATT reads back to back and log the return value of the second.
+5. Scan unfiltered for a minute in a public place and count the results.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `getDefaultSensor` | Can be `null`; sensors are hardware |
+| Delay constant | A rate you pay for in CPU wakeups |
+| `SensorEvent` | Reused between callbacks — copy the values |
+| Unregister | In `onStop` or `awaitClose`, or it runs forever |
+| `BLUETOOTH_SCAN` / `CONNECT` | The Android 12+ runtime permissions |
+| `neverForLocation` | Drops the location requirement from a scan |
+| GATT | One outstanding operation; queue them |
+| Callback chaining | Each callback starts the next step |
+| Scan filters | Fewer wakeups, and Android throttles aggressive scanning |
+| Stop the scan | The biggest battery cost an app can leave running |
+
+<Interview title="A question about an asynchronous device">
+"What goes wrong when you use BLE like a normal API?"
+
+A `BluetoothGatt` accepts one operation at a time. If you call `readCharacteristic` and then
+`writeDescriptor` without waiting for the first callback, the second returns `false` and silently does
+nothing — so the code looks correct, works on one phone where the timing happens to line up, and fails
+on another. The fix is to chain operations through their callbacks, or keep an explicit queue that
+drains one at a time.
+
+The sensor equivalent is forgetting to unregister. A listener is registered against `SensorManager`,
+not the screen, so registering in `onStart` without a matching `onStop` accumulates duplicates that
+all receive the same events — the count climbs and the phone gets warm, and neither symptom points at
+the screen that caused it.
+</Interview>

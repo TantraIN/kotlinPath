@@ -1,0 +1,182 @@
+---
+title: Sensors, Bluetooth aur BLE ki buniyad
+description: Sensors aapki khapat se tez data dhakelte hain, aur BLE ek aisi state machine hai jiski line maanni padti hai. Dono ek hi galti ki saza dete hain — kisi asynchronous device ko function call ki tarah lena.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Sensor callbacks bhejta rehta hai, aap taiyar ho ya na ho, aur BLE ka connection **ek baar mein ek hi
+kaam** leta hai. Is lesson ki har baat inhin do baaton se nikalti hai: jitna chahiye utna hi darj
+kijiye, rukte hi hata dijiye, aur pehla GATT call wapas aane se pehle doosra kabhi mat bhejiye.
+</KeyIdea>
+
+## Sensors
+
+```kotlin title="Sensors.kt" numbered
+fun steps(): Flow<Int> = callbackFlow {
+    val manager = context.getSystemService<SensorManager>()!!
+    val sensor = manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        ?: run { close(); return@callbackFlow }        // har device mein ye hota nahi
+
+    val listener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) { trySend(event.values[0].toInt()) }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+    awaitClose { manager.unregisterListener(listener) }        // warna hamesha chalta rehta hai
+}
+```
+
+Wahan do cheezein optional nahi hain.
+
+**`getDefaultSensor` `null` lauta sakta hai.** Sensors hardware hain, aur saste phone mein gyroscope,
+barometer ya step counter ho hi na. Jo code unke hone ki maan leta hai wo theek un devices par crash
+karta hai jo sabse kam sadbhavna ganwa sakte hain.
+
+**Wo delay ek raftar hai jiski keemat aap chun rahe ho.** `SENSOR_DELAY_NORMAL` kareeb 200ms hai;
+`SENSOR_DELAY_FASTEST` ek second mein saikdon ghatnayein de sakta hai, har ek CPU jagati hui. `GAME` ya
+`FASTEST` tabhi maangiye jab koi cheez sach mein us raftar se unhe khapati ho.
+
+`SensorEvent` wali cheezein callbacks ke beech dobara istemal hoti hain, to ek rakhkar baad mein
+padhne par aapko wo milta hai jo agli ghatna ne us par likh diya. Jo values chahiye unki nakal kar
+lijiye.
+
+<Quiz
+  question="Koi step counter screen khuli rehte theek padhta hai. Koi user batata hai ki kuch ghanton baad ginti kahin zyada hai, aur phone garam ho jata hai. Kya galat ho sakta hai?"
+  options={[
+    "`TYPE_STEP_COUNTER` boot se jodta jata hai aur use har session mein shoonya karna padta hai",
+    "Listener kabhi hataya hi nahi gaya — kai screens ne ek-ek darj kiya, to callbacks jama hote gaye aur screens ke jane ke bahut baad tak sensor CPU ko jagaye rakhta hai",
+    "Us sensor ko theek batane ke liye `ACTIVITY_RECOGNITION` permission chahiye"
+  ]}
+  answer={1}
+  explanation="Sensor ka listener SensorManager par darj hota hai, aapki screen par nahi, to screen ke jane par use kuch hatata nahi — aur onStop mein hataye bina onStart mein dobara darj karna ek aur jod deta hai, phir teesra. Har nakal wahi ghatnayein paati hai, to jo cheez gin rahi hai wo har darj hue listener par ek baar badhti hai, isiliye app jitni der chale sankhya utni tez chadhti hai. Garmi wahi bug bahar se dekha hua hai: chalta hua listener sensor ko sustane nahi deta aur CPU jagata rehta hai. Upar wale flow ka awaitClose ise sambhalta hai, aur onStop mein hatana bhi. Alag rakhne layak: TYPE_STEP_COUNTER sach mein boot se jodta jata hai, to aap ek shuruati naap rakhkar ghatate ho — par usse ginti lagatar utni hi zyada rehti hai, waqt ke saath tez nahi chadhti, aur usse phone garam nahi hota."
+/>
+
+## Bluetooth ki permissions badal gayin
+
+```xml title="AndroidManifest.xml" numbered
+<!-- Android 12 aur uske upar -->
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- Android 11 aur usse neeche -->
+<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+```
+
+Android 12 se pehle scan karne ke liye **location** wali permission chahiye thi, kyunki BLE ka scan bata
+sakta hai ki aap kahan ho. Android 12 se uski jagah alag runtime permissions hain, aur
+`usesPermissionFlags="neverForLocation"` ye ghoshna hai ki aap scan ke natijon se location nahi
+nikaloge — jisse location ki maang poori tarah hat jati hai.
+
+Jab wo sach ho to wo flag lagane layak hai. Dil ki dhadkan naapne wale monitor se baat karne ke liye
+location maangna usi kism ki maang hai jisse users mana karte hain aur sameeksha karne wale sawal uthate
+hain.
+
+## BLE ek line hai
+
+```kotlin title="Gatt.kt" numbered
+private val callback = object : BluetoothGattCallback() {
+    override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        if (newState == BluetoothProfile.STATE_CONNECTED) gatt.discoverServices()
+    }
+
+    override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+        val characteristic = gatt.getService(SERVICE_UUID)?.getCharacteristic(CHAR_UUID) ?: return
+        gatt.readCharacteristic(characteristic)          // ek kaam
+    }
+
+    override fun onCharacteristicRead(
+        gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
+        value: ByteArray, status: Int,
+    ) {
+        // ab jakar agla kaam shuru ho sakta hai
+        gatt.setCharacteristicNotification(characteristic, true)
+    }
+}
+```
+
+Shakal padhiye: har callback agla kadam shuru karta hai. Ye sajawat ka chunaav nahi hai — koi
+`BluetoothGatt` ek hi baqaya kaam leta hai, aur pehla callback aane se pehle doosra bhejne par wo
+`false` lautakar chupchap kuch nahi karta. "Mere phone par chalta hai, unke par nahi" wala har BLE bug
+koi aisi daud hai jise tez ya dheema device ujagar kar deta hai.
+
+Vyavharik jawab kaamon ki ek line hai jise aap ek-ek callback karke khaali karte ho, ya aisi library jo
+ye pehle se karti hai.
+
+<Detail summary="Battery bichhaye bina scan karna">
+```kotlin title="Scan.kt" numbered
+val filters = listOf(
+    ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build(),
+)
+val settings = ScanSettings.Builder()
+    .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+    .build()
+
+scanner.startScan(filters, settings, scanCallback)
+// aur hamesha
+scanner.stopScan(scanCallback)
+```
+
+Filters sirf suvidha nahi hain. Bina filter wala scan aapke app ko daayre ke har advertising packet par
+jagata hai — bheed wali jagah mein second mein darjanon — aur jo app lagatar scan karta hai use Android
+dheema kar deta hai, to aakramak scan aakhir mein *kam* dhoondhta hai.
+
+Jo chahiye wo milte hi scan band kijiye. Chalta chhoda gaya scan kisi app ki paida ki hui sabse badi
+battery ki keemat hai, GPS se bhi badi, aur chhote test mein wo dikhti hi nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur unmein se do phone garam karti hain">
+**Sensor ka listener na hatana.** Naklein jama hoti hain aur CPU kabhi sustata nahi.
+
+**Sensor ke hone ki maan lena.** Bahut saare devices par `getDefaultSensor` `null` lautata hai.
+
+**`SensorEvent` ko rakh lena.** Wo dobara istemal hote hain; values ki nakal kijiye.
+
+**Pehle callback se pehle doosra GATT kaam.** Wo `false` lautata hai aur kuch nahi karta.
+
+**Bina filter ka, bina ruka scan.** Maujood sabse badi battery ki keemat, aur Android use dheema kar
+deta hai.
+</Pitfall>
+
+## Abhyaas
+
+1. `onStart` mein sensor ka listener darj kijiye bina hataye, das baar ghumaiye, aur callbacks giniye.
+2. Jis device mein barometer nahi hai us par wo maangiye aur `null` sambhaliye.
+3. Das second mein `SENSOR_DELAY_NORMAL` aur `SENSOR_DELAY_FASTEST` ki ghatnayein ginkar milaiye.
+4. Ek ke baad ek do GATT reads bhejiye aur doosre ki lautai value log kijiye.
+5. Bheed wali jagah mein ek minute bina filter ke scan kijiye aur natije giniye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `getDefaultSensor` | `null` ho sakta hai; sensors hardware hain |
+| Delay wala constant | Ek raftar, jiski keemat CPU ke jagne mein chukti hai |
+| `SensorEvent` | Callbacks ke beech dobara istemal — values ki nakal kijiye |
+| Hatana | `onStop` mein ya `awaitClose` mein, warna hamesha chalta hai |
+| `BLUETOOTH_SCAN` / `CONNECT` | Android 12+ ki runtime permissions |
+| `neverForLocation` | Scan se location ki zarurat hata deta hai |
+| GATT | Ek baqaya kaam; unhe line mein lagaiye |
+| Callbacks ki kadi | Har callback agla kadam shuru karta hai |
+| Scan ke filters | Kam jagna, aur aakramak scan ko Android dheema karta hai |
+| Scan rokiye | App ki chhodi hui sabse badi battery ki keemat |
+
+<Interview title="Ek sawal, kisi asynchronous device ke baare mein">
+"BLE ko aam API ki tarah lene par galat kya hota hai?"
+
+Koi `BluetoothGatt` ek baar mein ek hi kaam leta hai. Agar aap `readCharacteristic` bulakar pehle
+callback ka intezar kiye bina `writeDescriptor` bulate ho, to doosra `false` lautakar chupchap kuch
+nahi karta — to code sahi dikhta hai, us ek phone par chalta hai jahan samay sanyog se baith jata hai,
+aur doosre par nakaam hota hai. Ilaaj hai kaamon ko unke callbacks se jodna, ya saaf-saaf ek line rakhna
+jo ek-ek karke khaali hoti hai.
+
+Sensor wala jodidar hai listener hatana bhoolna. Listener `SensorManager` par darj hota hai, screen par
+nahi, to `onStart` mein darj karke `onStop` mein na hatane se naklein jama hoti jati hain jo sab wahi
+ghatnayein paati hain — ginti chadhti hai aur phone garam hota hai, aur dono mein se koi lakshan us
+screen ki taraf ishara nahi karta jisne ye kiya.
+</Interview>
