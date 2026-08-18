@@ -1,0 +1,181 @@
+---
+title: "Firestore: documents, queries aur listeners"
+description: Firestore har document padhne par paise leta hai aur wo chhaan hi nahi sakta jiski uske security rules ijazat na dein. Collections ke kisi bhi tutorial se kahin zyada aapka data ka dhancha ye dono baatein tay karti hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firestore **har document padhne** par bill banata hai, har query par nahi, aur uski queries jaanbujhkar
+kamzor hain — na joins, na poora text khojna, na manchaha `OR`. To dhancha screens se ulta chalkar
+banaya jata hai: jo kisi screen ko padhna hai wo ek hi query mein rakhiye, chahe iska matlab data ki
+nakal ho.
+</KeyIdea>
+
+## Padhna
+
+```kotlin title="Read.kt" numbered
+// ek baar
+val snapshot = db.collection("orders")
+    .whereEqualTo("userId", uid)
+    .whereEqualTo("status", "pending")
+    .orderBy("createdAt", Query.Direction.DESCENDING)
+    .limit(20)
+    .get()
+    .await()
+
+// zinda dhara, Flow ki tarah
+fun orders(uid: String): Flow<List<Order>> = callbackFlow {
+    val registration = db.collection("orders")
+        .whereEqualTo("userId", uid)
+        .addSnapshotListener { snap, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            trySend(snap?.toObjects(Order::class.java).orEmpty())
+        }
+    awaitClose { registration.remove() }      // warna hamesha sunta hai, aur hamesha bill banata hai
+}
+```
+
+Yahan `awaitClose` us tarah vaikalpik nahi hai jaise wo aam taur par nahi hota: jis listener ko kisi ne
+hataya nahi wo updates pata rehta hai aur paise kharch karata rehta hai, us screen ke jane ke bahut baad
+tak.
+
+Upar jaisi judi hui query ko composite index chahiye. Firestore chupchap nakaam nahi hota — us error ke
+sandesh mein wo URL hota hai jo aapke liye wo index bana deta hai, aur wahi iraada hai, koi galti nahi.
+
+## Likhna
+
+```kotlin title="Write.kt" numbered
+db.collection("orders").document(id).set(order)                 // banaiye ya badal dijiye
+db.collection("orders").document(id).update("status", "paid")   // na ho to nakaam
+db.collection("orders").document(id).set(patch, SetOptions.merge())
+
+db.runTransaction { tx ->
+    val snap = tx.get(counterRef)
+    tx.update(counterRef, "count", snap.getLong("count")!! + 1)  // padhkar likhna, ek ikai mein
+}
+
+db.batch().apply { set(a, x); set(b, y) }.commit()               // sab ya kuch nahi, bina padhe
+```
+
+Transaction padhkar-likhne ke liye hai; batch bina padhe kai likhaiyon ke liye. Dono ek ikai hain, aur
+farak isliye maayne rakhta hai ki bheed mein transaction apne function ko kai baar dobara chala sakta hai
+— to wo lambda saada honi chahiye, aur uske andar koi asar daalne wala kaam rakhne ka matlab hai ki wo
+asar do baar ho sakta hai.
+
+<Quiz
+  question="Koi app 50 orders ki list dikhata hai, har ek par grahak ka naam. Banane wala har order par `customerId` rakhta hai aur har row ke liye grahak ka document lata hai. Ye chalta hai. Ismein galat kya hai?"
+  options={[
+    "Kuch nahi — data ko alag rakhna aur client par jodna sahi dhancha hai",
+    "Wo ek screen ke liye 51 documents padhna hai, aur Firestore har padhne par bill banata hai. Grahak ka naam order par hi rakh dijiye taki wo list ek query ho, aur naam badalne par un naklon ko badliye",
+    "Un grahakon ke documents ek hi `whereIn` wali query mein lane chahiye"
+  ]}
+  answer={1}
+  explanation="Ye Room wale lesson ka N+1 hai, bas yahan uske saath bill juda hai: pachaas rows yani screen khulne par har baar pachaas atirikt padhaiyan, aur listener har badlaav par dobara padhta hai. Firestore mein joins theek isiliye nahi hain ki use nakal wala dhancha mankar banaya gaya hai — order par customerId ke saath customerName rakh dena us screen ko ikyavan ke bajaye pachaas padhaiyon ki ek query bana deta hai, aur list badhne par bhi wo ek hi query rehti hai. Keemat ye hai ki naam badalne wale grahak ko apne orders badalne padte hain, jo asli kaam hai aur aam taur par likhai se chalne wala koi Cloud Function karta hai. whereIn thodi madad karta hai aur ilaaj nahi hai: us par tees values ki had hai, wo ab bhi doosra chakkar hai, aur list badalne par wo dobara chalta hai. Niyam ye hai ki screen se dhancha banaiye, aur ek sasti padhai ki keemat ke taur par nakal manzoor kijiye."
+/>
+
+## Security rules bhi queries hain
+
+```js title="firestore.rules" numbered
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /orders/{orderId} {
+      allow read:   if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == resource.data.userId;   // badla nahi ja sakta
+      allow delete: if false;
+    }
+  }
+}
+```
+
+`resource.data` wo document hai jo abhi hai; `request.resource.data` wo hai jo likha ja raha hai. Inhe
+uljha dena rules ka sabse aam bug hai, aur upar wala `update` dikhata hai ki dono kyun chahiye — maujooda
+maalik dekhna us likhai ko ijazat deta hai, aur dono ko milana kisi ko apna order doosre user ko saunpne
+se rokta hai.
+
+Jo baat logon ko chaunkati hai wo ye hai ki **rules chhaante nahi hain**. Jis query ke natijon mein aisa
+document aa sakta hai jise rules mana karte hain, wo query poori ki poori thukra di jati hai, ijazat wala
+hissa lautane ke bajaye. To ye nakaam hota hai:
+
+```kotlin title="Rejected.kt" numbered
+db.collection("orders").get()                                    // PERMISSION_DENIED
+db.collection("orders").whereEqualTo("userId", uid).get()         // theek
+```
+
+Query ko pehle hi sabit karna padta hai ki wo sirf ijazat wale documents se mel kha sakti hai. Ye judav
+jaanbujhkar hai: isi se rules bina server ke har document padhe manwaye ja sakte hain.
+
+<Detail summary="Offline, aur wo madad karna kahan band karta hai">
+Firestore sthaniya roop se rakhta hai aur default se offline chalta hai. Likhaiyan ek line mein jati hain
+aur connection lautne par lagu hoti hain, aur padhaiyan usi rakhe hue se aati hain — isiliye Firestore
+wala app turant lagta hai.
+
+```kotlin title="Offline.kt" numbered
+snapshot.metadata.hasPendingWrites    // ye badlaav abhi server tak pahuncha nahi
+snapshot.metadata.isFromCache         // ye data purana ho sakta hai
+```
+
+Wo do nishan hi aapko imandaar UI dikhane dete hain — likhai safal hone ka natak karne ke bajaye "bheja ja
+raha hai" wali haalat. Unhe andekha karna hi wo app banata hai jo order ko laga hua dikhata hai jabki wo
+aisi line mein pada hai jo security rules ke saamne nakaam hogi.
+
+Janne layak had ye hai ki line mein padi likhai tabhi parakhi jati hai jab wo server tak pahunche. Offline
+mein ki gayi aisi likhai jo rules todti hai, sthaniya roop se safal dikhti hai, UI badal deti hai, aur
+connection lautne par minton baad chupchap wapas palat di jati hai. Sthaniya safalta ko aakhri manne ke
+bajaye nakami wala callback sambhaliye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli do paise kharch karati hain">
+**Kabhi na hataya gaya listener.** Screen ke jane ke baad bhi wo update pata aur bill banata rehta hai.
+
+**Har row par juda document lana.** N+1, bill ke saath; uski jagah nakal rakhiye.
+
+**Rules se chhanne ki ummid.** Jo query kisi mana kiye document se mel kha sakti hai wo poori thukra di
+jati hai.
+
+**`resource` aur `request.resource` uljhana.** Maujooda document banam wo jo likha ja raha hai.
+
+**Sthaniya likhai par bharosa.** Rules server par dekhe jate hain; offline ki likhai palat sakti hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Bina `awaitClose` ke listener jodiye, das baar ghumaiye, aur console mein padhaiyan giniye.
+2. Maalik tak seemit rules ke neeche bina filter ke koi collection maangiye aur error padhiye.
+3. List wale document par koi naam nakal kijiye aur padhaiyon ki ginti milaiye.
+4. Aisa `update` wala niyam likhiye jo user ko document saunpne de, phir use theek kijiye.
+5. Offline hoiye, rules todne wali likhai kijiye, aur dobara judne par use palatte dekhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Bill | Har document padhne par, har query par nahi |
+| Koi joins nahi | Jaanbujhkar; screen se dhancha banaiye aur nakal rakhiye |
+| `addSnapshotListener` | Zinda updates; hataiye warna hamesha bill banta hai |
+| Judi hui queries | Index chahiye; error aapko URL de deta hai |
+| Transaction | Padhkar likhna; wo lambda kai baar chal sakti hai |
+| Batch | Kai likhaiyan, bina padhe, ek ikai |
+| `resource.data` | Abhi maujood document |
+| `request.resource.data` | Wo document jo likha ja raha hai |
+| Rules chhaante nahi | Query ko sabit karna hai ki wo sirf ijazat walon se milti hai |
+| Offline | Rakhe hue se padhta hai, likhaiyan line mein — parakh sirf server par |
+
+<Interview title="Ek sawal, jahan suthra jawab hi mehnga jawab hai">
+"Aise orders ki list ka dhancha aap kaise banaoge jinmein har ek par grahak ka naam dikhta hai?"
+
+Grahak ka naam order par hi rakhkar, sirf uski id nahi. SQL se aate hue ye galat lagta hai, par Firestore
+har document padhne par bill banata hai aur usmein joins hain hi nahi, to har row par ek grahak lana
+pachaas rows wali screen ko ikyavan padhaiyan bana deta hai — har baar jab wo khule, aur listener ho to
+har badlaav par phir se. Nakal rakhna use ek query bana deta hai.
+
+Keemat un naklon ko sahi rakhna hai, jise main client ke code ke bajaye grahak ke document par likhai se
+chalne wale kisi Cloud Function se sambhalunga, kyunki beech mein crash kar jane wala client data ko bemel
+chhod deta hai. Aur main wo query rules ke saath-saath banaunga, kyunki Firestore ke rules chhaante nahi —
+jo query kisi mana kiye document se mel kha sakti hai wo poori thukra di jati hai, to query ko wahi shart
+dhoni padti hai jo niyam dhota hai.
+</Interview>

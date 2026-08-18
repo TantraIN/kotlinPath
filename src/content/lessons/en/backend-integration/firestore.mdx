@@ -1,0 +1,178 @@
+---
+title: "Firestore: documents, queries and listeners"
+description: Firestore charges per document read and cannot filter what its security rules do not allow. Both of those shape your data model far more than any tutorial about collections will.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firestore bills **per document read**, not per query, and its queries are deliberately weak — no
+joins, no full-text search, no arbitrary `OR`. So the model is designed backwards from the screens:
+store what a screen needs to read in one query, even if that means duplicating data.
+</KeyIdea>
+
+## Reading
+
+```kotlin title="Read.kt" numbered
+// one-shot
+val snapshot = db.collection("orders")
+    .whereEqualTo("userId", uid)
+    .whereEqualTo("status", "pending")
+    .orderBy("createdAt", Query.Direction.DESCENDING)
+    .limit(20)
+    .get()
+    .await()
+
+// a live stream, as a Flow
+fun orders(uid: String): Flow<List<Order>> = callbackFlow {
+    val registration = db.collection("orders")
+        .whereEqualTo("userId", uid)
+        .addSnapshotListener { snap, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            trySend(snap?.toObjects(Order::class.java).orEmpty())
+        }
+    awaitClose { registration.remove() }      // or it listens forever, and bills forever
+}
+```
+
+`awaitClose` is not optional here in a way it usually is not elsewhere: a listener nobody removed keeps
+receiving updates and keeps costing money, long after the screen is gone.
+
+A composite query like the one above needs a composite index. Firestore does not fail silently — the
+error message contains a URL that creates the index for you, which is the intended workflow rather than
+a mistake.
+
+## Writing
+
+```kotlin title="Write.kt" numbered
+db.collection("orders").document(id).set(order)                 // create or replace
+db.collection("orders").document(id).update("status", "paid")   // fails if absent
+db.collection("orders").document(id).set(patch, SetOptions.merge())
+
+db.runTransaction { tx ->
+    val snap = tx.get(counterRef)
+    tx.update(counterRef, "count", snap.getLong("count")!! + 1)  // read then write, atomically
+}
+
+db.batch().apply { set(a, x); set(b, y) }.commit()               // all or nothing, no reads
+```
+
+A transaction is for read-then-write; a batch is for several writes with no reads. Both are atomic, and
+the distinction matters because a transaction can retry its function several times under contention —
+so the lambda must be pure, and putting a side effect inside it means that side effect can happen
+twice.
+
+<Quiz
+  question="An app shows a list of 50 orders, each with the customer's name. The developer stores a `customerId` on each order and fetches the customer document for each row. It works. What is wrong with it?"
+  options={[
+    "Nothing — normalising data and joining on the client is the correct model",
+    "That is 51 document reads for one screen, and Firestore bills per read. Denormalise the customer's name onto the order so the list is one query, and update the copies when the name changes",
+    "The customer documents should be fetched in a single `whereIn` query instead"
+  ]}
+  answer={1}
+  explanation="This is the N+1 pattern from the Room lesson, except here it has a bill attached: fifty rows means fifty extra reads every time the screen opens, and a listener re-reads on every change. Firestore has no joins precisely because it is designed to be denormalised — storing customerName alongside customerId on the order makes the screen one query of fifty reads instead of fifty-one, and it stays one query as the list grows. The cost is that a customer renaming themselves has to update their orders, which is real work and usually a Cloud Function triggered by the write. whereIn helps a little and does not fix it: it is capped at thirty values, it is still a second round trip, and it re-runs whenever the list changes. The rule is to model from the screen, and accept duplication as the price of a single cheap read."
+/>
+
+## Security rules are queries too
+
+```js title="firestore.rules" numbered
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /orders/{orderId} {
+      allow read:   if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == resource.data.userId;   // cannot reassign
+      allow delete: if false;
+    }
+  }
+}
+```
+
+`resource.data` is the document as it exists; `request.resource.data` is the document being written.
+Mixing them up is the most common rule bug, and the `update` rule above shows why both are needed —
+checking the existing owner authorises the write, and comparing the two prevents someone handing their
+order to another user.
+
+The part that surprises people is that **rules are not filters**. A query whose results might include
+a document the rules forbid is rejected entirely rather than returning the allowed subset. So this
+fails:
+
+```kotlin title="Rejected.kt" numbered
+db.collection("orders").get()                                    // PERMISSION_DENIED
+db.collection("orders").whereEqualTo("userId", uid).get()         // fine
+```
+
+The query must prove up front that it can only match permitted documents. That coupling is deliberate:
+it means the rules can be enforced without the server reading every document to check.
+
+<Detail summary="Offline, and where it stops helping">
+Firestore caches locally and works offline by default. Writes go into a queue and apply when the
+connection returns, and reads come from the cache — which is why a Firestore app feels instant.
+
+```kotlin title="Offline.kt" numbered
+snapshot.metadata.hasPendingWrites    // this change has not reached the server yet
+snapshot.metadata.isFromCache         // this data may be stale
+```
+
+Those two flags are what let you show an honest UI — a "sending" state rather than pretending a write
+succeeded. Ignoring them is what produces an app that shows an order as placed while it sits in a queue
+that will fail against the security rules.
+
+The limit worth knowing is that a queued write is validated only when it reaches the server. An offline
+write that violates the rules appears to succeed locally, updates the UI, and is silently reverted
+minutes later when the connection returns. Handle the failure callback rather than assuming a local
+success is final.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first two cost money">
+**A listener never removed.** It keeps updating and keeps billing after the screen is gone.
+
+**Fetching a related document per row.** N+1, with a bill; denormalise instead.
+
+**Expecting rules to filter.** A query that could match a forbidden document is rejected outright.
+
+**Confusing `resource` and `request.resource`.** The existing document versus the one being written.
+
+**Trusting a local write.** Rules are checked at the server; an offline write can be reverted.
+</Pitfall>
+
+## Practice
+
+1. Add a listener without `awaitClose`, rotate ten times, and count the reads in the console.
+2. Query a collection without a filter under owner-scoped rules and read the error.
+3. Denormalise a name onto a list document and compare the read count.
+4. Write an `update` rule that lets a user reassign a document, then fix it.
+5. Go offline, make a write that breaks the rules, and watch it revert when you reconnect.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Billing | Per document read, not per query |
+| No joins | By design; model from the screen and denormalise |
+| `addSnapshotListener` | Live updates; remove it or it bills forever |
+| Composite queries | Need an index; the error gives you the URL |
+| Transaction | Read then write; the lambda may run several times |
+| Batch | Several writes, no reads, atomic |
+| `resource.data` | The existing document |
+| `request.resource.data` | The document being written |
+| Rules are not filters | The query must prove it only matches permitted documents |
+| Offline | Reads from cache, queues writes — validated only at the server |
+
+<Interview title="A question where the tidy answer is the expensive one">
+"How would you model a list of orders that each show a customer name?"
+
+By storing the customer's name on the order, not just their id. It feels wrong coming from SQL, but
+Firestore bills per document read and has no joins, so fetching a customer per row turns a fifty-row
+screen into fifty-one reads — every time it opens, and again on every change if there is a listener.
+Denormalising makes it one query.
+
+The cost is keeping the copies correct, which I would handle with a Cloud Function triggered by a write
+to the customer document rather than by client code, since a client that crashes mid-update leaves the
+data inconsistent. And I would design the query alongside the rules, because Firestore rules are not
+filters — a query that could match a document the rules forbid is rejected entirely, so the query has
+to carry the same constraint the rule does.
+</Interview>

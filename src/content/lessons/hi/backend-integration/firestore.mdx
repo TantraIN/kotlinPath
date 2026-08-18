@@ -1,0 +1,177 @@
+---
+title: "Firestore: documents, queries और listeners"
+description: Firestore हर document पढ़ने पर पैसे लेता है और वह छान ही नहीं सकता जिसकी उसके security rules इजाजत न दें। Collections के किसी भी tutorial से कहीं ज्यादा आपका data का ढाँचा ये दोनों बातें तय करती हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firestore **हर document पढ़ने** पर बिल बनाता है, हर query पर नहीं, और उसकी queries जानबूझकर कमजोर हैं
+— न joins, न पूरा text खोजना, न मनचाहा `OR`। तो ढाँचा screens से उलटा चलकर बनाया जाता है: जो किसी
+screen को पढ़ना है वह एक ही query में रखिए, चाहे इसका मतलब data की नकल हो।
+</KeyIdea>
+
+## पढ़ना
+
+```kotlin title="Read.kt" numbered
+// एक बार
+val snapshot = db.collection("orders")
+    .whereEqualTo("userId", uid)
+    .whereEqualTo("status", "pending")
+    .orderBy("createdAt", Query.Direction.DESCENDING)
+    .limit(20)
+    .get()
+    .await()
+
+// जिंदा धारा, Flow की तरह
+fun orders(uid: String): Flow<List<Order>> = callbackFlow {
+    val registration = db.collection("orders")
+        .whereEqualTo("userId", uid)
+        .addSnapshotListener { snap, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            trySend(snap?.toObjects(Order::class.java).orEmpty())
+        }
+    awaitClose { registration.remove() }      // वरना हमेशा सुनता है, और हमेशा बिल बनाता है
+}
+```
+
+यहाँ `awaitClose` उस तरह वैकल्पिक नहीं है जैसे वह आमतौर पर नहीं होता: जिस listener को किसी ने हटाया
+नहीं वह updates पाता रहता है और पैसे खर्च कराता रहता है, उस screen के जाने के बहुत बाद तक।
+
+ऊपर जैसी जुड़ी हुई query को composite index चाहिए। Firestore चुपचाप नाकाम नहीं होता — उस error के संदेश
+में वह URL होता है जो आपके लिए वह index बना देता है, और वही इरादा है, कोई गलती नहीं।
+
+## लिखना
+
+```kotlin title="Write.kt" numbered
+db.collection("orders").document(id).set(order)                 // बनाइए या बदल दीजिए
+db.collection("orders").document(id).update("status", "paid")   // न हो तो नाकाम
+db.collection("orders").document(id).set(patch, SetOptions.merge())
+
+db.runTransaction { tx ->
+    val snap = tx.get(counterRef)
+    tx.update(counterRef, "count", snap.getLong("count")!! + 1)  // पढ़कर लिखना, एक इकाई में
+}
+
+db.batch().apply { set(a, x); set(b, y) }.commit()               // सब या कुछ नहीं, बिना पढ़े
+```
+
+Transaction पढ़कर-लिखने के लिए है; batch बिना पढ़े कई लिखाइयों के लिए। दोनों एक इकाई हैं, और फर्क
+इसलिए मायने रखता है कि भीड़ में transaction अपने function को कई बार दोबारा चला सकता है — तो वह lambda
+सादा होनी चाहिए, और उसके अंदर कोई असर डालने वाला काम रखने का मतलब है कि वह असर दो बार हो सकता है।
+
+<Quiz
+  question="कोई ऐप 50 orders की list दिखाता है, हर एक पर ग्राहक का नाम। बनाने वाला हर order पर `customerId` रखता है और हर row के लिए ग्राहक का document लाता है। यह चलता है। इसमें गलत क्या है?"
+  options={[
+    "कुछ नहीं — data को अलग रखना और client पर जोड़ना सही ढाँचा है",
+    "वह एक screen के लिए 51 documents पढ़ना है, और Firestore हर पढ़ने पर बिल बनाता है। ग्राहक का नाम order पर ही रख दीजिए ताकि वह list एक query हो, और नाम बदलने पर उन नकलों को बदलिए",
+    "उन ग्राहकों के documents एक ही `whereIn` वाली query में लाने चाहिए"
+  ]}
+  answer={1}
+  explanation="यह Room वाले पाठ का N+1 है, बस यहाँ उसके साथ बिल जुड़ा है: पचास rows यानी screen खुलने पर हर बार पचास अतिरिक्त पढ़ाइयाँ, और listener हर बदलाव पर दोबारा पढ़ता है। Firestore में joins ठीक इसीलिए नहीं हैं कि उसे नकल वाला ढाँचा मानकर बनाया गया है — order पर customerId के साथ customerName रख देना उस screen को इक्यावन के बजाय पचास पढ़ाइयों की एक query बना देता है, और list बढ़ने पर भी वह एक ही query रहती है। कीमत यह है कि नाम बदलने वाले ग्राहक को अपने orders बदलने पड़ते हैं, जो असली काम है और आमतौर पर लिखाई से चलने वाला कोई Cloud Function करता है। whereIn थोड़ी मदद करता है और इलाज नहीं है: उस पर तीस values की हद है, वह अब भी दूसरा चक्कर है, और list बदलने पर वह दोबारा चलता है। नियम यह है कि screen से ढाँचा बनाइए, और एक सस्ती पढ़ाई की कीमत के तौर पर नकल मंजूर कीजिए।"
+/>
+
+## Security rules भी queries हैं
+
+```js title="firestore.rules" numbered
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /orders/{orderId} {
+      allow read:   if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == resource.data.userId;   // बदला नहीं जा सकता
+      allow delete: if false;
+    }
+  }
+}
+```
+
+`resource.data` वह document है जो अभी है; `request.resource.data` वह है जो लिखा जा रहा है। इन्हें
+उलझा देना rules का सबसे आम bug है, और ऊपर वाला `update` दिखाता है कि दोनों क्यों चाहिए — मौजूदा मालिक
+जाँचना उस लिखाई को इजाजत देता है, और दोनों को मिलाना किसी को अपना order दूसरे user को सौंपने से रोकता
+है।
+
+जो बात लोगों को चौंकाती है वह यह है कि **rules छानते नहीं हैं**। जिस query के नतीजों में ऐसा document
+आ सकता है जिसे rules मना करते हैं, वह query पूरी की पूरी ठुकरा दी जाती है, इजाजत वाला हिस्सा लौटाने के
+बजाय। तो यह नाकाम होता है:
+
+```kotlin title="Rejected.kt" numbered
+db.collection("orders").get()                                    // PERMISSION_DENIED
+db.collection("orders").whereEqualTo("userId", uid).get()         // ठीक
+```
+
+Query को पहले ही साबित करना पड़ता है कि वह सिर्फ इजाजत वाले documents से मेल खा सकती है। यह जुड़ाव
+जानबूझकर है: इसी से rules बिना server के हर document पढ़े मनवाए जा सकते हैं।
+
+<Detail summary="Offline, और वह मदद करना कहाँ बंद करता है">
+Firestore स्थानीय रूप से रखता है और डिफॉल्ट से offline चलता है। लिखाइयाँ एक कतार में जाती हैं और
+connection लौटने पर लागू होती हैं, और पढ़ाइयाँ उसी रखे हुए से आती हैं — इसीलिए Firestore वाला ऐप तुरंत
+लगता है।
+
+```kotlin title="Offline.kt" numbered
+snapshot.metadata.hasPendingWrites    // यह बदलाव अभी server तक पहुँचा नहीं
+snapshot.metadata.isFromCache         // यह data पुराना हो सकता है
+```
+
+वे दो निशान ही आपको ईमानदार UI दिखाने देते हैं — लिखाई सफल होने का नाटक करने के बजाय "भेजा जा रहा है"
+वाली हालत। उन्हें अनदेखा करना ही वह ऐप बनाता है जो order को लगा हुआ दिखाता है जबकि वह ऐसी कतार में पड़ा
+है जो security rules के सामने नाकाम होगी।
+
+जानने लायक हद यह है कि कतार में पड़ी लिखाई तभी परखी जाती है जब वह server तक पहुँचे। Offline में की गई
+ऐसी लिखाई जो rules तोड़ती है, स्थानीय रूप से सफल दिखती है, UI बदल देती है, और connection लौटने पर
+मिनटों बाद चुपचाप वापस पलट दी जाती है। स्थानीय सफलता को आखिरी मानने के बजाय नाकामी वाला callback
+सँभालिए।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली दो पैसे खर्च कराती हैं">
+**कभी न हटाया गया listener।** Screen के जाने के बाद भी वह update पाता और बिल बनाता रहता है।
+
+**हर row पर जुड़ा document लाना।** N+1, बिल के साथ; उसकी जगह नकल रखिए।
+
+**Rules से छानने की उम्मीद।** जो query किसी मना किए document से मेल खा सकती है वह पूरी ठुकरा दी जाती है।
+
+**`resource` और `request.resource` उलझाना।** मौजूदा document बनाम वह जो लिखा जा रहा है।
+
+**स्थानीय लिखाई पर भरोसा।** Rules server पर जाँचे जाते हैं; offline की लिखाई पलट सकती है।
+</Pitfall>
+
+## अभ्यास
+
+1. बिना `awaitClose` के listener जोड़िए, दस बार घुमाइए, और console में पढ़ाइयाँ गिनिए।
+2. मालिक तक सीमित rules के नीचे बिना filter के कोई collection माँगिए और error पढ़िए।
+3. List वाले document पर कोई नाम नकल कीजिए और पढ़ाइयों की गिनती मिलाइए।
+4. ऐसा `update` वाला नियम लिखिए जो user को document सौंपने दे, फिर उसे ठीक कीजिए।
+5. Offline होइए, rules तोड़ने वाली लिखाई कीजिए, और दोबारा जुड़ने पर उसे पलटते देखिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| बिल | हर document पढ़ने पर, हर query पर नहीं |
+| कोई joins नहीं | जानबूझकर; screen से ढाँचा बनाइए और नकल रखिए |
+| `addSnapshotListener` | जिंदा updates; हटाइए वरना हमेशा बिल बनता है |
+| जुड़ी हुई queries | Index चाहिए; error आपको URL दे देता है |
+| Transaction | पढ़कर लिखना; वह lambda कई बार चल सकती है |
+| Batch | कई लिखाइयाँ, बिना पढ़े, एक इकाई |
+| `resource.data` | अभी मौजूद document |
+| `request.resource.data` | वह document जो लिखा जा रहा है |
+| Rules छानते नहीं | Query को साबित करना है कि वह सिर्फ इजाजत वालों से मिलती है |
+| Offline | रखे हुए से पढ़ता है, लिखाइयाँ कतार में — परख सिर्फ server पर |
+
+<Interview title="एक सवाल, जहाँ सुथरा जवाब ही महँगा जवाब है">
+"ऐसे orders की list का ढाँचा आप कैसे बनाएँगे जिनमें हर एक पर ग्राहक का नाम दिखता है?"
+
+ग्राहक का नाम order पर ही रखकर, सिर्फ उसकी id नहीं। SQL से आते हुए यह गलत लगता है, पर Firestore हर
+document पढ़ने पर बिल बनाता है और उसमें joins हैं ही नहीं, तो हर row पर एक ग्राहक लाना पचास rows वाली
+screen को इक्यावन पढ़ाइयाँ बना देता है — हर बार जब वह खुले, और listener हो तो हर बदलाव पर फिर से। नकल
+रखना उसे एक query बना देता है।
+
+कीमत उन नकलों को सही रखना है, जिसे मैं client के code के बजाय ग्राहक के document पर लिखाई से चलने वाले
+किसी Cloud Function से सँभालूँगा, क्योंकि बीच में crash कर जाने वाला client data को बेमेल छोड़ देता है।
+और मैं वह query rules के साथ-साथ बनाऊँगा, क्योंकि Firestore के rules छानते नहीं — जो query किसी मना
+किए document से मेल खा सकती है वह पूरी ठुकरा दी जाती है, तो query को वही शर्त ढोनी पड़ती है जो नियम
+ढोता है।
+</Interview>
