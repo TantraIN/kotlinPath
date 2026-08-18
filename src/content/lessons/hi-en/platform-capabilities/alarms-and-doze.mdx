@@ -1,0 +1,186 @@
+---
+title: AlarmManager, Doze aur peeche chalne ki hadein
+description: Aapka peeche chalne wala code aapki mez par chalta hai aur user ke phone par nahi — iski wajah Doze hai. AlarmManager use bhedne ka iklauta raasta hai, aur Android ne wo permission har saal aur mushkil ki hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Khaali pada phone aisa computer reh hi nahi jata jo aapke kehne par kabhi bhi code chalaye. Doze taali
+ja sakne wali har cheez ko kabhi-kabhaar ki rakhrakhav wali khidkiyon mein ikattha kar deta hai, aur
+sirf **exact alarm** bach nikalta hai — isiliye us kshamta ko ab aisi permission chahiye jisse user
+mana kar sakta hai.
+</KeyIdea>
+
+## Doze karta kya hai
+
+Jab device plug se hata, sthir aur screen band ho, to wo charnon mein Doze mein jata hai. Har charan
+antaral badhata hai:
+
+| Taala jata hai | Chalne diya jata hai |
+| --- | --- |
+| Network tak pahunch | Rakhrakhav wali khidkiyan, badhte antaral par |
+| Wake locks | Unchi prathamikta wale Firebase sandesh |
+| `AlarmManager` wale alarms | Exact alarms, permission ke saath |
+| Job aur sync lagana | Alarm clock wale alarms |
+
+App Standby uska jodidar niyam hai: jis app ko user ne haal mein nahi chhua use khane milte hain —
+active, working set, frequent, rare, restricted — aur khana tay karta hai ki uska taala hua kaam kitni
+baar chalega. Aapka apna device hamesha sabse meharban khane mein rehta hai, aur theek isiliye jo
+peeche wala code banate waqt chalta hai wo asal duniya mein nakaam hota hai.
+
+<Note>
+`adb shell dumpsys deviceidle force-idle` device ko turant Doze mein daal deta hai, aur
+`adb shell am set-standby-bucket <package> rare` aapke app ko dushman khane mein gira deta hai. Inke
+bina peeche wale behaviour ka test karna us iklauti haalat ka test karna hai jo aapke users ke paas
+nahi hai.
+</Note>
+
+## Alarm ke prakar, aur wo permission jo badal gayi
+
+```kotlin title="Alarms.kt" numbered
+// Taala ja sakne wala: system use rakhrakhav ki khidki mein ikattha kar sakta hai
+alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+
+// Pakka, aur Doze mein bhi bajta hai — permission chahiye
+alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+
+// User ko dikhta alarm clock: chhoot mili hui, aur status bar mein dikhta hai
+alarmManager.setAlarmClock(AlarmClockInfo(triggerAt, showIntent), pendingIntent)
+```
+
+Android 12 se `setExact*` ko `SCHEDULE_EXACT_ALARM` chahiye, aur Android 14 se zyadatar apps ke liye
+wo permission install par **milti nahi** — user ko Settings mein ijazat deni padti hai, aur Play tay
+karta hai ki kis shreni ke app use maang bhi sakte hain. Alarm clock, calendar aur timer is par khare
+utarte hain; aisa reminder jo paanch minute der se bhi chal jata, nahi utarta.
+
+```kotlin title="Check.kt" numbered
+if (Build.VERSION.SDK_INT >= 31 && !alarmManager.canScheduleExactAlarms()) {
+    // bas crash mat kijiye — kam karke chalaiye, ya user ko Settings bhejiye
+    context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM))
+}
+```
+
+Bina permission ke `setExact*` bulane par `SecurityException` aata hai, to wo check optional nahi hai.
+
+`USE_EXACT_ALARM` un apps ke liye vikalp hai jinka poora maksad hi alarms hai — wo install par mil jati
+hai, aur jo app ghadi ya calendar nahi hai usmein use lena Play ki neeti ka ullanghan hai.
+
+<Quiz
+  question="Koi reminders wala app exact alarms lagata hai. Reminders theek bajte hain, phir ek user batata hai ki raat bhar phone mez par pade rehne ke baad subah 7 baje wala reminder 9:40 par aaya. Permission mili hui hai. Hua kya?"
+  options={[
+    "Doze ne wo alarm radd karke agli rakhrakhav wali khidki par laga diya",
+    "Wo alarm lagbhag pakka exact tha hi nahi — `set()` aur `setWindow()` taale ja sakte hain aur Doze unhe ikattha karta hai, to raat bhar khaali pada device unhe ghanton taal deta hai",
+    "Chhah ghante Doze ke baad exact alarms chalna band kar dete hain"
+  ]}
+  answer={1}
+  explanation="Permission wale exact alarms Doze mein bajte hi hain — wo kshamta isiliye hai aur use permission isiliye chahiye. Kareeb teen ghante ki der taale ja sakne wale alarm ki pehchan hai: set() aur setWindow() saaf-saaf ikattha kiye ja sakte hain, aur khaali pade device par Doze rakhrakhav ki khidkiyan tab tak chaudi karta jata hai jab tak wo ghanton door na ho jayein. To bug lagbhag hamesha ye hota hai ki code set() bulata hai jabki manifest mein SCHEDULE_EXACT_ALARM likha hai, jo compile hota hai aur sahi dikhta hai. Uske bagal mein do aur jaal hain. Alarms reboot par nahi bachte, to jis app mein samay par reminders hain use unhe dobara lagane ke liye BOOT_COMPLETED wala receiver chahiye. Aur restricted khane mein pade app ke exact alarms tak seemit kiye ja sakte hain, isiliye jis app ko user kabhi nahi kholta wo zaruri reminders ke liye us app se buri jagah hai jise wo istemal karta hai."
+/>
+
+## Dobara lagana, kyunki alarms reboot par nahi bachte
+
+```kotlin title="BootReceiver.kt" numbered
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "reschedule-alarms",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<RescheduleAlarmsWorker>().build(),
+        )
+    }
+}
+```
+
+Har baaki pada alarm reboot se mit jata hai, chupchap. Wo worker reminders ko Room se padhta hai aur
+unhe dobara lagata hai — yani broadcasts wale lesson ka tarika, aur yahi wajah hai ki WorkManager ka
+khud dobara lag jana uske muqable itni raahat lagta hai.
+
+## Chunna
+
+| Zarurat | Lijiye |
+| --- | --- |
+| Mote taur par samay-samay par, ruk sakta hai | WorkManager |
+| Ghadi ke kisi khaas waqt par, user ko dikhta | Permission ke saath `setExactAndAllowWhileIdle` |
+| Sachmuch ka alarm clock | `setAlarmClock` |
+| Abhi hota kaam jo user dekh sakta hai | Foreground service |
+| Server se shuru aur zaruri | Unchi prathamikta wala Firebase sandesh |
+
+Aakhri pankti janne layak hai: unchi prathamikta wala FCM sandesh device ko Doze se jaga deta hai,
+jisse wo har us cheez ka sahi jawab ban jata hai jise *server* zaruri manta hai. Server ke updates
+dekhne ke liye exact alarm se baar-baar puchna battery ki mushkil bhi hai aur aisi permission bhi jise
+sahi thehrana mushkil padega.
+
+<Detail summary="Doze ke bagal mein baithi baaki hadein">
+**Peeche se shuru karne ki pabandi.** Android 12 se peeche gaya app foreground service shuru nahi kar
+sakta — services wale lesson ka niyam. Exact alarm ka bajna us chhoot-list mein *hai*, aur exact alarm
+lene ki ye un gini-chuni jayaz wajahon mein se ek hai.
+
+**Battery optimisation se chhoot.** `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` maujood hai aur aapko use
+lagbhag kabhi nahi maangna chahiye. Play uske liye khara utarta maksad maangta hai, aur jo users wo
+dialog dekhte hain wo aksar app hata dete hain. Agar aapke app ko chalne ke liye chhoot chahiye, to aam
+taur par design galat hai.
+
+**Banane walon ki apni paratein.** Kai companies Doze ke upar apni aur sakht maar-kaat jodti hain, apne
+settings wale pannon ke saath aur bina kisi public API ke. SDK mein iska koi ilaaj nahi — vyavharik
+jawab hain kaam ko WorkManager mein rakhna, jise wo paratein aam taur par manti hain, aur unhin devices
+par test karna jo aapke users ke paas sach mein hain.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli tab tak adrishya hai jab tak wo support ticket na ban jaye">
+**Jahan `setExactAndAllowWhileIdle` chahiye tha wahan `set()`.** Compile hota hai, sahi dikhta hai,
+ghanton der se aata hai.
+
+**Permission na check karna.** Bina `SCHEDULE_EXACT_ALARM` ke `setExact*` `SecurityException` phenkta
+hai.
+
+**Reboot ke baad dobara na lagana.** Har alarm mit jata hai, chupchap.
+
+**Sirf apne device par test karna.** Wo hamesha sabse meharban khane mein hota hai.
+
+**Baar-baar puchne ke liye exact alarms.** Jawab unchi prathamikta wala push hai, aur wo permission
+sameeksha mein nahi tikegi.
+</Pitfall>
+
+## Abhyaas
+
+1. `adb shell dumpsys deviceidle force-idle` se Doze lagu kijiye aur `set()` tatha
+   `setExactAndAllowWhileIdle` ko milaiye.
+2. Apne app ko `rare` khane mein giraiye aur taale hue kaam ko dheema hote dekhiye.
+3. Settings se exact alarm ki permission wapas lijiye aur pakka kijiye ki aapka code crash ke bajaye kam
+   karke chalta hai.
+4. Koi alarm lagaiye, reboot kijiye, aur pakka kijiye ki wo chala gaya.
+5. WorkManager ki periodic request aur exact alarm ko ek khaali raat bhar milaiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Doze | Taale ja sakne wale kaam ko chaudi hoti khidkiyon mein ikattha karta hai |
+| App Standby | User ne app kitni haal mein khola, usse khane baantta hai |
+| `set()` | Taala ja sakta hai; Doze use ghanton der kar sakta hai |
+| `setExactAndAllowWhileIdle` | Doze mein bajta hai, aur use `SCHEDULE_EXACT_ALARM` chahiye |
+| `setAlarmClock` | Sachmuch ke alarm ke liye; chhoot mili aur user ko dikhta |
+| Android 14 | Exact alarm ki permission ab install par nahi milti |
+| `canScheduleExactAlarms` | Check kijiye, warna `setExact*` phenkta hai |
+| Reboot | Har alarm mita deta hai; `BOOT_COMPLETED` se dobara lagaiye |
+| Server se zaruri | Unchi prathamikta wala FCM, baar-baar puchta alarm nahi |
+| Aapka device | Hamesha sabse meharban khane mein — `adb` se test kijiye |
+
+<Interview title="Ek sawal, ki peeche chalne wala code asal duniya mein kyun nakaam hota hai">
+"Koi tay kiya hua reminder ghanton der se kyun aa sakta hai?"
+
+Lagbhag hamesha isliye ki wo alarm pakka nahi, taala ja sakne wala tha. `set()` aur `setWindow()`
+saaf-saaf ikattha kiye ja sakte hain, aur khaali pade device par Doze apni rakhrakhav wali khidkiyan
+tab tak chaudi karta jata hai jab tak wo ghanton door na ho jayein — to code sahi dikhta hai, screen
+chalu rakhi mez par chalta hai, aur raat bhar mez par chhode gaye phone par nakaam hota hai. Exact
+alarm Doze mein bajta hi hai, aur use permission theek isiliye chahiye.
+
+Saath ki jo cheezein main dekhunga wo hain ki reboot ke baad alarms dobara lagaye gaye the ya nahi,
+kyunki reboot un sabko chupchap mita deta hai, aur app kis standby khane mein hai — jis app ko user kam
+kholta hai wo restricted hai, aur mera apna test wala device hamesha sabse meharban khane mein hota
+hai, to `adb` se jabran lagu kiye bina ismein se kuch bhi banate waqt dikhta nahi. Aur agar zarurat
+ghadi se nahi balki server se aa rahi hai, to sahi jawab unchi prathamikta wala push hai, alarm se
+baar-baar puchna nahi.
+</Interview>

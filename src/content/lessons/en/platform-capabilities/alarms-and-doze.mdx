@@ -1,0 +1,177 @@
+---
+title: AlarmManager, Doze and background limits
+description: Doze is why your background code works on your desk and not on a user's phone. AlarmManager is the one way to punch through it, and Android has made that permission harder to get every year.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+An idle phone stops being a computer that runs your code whenever you ask. Doze batches everything
+deferrable into occasional maintenance windows, and only an **exact alarm** escapes — which is why
+that capability now needs a permission the user can refuse.
+</KeyIdea>
+
+## What Doze actually does
+
+When a device is unplugged, still and screen-off, it enters Doze in stages. Each stage widens the
+gaps:
+
+| Deferred | Allowed |
+| --- | --- |
+| Network access | Maintenance windows, at growing intervals |
+| Wake locks | High-priority Firebase messages |
+| `AlarmManager` alarms | Exact alarms, with the permission |
+| Job and sync scheduling | Alarm clock alarms |
+
+App Standby is the companion rule: an app the user has not touched recently gets buckets — active,
+working set, frequent, rare, restricted — and the bucket decides how often its deferred work runs.
+Your own device is always in the friendliest bucket, which is precisely why background code that
+works in development fails in the field.
+
+<Note>
+`adb shell dumpsys deviceidle force-idle` puts a device into Doze immediately, and
+`adb shell am set-standby-bucket <package> rare` drops your app to a hostile bucket. Testing
+background behaviour without these is testing the one configuration your users do not have.
+</Note>
+
+## The alarm types, and the permission that changed
+
+```kotlin title="Alarms.kt" numbered
+// Deferrable: the system may batch it into a maintenance window
+alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+
+// Exact, and it fires in Doze — needs a permission
+alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+
+// A user-visible alarm clock: exempt, and shows in the status bar
+alarmManager.setAlarmClock(AlarmClockInfo(triggerAt, showIntent), pendingIntent)
+```
+
+Since Android 12, `setExact*` requires `SCHEDULE_EXACT_ALARM`, and since Android 14 that permission
+is **not granted at install** for most apps — the user must allow it in Settings, and Play restricts
+which app categories may request it at all. Alarm clocks, calendars and timers qualify; a reminder
+that could be five minutes late does not.
+
+```kotlin title="Check.kt" numbered
+if (Build.VERSION.SDK_INT >= 31 && !alarmManager.canScheduleExactAlarms()) {
+    // do not just crash — degrade, or send the user to Settings
+    context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM))
+}
+```
+
+Calling `setExact*` without the permission throws `SecurityException`, so the check is not optional.
+
+`USE_EXACT_ALARM` is the alternative for apps whose whole purpose is alarms — it is granted at
+install, and using it in an app that is not a clock or calendar is a Play policy violation.
+
+<Quiz
+  question="A reminders app schedules exact alarms. Reminders fire correctly, until a user reports that after their phone was on a table overnight, the 7am reminder arrived at 9:40am. The permission is granted. What happened?"
+  options={[
+    "The alarm was cancelled by Doze and rescheduled at the next maintenance window",
+    "The alarm was almost certainly not exact — `set()` and `setWindow()` are deferrable and Doze batches them, so an overnight idle device delays them by hours",
+    "Exact alarms stop working after six hours of Doze"
+  ]}
+  answer={1}
+  explanation="Exact alarms with the permission do fire in Doze — that is the entire reason the capability exists and the reason it needs a permission. A delay of nearly three hours is the signature of a deferrable alarm: set() and setWindow() are explicitly batchable, and on an idle device Doze widens maintenance windows until they are hours apart. So the bug is almost always that the code calls set() while the manifest declares SCHEDULE_EXACT_ALARM, which compiles and looks correct. Two related traps sit next to it. Alarms do not survive a reboot, so an app with scheduled reminders needs a BOOT_COMPLETED receiver to reschedule them. And an app in the restricted standby bucket can have even exact alarms limited, which is why an app the user never opens is a worse place for critical reminders than one they use."
+/>
+
+## Rescheduling, because alarms do not survive a reboot
+
+```kotlin title="BootReceiver.kt" numbered
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "reschedule-alarms",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<RescheduleAlarmsWorker>().build(),
+        )
+    }
+}
+```
+
+Every pending alarm is cleared by a reboot, silently. The worker reads the reminders from Room and
+sets them again — which is the pattern from the broadcasts lesson, and the reason WorkManager
+rescheduling itself is such a relief by comparison.
+
+## Choosing
+
+| Need | Use |
+| --- | --- |
+| Roughly periodic, can wait | WorkManager |
+| At a specific wall-clock time, user-facing | `setExactAndAllowWhileIdle` with the permission |
+| A literal alarm clock | `setAlarmClock` |
+| Immediate work the user can see | Foreground service |
+| Server-initiated and urgent | High-priority Firebase message |
+
+The last row is worth knowing: a high-priority FCM message wakes the device out of Doze, which makes
+it the right answer for anything the *server* decides is urgent. Polling with an exact alarm to check
+for server updates is both a battery problem and a permission you will struggle to justify.
+
+<Detail summary="The other limits sitting alongside Doze">
+**Background start restrictions.** From Android 12, a background app cannot start a foreground
+service — the rule from the services lesson. An exact alarm firing *is* on the exemption list, which
+is one of the few legitimate reasons to use one.
+
+**Battery optimisation exemption.** `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` exists and you should
+almost never ask for it. Play requires a qualifying use case, and users who see the dialog often
+uninstall instead. If your app needs an exemption to work, the design is usually wrong.
+
+**Manufacturer layers.** Several manufacturers add their own aggressive killing on top of Doze, with
+their own settings pages and no public API. Nothing in the SDK fixes this — the practical answers are
+to keep work in WorkManager, which those layers tend to respect, and to test on the devices your
+users actually have.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is invisible until it is a support ticket">
+**`set()` where `setExactAndAllowWhileIdle` was meant.** Compiles, looks right, arrives hours late.
+
+**No permission check.** `setExact*` without `SCHEDULE_EXACT_ALARM` throws `SecurityException`.
+
+**Not rescheduling after a reboot.** Every alarm is cleared, silently.
+
+**Testing only on your own device.** It is always in the friendliest standby bucket.
+
+**Exact alarms for polling.** A high-priority push is the answer, and the permission will not survive
+review.
+</Pitfall>
+
+## Practice
+
+1. Force Doze with `adb shell dumpsys deviceidle force-idle` and compare `set()` with
+   `setExactAndAllowWhileIdle`.
+2. Drop your app to the `rare` bucket and watch deferred work slow down.
+3. Revoke the exact alarm permission in Settings and confirm your code degrades rather than crashing.
+4. Schedule an alarm, reboot, and confirm it is gone.
+5. Compare a WorkManager periodic request and an exact alarm over an idle night.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Doze | Batches deferrable work into widening maintenance windows |
+| App Standby | Buckets by how recently the user opened the app |
+| `set()` | Deferrable; Doze may delay it by hours |
+| `setExactAndAllowWhileIdle` | Fires in Doze, and needs `SCHEDULE_EXACT_ALARM` |
+| `setAlarmClock` | For a literal alarm; exempt and user-visible |
+| Android 14 | Exact alarm permission no longer granted at install |
+| `canScheduleExactAlarms` | Check it, or `setExact*` throws |
+| Reboot | Clears every alarm; reschedule from `BOOT_COMPLETED` |
+| Urgent from the server | High-priority FCM, not a polling alarm |
+| Your device | Always in the friendliest bucket — test with `adb` |
+
+<Interview title="A question about why background code fails in the field">
+"Why might a scheduled reminder arrive hours late?"
+
+Almost always because the alarm was deferrable rather than exact. `set()` and `setWindow()` are
+explicitly batchable, and on an idle device Doze widens its maintenance windows until they are hours
+apart — so the code looks correct, works on a desk with the screen on, and fails on a phone left on a
+table overnight. An exact alarm does fire in Doze, which is exactly why it needs a permission.
+
+The related things I would check are whether the alarms were rescheduled after a reboot, since a
+reboot clears all of them silently, and which standby bucket the app is in — an app the user rarely
+opens is restricted, and my own test device is always in the friendliest bucket, so none of this is
+visible in development without forcing it through `adb`. And if the urgency comes from the server
+rather than the clock, the right answer is a high-priority push, not polling with an alarm.
+</Interview>

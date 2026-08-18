@@ -1,0 +1,180 @@
+---
+title: AlarmManager, Doze और पीछे चलने की हदें
+description: आपका पीछे चलने वाला code आपकी मेज पर चलता है और user के phone पर नहीं — इसकी वजह Doze है। AlarmManager उसे भेदने का इकलौता रास्ता है, और Android ने वह permission हर साल और मुश्किल की है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+खाली पड़ा phone ऐसा computer रह ही नहीं जाता जो आपके कहने पर कभी भी code चलाए। Doze टाली जा सकने वाली
+हर चीज को कभी-कभार की रखरखाव वाली खिड़कियों में इकट्ठा कर देता है, और सिर्फ **exact alarm** बच निकलता
+है — इसीलिए उस क्षमता को अब ऐसी permission चाहिए जिससे user मना कर सकता है।
+</KeyIdea>
+
+## Doze करता क्या है
+
+जब device plug से हटा, स्थिर और screen बंद हो, तो वह चरणों में Doze में जाता है। हर चरण अंतराल बढ़ाता
+है:
+
+| टाला जाता है | चलने दिया जाता है |
+| --- | --- |
+| Network तक पहुँच | रखरखाव वाली खिड़कियाँ, बढ़ते अंतराल पर |
+| Wake locks | ऊँची प्राथमिकता वाले Firebase संदेश |
+| `AlarmManager` वाले alarms | Exact alarms, permission के साथ |
+| Job और sync लगाना | Alarm clock वाले alarms |
+
+App Standby उसका जोड़ीदार नियम है: जिस ऐप को user ने हाल में नहीं छुआ उसे खाने मिलते हैं — active,
+working set, frequent, rare, restricted — और खाना तय करता है कि उसका टाला हुआ काम कितनी बार चलेगा।
+आपका अपना device हमेशा सबसे मेहरबान खाने में रहता है, और ठीक इसीलिए जो पीछे वाला code बनाते वक्त
+चलता है वह असल दुनिया में नाकाम होता है।
+
+<Note>
+`adb shell dumpsys deviceidle force-idle` device को तुरंत Doze में डाल देता है, और
+`adb shell am set-standby-bucket <package> rare` आपके ऐप को दुश्मन खाने में गिरा देता है। इनके बिना
+पीछे वाले बर्ताव का test करना उस इकलौती हालत का test करना है जो आपके users के पास नहीं है।
+</Note>
+
+## Alarm के प्रकार, और वह permission जो बदल गई
+
+```kotlin title="Alarms.kt" numbered
+// टाला जा सकने वाला: system उसे रखरखाव की खिड़की में इकट्ठा कर सकता है
+alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+
+// पक्का, और Doze में भी बजता है — permission चाहिए
+alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+
+// User को दिखता alarm clock: छूट मिली हुई, और status bar में दिखता है
+alarmManager.setAlarmClock(AlarmClockInfo(triggerAt, showIntent), pendingIntent)
+```
+
+Android 12 से `setExact*` को `SCHEDULE_EXACT_ALARM` चाहिए, और Android 14 से ज्यादातर ऐप्स के लिए वह
+permission install पर **मिलती नहीं** — user को Settings में इजाजत देनी पड़ती है, और Play तय करता है
+कि किस श्रेणी के ऐप उसे माँग भी सकते हैं। Alarm clock, calendar और timer इस पर खरे उतरते हैं; ऐसा
+reminder जो पाँच मिनट देर से भी चल जाता, नहीं उतरता।
+
+```kotlin title="Check.kt" numbered
+if (Build.VERSION.SDK_INT >= 31 && !alarmManager.canScheduleExactAlarms()) {
+    // बस crash मत कीजिए — कम करके चलाइए, या user को Settings भेजिए
+    context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM))
+}
+```
+
+बिना permission के `setExact*` बुलाने पर `SecurityException` आता है, तो वह जाँच वैकल्पिक नहीं है।
+
+`USE_EXACT_ALARM` उन ऐप्स के लिए विकल्प है जिनका पूरा मकसद ही alarms है — वह install पर मिल जाती है,
+और जो ऐप घड़ी या calendar नहीं है उसमें उसे लेना Play की नीति का उल्लंघन है।
+
+<Quiz
+  question="कोई reminders वाला ऐप exact alarms लगाता है। Reminders ठीक बजते हैं, फिर एक user बताता है कि रात भर phone मेज पर पड़े रहने के बाद सुबह 7 बजे वाला reminder 9:40 पर आया। Permission मिली हुई है। हुआ क्या?"
+  options={[
+    "Doze ने वह alarm रद्द करके अगली रखरखाव वाली खिड़की पर लगा दिया",
+    "वह alarm लगभग पक्का exact था ही नहीं — `set()` और `setWindow()` टाले जा सकते हैं और Doze उन्हें इकट्ठा करता है, तो रात भर खाली पड़ा device उन्हें घंटों टाल देता है",
+    "छह घंटे Doze के बाद exact alarms चलना बंद कर देते हैं"
+  ]}
+  answer={1}
+  explanation="Permission वाले exact alarms Doze में बजते ही हैं — वह क्षमता इसीलिए है और उसे permission इसीलिए चाहिए। करीब तीन घंटे की देर टाले जा सकने वाले alarm की पहचान है: set() और setWindow() साफ-साफ इकट्ठा किए जा सकते हैं, और खाली पड़े device पर Doze रखरखाव की खिड़कियाँ तब तक चौड़ी करता जाता है जब तक वे घंटों दूर न हो जाएँ। तो bug लगभग हमेशा यह होता है कि code set() बुलाता है जबकि manifest में SCHEDULE_EXACT_ALARM लिखा है, जो compile होता है और सही दिखता है। उसके बगल में दो और जाल हैं। Alarms reboot पर नहीं बचते, तो जिस ऐप में समय पर reminders हैं उसे उन्हें दोबारा लगाने के लिए BOOT_COMPLETED वाला receiver चाहिए। और restricted खाने में पड़े ऐप के exact alarms तक सीमित किए जा सकते हैं, इसीलिए जिस ऐप को user कभी नहीं खोलता वह जरूरी reminders के लिए उस ऐप से बुरी जगह है जिसे वह इस्तेमाल करता है।"
+/>
+
+## दोबारा लगाना, क्योंकि alarms reboot पर नहीं बचते
+
+```kotlin title="BootReceiver.kt" numbered
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "reschedule-alarms",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<RescheduleAlarmsWorker>().build(),
+        )
+    }
+}
+```
+
+हर बाकी पड़ा alarm reboot से मिट जाता है, चुपचाप। वह worker reminders को Room से पढ़ता है और उन्हें
+दोबारा लगाता है — यानी broadcasts वाले पाठ का तरीका, और यही वजह है कि WorkManager का खुद दोबारा लग
+जाना उसके मुकाबले इतनी राहत लगता है।
+
+## चुनना
+
+| जरूरत | लीजिए |
+| --- | --- |
+| मोटे तौर पर समय-समय पर, रुक सकता है | WorkManager |
+| घड़ी के किसी खास वक्त पर, user को दिखता | Permission के साथ `setExactAndAllowWhileIdle` |
+| सचमुच का alarm clock | `setAlarmClock` |
+| अभी होता काम जो user देख सकता है | Foreground service |
+| Server से शुरू और जरूरी | ऊँची प्राथमिकता वाला Firebase संदेश |
+
+आखिरी पंक्ति जानने लायक है: ऊँची प्राथमिकता वाला FCM संदेश device को Doze से जगा देता है, जिससे वह
+हर उस चीज का सही जवाब बन जाता है जिसे *server* जरूरी मानता है। Server के updates देखने के लिए exact
+alarm से बार-बार पूछना battery की दिक्कत भी है और ऐसी permission भी जिसे सही ठहराना मुश्किल पड़ेगा।
+
+<Detail summary="Doze के बगल में बैठी बाकी हदें">
+**पीछे से शुरू करने की पाबंदी।** Android 12 से पीछे गया ऐप foreground service शुरू नहीं कर सकता —
+services वाले पाठ का नियम। Exact alarm का बजना उस छूट-सूची में *है*, और exact alarm लेने की यह उन
+गिनी-चुनी जायज वजहों में से एक है।
+
+**Battery optimisation से छूट।** `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` मौजूद है और आपको उसे लगभग
+कभी नहीं माँगना चाहिए। Play उसके लिए खरा उतरता मकसद माँगता है, और जो users वह dialog देखते हैं वे
+अक्सर ऐप हटा देते हैं। अगर आपके ऐप को चलने के लिए छूट चाहिए, तो आमतौर पर design गलत है।
+
+**बनाने वालों की अपनी परतें।** कई कंपनियाँ Doze के ऊपर अपनी और सख्त मार-काट जोड़ती हैं, अपने settings
+वाले पन्नों के साथ और बिना किसी सार्वजनिक API के। SDK में इसका कोई इलाज नहीं — व्यावहारिक जवाब हैं
+काम को WorkManager में रखना, जिसे वे परतें आमतौर पर मानती हैं, और उन्हीं devices पर test करना जो
+आपके users के पास सच में हैं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली तब तक अदृश्य है जब तक वह support ticket न बन जाए">
+**जहाँ `setExactAndAllowWhileIdle` चाहिए था वहाँ `set()`।** Compile होता है, सही दिखता है, घंटों देर
+से आता है।
+
+**Permission न जाँचना।** बिना `SCHEDULE_EXACT_ALARM` के `setExact*` `SecurityException` फेंकता है।
+
+**Reboot के बाद दोबारा न लगाना।** हर alarm मिट जाता है, चुपचाप।
+
+**सिर्फ अपने device पर test करना।** वह हमेशा सबसे मेहरबान खाने में होता है।
+
+**बार-बार पूछने के लिए exact alarms।** जवाब ऊँची प्राथमिकता वाला push है, और वह permission समीक्षा
+में नहीं टिकेगी।
+</Pitfall>
+
+## अभ्यास
+
+1. `adb shell dumpsys deviceidle force-idle` से Doze लागू कीजिए और `set()` तथा
+   `setExactAndAllowWhileIdle` को मिलाइए।
+2. अपने ऐप को `rare` खाने में गिराइए और टाले हुए काम को धीमा होते देखिए।
+3. Settings से exact alarm की permission वापस लीजिए और पक्का कीजिए कि आपका code crash के बजाय कम
+   करके चलता है।
+4. कोई alarm लगाइए, reboot कीजिए, और पक्का कीजिए कि वह चला गया।
+5. WorkManager की periodic request और exact alarm को एक खाली रात भर मिलाइए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Doze | टाले जा सकने वाले काम को चौड़ी होती खिड़कियों में इकट्ठा करता है |
+| App Standby | User ने ऐप कितनी हाल में खोला, उससे खाने बाँटता है |
+| `set()` | टाला जा सकता है; Doze उसे घंटों देर कर सकता है |
+| `setExactAndAllowWhileIdle` | Doze में बजता है, और उसे `SCHEDULE_EXACT_ALARM` चाहिए |
+| `setAlarmClock` | सचमुच के alarm के लिए; छूट मिली और user को दिखता |
+| Android 14 | Exact alarm की permission अब install पर नहीं मिलती |
+| `canScheduleExactAlarms` | जाँचिए, वरना `setExact*` फेंकता है |
+| Reboot | हर alarm मिटा देता है; `BOOT_COMPLETED` से दोबारा लगाइए |
+| Server से जरूरी | ऊँची प्राथमिकता वाला FCM, बार-बार पूछता alarm नहीं |
+| आपका device | हमेशा सबसे मेहरबान खाने में — `adb` से test कीजिए |
+
+<Interview title="एक सवाल, कि पीछे चलने वाला code असल दुनिया में क्यों नाकाम होता है">
+"कोई तय किया हुआ reminder घंटों देर से क्यों आ सकता है?"
+
+लगभग हमेशा इसलिए कि वह alarm पक्का नहीं, टाला जा सकने वाला था। `set()` और `setWindow()` साफ-साफ
+इकट्ठा किए जा सकते हैं, और खाली पड़े device पर Doze अपनी रखरखाव वाली खिड़कियाँ तब तक चौड़ी करता जाता
+है जब तक वे घंटों दूर न हो जाएँ — तो code सही दिखता है, screen चालू रखी मेज पर चलता है, और रात भर मेज
+पर छोड़े गए phone पर नाकाम होता है। Exact alarm Doze में बजता ही है, और उसे permission ठीक इसीलिए
+चाहिए।
+
+साथ की जो चीजें मैं देखूँगा वे हैं कि reboot के बाद alarms दोबारा लगाए गए थे या नहीं, क्योंकि reboot
+उन सबको चुपचाप मिटा देता है, और ऐप किस standby खाने में है — जिस ऐप को user कम खोलता है वह restricted
+है, और मेरा अपना test वाला device हमेशा सबसे मेहरबान खाने में होता है, तो `adb` से जबरन लागू किए बिना
+इसमें से कुछ भी बनाते वक्त दिखता नहीं। और अगर जरूरत घड़ी से नहीं बल्कि server से आ रही है, तो सही
+जवाब ऊँची प्राथमिकता वाला push है, alarm से बार-बार पूछना नहीं।
+</Interview>
