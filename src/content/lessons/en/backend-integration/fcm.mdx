@@ -1,0 +1,178 @@
+---
+title: Push notifications with FCM
+description: Whether your app sees a push at all depends on which of two JSON keys the server used. Almost every "notifications work sometimes" bug is that one distinction.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A message with a `notification` block is drawn by the **system** when your app is backgrounded — your
+code never runs. A message with only `data` always goes to `onMessageReceived`, so your code always
+runs. Choosing between them decides everything else.
+</KeyIdea>
+
+## The two message types
+
+| | `notification` payload | `data`-only payload |
+| --- | --- | --- |
+| App in foreground | `onMessageReceived` | `onMessageReceived` |
+| App in background | System draws it; your code does not run | `onMessageReceived` |
+| Custom rendering | No | Yes |
+| Tap handling | Launcher activity, with data in extras | Whatever you build |
+| If the user force-stopped the app | Not delivered | Not delivered |
+
+```json title="notification payload" numbered
+{ "to": "TOKEN",
+  "notification": { "title": "Order shipped", "body": "Your coffee is on the way" } }
+```
+
+```json title="data-only payload" numbered
+{ "to": "TOKEN",
+  "data": { "type": "order_shipped", "orderId": "18" },
+  "android": { "priority": "high" } }
+```
+
+The `notification` form is right when the message is exactly a notification and nothing else — the
+system handles it, it works while your app is not running, and there is nothing to get wrong. The
+`data` form is right when you need to do something: write to the database, decide whether to show
+anything at all, or render a notification whose content depends on local state.
+
+The trap is sending both. A combined message goes to the system in the background *and* to your code in
+the foreground, so you get two different behaviours from one payload and usually a duplicate
+notification.
+
+## Receiving
+
+```kotlin title="MessagingService.kt" numbered
+class AppMessagingService : FirebaseMessagingService() {
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        val orderId = message.data["orderId"] ?: return
+        // ~10 seconds, like a BroadcastReceiver — notice and delegate
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<SyncOrderWorker>()
+                .setInputData(workDataOf("orderId" to orderId))
+                .build(),
+        )
+        showNotification(orderId)
+    }
+
+    override fun onNewToken(token: String) {
+        // the token can change at any time; the server needs the new one
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<RegisterTokenWorker>().build(),
+        )
+    }
+}
+```
+
+`onMessageReceived` has roughly the same budget as a broadcast receiver — about ten seconds, and the
+process can be killed after it returns. So the shape is the same one from the broadcasts lesson: notice
+and enqueue, never do the work here.
+
+`onNewToken` is the one people implement once and then forget. A token changes when the app is
+reinstalled, data is cleared, or Firebase decides to rotate it — and if the server keeps the old one,
+push silently stops for that user with nothing in any log.
+
+<Quiz
+  question="Notifications arrive reliably when the app is open. When it has been backgrounded for a while, some users get them and some never do — and the ones who do get them minutes late. The payload is `data`-only. What is happening?"
+  options={[
+    "The FCM token expired and needs refreshing on every app start",
+    "A `data`-only message defaults to normal priority, which Doze defers until a maintenance window. Setting `priority: high` tells the system the message is user-visible and should wake the device — and a device in a restricted App Standby bucket delays even those",
+    "`data`-only messages are not supported when the app is in the background"
+  ]}
+  answer={1}
+  explanation="This is Doze from the platform phase, arriving through a different door. A normal-priority data message is explicitly deferrable, so on an idle device the system batches it into a maintenance window — which is why delivery looks fine on a phone in your hand and unreliable on one left on a table. Setting android.priority to high marks the message as something the user is waiting for and wakes the device, which is the correct setting for a chat message or an order update. It is not free: Google rate-limits apps that send high-priority messages the user never sees, so using it for background sync is what gets an app throttled. The other half of the answer is that App Standby buckets still apply — an app the user rarely opens is restricted, and no priority overrides that entirely."
+/>
+
+## Tokens
+
+```kotlin title="Token.kt" numbered
+val token = FirebaseMessaging.getInstance().token.await()
+api.registerToken(token)                       // tie it to the signed-in user
+
+// on sign-out
+FirebaseMessaging.getInstance().deleteToken().await()
+```
+
+A token identifies an app install, not a user. That distinction is the source of the most embarrassing
+push bug there is: if a user signs out and someone else signs in on the same device, the old token is
+still registered to the first user, and they receive the second user's notifications.
+
+Deleting the token on sign-out and registering a fresh one after sign-in is the fix, and it is worth
+testing deliberately because nobody hits it by accident during development.
+
+Also remember `POST_NOTIFICATIONS` from the platform phase: on Android 13 and above, without that
+runtime permission a `notification` message shows nothing at all — no crash, no log line.
+
+<Detail summary="Topics, and delivery you cannot rely on">
+Topics are a publish-subscribe channel that needs no token bookkeeping:
+
+```kotlin title="Topics.kt" numbered
+FirebaseMessaging.getInstance().subscribeToTopic("order_updates")
+```
+
+They are right for broadcast-style messages — an announcement to everyone, or to everyone in a
+category. They are wrong for anything user-specific, because subscription is per device and there is no
+authentication: any client can subscribe to any topic name, so a topic per user id is readable by
+anyone who guesses the id.
+
+The larger point is that FCM is **best-effort**. Messages can be dropped when a device is offline past
+the time-to-live, collapsed if you set a `collapse_key`, and never delivered at all to an app the user
+force-stopped. So a push is a hint to sync, not a delivery mechanism: the message says "something
+changed", the app fetches the truth from your API, and the screen is correct whether or not the push
+arrived. Designing the other way round — putting the only copy of the information in the payload —
+produces a feature that quietly fails for a fraction of users you will never hear from.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the third one sends a user someone else's notifications">
+**Sending `notification` and `data` together.** Two behaviours from one payload, usually duplicated.
+
+**Normal priority for something urgent.** Doze defers it, and delivery looks random.
+
+**Not deleting the token on sign-out.** The next user on that device gets the first user's pushes.
+
+**Work inside `onMessageReceived`.** Ten seconds, then the process can die. Enqueue instead.
+
+**Treating the payload as the data.** FCM is best-effort; use the push to trigger a sync.
+</Pitfall>
+
+## Practice
+
+1. Send a `notification` message with the app backgrounded and confirm your code never runs.
+2. Send the same content as `data`-only and watch `onMessageReceived` fire.
+3. Force Doze with `adb` and compare normal and high priority delivery.
+4. Sign out without deleting the token, sign in as someone else, and send a push.
+5. Force-stop the app and confirm nothing is delivered until it is opened again.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `notification` payload | System draws it in the background; your code does not run |
+| `data`-only | Always reaches `onMessageReceived` |
+| Both together | Two behaviours from one message; usually a duplicate |
+| `onMessageReceived` | About ten seconds — notice and enqueue |
+| `priority: high` | Wakes the device; rate-limited if the user never sees it |
+| App Standby | Still applies; no priority fully overrides it |
+| Token | Identifies an install, not a user |
+| Sign-out | Delete the token, or the next user gets the pushes |
+| `POST_NOTIFICATIONS` | Android 13+; without it, nothing shows |
+| FCM | Best-effort — a hint to sync, not a delivery guarantee |
+
+<Interview title="A question about unreliable delivery">
+"Push notifications arrive reliably in the foreground and unpredictably in the background. Where do you look?"
+
+First at the payload. If it is `data`-only, the default priority is normal, and a normal-priority
+message is explicitly deferrable — Doze batches it into a maintenance window, so it arrives promptly on
+a phone in someone's hand and minutes late on one left on a table. Setting `priority: high` marks it as
+something the user is waiting for. That is not free: Google throttles apps that send high-priority
+messages the user never sees, so it is for chat and order updates, not background sync.
+
+The other things I would check are whether `onNewToken` actually re-registers with the server, since a
+stale token fails silently, and whether `POST_NOTIFICATIONS` was granted on Android 13 and above,
+because without it a notification shows nothing with no error anywhere. And I would design so it does
+not matter: treat the push as a hint to sync rather than as the data itself, since FCM is best-effort
+and a force-stopped app receives nothing at all.
+</Interview>

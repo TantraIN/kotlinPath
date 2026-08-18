@@ -1,0 +1,180 @@
+---
+title: FCM se push notifications
+description: Aapka app koi push dekhta bhi hai ya nahi, ye is par tika hai ki server ne JSON ki do keys mein se kaun si li. "Notifications kabhi-kabhi chalte hain" wala lagbhag har bug wahi ek farak hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Jis sandesh mein `notification` wala khana hai use app ke peeche rehte **system** banata hai — aapka
+code chalta hi nahi. Jismein sirf `data` hai wo hamesha `onMessageReceived` tak jata hai, to aapka code
+hamesha chalta hai. In dono mein se chunna baaki sab kuch tay kar deta hai.
+</KeyIdea>
+
+## Sandesh ki do kismein
+
+| | `notification` wala | Sirf `data` wala |
+| --- | --- | --- |
+| App saamne | `onMessageReceived` | `onMessageReceived` |
+| App peeche | System banata hai; aapka code nahi chalta | `onMessageReceived` |
+| Apni shakal mein banana | Nahi | Haan |
+| Tap sambhalna | Launcher wali activity, extras mein data | Jo aap banao |
+| User ne force-stop kiya ho | Nahi pahunchta | Nahi pahunchta |
+
+```json title="notification payload" numbered
+{ "to": "TOKEN",
+  "notification": { "title": "Order shipped", "body": "Your coffee is on the way" } }
+```
+
+```json title="data-only payload" numbered
+{ "to": "TOKEN",
+  "data": { "type": "order_shipped", "orderId": "18" },
+  "android": { "priority": "high" } }
+```
+
+`notification` wala roop tab sahi hai jab wo sandesh theek-theek notification hi hai aur kuch nahi —
+system use sambhal leta hai, wo aapke app ke na chalte hue bhi chalta hai, aur galat hone ko kuch hai hi
+nahi. `data` wala roop tab sahi hai jab aapko kuch karna hai: database mein likhna, ye tay karna ki kuch
+dikhana bhi hai ya nahi, ya aisi notification banana jiska saaman sthaniya haalat par tika ho.
+
+Jaal hai dono bhej dena. Mila-jula sandesh peeche rehte system tak *aur* saamne rehte aapke code tak jata
+hai, to ek hi payload se do alag behaviour milte hain aur aam taur par ek dohri notification.
+
+## Paana
+
+```kotlin title="MessagingService.kt" numbered
+class AppMessagingService : FirebaseMessagingService() {
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        val orderId = message.data["orderId"] ?: return
+        // ~10 second, BroadcastReceiver ki tarah — notice kijiye aur saunpiye
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<SyncOrderWorker>()
+                .setInputData(workDataOf("orderId" to orderId))
+                .build(),
+        )
+        showNotification(orderId)
+    }
+
+    override fun onNewToken(token: String) {
+        // token kabhi bhi badal sakta hai; server ko naya chahiye
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<RegisterTokenWorker>().build(),
+        )
+    }
+}
+```
+
+`onMessageReceived` ko lagbhag utna hi budget milta hai jitna kisi broadcast receiver ko — kareeb das
+second, aur uske lautne ke baad process maara ja sakta hai. To shakal wahi hai jo broadcasts wale lesson
+mein thi: notice kijiye aur line mein lagaiye, kaam yahan kabhi nahi.
+
+`onNewToken` wahi hai jise log ek baar likhkar bhool jate hain. Token tab badalta hai jab app dobara
+lage, data saaf ho, ya Firebase use badalne ka faisla kare — aur agar server purana pakde rahe, to us
+user ke liye push chupchap band ho jata hai, kisi log mein kuch aaye bina.
+
+<Quiz
+  question="App khula ho to notifications bharose se aate hain. Kuch der peeche rehne ke baad kuch users ko milte hain aur kuch ko kabhi nahi — aur jinhe milte hain unhe minton der se. Payload sirf `data` wala hai. Ho kya raha hai?"
+  options={[
+    "FCM ka token khatam ho gaya aur use har baar app shuru hone par taza karna padega",
+    "Sirf `data` wala sandesh default se aam prathamikta leta hai, jise Doze rakhrakhav wali khidki tak taal deta hai. `priority: high` lagana system ko batata hai ki wo sandesh user ko dikhne wala hai aur device jagana chahiye — aur restricted wale App Standby khane ka device unhe bhi taalta hai",
+    "App ke peeche rehte sirf `data` wale sandesh chalte hi nahi"
+  ]}
+  answer={1}
+  explanation="Ye platform wale phase ka Doze hai, bas doosre darwaze se aata hua. Aam prathamikta wala data sandesh saaf-saaf taala ja sakne wala hai, to khaali pade device par system use rakhrakhav wali khidki mein ikattha kar deta hai — isiliye haath mein pakde phone par pahunchna theek dikhta hai aur mez par chhode hue par gair-bharosemand. android.priority ko high karna us sandesh ko aisi cheez batata hai jiska user intezar kar raha hai aur device jaga deta hai, aur chat ke sandesh ya order ke update ke liye yahi sahi setting hai. Wo muft nahi hai: jo app unchi prathamikta wale aise sandesh bhejte hain jo user ko kabhi dikhte hi nahi, Google unki raftar baandh deta hai, to use peeche ki sync ke liye lena hi app ko dheema karata hai. Jawab ka doosra aadha ye hai ki App Standby ke khane phir bhi lagu hain — jis app ko user kam kholta hai wo restricted hai, aur koi prathamikta use poori tarah nahi palatti."
+/>
+
+## Tokens
+
+```kotlin title="Token.kt" numbered
+val token = FirebaseMessaging.getInstance().token.await()
+api.registerToken(token)                       // use signed-in user se baandhiye
+
+// sign-out par
+FirebaseMessaging.getInstance().deleteToken().await()
+```
+
+Token kisi app ke lage hone ki pehchan hai, kisi user ki nahi. Yahi farak push ke sabse sharmnak bug ki
+jad hai: agar koi user sign out kare aur usi device par koi aur sign in kare, to purana token ab bhi
+pehle user se bandha hai, aur use doosre user ki notifications milti hain.
+
+Sign-out par token mitana aur sign-in ke baad naya darj karna hi ilaaj hai, aur use jaanbujhkar dekhna
+banta hai kyunki banate waqt ye ittefaqan kisi ko nahi milta.
+
+Platform wale phase ka `POST_NOTIFICATIONS` bhi yaad rakhiye: Android 13 aur uske upar, us runtime wali
+permission ke bina `notification` wala sandesh kuch dikhata hi nahi — na crash, na log ki koi line.
+
+<Detail summary="Topics, aur wo pahunchna jis par bharosa nahi kiya ja sakta">
+Topics aisi publish-subscribe wali naali hain jinmein tokens ka hisab nahi rakhna padta:
+
+```kotlin title="Topics.kt" numbered
+FirebaseMessaging.getInstance().subscribeToTopic("order_updates")
+```
+
+Wo sabko bheje jane wale sandeshon ke liye sahi hain — koi ghoshna jo sabko jaye, ya kisi shreni ke sabko.
+Wo kisi bhi user se judi cheez ke liye galat hain, kyunki subscription har device ki apni hai aur usmein
+koi pehchan nahi hoti: koi bhi client kisi bhi topic ke naam se jud sakta hai, to har user ki id wala
+topic us kisi ko bhi padha ja sakta hai jo wo id andaze se laga le.
+
+Badi baat ye hai ki FCM **koshish bhar** karta hai. Device ke time-to-live se zyada offline rehne par
+sandesh gir sakte hain, `collapse_key` lagane par samete ja sakte hain, aur jis app ko user ne force-stop
+kiya us tak pahunchte hi nahi. To push koi pahunchane ki vyavastha nahi, sync karne ka ishara hai: wo
+sandesh kehta hai "kuch badla", app aapki API se sach lata hai, aur screen sahi rehti hai, wo push aaya
+ho ya na aaya ho. Ulta banana — jankari ki iklauti nakal us payload mein rakh dena — aisi suvidha banata
+hai jo users ke ek hisse ke liye chupchap nakaam hoti hai, aur unki awaaz aap tak kabhi nahi pahunchegi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur teesri kisi user ko kisi aur ki notifications bhej deti hai">
+**`notification` aur `data` saath bhejna.** Ek payload se do behaviour, aam taur par dohre.
+
+**Zaruri cheez ke liye aam prathamikta.** Doze use taal deta hai, aur pahunchna betarteeb dikhta hai.
+
+**Sign-out par token na mitana.** Us device ka agla user pehle wale ke pushes pata hai.
+
+**`onMessageReceived` ke andar kaam.** Das second, phir process mar sakta hai. Uski jagah line mein
+lagaiye.
+
+**Payload ko hi data manna.** FCM koshish bhar karta hai; push se sync chalaiye.
+</Pitfall>
+
+## Abhyaas
+
+1. App peeche rakhte hue `notification` wala sandesh bhejiye aur pakka kijiye ki aapka code chalta hi
+   nahi.
+2. Wahi saaman sirf `data` mein bhejiye aur `onMessageReceived` ko chalte dekhiye.
+3. `adb` se Doze lagu kijiye aur aam tatha unchi prathamikta ka pahunchna milaiye.
+4. Bina token mitaye sign out kijiye, kisi aur ki tarah sign in kijiye, aur push bhejiye.
+5. App force-stop kijiye aur pakka kijiye ki dobara kholne tak kuch nahi pahunchta.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `notification` wala | Peeche rehte system banata hai; aapka code nahi chalta |
+| Sirf `data` | Hamesha `onMessageReceived` tak pahunchta hai |
+| Dono saath | Ek sandesh se do behaviour; aam taur par dohra |
+| `onMessageReceived` | Kareeb das second — notice kijiye aur line mein lagaiye |
+| `priority: high` | Device jagata hai; user ko na dikhe to raftar bandhti hai |
+| App Standby | Phir bhi lagu; koi prathamikta use poori tarah nahi palatti |
+| Token | App ke lage hone ki pehchan, user ki nahi |
+| Sign-out | Token mitaiye, warna agle user ko pushes milte hain |
+| `POST_NOTIFICATIONS` | Android 13+; uske bina kuch nahi dikhta |
+| FCM | Koshish bhar — sync ka ishara, pahunchne ki guarantee nahi |
+
+<Interview title="Ek sawal, bharose layak na pahunchne ka">
+"Push notifications saamne rehte bharose se aate hain aur peeche rehte betarteeb. Aap kahan dekhoge?"
+
+Pehle payload mein. Agar wo sirf `data` wala hai, to default prathamikta aam hai, aur aam prathamikta wala
+sandesh saaf-saaf taala ja sakne wala hai — Doze use rakhrakhav wali khidki mein ikattha kar deta hai, to
+wo kisi ke haath mein pakde phone par phurti se aata hai aur mez par chhode hue par minton der se.
+`priority: high` lagana use aisi cheez batata hai jiska user intezar kar raha hai. Wo muft nahi hai: jo
+app unchi prathamikta wale aise sandesh bhejte hain jo user ko kabhi dikhte nahi, Google unhe dheema kar
+deta hai, to wo chat aur order ke updates ke liye hai, peeche ki sync ke liye nahi.
+
+Baaki jo main dekhunga wo hai ki `onNewToken` sach mein server ke saath dobara darj karta hai ya nahi,
+kyunki purana token chupchap nakaam hota hai, aur Android 13 tatha uske upar `POST_NOTIFICATIONS` mili
+thi ya nahi, kyunki uske bina notification kahin koi error diye bina kuch nahi dikhati. Aur main aisa
+banaunga ki isse farak hi na pade: push ko data manne ke bajaye sync ka ishara maniye, kyunki FCM koshish
+bhar karta hai aur force-stop kiye app tak kuch pahunchta hi nahi.
+</Interview>

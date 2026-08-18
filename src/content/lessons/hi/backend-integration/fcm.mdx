@@ -1,0 +1,178 @@
+---
+title: FCM से push notifications
+description: आपका ऐप कोई push देखता भी है या नहीं, यह इस पर टिका है कि server ने JSON की दो keys में से कौन सी ली। "Notifications कभी-कभी चलते हैं" वाला लगभग हर bug वही एक फर्क है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+जिस संदेश में `notification` वाला खाना है उसे ऐप के पीछे रहते **system** बनाता है — आपका code चलता ही
+नहीं। जिसमें सिर्फ `data` है वह हमेशा `onMessageReceived` तक जाता है, तो आपका code हमेशा चलता है। इन
+दोनों में से चुनना बाकी सब कुछ तय कर देता है।
+</KeyIdea>
+
+## संदेश की दो किस्में
+
+| | `notification` वाला | सिर्फ `data` वाला |
+| --- | --- | --- |
+| ऐप सामने | `onMessageReceived` | `onMessageReceived` |
+| ऐप पीछे | System बनाता है; आपका code नहीं चलता | `onMessageReceived` |
+| अपनी शक्ल में बनाना | नहीं | हाँ |
+| Tap सँभालना | Launcher वाली activity, extras में data | जो आप बनाएँ |
+| User ने force-stop किया हो | नहीं पहुँचता | नहीं पहुँचता |
+
+```json title="notification payload" numbered
+{ "to": "TOKEN",
+  "notification": { "title": "Order shipped", "body": "Your coffee is on the way" } }
+```
+
+```json title="data-only payload" numbered
+{ "to": "TOKEN",
+  "data": { "type": "order_shipped", "orderId": "18" },
+  "android": { "priority": "high" } }
+```
+
+`notification` वाला रूप तब सही है जब वह संदेश ठीक-ठीक notification ही है और कुछ नहीं — system उसे
+सँभाल लेता है, वह आपके ऐप के न चलते हुए भी चलता है, और गलत होने को कुछ है ही नहीं। `data` वाला रूप तब
+सही है जब आपको कुछ करना है: database में लिखना, यह तय करना कि कुछ दिखाना भी है या नहीं, या ऐसी
+notification बनाना जिसका सामान स्थानीय हालत पर टिका हो।
+
+जाल है दोनों भेज देना। मिला-जुला संदेश पीछे रहते system तक *और* सामने रहते आपके code तक जाता है, तो एक
+ही payload से दो अलग बर्ताव मिलते हैं और आमतौर पर एक दोहरी notification।
+
+## पाना
+
+```kotlin title="MessagingService.kt" numbered
+class AppMessagingService : FirebaseMessagingService() {
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        val orderId = message.data["orderId"] ?: return
+        // ~10 सेकंड, BroadcastReceiver की तरह — नोटिस कीजिए और सौंपिए
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<SyncOrderWorker>()
+                .setInputData(workDataOf("orderId" to orderId))
+                .build(),
+        )
+        showNotification(orderId)
+    }
+
+    override fun onNewToken(token: String) {
+        // token कभी भी बदल सकता है; server को नया चाहिए
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<RegisterTokenWorker>().build(),
+        )
+    }
+}
+```
+
+`onMessageReceived` को लगभग उतना ही बजट मिलता है जितना किसी broadcast receiver को — करीब दस सेकंड, और
+उसके लौटने के बाद process मारा जा सकता है। तो शक्ल वही है जो broadcasts वाले पाठ में थी: नोटिस कीजिए
+और कतार में लगाइए, काम यहाँ कभी नहीं।
+
+`onNewToken` वही है जिसे लोग एक बार लिखकर भूल जाते हैं। Token तब बदलता है जब ऐप दोबारा लगे, data साफ
+हो, या Firebase उसे बदलने का फैसला करे — और अगर server पुराना पकड़े रहे, तो उस user के लिए push चुपचाप
+बंद हो जाता है, किसी log में कुछ आए बिना।
+
+<Quiz
+  question="ऐप खुला हो तो notifications भरोसे से आते हैं। कुछ देर पीछे रहने के बाद कुछ users को मिलते हैं और कुछ को कभी नहीं — और जिन्हें मिलते हैं उन्हें मिनटों देर से। Payload सिर्फ `data` वाला है। हो क्या रहा है?"
+  options={[
+    "FCM का token खत्म हो गया और उसे हर बार ऐप शुरू होने पर ताजा करना पड़ेगा",
+    "सिर्फ `data` वाला संदेश डिफॉल्ट से आम प्राथमिकता लेता है, जिसे Doze रखरखाव वाली खिड़की तक टाल देता है। `priority: high` लगाना system को बताता है कि वह संदेश user को दिखने वाला है और device जगाना चाहिए — और restricted वाले App Standby खाने का device उन्हें भी टालता है",
+    "ऐप के पीछे रहते सिर्फ `data` वाले संदेश चलते ही नहीं"
+  ]}
+  answer={1}
+  explanation="यह platform वाले phase का Doze है, बस दूसरे दरवाजे से आता हुआ। आम प्राथमिकता वाला data संदेश साफ-साफ टाला जा सकने वाला है, तो खाली पड़े device पर system उसे रखरखाव वाली खिड़की में इकट्ठा कर देता है — इसीलिए हाथ में पकड़े phone पर पहुँचना ठीक दिखता है और मेज पर छोड़े हुए पर गैर-भरोसेमंद। android.priority को high करना उस संदेश को ऐसी चीज बताता है जिसका user इंतजार कर रहा है और device जगा देता है, और chat के संदेश या order के update के लिए यही सही setting है। वह मुफ्त नहीं है: जो ऐप ऊँची प्राथमिकता वाले ऐसे संदेश भेजते हैं जो user को कभी दिखते ही नहीं, Google उनकी रफ्तार बाँध देता है, तो उसे पीछे की sync के लिए लेना ही ऐप को धीमा कराता है। जवाब का दूसरा आधा यह है कि App Standby के खाने फिर भी लागू हैं — जिस ऐप को user कम खोलता है वह restricted है, और कोई प्राथमिकता उसे पूरी तरह नहीं पलटती।"
+/>
+
+## Tokens
+
+```kotlin title="Token.kt" numbered
+val token = FirebaseMessaging.getInstance().token.await()
+api.registerToken(token)                       // उसे signed-in user से बाँधिए
+
+// sign-out पर
+FirebaseMessaging.getInstance().deleteToken().await()
+```
+
+Token किसी ऐप के लगे होने की पहचान है, किसी user की नहीं। यही फर्क push के सबसे शर्मनाक bug की जड़ है:
+अगर कोई user sign out करे और उसी device पर कोई और sign in करे, तो पुराना token अब भी पहले user से बँधा
+है, और उसे दूसरे user की notifications मिलती हैं।
+
+Sign-out पर token मिटाना और sign-in के बाद नया दर्ज करना ही इलाज है, और उसे जानबूझकर जाँचना बनता है
+क्योंकि बनाते वक्त यह इत्तेफाकन किसी को नहीं मिलता।
+
+Platform वाले phase का `POST_NOTIFICATIONS` भी याद रखिए: Android 13 और उसके ऊपर, उस runtime वाली
+permission के बिना `notification` वाला संदेश कुछ दिखाता ही नहीं — न crash, न log की कोई लाइन।
+
+<Detail summary="Topics, और वह पहुँचना जिस पर भरोसा नहीं किया जा सकता">
+Topics ऐसी publish-subscribe वाली नाली हैं जिनमें tokens का हिसाब नहीं रखना पड़ता:
+
+```kotlin title="Topics.kt" numbered
+FirebaseMessaging.getInstance().subscribeToTopic("order_updates")
+```
+
+वे सबको भेजे जाने वाले संदेशों के लिए सही हैं — कोई घोषणा जो सबको जाए, या किसी श्रेणी के सबको। वे किसी
+भी user से जुड़ी चीज के लिए गलत हैं, क्योंकि subscription हर device की अपनी है और उसमें कोई पहचान नहीं
+होती: कोई भी client किसी भी topic के नाम से जुड़ सकता है, तो हर user की id वाला topic उस किसी को भी
+पढ़ा जा सकता है जो वह id अंदाजे से लगा ले।
+
+बड़ी बात यह है कि FCM **कोशिश भर** करता है। Device के time-to-live से ज्यादा offline रहने पर संदेश गिर
+सकते हैं, `collapse_key` लगाने पर समेटे जा सकते हैं, और जिस ऐप को user ने force-stop किया उस तक पहुँचते
+ही नहीं। तो push कोई पहुँचाने की व्यवस्था नहीं, sync करने का इशारा है: वह संदेश कहता है "कुछ बदला",
+ऐप आपकी API से सच लाता है, और screen सही रहती है, वह push आया हो या न आया हो। उलटा बनाना — जानकारी की
+इकलौती नकल उस payload में रख देना — ऐसी सुविधा बनाता है जो users के एक हिस्से के लिए चुपचाप नाकाम होती
+है, और उनकी आवाज आप तक कभी नहीं पहुँचेगी।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और तीसरी किसी user को किसी और की notifications भेज देती है">
+**`notification` और `data` साथ भेजना।** एक payload से दो बर्ताव, आमतौर पर दोहरे।
+
+**जरूरी चीज के लिए आम प्राथमिकता।** Doze उसे टाल देता है, और पहुँचना बेतरतीब दिखता है।
+
+**Sign-out पर token न मिटाना।** उस device का अगला user पहले वाले के pushes पाता है।
+
+**`onMessageReceived` के अंदर काम।** दस सेकंड, फिर process मर सकता है। उसकी जगह कतार में लगाइए।
+
+**Payload को ही data मानना।** FCM कोशिश भर करता है; push से sync चलाइए।
+</Pitfall>
+
+## अभ्यास
+
+1. ऐप पीछे रखते हुए `notification` वाला संदेश भेजिए और पक्का कीजिए कि आपका code चलता ही नहीं।
+2. वही सामान सिर्फ `data` में भेजिए और `onMessageReceived` को चलते देखिए।
+3. `adb` से Doze लागू कीजिए और आम तथा ऊँची प्राथमिकता का पहुँचना मिलाइए।
+4. बिना token मिटाए sign out कीजिए, किसी और की तरह sign in कीजिए, और push भेजिए।
+5. ऐप force-stop कीजिए और पक्का कीजिए कि दोबारा खोलने तक कुछ नहीं पहुँचता।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `notification` वाला | पीछे रहते system बनाता है; आपका code नहीं चलता |
+| सिर्फ `data` | हमेशा `onMessageReceived` तक पहुँचता है |
+| दोनों साथ | एक संदेश से दो बर्ताव; आमतौर पर दोहरा |
+| `onMessageReceived` | करीब दस सेकंड — नोटिस कीजिए और कतार में लगाइए |
+| `priority: high` | Device जगाता है; user को न दिखे तो रफ्तार बँधती है |
+| App Standby | फिर भी लागू; कोई प्राथमिकता उसे पूरी तरह नहीं पलटती |
+| Token | ऐप के लगे होने की पहचान, user की नहीं |
+| Sign-out | Token मिटाइए, वरना अगले user को pushes मिलते हैं |
+| `POST_NOTIFICATIONS` | Android 13+; उसके बिना कुछ नहीं दिखता |
+| FCM | कोशिश भर — sync का इशारा, पहुँचने की गारंटी नहीं |
+
+<Interview title="एक सवाल, भरोसे लायक न पहुँचने का">
+"Push notifications सामने रहते भरोसे से आते हैं और पीछे रहते बेतरतीब। आप कहाँ देखेंगे?"
+
+पहले payload में। अगर वह सिर्फ `data` वाला है, तो डिफॉल्ट प्राथमिकता आम है, और आम प्राथमिकता वाला संदेश
+साफ-साफ टाला जा सकने वाला है — Doze उसे रखरखाव वाली खिड़की में इकट्ठा कर देता है, तो वह किसी के हाथ में
+पकड़े phone पर फुर्ती से आता है और मेज पर छोड़े हुए पर मिनटों देर से। `priority: high` लगाना उसे ऐसी
+चीज बताता है जिसका user इंतजार कर रहा है। वह मुफ्त नहीं है: जो ऐप ऊँची प्राथमिकता वाले ऐसे संदेश भेजते
+हैं जो user को कभी दिखते नहीं, Google उन्हें धीमा कर देता है, तो वह chat और order के updates के लिए है,
+पीछे की sync के लिए नहीं।
+
+बाकी जो मैं देखूँगा वह है कि `onNewToken` सच में server के साथ दोबारा दर्ज करता है या नहीं, क्योंकि
+पुराना token चुपचाप नाकाम होता है, और Android 13 तथा उसके ऊपर `POST_NOTIFICATIONS` मिली थी या नहीं,
+क्योंकि उसके बिना notification कहीं कोई error दिए बिना कुछ नहीं दिखाती। और मैं ऐसा बनाऊँगा कि इससे फर्क
+ही न पड़े: push को data मानने के बजाय sync का इशारा मानिए, क्योंकि FCM कोशिश भर करता है और force-stop
+किए ऐप तक कुछ पहुँचता ही नहीं।
+</Interview>
