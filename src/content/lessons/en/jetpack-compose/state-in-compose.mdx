@@ -1,0 +1,234 @@
+---
+title: "State: remember, mutableStateOf, rememberSaveable"
+description: Three tools that answer three different questions. Almost every state bug in Compose is reaching for one when you needed another.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`remember` answers *does this value survive recomposition*. `mutableStateOf` answers *does
+changing it cause one*. `rememberSaveable` answers *does it survive the process being killed*.
+They are three questions, not one.
+</KeyIdea>
+
+## Why this matters
+
+Start with the version that looks obviously right:
+
+```kotlin title="Broken1.kt"
+@Composable
+fun Counter() {
+    var count = 0                        // reset on every recomposition
+    Button(onClick = { count++ }) { Text("$count") }
+}
+```
+
+Every recomposition runs the body again, so `count` goes back to zero. Fix that and the next
+version appears:
+
+```kotlin title="Broken2.kt"
+@Composable
+fun Counter() {
+    var count = remember { 0 }           // survives, but nothing watches it
+    Button(onClick = { count++ }) { Text("$count") }
+}
+```
+
+Now the value persists, but changing it recomposes nothing, so the screen never updates. You need
+both properties, and that is exactly what the pair gives you.
+
+```kotlin title="Works.kt" numbered
+@Composable
+fun Counter() {
+    var count by remember { mutableStateOf(0) }
+    Button(onClick = { count++ }) { Text("$count") }
+}
+```
+
+<Note>
+`by` needs `import androidx.compose.runtime.getValue` and `setValue`. Without them the delegate
+does not compile, which is the single most common first-day error in Compose.
+</Note>
+
+## Three ways to write the same thing
+
+<Tabs>
+  <Tab label="by (usual)">
+
+```kotlin title="Delegate.kt"
+var count by remember { mutableStateOf(0) }
+count++              // reads and writes like a normal var
+```
+
+Cleanest to read, and the default choice.
+
+  </Tab>
+  <Tab label=".value">
+
+```kotlin title="Value.kt"
+val count = remember { mutableStateOf(0) }
+count.value++
+```
+
+Useful when you need to pass the `MutableState` object itself somewhere.
+
+  </Tab>
+  <Tab label="destructured">
+
+```kotlin title="Destructured.kt"
+val (count, setCount) = remember { mutableStateOf(0) }
+setCount(count + 1)
+```
+
+Handy when you want to hand a plain setter to a child without giving it the state.
+
+  </Tab>
+</Tabs>
+
+## The bug everybody ships once
+
+<Quiz
+  question="`var name by remember { mutableStateOf(user.name) }` is inside a composable that takes `user` as a parameter. A new `user` arrives. What does the field show?"
+  options={[
+    "The new user's name — remember re-runs when its enclosing composable does",
+    "The first user's name, forever, because remember has no key",
+    "An empty string, because the state was invalidated",
+  ]}
+  answer={1}
+  explanation="remember computes its lambda once for that call site and returns the stored value on every later composition, no matter what the surrounding parameters do. So the field keeps the name it was initialised with and quietly shows the wrong user. There are two correct fixes and they are not equivalent. remember(user) { mutableStateOf(user.name) } re-initialises when the user changes, which is right when the field is genuinely local editable state. Better still, do not copy the value into state at all — read user.name directly and send edits upward, so there is only one source of truth to get out of sync."
+/>
+
+## `rememberSaveable` is a different question again
+
+```kotlin title="Saveable.kt" numbered
+@Composable
+fun SearchField() {
+    var query by rememberSaveable { mutableStateOf("") }
+    TextField(value = query, onValueChange = { query = it })
+}
+```
+
+| Survives | `remember` | `rememberSaveable` | `ViewModel` |
+| --- | --- | --- | --- |
+| Recomposition | Yes | Yes | Yes |
+| Rotation | No | Yes | Yes |
+| The system killing your process | No | Yes | Only with `SavedStateHandle` |
+| Large data | Fine | No — it goes into a `Bundle` | Yes |
+
+<Warning>
+`rememberSaveable` writes into the same size-limited `Bundle` as `onSaveInstanceState`. Putting a
+list of a thousand items there is a `TransactionTooLargeException` waiting for a slow device.
+Save the id, reload the data.
+</Warning>
+
+<Detail summary="Saving a type Bundle does not understand">
+Anything not natively `Parcelable` needs a `Saver` — a pair of functions that convert to and from
+something a `Bundle` accepts.
+
+```kotlin title="Saver.kt" numbered
+data class Selection(val from: Int, val to: Int)
+
+val SelectionSaver = listSaver<Selection, Int>(
+    save = { listOf(it.from, it.to) },
+    restore = { Selection(it[0], it[1]) },
+)
+
+var selection by rememberSaveable(stateSaver = SelectionSaver) {
+    mutableStateOf(Selection(0, 0))
+}
+```
+
+`mapSaver` and `listSaver` cover almost everything. Marking the class `@Parcelize` is the shorter
+route when you control it.
+</Detail>
+
+## Lists are where state quietly stops working
+
+```kotlin title="Lists.kt" numbered
+// Wrong: the list object never changes, so nothing recomposes
+val items = remember { mutableListOf<String>() }
+items.add("new")
+
+// Right: a state-aware list
+val items = remember { mutableStateListOf<String>() }
+items.add("new")
+
+// Also right: replace the value with a new list
+var items by remember { mutableStateOf(emptyList<String>()) }
+items = items + "new"
+```
+
+Compose notices *writes to a `State`*, and nothing else. Mutating a plain collection is not a
+write to any state, so the runtime has no idea anything happened.
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="`mutableStateOf` returns an observable box" meta="MutableState<T>">
+    Reading `.value` inside a composition records the current scope as a reader. Writing it marks
+    every reader invalid.
+  </TimelineItem>
+  <TimelineItem title="`remember` is a slot lookup" meta="positional">
+    On the first composition it runs the lambda and stores the result in this call site's group.
+    On every later one it reads it back. Keys are compared, and a changed key discards the value.
+  </TimelineItem>
+  <TimelineItem title="Snapshots isolate concurrent readers" meta="the snapshot system">
+    Each composition reads a consistent snapshot of every state, so a value cannot change halfway
+    through a frame. This is what makes running composables in parallel safe.
+  </TimelineItem>
+  <TimelineItem title="`rememberSaveable` adds a Bundle round trip" meta="on top of remember">
+    It registers with the `SaveableStateRegistry`, so the value goes into saved instance state and
+    comes back after process death.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four that account for most state bugs">
+**`remember` without a key over a changing parameter.** The classic stale-field bug above.
+
+**Mutating a plain `List`, `Map` or `Set`.** No state was written, so no recomposition happens.
+Use `mutableStateListOf`, or replace the whole value.
+
+**`rememberSaveable` for anything large.** It rides in the saved-state `Bundle`. Keep it to ids,
+text fields, scroll positions and flags.
+
+**Keeping in the composable what belongs to the screen.** State a `ViewModel` owns survives
+rotation and process death for free and can be tested without a device. `remember` is for state
+that is genuinely only about this piece of UI.
+</Pitfall>
+
+## Practice
+
+1. Build the counter three times — plain `var`, `remember` alone, and both — and predict each
+   result before running it.
+2. Reproduce the stale-field bug with a parameter, then fix it once with a key and once by
+   removing the duplicated state. Decide which you prefer and why.
+3. Type into a `TextField` backed by `remember`, rotate, and watch it clear. Switch to
+   `rememberSaveable` and rotate again.
+4. Add items to a `mutableListOf` inside `remember` and see nothing happen. Change one word and
+   see it work.
+5. Kill the app from the recents list with a saveable field filled in, reopen it, and check what
+   came back.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `remember` | Survives recomposition, nothing more |
+| `mutableStateOf` | A write triggers recomposition of its readers |
+| Together | The normal way to hold local UI state |
+| `by` | Delegate syntax; needs the `getValue` / `setValue` imports |
+| `remember(key)` | Recomputes when the key changes |
+| `rememberSaveable` | Also survives rotation and process death, via a `Bundle` |
+| `Saver` | Needed for types a `Bundle` cannot hold |
+| `mutableStateListOf` | A list whose mutations are observable |
+| `ViewModel` | Where screen state belongs; `remember` is for UI-only state |
+
+<Interview title="A question with three answers, and you need all three">
+"What is the difference between `remember` and `rememberSaveable`?"
+
+`remember` keeps a value across recompositions only; `rememberSaveable` also survives
+configuration changes and process death by writing into saved instance state. The third part
+completes it: `rememberSaveable` therefore inherits the `Bundle` size limit, so it is for ids and
+field text, and anything larger belongs in a `ViewModel` with a `SavedStateHandle`.
+</Interview>

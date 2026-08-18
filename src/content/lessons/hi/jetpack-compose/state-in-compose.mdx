@@ -1,0 +1,234 @@
+---
+title: "State: remember, mutableStateOf, rememberSaveable"
+description: तीन औजार, जो तीन अलग सवालों के जवाब हैं। Compose का लगभग हर state वाला bug यही है कि जरूरत किसी और की थी और उठा कोई और लिया गया।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`remember` बताता है *यह value recomposition झेलेगी या नहीं*। `mutableStateOf` बताता है *इसे बदलने
+से recomposition होगी या नहीं*। `rememberSaveable` बताता है *process मारे जाने पर यह बचेगी या
+नहीं*। ये तीन सवाल हैं, एक नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+उस रूप से शुरू कीजिए जो साफ तौर पर सही लगता है:
+
+```kotlin title="Broken1.kt"
+@Composable
+fun Counter() {
+    var count = 0                        // हर recomposition पर वापस शून्य
+    Button(onClick = { count++ }) { Text("$count") }
+}
+```
+
+हर recomposition body दोबारा चलाती है, तो `count` फिर से शून्य हो जाता है। इसे ठीक कीजिए तो अगला
+रूप सामने आता है:
+
+```kotlin title="Broken2.kt"
+@Composable
+fun Counter() {
+    var count = remember { 0 }           // बचती है, पर कोई नजर नहीं रखता
+    Button(onClick = { count++ }) { Text("$count") }
+}
+```
+
+अब value बनी रहती है, पर उसे बदलने से कुछ recompose नहीं होता, तो screen कभी बदलती ही नहीं।
+आपको दोनों गुण चाहिए, और यही जोड़ी आपको दोनों देती है।
+
+```kotlin title="Works.kt" numbered
+@Composable
+fun Counter() {
+    var count by remember { mutableStateOf(0) }
+    Button(onClick = { count++ }) { Text("$count") }
+}
+```
+
+<Note>
+`by` के लिए `androidx.compose.runtime.getValue` और `setValue` import करने पड़ते हैं। इनके बिना
+delegate compile ही नहीं होता, और Compose के पहले दिन की सबसे आम error यही है।
+</Note>
+
+## एक ही बात लिखने के तीन तरीके
+
+<Tabs>
+  <Tab label="by (आम)">
+
+```kotlin title="Delegate.kt"
+var count by remember { mutableStateOf(0) }
+count++              // आम var की तरह पढ़ा और लिखा जाता है
+```
+
+पढ़ने में सबसे साफ, और यही default चुनाव है।
+
+  </Tab>
+  <Tab label=".value">
+
+```kotlin title="Value.kt"
+val count = remember { mutableStateOf(0) }
+count.value++
+```
+
+तब काम का जब खुद `MutableState` वाली चीज कहीं भेजनी हो।
+
+  </Tab>
+  <Tab label="अलग-अलग करके">
+
+```kotlin title="Destructured.kt"
+val (count, setCount) = remember { mutableStateOf(0) }
+setCount(count + 1)
+```
+
+तब सुविधाजनक जब किसी बच्चे को state दिए बिना सिर्फ एक सादा setter थमाना हो।
+
+  </Tab>
+</Tabs>
+
+## वह bug जो हर कोई एक बार ship करता है
+
+<Quiz
+  question="`var name by remember { mutableStateOf(user.name) }` ऐसे composable के अंदर है जो `user` को parameter की तरह लेता है। नया `user` आता है। Field दिखाती क्या है?"
+  options={[
+    "नए user का नाम — बाहर वाला composable चलने पर remember भी दोबारा चलता है",
+    "पहले user का नाम, हमेशा के लिए, क्योंकि remember को कोई key नहीं दी गई",
+    "खाली string, क्योंकि state बेकार हो चुकी है",
+  ]}
+  answer={1}
+  explanation="remember अपना lambda उस call वाली जगह के लिए एक ही बार चलाता है और उसके बाद हर composition पर रखी हुई value लौटा देता है, चाहे आस-पास के parameters कुछ भी करें। तो field वही नाम लिए रहती है जिससे वह शुरू हुई थी और चुपचाप गलत user दिखाती है। इसके दो सही इलाज हैं और वे एक जैसे नहीं हैं। remember(user) { mutableStateOf(user.name) } user बदलने पर दोबारा शुरू करता है, जो तब सही है जब वह field सच में यहीं की बदली जा सकने वाली state हो। इससे भी बेहतर, value को state में copy ही मत कीजिए — सीधे user.name पढ़िए और बदलाव ऊपर भेजिए, ताकि सच का एक ही ठिकाना रहे जिसका बिगड़ना मुमकिन हो।"
+/>
+
+## `rememberSaveable` फिर से एक अलग सवाल है
+
+```kotlin title="Saveable.kt" numbered
+@Composable
+fun SearchField() {
+    var query by rememberSaveable { mutableStateOf("") }
+    TextField(value = query, onValueChange = { query = it })
+}
+```
+
+| क्या झेलता है | `remember` | `rememberSaveable` | `ViewModel` |
+| --- | --- | --- | --- |
+| Recomposition | हाँ | हाँ | हाँ |
+| Rotation | नहीं | हाँ | हाँ |
+| System का process मार देना | नहीं | हाँ | सिर्फ `SavedStateHandle` के साथ |
+| बड़ा data | ठीक है | नहीं — वह `Bundle` में जाता है | हाँ |
+
+<Warning>
+`rememberSaveable` उसी नाप की हद वाले `Bundle` में लिखता है जिसमें `onSaveInstanceState` लिखता
+है। वहाँ हजार items की list रखना किसी धीमे device पर आने वाला `TransactionTooLargeException` है।
+Id सँभालिए, data दोबारा लाइए।
+</Warning>
+
+<Detail summary="ऐसा type सँभालना जिसे Bundle नहीं समझता">
+जो चीज खुद `Parcelable` नहीं है उसे `Saver` चाहिए — दो functions की जोड़ी, जो उसे `Bundle` के
+मानने लायक रूप में बदलती और वापस लाती है।
+
+```kotlin title="Saver.kt" numbered
+data class Selection(val from: Int, val to: Int)
+
+val SelectionSaver = listSaver<Selection, Int>(
+    save = { listOf(it.from, it.to) },
+    restore = { Selection(it[0], it[1]) },
+)
+
+var selection by rememberSaveable(stateSaver = SelectionSaver) {
+    mutableStateOf(Selection(0, 0))
+}
+```
+
+`mapSaver` और `listSaver` लगभग सब कुछ सँभाल लेते हैं। Class आपके अपने हाथ में हो तो उस पर
+`@Parcelize` लगाना छोटा रास्ता है।
+</Detail>
+
+## Lists वहाँ हैं जहाँ state चुपचाप काम करना बंद कर देता है
+
+```kotlin title="Lists.kt" numbered
+// गलत: list वाली चीज कभी बदलती ही नहीं, तो कुछ recompose नहीं होता
+val items = remember { mutableListOf<String>() }
+items.add("new")
+
+// सही: state समझने वाली list
+val items = remember { mutableStateListOf<String>() }
+items.add("new")
+
+// यह भी सही: value की जगह नई list रख दीजिए
+var items by remember { mutableStateOf(emptyList<String>()) }
+items = items + "new"
+```
+
+Compose सिर्फ *किसी `State` में लिखा जाना* देखता है, और कुछ नहीं। सादी collection बदलना किसी
+state में लिखना नहीं है, तो runtime को खबर ही नहीं होती कि कुछ हुआ।
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="`mutableStateOf` एक नजर रखी जाने वाली डिबिया लौटाता है" meta="MutableState<T>">
+    Composition के अंदर `.value` पढ़ना मौजूदा दायरे को उसका पाठक बना देता है। उसमें लिखना हर पाठक
+    को बेकार निशान दे देता है।
+  </TimelineItem>
+  <TimelineItem title="`remember` एक slot में देखना है" meta="जगह के हिसाब से">
+    पहली composition पर वह lambda चलाता है और नतीजा इसी call वाली जगह के group में रख देता है।
+    उसके बाद हर बार वहीं से पढ़ लेता है। Keys मिलाई जाती हैं, और key बदलने पर value फेंक दी जाती
+    है।
+  </TimelineItem>
+  <TimelineItem title="Snapshots साथ-साथ पढ़ने वालों को अलग रखते हैं" meta="snapshot system">
+    हर composition हर state का एक एक-जैसा snapshot पढ़ती है, तो कोई value frame के बीचोंबीच बदल
+    नहीं सकती। composables को साथ-साथ चलाना इसी से सुरक्षित होता है।
+  </TimelineItem>
+  <TimelineItem title="`rememberSaveable` एक Bundle का चक्कर और जोड़ता है" meta="remember के ऊपर">
+    वह `SaveableStateRegistry` में दर्ज होता है, तो value saved instance state में जाती है और
+    process मरने के बाद वापस आती है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, जिनसे ज्यादातर state वाले bugs बनते हैं">
+**बदलते parameter पर बिना key वाला `remember`।** ऊपर वाला जाना-पहचाना बासी-field bug।
+
+**सादी `List`, `Map` या `Set` बदलना।** किसी state में लिखा ही नहीं गया, तो recomposition भी नहीं
+होती। `mutableStateListOf` लीजिए, या पूरी value बदल दीजिए।
+
+**किसी भी बड़ी चीज के लिए `rememberSaveable`।** वह saved-state वाले `Bundle` में सवारी करती है।
+इसे ids, text fields, scroll की जगह और झंडों तक ही रखिए।
+
+**जो screen का है उसे composable में रखना।** `ViewModel` के पास वाली state rotation और process
+मरना मुफ्त में झेल जाती है और बिना device के test हो सकती है। `remember` उस state के लिए है जो
+सच में सिर्फ UI के इस टुकड़े की है।
+</Pitfall>
+
+## अभ्यास
+
+1. Counter तीन बार बनाइए — सादा `var`, अकेला `remember`, और दोनों — और चलाने से पहले हर बार नतीजा
+   बताइए।
+2. किसी parameter के साथ बासी-field वाला bug दोबारा पैदा कीजिए, फिर एक बार key से और एक बार
+   दोहरी state हटाकर ठीक कीजिए। तय कीजिए कि आपको कौन सा ज्यादा पसंद है और क्यों।
+3. `remember` वाले `TextField` में लिखिए, घुमाइए, और उसे खाली होते देखिए। `rememberSaveable` पर
+   जाइए और दोबारा घुमाइए।
+4. `remember` के अंदर `mutableListOf` में items जोड़िए और कुछ न होते देखिए। एक शब्द बदलिए और उसे
+   चलते देखिए।
+5. Saveable field भरी हुई रखकर app को recents से हटाइए, दोबारा खोलिए, और देखिए क्या वापस आया।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `remember` | Recomposition झेलती है, इससे ज्यादा कुछ नहीं |
+| `mutableStateOf` | इसमें लिखना उसके पाठकों की recomposition कराता है |
+| दोनों साथ | यहीं की UI state रखने का आम तरीका |
+| `by` | Delegate वाला रूप; `getValue` / `setValue` के imports चाहिए |
+| `remember(key)` | Key बदलने पर दोबारा निकालता है |
+| `rememberSaveable` | `Bundle` के जरिए rotation और process मरना भी झेलती है |
+| `Saver` | उन types के लिए जिन्हें `Bundle` नहीं रख सकता |
+| `mutableStateListOf` | ऐसी list जिसके बदलाव दिखते हैं |
+| `ViewModel` | Screen की state की जगह; `remember` सिर्फ UI वाली state के लिए |
+
+<Interview title="तीन जवाबों वाला सवाल, और तीनों चाहिए">
+"`remember` और `rememberSaveable` में फर्क क्या है?"
+
+`remember` value सिर्फ recompositions के आर-पार रखता है; `rememberSaveable` उसे saved instance
+state में लिखकर configuration बदलने और process मरने पर भी बचा लेता है। तीसरा हिस्सा इसे पूरा
+करता है: इसी वजह से `rememberSaveable` को `Bundle` की नाप की हद विरासत में मिलती है, तो वह ids और
+field के text के लिए है, और उससे बड़ी चीज `SavedStateHandle` वाले `ViewModel` की है।
+</Interview>
