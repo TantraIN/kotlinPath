@@ -1,0 +1,200 @@
+---
+title: "Clean Architecture: data, domain, presentation"
+description: Ek hi niyam se poora naksha ban jata hai. Niyam samajh lijiye aur paratein ratte mare hue folder naam rehna band kar deti hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Niyam theek ek hai: **source code ki nirbharta andar ki taraf jati hai, niyamon ki taraf**. Baaki
+sab — paraton ke naam, use cases, ajeeb jagahon par rakhe interfaces — usi niyam ko tikaye rakhne ka
+result hai, jabki kaam karne wali parat bahar wali hoti hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Asli kasauti ye nahi ki naksha kaisa dikhta hai. Ye hai: apni domain parat kholiye aur
+`import android.` dhundhkar dikhaiye. Agar ek bhi hai, to aapki app ke niyam na kisi server par chal
+sakte hain, na bina emulator ke kisi unit test mein, aur na koi widget ya watch face unhe dobara
+istemal kar sakta hai.
+
+| Parat | Ismein kya hai | Kya import kar sakti hai |
+| --- | --- | --- |
+| **Domain** | Models, niyam, repository ke interfaces, use cases | Kotlin, aur kuch nahi |
+| **Data** | Repository ke implementations, network, database, mappers | Domain, aur uski libraries |
+| **Presentation** | `ViewModel`, UI ki state | Domain, aur Android |
+| **UI** | Composables, views | Presentation, aur Android |
+
+Doosra khana upar se neeche padh lijiye — poora design wahi hai.
+
+## Wo ultav jisse teer andar ki taraf jata hai
+
+Kaam data karta hai — wahi network se baat karta hai. Niyam domain ke paas hain. Agar domain seedhe
+data ko bulata, to teer bahar ki taraf jata aur niyam Retrofit par tik jate.
+
+```kotlin title="Domain.kt" numbered
+// domain/OrderRepository.kt — ek interface, andar wali parat mein
+interface OrderRepository {
+    fun observeOrders(): Flow<List<Order>>
+    suspend fun refresh(): Result<Unit>
+}
+```
+
+```kotlin title="Data.kt" numbered
+// data/OfflineFirstOrderRepository.kt — implementation, bahar wali parat mein
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository { }
+```
+
+<Quiz
+  question="`OrderRepository` ka interface domain mein hai aur uska implementation data mein. Kaun sa module kis par nirbharta ghoshit karta hai?"
+  options={[
+    "Domain data par, kyunki asli kaam wahin hota hai",
+    "Data domain par, kyunki implementation ko wo interface dikhna chahiye jise wo lagu karta hai",
+    "Koi kisi par nahi — wo barabar ke hain aur teesra module dono ko jodta hai",
+  ]}
+  answer={1}
+  explanation="Yahi wo ultav hai, aur pehli baar mein yahi hissa ulta lagta hai. Implementation ko interface dikhna hi chahiye, to data ki Gradle file domain par nirbharta ghoshit karti hai, kabhi ulta nahi. Result ye hota hai ki source code ki nirbharta ka teer andar ki taraf jata hai jabki chalte waqt kaabu bahar ki taraf jata hai — domain koi method bulata hai, aur jo code chalta hai wo data mein hai. Yahi ek tarkeeb domain module ko sirf Kotlin ki standard library ke saath compile hone deti hai, aur yahi iklauta gun hai jiske liye ye sab kabhi tha."
+/>
+
+<Figure caption="Chalte waqt kaabu bahar ki taraf behta hai — ViewModel repository ko bulata hai, wo network ko. Source code ki nirbharta ulti taraf jati hai, isiliye andar ki paratein akele compile hoti hain.">
+  <LayerStack
+    title="Clean Architecture mein nirbharta"
+    description="Beech mein domain kisi par nirbhar nahi. Data domain par nirbhar hai. Presentation domain par. UI presentation par."
+    youWriteThis="niyamon se sabse door"
+    topLabel="frameworks aur screens"
+    bottomLabel="niyam"
+    layers={[
+      { label: "Domain", sub: "models, niyam, interfaces", accent: "emerald", detail: "Saada Kotlin. Na Android, na Retrofit, na Room ke saath compile hota hai. Yahi wo parat hai jo milliseconds mein test hoti hai aur kahin bhi dobara istemal hoti hai." },
+      { label: "Data", sub: "domain ke interfaces ke implementations", accent: "amber", detail: "Network, database aur mapping ise pata hain. Domain par nirbhar hai taki uske interfaces lagu kar sake; domain uska naam tak nahi leta." },
+      { label: "Presentation", sub: "ViewModels aur UI ki state", accent: "sky", detail: "Domain ke models ko us cheez mein badalta hai jo ek screen ko chahiye. Domain par nirbhar, aur Android par sirf lifecycle ke liye." },
+      { label: "UI", sub: "composables aur views", accent: "violet", detail: "State dikhata hai aur ghatnayein batata hai. Use presentation ka pata hai aur uske neeche kisi ka nahi." },
+    ]}
+  />
+</Figure>
+
+## Use cases, aur wo apni jagah kab kamate hain
+
+```kotlin title="UseCase.kt" numbered
+class PlaceOrderUseCase(
+    private val orders: OrderRepository,
+    private val stock: StockRepository,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(cart: Cart): Result<Order> {
+        if (cart.isEmpty()) return Result.failure(EmptyCart)
+        if (!stock.hasAll(cart.lines)) return Result.failure(OutOfStock)
+        if (clock.now().hour !in 9..21) return Result.failure(OutsideHours)
+
+        return orders.place(cart)
+    }
+}
+```
+
+```kotlin title="Call.kt"
+val result = placeOrder(cart)      // operator invoke — kisi function jaisa padha jata hai
+```
+
+Wo class teen tarah se apni jagah kamati hai: wo do repositories par phaili hai, usmein wo niyam
+hain jo `ViewModel` mein nahi hone chahiye, aur wo do nakli cheezon ke saath bina Android ke parkhi
+ja sakti hai.
+
+<Warning>
+Jo use case kisi repository ka ek method bulakar usi ko jyon ka tyon lauta deta hai, wo apni jagah
+nahi kamata. Wo ek file, ek constructor parameter aur ek padav jodta hai, aur koi faisla nahi rakhta.
+Tab likhiye jab koi niyam rakhne ko ho — isliye nahi ki paraton wale nakshe mein us naam ka ek dibba
+bana hai.
+</Warning>
+
+<Detail summary="Kamzor domain: wo nakami jismein folders bachte hain aur matlab chala jata hai">
+Ye sabse aam tarike se is tarah bigadta hai ki domain parat mein `data class` ke alawa kuch nahi
+hota, aur har niyam ab bhi kisi `ViewModel` mein baitha rehta hai:
+
+```kotlin title="Anaemic.kt"
+// domain
+data class Order(val lines: List<Line>, val status: String)
+
+// presentation — niyam aakhir yahin aa baithe
+val isOpen = order.status != "DELIVERED" && order.status != "CANCELLED"
+val total = order.lines.sumOf { it.price * it.quantity }
+```
+
+Wo dono lines domain ke niyam hain, bas `ViewModel` ke kapde pehne hue. Jis doosri screen ko wo
+chahiye wo unhe copy karegi, aur dono copies behkar alag ho jayengi.
+
+```kotlin title="Rich.kt"
+// domain
+data class Order(val lines: List<Line>, val status: OrderStatus) {
+    val isOpen: Boolean get() = status !in OrderStatus.finished
+    val total: Money get() = lines.fold(Money.ZERO) { acc, l -> acc + l.price * l.quantity }
+}
+```
+
+Gaur kijiye ki `String` bhi `OrderStatus` ban gaya. Jis status mein koi bhi string aa sakti hai wo
+kisi typo se tootne ke intezar mein baitha niyam hai.
+</Detail>
+
+## Keemat, saaf-saaf
+
+Chaar paraton ka matlab hai chaar files aur do mapping wale functions, us cheez ke liye jo ek
+function call thi. Ye asli keemat hai, aur isse teen cheezein milti hain: niyam bina device ke
+chalte hain, network ka koi badlaav data parat par ruk jata hai, aur do screens "khula" ka matlab
+alag-alag nahi samajh saktin.
+
+Aap jo bana rahe hain uske liye in teenon mein se koi bhi maayne nahi rakhti, to aap us khatre ke
+khilaf beema khareed rahe hain jo aap par hai hi nahi.
+
+## Common galtiyan
+
+<Pitfall title="Chaar, asli projects mein dikhne ke kram mein">
+**Repository ke har method ke liye ek use case.** Jo file ek call aage badha deti hai wo bina kisi
+faisle wala ghumav hai.
+
+**Kamzor domain.** `domain/` mein data classes, niyam `ViewModel` mein. Folders suthre hain aur mila
+kuch nahi.
+
+**Domain mein Android.** Ek `android.net.Uri` ya ek `@Parcelize`, aur wo module akele compile hona
+band kar deta hai. Ye galti se hota hai, aur isiliye module ki sarhad ise pakad leti hai aur folder
+nahi.
+
+**Usool ke naam par har cheez ki mapping.** Agar DTO, entity aur domain ka model sach mein ek jaise
+hain aur server ka contract aapka apna hai, to teen copies aur chaar mappers sirf keemat hain, faayda
+nahi. Jab wo alag hone lagein tab baantiye.
+</Pitfall>
+
+## Practice
+
+1. Apne domain package mein `import android.` khojiye. Har milan wo jagah hai jahan se niyam phone
+   ke bahar nahi ja sakte.
+2. Ek niyam `ViewModel` se hatakar domain ke model mein le jaiye aur uska aisa test likhiye jo JVM
+   par chale.
+3. Ek call aage badhane wala koi use case lijiye aur mita dijiye. Dekhiye ki kuch bura hua bhi ya
+   nahi.
+4. Apne modules ke beech Gradle ki nirbhartayein kheenchiye aur parkhiye ki har teer domain ki taraf
+   jata hai.
+5. Kisi `String` wale status ki jagah sealed type rakhiye aur dekhiye ki code ke kaun se hisse
+   compile hona band kar dete hain.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Nirbharta ka niyam | Source code ki nirbharta andar, niyamon ki taraf |
+| Ultav | Interface domain ghoshit karta hai; data use lagu karta hai aur domain par nirbhar hai |
+| Kaabu banam nirbharta | Chalte waqt kaabu bahar jata hai; nirbharta andar ki taraf |
+| Domain | Saada Kotlin — asli kasauti ye ki usmein koi Android import nahi |
+| Use case | Tab sahi jab wo kai repositories par phaile, koi niyam rakhe, ya dobara istemal ho |
+| `operator fun invoke` | Use case ko function call jaisa padhwata hai |
+| Kamzor domain | Domain mein data classes, niyam `ViewModel` mein — aam nakami |
+| Keemat | Files aur mappers; test, alagav aur mel ke liye chukane layak |
+
+<Interview title="Wo sawal, aur wo ek vakya jo uska theek jawab deta hai">
+"Clean Architecture mein nirbharta ka niyam kya hai?"
+
+Source code ki nirbharta andar ki taraf jati hai, un paraton ki taraf jinke paas niyam hain, to
+domain kisi par nirbhar nahi hota. Jo vakya dikhata hai ki ye rata nahi samjha gaya hai wo ultav hai:
+repository ka interface domain ghoshit karta hai aur data parat use lagu karti hai, yani data domain
+par nirbhar hai jabki kaam data mein hota hai. Dikhne wala faayda ye hai ki domain module sirf Kotlin
+ke saath compile hota hai, aur baaki sab usi gun ki sewa mein hai.
+</Interview>

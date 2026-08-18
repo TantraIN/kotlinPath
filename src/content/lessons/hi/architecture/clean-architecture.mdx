@@ -1,0 +1,192 @@
+---
+title: "Clean Architecture: data, domain, presentation"
+description: एक ही नियम से पूरा नक्शा बन जाता है। नियम समझ लीजिए और परतें रट्टे मारे हुए folder नाम रहना बंद कर देती हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+नियम ठीक एक है: **source code की निर्भरता अंदर की तरफ जाती है, नियमों की तरफ**। बाकी सब — परतों के
+नाम, use cases, अजीब जगहों पर रखे interfaces — उसी नियम को टिकाए रखने का नतीजा है, जबकि काम करने
+वाली परत बाहर वाली होती है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+असली कसौटी यह नहीं कि नक्शा कैसा दिखता है। यह है: अपनी domain परत खोलिए और `import android.` ढूँढ़कर
+दिखाइए। अगर एक भी है, तो आपकी app के नियम न किसी server पर चल सकते हैं, न बिना emulator के किसी unit
+test में, और न कोई widget या watch face उन्हें दोबारा इस्तेमाल कर सकता है।
+
+| परत | इसमें क्या है | क्या import कर सकती है |
+| --- | --- | --- |
+| **Domain** | Models, नियम, repository के interfaces, use cases | Kotlin, और कुछ नहीं |
+| **Data** | Repository के implementations, network, database, mappers | Domain, और उसकी libraries |
+| **Presentation** | `ViewModel`, UI की state | Domain, और Android |
+| **UI** | Composables, views | Presentation, और Android |
+
+दूसरा खाना ऊपर से नीचे पढ़ लीजिए — पूरा design वही है।
+
+## वह उलटाव जिससे तीर अंदर की तरफ जाता है
+
+काम data करता है — वही network से बात करता है। नियम domain के पास हैं। अगर domain सीधे data को
+बुलाता, तो तीर बाहर की तरफ जाता और नियम Retrofit पर टिक जाते।
+
+```kotlin title="Domain.kt" numbered
+// domain/OrderRepository.kt — एक interface, अंदर वाली परत में
+interface OrderRepository {
+    fun observeOrders(): Flow<List<Order>>
+    suspend fun refresh(): Result<Unit>
+}
+```
+
+```kotlin title="Data.kt" numbered
+// data/OfflineFirstOrderRepository.kt — implementation, बाहर वाली परत में
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository { }
+```
+
+<Quiz
+  question="`OrderRepository` का interface domain में है और उसका implementation data में। कौन सा module किस पर निर्भरता घोषित करता है?"
+  options={[
+    "Domain data पर, क्योंकि असली काम वहीं होता है",
+    "Data domain पर, क्योंकि implementation को वह interface दिखना चाहिए जिसे वह लागू करता है",
+    "कोई किसी पर नहीं — वे बराबर के हैं और तीसरा module दोनों को जोड़ता है",
+  ]}
+  answer={1}
+  explanation="यही वह उलटाव है, और पहली बार में यही हिस्सा उल्टा लगता है। Implementation को interface दिखना ही चाहिए, तो data की Gradle file domain पर निर्भरता घोषित करती है, कभी उल्टा नहीं। नतीजा यह होता है कि source code की निर्भरता का तीर अंदर की तरफ जाता है जबकि चलते वक्त काबू बाहर की तरफ जाता है — domain कोई method बुलाता है, और जो code चलता है वह data में है। यही एक तरकीब domain module को सिर्फ Kotlin की standard library के साथ compile होने देती है, और यही इकलौता गुण है जिसके लिए यह सब कभी था।"
+/>
+
+<Figure caption="चलते वक्त काबू बाहर की तरफ बहता है — ViewModel repository को बुलाता है, वह network को। Source code की निर्भरता उल्टी तरफ जाती है, इसीलिए अंदर की परतें अकेले compile होती हैं।">
+  <LayerStack
+    title="Clean Architecture में निर्भरता"
+    description="बीच में domain किसी पर निर्भर नहीं। Data domain पर निर्भर है। Presentation domain पर। UI presentation पर।"
+    youWriteThis="नियमों से सबसे दूर"
+    topLabel="frameworks और screens"
+    bottomLabel="नियम"
+    layers={[
+      { label: "Domain", sub: "models, नियम, interfaces", accent: "emerald", detail: "सादा Kotlin। न Android, न Retrofit, न Room के साथ compile होता है। यही वह परत है जो milliseconds में test होती है और कहीं भी दोबारा इस्तेमाल होती है।" },
+      { label: "Data", sub: "domain के interfaces के implementations", accent: "amber", detail: "Network, database और mapping इसे पता हैं। Domain पर निर्भर है ताकि उसके interfaces लागू कर सके; domain उसका नाम तक नहीं लेता।" },
+      { label: "Presentation", sub: "ViewModels और UI की state", accent: "sky", detail: "Domain के models को उस चीज में बदलता है जो एक screen को चाहिए। Domain पर निर्भर, और Android पर सिर्फ lifecycle के लिए।" },
+      { label: "UI", sub: "composables और views", accent: "violet", detail: "State दिखाता है और घटनाएँ बताता है। उसे presentation का पता है और उसके नीचे किसी का नहीं।" },
+    ]}
+  />
+</Figure>
+
+## Use cases, और वे अपनी जगह कब कमाते हैं
+
+```kotlin title="UseCase.kt" numbered
+class PlaceOrderUseCase(
+    private val orders: OrderRepository,
+    private val stock: StockRepository,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(cart: Cart): Result<Order> {
+        if (cart.isEmpty()) return Result.failure(EmptyCart)
+        if (!stock.hasAll(cart.lines)) return Result.failure(OutOfStock)
+        if (clock.now().hour !in 9..21) return Result.failure(OutsideHours)
+
+        return orders.place(cart)
+    }
+}
+```
+
+```kotlin title="Call.kt"
+val result = placeOrder(cart)      // operator invoke — किसी function जैसा पढ़ा जाता है
+```
+
+वह class तीन तरह से अपनी जगह कमाती है: वह दो repositories पर फैली है, उसमें वे नियम हैं जो
+`ViewModel` में नहीं होने चाहिए, और वह दो नकली चीजों के साथ बिना Android के जाँची जा सकती है।
+
+<Warning>
+जो use case किसी repository का एक method बुलाकर उसी को ज्यों का त्यों लौटा देता है, वह अपनी जगह नहीं
+कमाता। वह एक file, एक constructor parameter और एक पड़ाव जोड़ता है, और कोई फैसला नहीं रखता। तब लिखिए
+जब कोई नियम रखने को हो — इसलिए नहीं कि परतों वाले नक्शे में उस नाम का एक डिब्बा बना है।
+</Warning>
+
+<Detail summary="कमजोर domain: वह नाकामी जिसमें folders बचते हैं और मतलब चला जाता है">
+यह सबसे आम तरीके से इस तरह बिगड़ता है कि domain परत में `data class` के अलावा कुछ नहीं होता, और हर
+नियम अब भी किसी `ViewModel` में बैठा रहता है:
+
+```kotlin title="Anaemic.kt"
+// domain
+data class Order(val lines: List<Line>, val status: String)
+
+// presentation — नियम आखिर यहीं आ बैठे
+val isOpen = order.status != "DELIVERED" && order.status != "CANCELLED"
+val total = order.lines.sumOf { it.price * it.quantity }
+```
+
+वे दोनों lines domain के नियम हैं, बस `ViewModel` के कपड़े पहने हुए। जिस दूसरी screen को वे चाहिए वह
+उन्हें copy करेगी, और दोनों copies बहककर अलग हो जाएँगी।
+
+```kotlin title="Rich.kt"
+// domain
+data class Order(val lines: List<Line>, val status: OrderStatus) {
+    val isOpen: Boolean get() = status !in OrderStatus.finished
+    val total: Money get() = lines.fold(Money.ZERO) { acc, l -> acc + l.price * l.quantity }
+}
+```
+
+गौर कीजिए कि `String` भी `OrderStatus` बन गया। जिस status में कोई भी string आ सकती है वह किसी typo
+से टूटने के इंतजार में बैठा नियम है।
+</Detail>
+
+## कीमत, साफ-साफ
+
+चार परतों का मतलब है चार files और दो mapping वाले functions, उस चीज के लिए जो एक function call थी।
+यह असली कीमत है, और इससे तीन चीजें मिलती हैं: नियम बिना device के चलते हैं, network का कोई बदलाव
+data परत पर रुक जाता है, और दो screens "खुला" का मतलब अलग-अलग नहीं समझ सकतीं।
+
+आप जो बना रहे हैं उसके लिए इन तीनों में से कोई भी मायने नहीं रखती, तो आप उस खतरे के खिलाफ बीमा खरीद
+रहे हैं जो आप पर है ही नहीं।
+
+## आम गलतियाँ
+
+<Pitfall title="चार, असली projects में दिखने के क्रम में">
+**Repository के हर method के लिए एक use case।** जो file एक call आगे बढ़ा देती है वह बिना किसी फैसले
+वाला घुमाव है।
+
+**कमजोर domain।** `domain/` में data classes, नियम `ViewModel` में। Folders सुथरे हैं और मिला कुछ
+नहीं।
+
+**Domain में Android।** एक `android.net.Uri` या एक `@Parcelize`, और वह module अकेले compile होना
+बंद कर देता है। यह गलती से होता है, और इसीलिए module की सरहद इसे पकड़ लेती है और folder नहीं।
+
+**उसूल के नाम पर हर चीज की mapping।** अगर DTO, entity और domain का model सच में एक जैसे हैं और
+server का contract आपका अपना है, तो तीन copies और चार mappers सिर्फ कीमत हैं, फायदा नहीं। जब वे अलग
+होने लगें तब बाँटिए।
+</Pitfall>
+
+## अभ्यास
+
+1. अपने domain package में `import android.` खोजिए। हर मिलान वह जगह है जहाँ से नियम phone के बाहर
+   नहीं जा सकते।
+2. एक नियम `ViewModel` से हटाकर domain के model में ले जाइए और उसका ऐसा test लिखिए जो JVM पर चले।
+3. एक call आगे बढ़ाने वाला कोई use case लीजिए और मिटा दीजिए। देखिए कि कुछ बुरा हुआ भी या नहीं।
+4. अपने modules के बीच Gradle की निर्भरताएँ खींचिए और जाँचिए कि हर तीर domain की तरफ जाता है।
+5. किसी `String` वाले status की जगह sealed type रखिए और देखिए कि code के कौन से हिस्से compile होना
+   बंद कर देते हैं।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| निर्भरता का नियम | Source code की निर्भरता अंदर, नियमों की तरफ |
+| उलटाव | Interface domain घोषित करता है; data उसे लागू करता है और domain पर निर्भर है |
+| काबू बनाम निर्भरता | चलते वक्त काबू बाहर जाता है; निर्भरता अंदर की तरफ |
+| Domain | सादा Kotlin — असली कसौटी यह कि उसमें कोई Android import नहीं |
+| Use case | तब सही जब वह कई repositories पर फैले, कोई नियम रखे, या दोबारा इस्तेमाल हो |
+| `operator fun invoke` | Use case को function call जैसा पढ़वाता है |
+| कमजोर domain | Domain में data classes, नियम `ViewModel` में — आम नाकामी |
+| कीमत | Files और mappers; test, अलगाव और मेल के लिए चुकाने लायक |
+
+<Interview title="वह सवाल, और वह एक वाक्य जो उसका ठीक जवाब देता है">
+"Clean Architecture में निर्भरता का नियम क्या है?"
+
+Source code की निर्भरता अंदर की तरफ जाती है, उन परतों की तरफ जिनके पास नियम हैं, तो domain किसी पर
+निर्भर नहीं होता। जो वाक्य दिखाता है कि यह रटा नहीं समझा गया है वह उलटाव है: repository का interface
+domain घोषित करता है और data परत उसे लागू करती है, यानी data domain पर निर्भर है जबकि काम data में
+होता है। दिखने वाला फायदा यह है कि domain module सिर्फ Kotlin के साथ compile होता है, और बाकी सब उसी
+गुण की सेवा में है।
+</Interview>

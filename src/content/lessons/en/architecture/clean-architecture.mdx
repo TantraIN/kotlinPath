@@ -1,0 +1,192 @@
+---
+title: "Clean Architecture: data, domain, presentation"
+description: One rule generates the whole diagram. Learn the rule and the layers stop being folder names you memorised.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+There is exactly one rule: **source-code dependencies point inward, toward the rules**. Everything
+else — the layer names, use cases, interfaces in odd places — is a consequence of making that rule
+hold when the outer layer is the one doing the work.
+</KeyIdea>
+
+## Why this matters
+
+The practical test is not how the diagram looks. It is this: open your domain layer and try to find
+an `import android.`. If there is one, the rules of your app cannot run on a server, cannot run in a
+unit test without an emulator, and cannot be reused by a widget or a watch face.
+
+| Layer | Contains | May import |
+| --- | --- | --- |
+| **Domain** | Models, rules, repository interfaces, use cases | Kotlin, and nothing else |
+| **Data** | Repository implementations, network, database, mappers | Domain, plus its libraries |
+| **Presentation** | `ViewModel`s, UI state | Domain, plus Android |
+| **UI** | Composables, views | Presentation, plus Android |
+
+Read the second column downward and you have the whole design.
+
+## The inversion that makes the arrow point inward
+
+Data does the work — it talks to the network. Domain holds the rules. If domain called data
+directly, the arrow would point outward and the rules would depend on Retrofit.
+
+```kotlin title="Domain.kt" numbered
+// domain/OrderRepository.kt — an interface, in the inner layer
+interface OrderRepository {
+    fun observeOrders(): Flow<List<Order>>
+    suspend fun refresh(): Result<Unit>
+}
+```
+
+```kotlin title="Data.kt" numbered
+// data/OfflineFirstOrderRepository.kt — the implementation, in the outer layer
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository { }
+```
+
+<Quiz
+  question="The `OrderRepository` interface is in domain and its implementation is in data. Which module declares a dependency on which?"
+  options={[
+    "Domain depends on data, because that is where the real work happens",
+    "Data depends on domain, because the implementation must see the interface it implements",
+    "Neither — they are siblings and a third module wires them together",
+  ]}
+  answer={1}
+  explanation="This is the inversion, and it is the part that feels backwards the first time. The implementation has to see the interface, so data's Gradle file declares a dependency on domain and never the other way round. The result is that the arrow of the source-code dependency points inward even though the flow of control at run time goes outward — domain calls a method, and the code that runs is in data. That single trick is what lets the domain module compile with nothing but the Kotlin standard library, which is the only property any of this was ever for."
+/>
+
+<Figure caption="Control flows outward at run time — the ViewModel calls the repository, which calls the network. Source-code dependencies point the other way, which is why the inner layers compile alone.">
+  <LayerStack
+    title="Dependencies in Clean Architecture"
+    description="Domain at the centre depends on nothing. Data depends on domain. Presentation depends on domain. UI depends on presentation."
+    youWriteThis="furthest from the rules"
+    topLabel="frameworks and screens"
+    bottomLabel="the rules"
+    layers={[
+      { label: "Domain", sub: "models, rules, interfaces", accent: "emerald", detail: "Pure Kotlin. Compiles with no Android, no Retrofit, no Room. This is the layer that can be tested in milliseconds and reused anywhere." },
+      { label: "Data", sub: "implementations of domain interfaces", accent: "amber", detail: "Knows the network, the database and the mapping. Depends on domain so it can implement its interfaces; domain never mentions it." },
+      { label: "Presentation", sub: "ViewModels and UI state", accent: "sky", detail: "Turns domain models into what one screen needs. Depends on domain, and on Android only for lifecycle." },
+      { label: "UI", sub: "composables and views", accent: "violet", detail: "Displays state and reports events. Knows presentation and nothing below it." },
+    ]}
+  />
+</Figure>
+
+## Use cases, and when they earn their place
+
+```kotlin title="UseCase.kt" numbered
+class PlaceOrderUseCase(
+    private val orders: OrderRepository,
+    private val stock: StockRepository,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(cart: Cart): Result<Order> {
+        if (cart.isEmpty()) return Result.failure(EmptyCart)
+        if (!stock.hasAll(cart.lines)) return Result.failure(OutOfStock)
+        if (clock.now().hour !in 9..21) return Result.failure(OutsideHours)
+
+        return orders.place(cart)
+    }
+}
+```
+
+```kotlin title="Call.kt"
+val result = placeOrder(cart)      // operator invoke — reads like a function
+```
+
+That class earns its keep three times over: it spans two repositories, it holds rules a
+`ViewModel` should not, and it is testable with two fakes and no Android.
+
+<Warning>
+A use case that calls one repository method and returns it unchanged does not. It adds a file, a
+constructor parameter and a hop, and holds no decision. Write it when there is a rule to hold —
+not because the layer diagram has a box with that name in it.
+</Warning>
+
+<Detail summary="Anaemic domain: the failure that keeps the folders and loses the point">
+The most common way this goes wrong is a domain layer of nothing but `data class`es, with every rule
+still sitting in a `ViewModel`:
+
+```kotlin title="Anaemic.kt"
+// domain
+data class Order(val lines: List<Line>, val status: String)
+
+// presentation — the rules ended up here anyway
+val isOpen = order.status != "DELIVERED" && order.status != "CANCELLED"
+val total = order.lines.sumOf { it.price * it.quantity }
+```
+
+Both of those lines are domain rules wearing a `ViewModel`'s clothes. The second screen that needs
+them will copy them, and the two copies will drift.
+
+```kotlin title="Rich.kt"
+// domain
+data class Order(val lines: List<Line>, val status: OrderStatus) {
+    val isOpen: Boolean get() = status !in OrderStatus.finished
+    val total: Money get() = lines.fold(Money.ZERO) { acc, l -> acc + l.price * l.quantity }
+}
+```
+
+Note the `String` becoming an `OrderStatus` too. A status that can hold any string is a rule waiting
+to be broken by a typo.
+</Detail>
+
+## The cost, stated plainly
+
+Four layers means four files and two mapping functions for something that was one function call.
+That is a real price, and it buys three things: the rules run without a device, a change to the
+network stops at the data layer, and two screens cannot disagree about what "open" means.
+
+If none of those three matters for what you are building, you are paying for insurance against a
+risk you do not have.
+
+## Common mistakes
+
+<Pitfall title="Four, in order of how often they appear in real projects">
+**A use case per repository method.** A file that forwards a call is indirection with no decision.
+
+**An anaemic domain.** Data classes in `domain/`, rules in `ViewModel`s. The folders are clean and
+nothing was gained.
+
+**Android in the domain.** One `android.net.Uri` or one `@Parcelize` and the module no longer
+compiles alone. It happens by accident, which is why a module boundary catches it and a folder does
+not.
+
+**Mapping everything on principle.** If the DTO, the entity and the domain model are genuinely
+identical and the server contract is yours, three copies and four mappers are cost without benefit.
+Split them when they start to differ.
+</Pitfall>
+
+## Practice
+
+1. Search your domain package for `import android.`. Every hit is a place the rules cannot leave the
+   phone.
+2. Move one rule out of a `ViewModel` into a domain model and write a test for it that runs on the
+   JVM.
+3. Take a use case that forwards a single call and delete it. Notice what, if anything, is worse.
+4. Draw the Gradle dependencies between your modules and check every arrow points toward domain.
+5. Replace a `String` status with a sealed type and see which parts of the code stop compiling.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The dependency rule | Source-code dependencies point inward, toward the rules |
+| Inversion | Domain declares the interface; data implements and depends on domain |
+| Control versus dependency | Control flows outward at run time; dependencies point inward |
+| Domain | Pure Kotlin — the practical test is that it has no Android imports |
+| Use case | Worth it when it spans repositories, holds a rule, or is reused |
+| `operator fun invoke` | Lets a use case read as a function call |
+| Anaemic domain | Data classes in domain, rules in the `ViewModel` — the common failure |
+| The cost | Files and mappers; worth it for testability, isolation and consistency |
+
+<Interview title="The question, and the one sentence that answers it properly">
+"What is the dependency rule in Clean Architecture?"
+
+Source-code dependencies point inward, toward the layers holding the rules, so the domain depends on
+nothing. The sentence that shows it is understood rather than memorised is the inversion: the domain
+declares the repository interface and the data layer implements it, which means data depends on
+domain even though data is where the work happens. The observable payoff is that the domain module
+compiles with nothing but Kotlin, and that is the property everything else is in service of.
+</Interview>
