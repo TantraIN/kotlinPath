@@ -1,0 +1,195 @@
+---
+title: Testing ViewModels and repositories
+description: A ViewModel test is a state machine test — given this event and this repository result, what does the UI end up showing. Everything that makes it awkward comes from something that should have been injected.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Assert on the **state the UI would render**, not on the calls the `ViewModel` made. That single rule
+decides how the test is written, survives refactoring, and catches the bugs users actually see.
+</KeyIdea>
+
+## The setup, once
+
+```kotlin title="OrderViewModelTest.kt" numbered
+class OrderViewModelTest {
+
+    @get:Rule val mainDispatcherRule = MainDispatcherRule()
+
+    private lateinit var repository: FakeOrderRepository
+    private lateinit var viewModel: OrderViewModel
+
+    @Before
+    fun setUp() {
+        repository = FakeOrderRepository()
+        viewModel = OrderViewModel(repository)      // no Hilt, no Android, no emulator
+    }
+}
+```
+
+That constructor call is the payoff from the dependency injection phase. Because `OrderViewModel`
+receives an `OrderRepository` rather than building one, the test hands it a fake and the whole thing
+runs on the JVM in milliseconds.
+
+`MainDispatcherRule` is required because `viewModelScope` uses `Dispatchers.Main`, which does not
+exist off-device.
+
+## The three tests that cover most of it
+
+```kotlin title="Cases.kt" numbered
+@Test
+fun `shows orders when the repository has them`() = runTest {
+    repository.emit(listOf(order(1), order(2)))
+
+    viewModel.state.test {
+        assertEquals(2, awaitItem().orders.size)
+    }
+}
+
+@Test
+fun `shows an offline message when refresh fails`() = runTest {
+    repository.refreshResult = Outcome.Failure(DataError.Network.Offline)
+
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+}
+
+@Test
+fun `clears the error on a successful retry`() = runTest {
+    repository.refreshResult = Outcome.Failure(DataError.Network.Offline)
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    repository.refreshResult = Outcome.Success(Unit)
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    assertNull(viewModel.state.value.error)
+}
+```
+
+Content, failure, recovery. The third is the one teams skip and the one that catches real bugs — an
+error that is set and never cleared is a screen stuck showing "offline" after the network came back.
+
+<Quiz
+  question="A `ViewModel` test asserts on `state.value` immediately after calling `refresh()`. It passes with `UnconfinedTestDispatcher` in the rule. The team switches the rule to `StandardTestDispatcher` and thirty tests fail. Is the change wrong?"
+  options={[
+    "Yes — `StandardTestDispatcher` is not suitable for `ViewModel` tests",
+    "No. The tests were relying on `viewModelScope.launch` running eagerly, so they never stated when the work happened; they need `advanceUntilIdle()` before the assertion, and that makes the ordering explicit",
+    "No, but the fix is to add a small `delay()` before each assertion"
+  ]}
+  answer={1}
+  explanation="Thirty failures look alarming and are actually the change working. Under Unconfined, viewModelScope.launch starts running immediately up to its first real suspension, so a test could call refresh() and read state on the next line and see the finished result — without ever saying that the coroutine should have completed. Under Standard nothing runs until the test advances, so each test has to add advanceUntilIdle() and thereby state its own assumption. That is worth the churn: the Unconfined version silently stops being correct the moment the ViewModel adds a withContext or a second coroutine, and the resulting failure looks unrelated to the change. Adding a delay would be the worst of both — it reintroduces real waiting into a virtual-clock test and leaves the ordering just as implicit."
+/>
+
+## Testing the repository underneath
+
+A repository test is about **mapping and error translation**, which is where quiet bugs live:
+
+```kotlin title="RepositoryTest.kt" numbered
+@Test
+fun `maps a 404 to NotFound rather than throwing`() = runTest {
+    api.nextResponse = Response.error(404, "".toResponseBody())
+
+    val result = repository.order(id = 7)
+
+    assertEquals(Outcome.Failure(DataError.Network.NotFound), result)
+}
+
+@Test
+fun `keeps returning cached orders when the network fails`() = runTest {
+    dao.insert(orderEntity(1))
+    api.nextFailure = IOException()
+
+    repository.refresh()
+
+    assertEquals(listOf(order(1)), repository.observeOrders().first())
+}
+```
+
+The second test states the offline-first contract from the data-layer phase as an assertion: a failed
+refresh must not empty the screen. That is a rule you want written down somewhere that fails when
+broken.
+
+<Detail summary="Fakes that are worth their keep">
+A fake earns its place by having behaviour, not just canned answers:
+
+```kotlin title="FakeOrderRepository.kt" numbered
+class FakeOrderRepository : OrderRepository {
+    var refreshResult: Outcome<Unit> = Outcome.Success(Unit)
+    var refreshCount = 0                                    // for the rare interaction assertion
+    private val orders = MutableStateFlow<List<Order>>(emptyList())
+
+    override fun observeOrders(): Flow<List<Order>> = orders
+
+    override suspend fun refresh(): Outcome<Unit> {
+        refreshCount++
+        return refreshResult.also { if (it is Outcome.Success) orders.value = seeded }
+    }
+
+    fun emit(new: List<Order>) { orders.value = new }
+}
+```
+
+Two details make it useful. `refresh()` actually updates the flow on success, so a test can assert
+that the screen changed — which a stub returning `Success` cannot show. And `refreshCount` gives you
+the one interaction assertion you occasionally need without pulling in a mocking library for it.
+
+Keep the fake in `src/test` next to the tests, not in production source. And keep it honest: a fake
+that never fails, never returns an empty list and never emits twice will let bugs through in exactly
+those cases.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the third is the bug users report">
+**Verifying calls instead of state.** Passes when the `ViewModel` ignores the result.
+
+**No `MainDispatcherRule`.** `viewModelScope.launch` throws off-device.
+
+**Never testing recovery.** The error is set and never cleared, so the screen stays broken.
+
+**A fake with no behaviour.** Returning `Success` without changing anything proves nothing.
+
+**Reaching for Hilt.** A constructor call with a fake needs no graph at all.
+</Pitfall>
+
+## Practice
+
+1. Test that a failed refresh leaves previously loaded orders on screen.
+2. Test the recovery path: fail, then succeed, and assert the error is cleared.
+3. Make your fake's `refresh()` actually mutate its flow and see which assertions get stronger.
+4. Remove `MainDispatcherRule` and read the exception.
+5. Assert on `state.value` without `advanceUntilIdle` under `StandardTestDispatcher`.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Assert on | The state the UI would render |
+| Construction | Call the constructor with a fake; no Hilt, no emulator |
+| `MainDispatcherRule` | `viewModelScope` needs `Dispatchers.Main` |
+| Three cases | Content, failure, recovery |
+| Recovery | The one teams skip and users notice |
+| Repository tests | Mapping and error translation |
+| Offline-first | Assert that a failed refresh does not empty the screen |
+| A good fake | Has behaviour, so assertions can be about outcomes |
+| `refreshCount` | The occasional interaction assertion, without a mock |
+| Fake location | `src/test`, not production source |
+
+<Interview title="A question about what a ViewModel test is for">
+"How do you test a `ViewModel`?"
+
+By treating it as a state machine: give the repository a result, trigger the event, and assert on the
+state the UI would render. I construct it directly with a fake repository, which needs no Hilt and no
+emulator — that is exactly what constructor injection buys — plus a `MainDispatcherRule`, since
+`viewModelScope` uses `Dispatchers.Main` and that does not exist on the JVM.
+
+The three cases I always write are content, failure and recovery. The third is the one that gets
+skipped and the one that catches real bugs, because an error that is set and never cleared leaves the
+screen showing "offline" after the network came back. And I assert on state rather than verifying
+calls — a test that checks `refresh()` was called still passes when the `ViewModel` ignores the
+result, which is the bug it was supposed to catch.
+</Interview>

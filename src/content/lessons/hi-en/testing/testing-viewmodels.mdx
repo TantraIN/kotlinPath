@@ -1,0 +1,200 @@
+---
+title: ViewModels aur repositories ki padtal
+description: ViewModel ka test state machine ka test hai — is ghatna aur repository ke is jawab par, UI aakhir mein dikhata kya hai. Use jo bhi asahaj banata hai wo kisi aisi cheez se aata hai jo inject honi chahiye thi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Us **state par dawa kijiye jo UI banata** — un calls par nahi jo `ViewModel` ne kin. Wahi ek niyam tay
+karta hai ki test kaise likha jayega, wo refactor mein bachta hai, aur wahi bugs pakadta hai jo users
+ko sach mein dikhte hain.
+</KeyIdea>
+
+## Taiyari, ek baar
+
+```kotlin title="OrderViewModelTest.kt" numbered
+class OrderViewModelTest {
+
+    @get:Rule val mainDispatcherRule = MainDispatcherRule()
+
+    private lateinit var repository: FakeOrderRepository
+    private lateinit var viewModel: OrderViewModel
+
+    @Before
+    fun setUp() {
+        repository = FakeOrderRepository()
+        viewModel = OrderViewModel(repository)      // na Hilt, na Android, na emulator
+    }
+}
+```
+
+Wo constructor wali call dependency injection wale phase ka phal hai. Chunki `OrderViewModel`
+`OrderRepository` banata nahi balki paata hai, test use nakli cheez thama deta hai aur poori baat JVM
+par milliseconds mein chal jati hai.
+
+`MainDispatcherRule` isliye zaruri hai ki `viewModelScope` `Dispatchers.Main` leta hai, jo device se
+bahar hota hi nahi.
+
+## Wo teen tests jo zyadatar dhak lete hain
+
+```kotlin title="Cases.kt" numbered
+@Test
+fun `shows orders when the repository has them`() = runTest {
+    repository.emit(listOf(order(1), order(2)))
+
+    viewModel.state.test {
+        assertEquals(2, awaitItem().orders.size)
+    }
+}
+
+@Test
+fun `shows an offline message when refresh fails`() = runTest {
+    repository.refreshResult = Outcome.Failure(DataError.Network.Offline)
+
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+}
+
+@Test
+fun `clears the error on a successful retry`() = runTest {
+    repository.refreshResult = Outcome.Failure(DataError.Network.Offline)
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    repository.refreshResult = Outcome.Success(Unit)
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    assertNull(viewModel.state.value.error)
+}
+```
+
+Saamagri, nakami, wapsi. Teesra wahi hai jise teams chhod deti hain aur wahi asli bugs pakadta hai — jo
+error lagai gayi aur kabhi hatai nahi gayi, wo network laut aane ke baad bhi "offline" dikhati atki hui
+screen hai.
+
+<Quiz
+  question="Koi `ViewModel` wala test `refresh()` bulane ke turant baad `state.value` par dawa karta hai. Rule mein `UnconfinedTestDispatcher` ke saath wo pass hota hai. Team us rule ko `StandardTestDispatcher` kar deti hai aur tees tests nakaam ho jate hain. Kya wo badlaav galat hai?"
+  options={[
+    "Haan — `StandardTestDispatcher` `ViewModel` wale tests ke liye theek nahi hai",
+    "Nahi. Wo tests is par tike the ki `viewModelScope.launch` turant chal padta hai, to unhone kabhi bataya hi nahi ki wo kaam kab hua; unhe dawe se pehle `advanceUntilIdle()` chahiye, aur usse order saaf ho jata hai",
+    "Nahi, par ilaaj hai har dawe se pehle chhota sa `delay()` rakhna"
+  ]}
+  answer={1}
+  explanation="Tees nakamiyan darawni lagti hain aur asal mein wo badlaav apna kaam kar raha hai. Unconfined ke neeche viewModelScope.launch turant chalkar pehli asli rukavat tak pahunch jata hai, to koi test refresh() bulakar agli line par state padh sakta tha aur poora hua result dekh sakta tha — bina kabhi ye kahe ki wo coroutine poora ho jana chahiye tha. Standard ke neeche test ke aage badhane tak kuch chalta nahi, to har test ko advanceUntilIdle() jodna padta hai aur is tarah apni manyata khud batani padti hai. Wo uthal-puthal iske layak hai: Unconfined wala roop ViewModel ke koi withContext ya doosra coroutine jodte hi chupchap sahi hona band kar deta hai, aur usse bani nakami us badlaav se bematlab dikhti hai. delay jodna dono mein se sabse bura hota — wo aabhasi ghadi wale test mein asli intezar lauta deta hai aur order ko utna hi chhupa hua chhod deta hai."
+/>
+
+## Neeche wale repository ki padtal
+
+Repository ka test **badalne aur errors ke anuvad** ke baare mein hai, aur chupchap baithe bugs wahin
+rehte hain:
+
+```kotlin title="RepositoryTest.kt" numbered
+@Test
+fun `maps a 404 to NotFound rather than throwing`() = runTest {
+    api.nextResponse = Response.error(404, "".toResponseBody())
+
+    val result = repository.order(id = 7)
+
+    assertEquals(Outcome.Failure(DataError.Network.NotFound), result)
+}
+
+@Test
+fun `keeps returning cached orders when the network fails`() = runTest {
+    dao.insert(orderEntity(1))
+    api.nextFailure = IOException()
+
+    repository.refresh()
+
+    assertEquals(listOf(order(1)), repository.observeOrders().first())
+}
+```
+
+Doosra test data wale phase ke offline-first karaar ko dawe ki tarah likh deta hai: nakaam hua refresh
+screen khaali nahi kar sakta. Ye wo niyam hai jise aap kahin likha hua chahte ho taki tootne par wo
+nakaam ho.
+
+<Detail summary="Wo nakli cheezein jo apni keemat vasoolti hain">
+Nakli cheez apni jagah behaviour se banati hai, bane-banaye jawabon se nahi:
+
+```kotlin title="FakeOrderRepository.kt" numbered
+class FakeOrderRepository : OrderRepository {
+    var refreshResult: Outcome<Unit> = Outcome.Success(Unit)
+    var refreshCount = 0                                    // birle len-den wale dawe ke liye
+    private val orders = MutableStateFlow<List<Order>>(emptyList())
+
+    override fun observeOrders(): Flow<List<Order>> = orders
+
+    override suspend fun refresh(): Outcome<Unit> {
+        refreshCount++
+        return refreshResult.also { if (it is Outcome.Success) orders.value = seeded }
+    }
+
+    fun emit(new: List<Order>) { orders.value = new }
+}
+```
+
+Do bareekiyan use kaam ka banati hain. Safalta par `refresh()` sach mein us flow ko badalta hai, to koi
+test dawa kar sakta hai ki screen badli — jo `Success` lautata koi stub dikha hi nahi sakta. Aur
+`refreshCount` wo iklauta len-den wala dawa de deta hai jo aapko kabhi-kabhaar chahiye, bina uske liye
+poori mocking library uthaye.
+
+Nakli cheez ko `src/test` mein tests ke paas rakhiye, production ke source mein nahi. Aur use imandaar
+rakhiye: jo nakli cheez kabhi nakaam nahi hoti, kabhi khaali list nahi lautati aur kabhi do baar nahi
+bhejti wo theek unhin haalaton mein bugs nikal jane degi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur teesri wahi bug hai jiski users shikayat karte hain">
+**State ke bajaye calls dekhna.** `ViewModel` ke result andekha karne par bhi pass hota hai.
+
+**`MainDispatcherRule` na hona.** Device se bahar `viewModelScope.launch` phenkta hai.
+
+**Wapsi kabhi na dekhna.** Error lagti hai aur kabhi hatti nahi, to screen tooti reh jati hai.
+
+**Bina behaviour wali nakli cheez.** Kuch badle bina `Success` lautana kuch sabit nahi karta.
+
+**Hilt ki taraf jana.** Nakli cheez ke saath constructor ki ek call ko koi graph chahiye hi nahi.
+</Pitfall>
+
+## Abhyaas
+
+1. Dekhiye ki nakaam hua refresh pehle se lade orders ko screen par chhod deta hai.
+2. Wapsi wala raasta dekhiye: nakaam, phir safal, aur dawa kijiye ki error hat gayi.
+3. Apni nakli cheez ke `refresh()` ko sach mein flow badalne layak banaiye aur dekhiye ki kaun se dawe
+   mazboot hote hain.
+4. `MainDispatcherRule` hataiye aur exception padhiye.
+5. `StandardTestDispatcher` ke neeche bina `advanceUntilIdle` ke `state.value` par dawa kijiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Dawa kis par | Us state par jo UI banata |
+| Banana | Nakli cheez ke saath constructor bulaiye; na Hilt, na emulator |
+| `MainDispatcherRule` | `viewModelScope` ko `Dispatchers.Main` chahiye |
+| Teen maamle | Saamagri, nakami, wapsi |
+| Wapsi | Jise teams chhodti hain aur users notice karte hain |
+| Repository ke tests | Badalna aur errors ka anuvad |
+| Offline-first | Dawa kijiye ki nakaam refresh screen khaali nahi karta |
+| Achhi nakli cheez | Jiska behaviour hai, taki dawe natijon ke baare mein hon |
+| `refreshCount` | Kabhi-kabhaar ka len-den wala dawa, bina mock ke |
+| Nakli cheez kahan | `src/test` mein, production ke source mein nahi |
+
+<Interview title="Ek sawal, ki ViewModel ka test hota kisliye hai">
+"`ViewModel` ki padtal aap kaise karoge?"
+
+Use state machine mankar: repository ko koi jawab dijiye, ghatna chalaiye, aur us state par dawa kijiye
+jo UI banata. Main use nakli repository ke saath seedhe banata hoon, jise na Hilt chahiye na emulator —
+constructor injection yahi khareedti hai — aur saath mein `MainDispatcherRule`, kyunki `viewModelScope`
+`Dispatchers.Main` leta hai aur wo JVM par hota hi nahi.
+
+Jo teen maamle main hamesha likhta hoon wo hain saamagri, nakami aur wapsi. Teesra wahi hai jo chhoot
+jata hai aur wahi asli bugs pakadta hai, kyunki jo error lagi aur kabhi hati nahi wo network laut aane
+ke baad bhi screen par "offline" chhod deti hai. Aur main calls dekhne ke bajaye state par dawa karta
+hoon — jo test ye dekhta hai ki `refresh()` bulaya gaya wo tab bhi pass hota hai jab `ViewModel` result
+andekha kar de, aur theek wahi bug use pakadna tha.
+</Interview>

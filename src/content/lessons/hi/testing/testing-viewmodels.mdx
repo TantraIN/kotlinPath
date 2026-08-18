@@ -1,0 +1,195 @@
+---
+title: ViewModels और repositories की जाँच
+description: ViewModel का test state machine का test है — इस घटना और repository के इस जवाब पर, UI आखिर में दिखाता क्या है। उसे जो भी असहज बनाता है वह किसी ऐसी चीज से आता है जो inject होनी चाहिए थी।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+उस **state पर दावा कीजिए जो UI बनाता** — उन calls पर नहीं जो `ViewModel` ने कीं। वही एक नियम तय करता
+है कि test कैसे लिखा जाएगा, वह refactor में बचता है, और वही bugs पकड़ता है जो users को सच में दिखते
+हैं।
+</KeyIdea>
+
+## तैयारी, एक बार
+
+```kotlin title="OrderViewModelTest.kt" numbered
+class OrderViewModelTest {
+
+    @get:Rule val mainDispatcherRule = MainDispatcherRule()
+
+    private lateinit var repository: FakeOrderRepository
+    private lateinit var viewModel: OrderViewModel
+
+    @Before
+    fun setUp() {
+        repository = FakeOrderRepository()
+        viewModel = OrderViewModel(repository)      // न Hilt, न Android, न emulator
+    }
+}
+```
+
+वह constructor वाली call dependency injection वाले phase का फल है। चूँकि `OrderViewModel`
+`OrderRepository` बनाता नहीं बल्कि पाता है, test उसे नकली चीज थमा देता है और पूरी बात JVM पर
+milliseconds में चल जाती है।
+
+`MainDispatcherRule` इसलिए जरूरी है कि `viewModelScope` `Dispatchers.Main` लेता है, जो device से बाहर
+होता ही नहीं।
+
+## वे तीन tests जो ज्यादातर ढक लेते हैं
+
+```kotlin title="Cases.kt" numbered
+@Test
+fun `shows orders when the repository has them`() = runTest {
+    repository.emit(listOf(order(1), order(2)))
+
+    viewModel.state.test {
+        assertEquals(2, awaitItem().orders.size)
+    }
+}
+
+@Test
+fun `shows an offline message when refresh fails`() = runTest {
+    repository.refreshResult = Outcome.Failure(DataError.Network.Offline)
+
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+}
+
+@Test
+fun `clears the error on a successful retry`() = runTest {
+    repository.refreshResult = Outcome.Failure(DataError.Network.Offline)
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    repository.refreshResult = Outcome.Success(Unit)
+    viewModel.refresh()
+    advanceUntilIdle()
+
+    assertNull(viewModel.state.value.error)
+}
+```
+
+सामग्री, नाकामी, वापसी। तीसरा वही है जिसे teams छोड़ देती हैं और वही असली bugs पकड़ता है — जो error
+लगाई गई और कभी हटाई नहीं गई, वह network लौट आने के बाद भी "offline" दिखाती अटकी हुई screen है।
+
+<Quiz
+  question="कोई `ViewModel` वाला test `refresh()` बुलाने के तुरंत बाद `state.value` पर दावा करता है। Rule में `UnconfinedTestDispatcher` के साथ वह पास होता है। Team उस rule को `StandardTestDispatcher` कर देती है और तीस tests नाकाम हो जाते हैं। क्या वह बदलाव गलत है?"
+  options={[
+    "हाँ — `StandardTestDispatcher` `ViewModel` वाले tests के लिए ठीक नहीं है",
+    "नहीं। वे tests इस पर टिके थे कि `viewModelScope.launch` तुरंत चल पड़ता है, तो उन्होंने कभी बताया ही नहीं कि वह काम कब हुआ; उन्हें दावे से पहले `advanceUntilIdle()` चाहिए, और उससे क्रम साफ हो जाता है",
+    "नहीं, पर इलाज है हर दावे से पहले छोटा सा `delay()` रखना"
+  ]}
+  answer={1}
+  explanation="तीस नाकामियाँ डरावनी लगती हैं और असल में वह बदलाव अपना काम कर रहा है। Unconfined के नीचे viewModelScope.launch तुरंत चलकर पहली असली रुकावट तक पहुँच जाता है, तो कोई test refresh() बुलाकर अगली लाइन पर state पढ़ सकता था और पूरा हुआ नतीजा देख सकता था — बिना कभी यह कहे कि वह coroutine पूरा हो जाना चाहिए था। Standard के नीचे test के आगे बढ़ाने तक कुछ चलता नहीं, तो हर test को advanceUntilIdle() जोड़ना पड़ता है और इस तरह अपनी मान्यता खुद बतानी पड़ती है। वह उथल-पुथल इसके लायक है: Unconfined वाला रूप ViewModel के कोई withContext या दूसरा coroutine जोड़ते ही चुपचाप सही होना बंद कर देता है, और उससे बनी नाकामी उस बदलाव से बेमतलब दिखती है। delay जोड़ना दोनों में से सबसे बुरा होता — वह आभासी घड़ी वाले test में असली इंतजार लौटा देता है और क्रम को उतना ही छिपा हुआ छोड़ देता है।"
+/>
+
+## नीचे वाले repository की जाँच
+
+Repository का test **बदलने और errors के अनुवाद** के बारे में है, और चुपचाप बैठे bugs वहीं रहते हैं:
+
+```kotlin title="RepositoryTest.kt" numbered
+@Test
+fun `maps a 404 to NotFound rather than throwing`() = runTest {
+    api.nextResponse = Response.error(404, "".toResponseBody())
+
+    val result = repository.order(id = 7)
+
+    assertEquals(Outcome.Failure(DataError.Network.NotFound), result)
+}
+
+@Test
+fun `keeps returning cached orders when the network fails`() = runTest {
+    dao.insert(orderEntity(1))
+    api.nextFailure = IOException()
+
+    repository.refresh()
+
+    assertEquals(listOf(order(1)), repository.observeOrders().first())
+}
+```
+
+दूसरा test data वाले phase के offline-first करार को दावे की तरह लिख देता है: नाकाम हुआ refresh screen
+खाली नहीं कर सकता। यह वह नियम है जिसे आप कहीं लिखा हुआ चाहते हैं ताकि टूटने पर वह नाकाम हो।
+
+<Detail summary="वे नकली चीजें जो अपनी कीमत वसूलती हैं">
+नकली चीज अपनी जगह बर्ताव से बनाती है, बने-बनाए जवाबों से नहीं:
+
+```kotlin title="FakeOrderRepository.kt" numbered
+class FakeOrderRepository : OrderRepository {
+    var refreshResult: Outcome<Unit> = Outcome.Success(Unit)
+    var refreshCount = 0                                    // बिरले लेन-देन वाले दावे के लिए
+    private val orders = MutableStateFlow<List<Order>>(emptyList())
+
+    override fun observeOrders(): Flow<List<Order>> = orders
+
+    override suspend fun refresh(): Outcome<Unit> {
+        refreshCount++
+        return refreshResult.also { if (it is Outcome.Success) orders.value = seeded }
+    }
+
+    fun emit(new: List<Order>) { orders.value = new }
+}
+```
+
+दो बारीकियाँ उसे काम का बनाती हैं। सफलता पर `refresh()` सच में उस flow को बदलता है, तो कोई test दावा
+कर सकता है कि screen बदली — जो `Success` लौटाता कोई stub दिखा ही नहीं सकता। और `refreshCount` वह
+इकलौता लेन-देन वाला दावा दे देता है जो आपको कभी-कभार चाहिए, बिना उसके लिए पूरी mocking library उठाए।
+
+नकली चीज को `src/test` में tests के पास रखिए, production के source में नहीं। और उसे ईमानदार रखिए: जो
+नकली चीज कभी नाकाम नहीं होती, कभी खाली list नहीं लौटाती और कभी दो बार नहीं भेजती वह ठीक उन्हीं
+हालतों में bugs निकल जाने देगी।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और तीसरी वही bug है जिसकी users शिकायत करते हैं">
+**State के बजाय calls जाँचना।** `ViewModel` के नतीजा अनदेखा करने पर भी पास होता है।
+
+**`MainDispatcherRule` न होना।** Device से बाहर `viewModelScope.launch` फेंकता है।
+
+**वापसी कभी न जाँचना।** Error लगती है और कभी हटती नहीं, तो screen टूटी रह जाती है।
+
+**बिना बर्ताव वाली नकली चीज।** कुछ बदले बिना `Success` लौटाना कुछ साबित नहीं करता।
+
+**Hilt की तरफ जाना।** नकली चीज के साथ constructor की एक call को कोई graph चाहिए ही नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. जाँचिए कि नाकाम हुआ refresh पहले से लदे orders को screen पर छोड़ देता है।
+2. वापसी वाला रास्ता जाँचिए: नाकाम, फिर सफल, और दावा कीजिए कि error हट गई।
+3. अपनी नकली चीज के `refresh()` को सच में flow बदलने लायक बनाइए और देखिए कि कौन से दावे मजबूत होते हैं।
+4. `MainDispatcherRule` हटाइए और exception पढ़िए।
+5. `StandardTestDispatcher` के नीचे बिना `advanceUntilIdle` के `state.value` पर दावा कीजिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| दावा किस पर | उस state पर जो UI बनाता |
+| बनाना | नकली चीज के साथ constructor बुलाइए; न Hilt, न emulator |
+| `MainDispatcherRule` | `viewModelScope` को `Dispatchers.Main` चाहिए |
+| तीन मामले | सामग्री, नाकामी, वापसी |
+| वापसी | जिसे teams छोड़ती हैं और users नोटिस करते हैं |
+| Repository के tests | बदलना और errors का अनुवाद |
+| Offline-first | दावा कीजिए कि नाकाम refresh screen खाली नहीं करता |
+| अच्छी नकली चीज | जिसका बर्ताव है, ताकि दावे नतीजों के बारे में हों |
+| `refreshCount` | कभी-कभार का लेन-देन वाला दावा, बिना mock के |
+| नकली चीज कहाँ | `src/test` में, production के source में नहीं |
+
+<Interview title="एक सवाल, कि ViewModel का test होता किसलिए है">
+"`ViewModel` की जाँच आप कैसे करेंगे?"
+
+उसे state machine मानकर: repository को कोई जवाब दीजिए, घटना चलाइए, और उस state पर दावा कीजिए जो UI
+बनाता। मैं उसे नकली repository के साथ सीधे बनाता हूँ, जिसे न Hilt चाहिए न emulator — constructor
+injection यही खरीदती है — और साथ में `MainDispatcherRule`, क्योंकि `viewModelScope`
+`Dispatchers.Main` लेता है और वह JVM पर होता ही नहीं।
+
+जो तीन मामले मैं हमेशा लिखता हूँ वे हैं सामग्री, नाकामी और वापसी। तीसरा वही है जो छूट जाता है और वही
+असली bugs पकड़ता है, क्योंकि जो error लगी और कभी हटी नहीं वह network लौट आने के बाद भी screen पर
+"offline" छोड़ देती है। और मैं calls जाँचने के बजाय state पर दावा करता हूँ — जो test यह देखता है कि
+`refresh()` बुलाया गया वह तब भी पास होता है जब `ViewModel` नतीजा अनदेखा कर दे, और ठीक वही bug उसे
+पकड़ना था।
+</Interview>
