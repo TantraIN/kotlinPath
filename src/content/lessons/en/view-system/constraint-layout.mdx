@@ -1,0 +1,193 @@
+---
+title: "ConstraintLayout: chains, guidelines and barriers"
+description: One flat hierarchy that expresses what four nested layouts used to. The rules are few, but two of them catch everybody.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Every view needs at least one **horizontal** and one **vertical** constraint, or it lands at the
+top-left corner. Chains, guidelines and barriers exist so that relationships between views never
+require another level of nesting.
+</KeyIdea>
+
+## Why this matters
+
+The previous lesson ended on the cost of nesting: every level is another measure pass, and a
+weighted level is two. A screen built from four nested `LinearLayout`s pays that on every frame.
+
+`ConstraintLayout` says the same thing in one level. The trade is that positions become
+relationships you declare rather than a structure you build.
+
+## A constraint is a pair of sides
+
+```xml title="res/layout/card.xml" numbered
+<androidx.constraintlayout.widget.ConstraintLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:id="@+id/avatar"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintStart_toEndOf="@id/avatar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/avatar" />
+</androidx.constraintlayout.widget.ConstraintLayout>
+```
+
+Read each attribute as *my side, to your side*: `Start_toEndOf` means "my start edge attaches to
+your end edge". Constrain both opposite sides and the view centres between them.
+
+<Quiz
+  question={'Inside a ConstraintLayout you set `android:layout_width="0dp"`. What have you asked for?'}
+  options={[
+    "A zero-width view, so nothing is drawn",
+    "Match constraints — stretch to fill whatever the constraints leave",
+    "The same as wrap_content, since 0dp is ignored here",
+  ]}
+  answer={1}
+  explanation="In ConstraintLayout 0dp is redefined to mean MATCH_CONSTRAINT: the view stretches to whatever space its own constraints allow. That is the direct replacement for match_parent, which is not supported here at all — using match_parent gives you a view sized to the whole parent regardless of its constraints, which then overlaps its neighbours. The rule is: match_parent never, 0dp plus two opposing constraints instead."
+/>
+
+## Chains distribute a row
+
+A chain is two or more views constrained to each other in both directions. The first view in the
+chain — the **head** — carries the style.
+
+| `layout_constraintHorizontal_chainStyle` | Result |
+| --- | --- |
+| `spread` | Space divided evenly around every view (the default) |
+| `spread_inside` | Outer views pinned to the edges, space between the rest |
+| `packed` | Views pushed together, the group positioned by `bias` |
+
+Give the chain members `0dp` and a `layout_constraintHorizontal_weight` and you get exactly what
+`layout_weight` did in a `LinearLayout` — without the extra measure pass.
+
+## Guidelines and barriers are not the same thing
+
+<Compare
+  left={{
+    title: "Guideline",
+    subtitle: "A fixed invisible line",
+    accent: "sky",
+    points: [
+      "+ Placed at a percent or a fixed dp from an edge",
+      "+ Right for a design grid — a 16dp margin column",
+      "+ Costs nothing; it is never drawn",
+      "- Does not move when content changes",
+    ],
+  }}
+  right={{
+    title: "Barrier",
+    subtitle: "A line that follows content",
+    accent: "emerald",
+    points: [
+      "+ Sits at the edge of whichever referenced view is largest",
+      "+ Right for a label column where the longest label wins",
+      "+ Survives translation, where label lengths change",
+      "- References views by id, so it needs maintaining",
+    ],
+  }}
+/>
+
+```xml title="Barrier.xml" numbered
+<androidx.constraintlayout.widget.Barrier
+    android:id="@+id/labelEnd"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    app:barrierDirection="end"
+    app:constraint_referenced_ids="nameLabel,emailLabel,phoneLabel" />
+```
+
+Every value field then constrains its start to `@id/labelEnd`, and the column lines up no matter
+which label is longest — including after a translator makes one of them twice as long.
+
+## Under the hood: it is a solver
+
+<Timeline>
+  <TimelineItem title="Constraints become equations" meta="not instructions">
+    The layout is a system of linear relationships, solved by a Cassowary-style solver. You are
+    describing a result, not a sequence of steps.
+  </TimelineItem>
+  <TimelineItem title="Which is why order does not matter" meta="mostly">
+    Declaring a view before the view it references is fine. The solver sees the whole system at
+    once.
+  </TimelineItem>
+  <TimelineItem title="And why circles are an error" meta="not a crash">
+    Two views constrained to each other's edges with no fixed point have no solution. The editor
+    warns, and at run time one of them collapses.
+  </TimelineItem>
+  <TimelineItem title="One flat pass" meta="the payoff">
+    Because the whole thing is solved together, the tree is measured once rather than once per
+    nesting level.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`bias`, and what it does when both sides are constrained">
+Constrain both opposite sides of a view and it centres. `layout_constraintHorizontal_bias` moves
+it along that span: `0.0` sits at the start, `1.0` at the end, `0.5` is the centre and the
+default.
+
+```xml title="Bias.xml"
+app:layout_constraintStart_toStartOf="parent"
+app:layout_constraintEnd_toEndOf="parent"
+app:layout_constraintHorizontal_bias="0.25"
+```
+
+This is how you place something a quarter of the way across without a guideline — and unlike a
+fixed margin it holds on every screen width.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that produce a view in the corner">
+**A missing constraint in one direction.** Constrain horizontally but not vertically and the view
+sits at the top, silently. The editor flags it; the build does not.
+
+**`match_parent` on a child.** Unsupported here. Use `0dp` with constraints on both sides.
+
+**Nesting `ConstraintLayout` inside `ConstraintLayout`.** It works, and it throws away the reason
+you chose it. Reach for a chain, a guideline or a barrier first.
+
+**A guideline where a barrier belongs.** A fixed line looks right in English and breaks the
+moment a translated label is longer.
+</Pitfall>
+
+## Practice
+
+1. Place a view with only a horizontal constraint. Run it, then add the vertical one.
+2. Build a three-view row as a chain, and cycle the head through `spread`, `spread_inside` and
+   `packed`.
+3. Make a two-column form with a guideline at 30%. Then replace the guideline with a barrier and
+   double the length of one label.
+4. Take a screen built from nested `LinearLayout`s and flatten it. Compare the depth in Layout
+   Inspector.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Constraint | *My side, to your side*; at least one per axis |
+| `0dp` | Match constraints — the replacement for `match_parent` |
+| `match_parent` | Not supported on a child |
+| Chain | Mutually constrained views; the head carries the style |
+| `spread` / `spread_inside` / `packed` | How a chain distributes space |
+| Guideline | A fixed invisible line at a percent or dp |
+| Barrier | A line that follows the largest referenced view |
+| `bias` | Where along a constrained span the view sits |
+
+<Interview title="A quick way to tell whether someone has built a real screen with it">
+"When would you use a barrier rather than a guideline?"
+
+When the line has to follow content rather than sit at a fixed place — a label column where the
+longest label decides the width. Adding that this is what survives translation, because a
+guideline tuned to English breaks when a label gets longer, is the part that sounds like it came
+from a real screen rather than a tutorial.
+</Interview>

@@ -1,0 +1,194 @@
+---
+title: "ConstraintLayout: chains, guidelines aur barriers"
+description: Ek sapaat hierarchy jo wahi kehti hai jo pehle chaar nested layouts kehte the. Niyam kam hain, par unmein se do har kisi ko pakad lete hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Har view ko kam se kam ek **aadi** aur ek **khadi** constraint chahiye, warna wo upar-baayen kone
+mein ja baithti hai. Chains, guidelines aur barriers isiliye hain taaki views ke aapsi rishte ke
+liye kabhi nesting ka ek aur level na jodna pade.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Pichhla lesson nesting ki keemat par khatam hua tha: har level ek aur measure pass hai, aur weight
+wala level do. Chaar nested `LinearLayout` se bani screen ye keemat har frame par chukati hai.
+
+`ConstraintLayout` wahi baat ek hi level mein keh deta hai. Badle mein jagahein aise rishte ban
+jati hain jo aap batate ho, na ki aisa structure jo aap khada karte ho.
+
+## Constraint do kinaron ki jodi hai
+
+```xml title="res/layout/card.xml" numbered
+<androidx.constraintlayout.widget.ConstraintLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:id="@+id/avatar"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintStart_toEndOf="@id/avatar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/avatar" />
+</androidx.constraintlayout.widget.ConstraintLayout>
+```
+
+Har attribute ko *mera kinara, tumhare kinare se* ki tarah padho: `Start_toEndOf` ka matlab hai
+"mera start kinara tumhare end kinare se judta hai". Dono aamne-saamne ke kinare baandh do aur
+view unke beech mein aa jati hai.
+
+<Quiz
+  question={'ConstraintLayout ke andar aapne `android:layout_width="0dp"` rakha. Aapne maanga kya?'}
+  options={[
+    "Zero chaudai wali view, to kuch banega hi nahi",
+    "Match constraints — constraints jitni jagah chhoden, utna phail jao",
+    "wrap_content jaisa hi, kyunki yahan 0dp ignore ho jata hai",
+  ]}
+  answer={1}
+  explanation="ConstraintLayout mein 0dp ka matlab badalkar MATCH_CONSTRAINT kar diya gaya hai: view utni phailti hai jitni jagah uski apni constraints deti hain. Yahi match_parent ki seedhi jagah leta hai, jo yahan support hi nahi hota — match_parent dene par view apni constraints ki parwah kiye bina poore parent jitni ho jati hai aur phir apne padosiyon ke upar chadh jati hai. Niyam yahi hai: match_parent kabhi nahi, uski jagah 0dp aur aamne-saamne ki do constraints."
+/>
+
+## Chain ek row ko baantti hai
+
+Chain do ya zyada views hain jo dono dishaon mein ek-dusre se bandhi hon. Chain ki pehli view —
+**head** — style tay karti hai.
+
+| `layout_constraintHorizontal_chainStyle` | Result |
+| --- | --- |
+| `spread` | Har view ke chaaron taraf jagah barabar baantti hai (default) |
+| `spread_inside` | Bahri views kinaron se chipakti hain, jagah baaki ke beech baantti hai |
+| `packed` | Views paas-paas aa jati hain, aur poora guchha `bias` se jamta hai |
+
+Chain walon ko `0dp` aur `layout_constraintHorizontal_weight` de do, aur theek wahi milega jo
+`LinearLayout` mein `layout_weight` deta tha — bina us extra measure pass ke.
+
+## Guideline aur barrier ek cheez nahi hain
+
+<Compare
+  left={{
+    title: "Guideline",
+    subtitle: "Ek tay, na dikhne wali rekha",
+    accent: "sky",
+    points: [
+      "+ Kisi kinare se percent ya tay dp par rakhi jati hai",
+      "+ Design grid ke liye sahi — 16dp wala margin column",
+      "+ Koi keemat nahi; ye kabhi draw hi nahi hoti",
+      "- Content badalne par hilti nahi",
+    ],
+  }}
+  right={{
+    title: "Barrier",
+    subtitle: "Content ke peechhe chalne wali rekha",
+    accent: "emerald",
+    points: [
+      "+ Jin views ka naam diya hai, unmein se sabse badi ke kinare par baithti hai",
+      "+ Aise label column ke liye sahi jahan sabse lamba label jeetta hai",
+      "+ Translation jhel jati hai, jahan labels ki lambai badalti hai",
+      "- Views ko id se bulati hai, to use sambhalna padta hai",
+    ],
+  }}
+/>
+
+```xml title="Barrier.xml" numbered
+<androidx.constraintlayout.widget.Barrier
+    android:id="@+id/labelEnd"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    app:barrierDirection="end"
+    app:constraint_referenced_ids="nameLabel,emailLabel,phoneLabel" />
+```
+
+Phir har value wala field apna start `@id/labelEnd` se baandh deta hai, aur column seedha rehta
+hai chahe koi bhi label sabse lamba ho — translator ke kisi label ko dugna kar dene ke baad bhi.
+
+## Andar ki baat: ye ek solver hai
+
+<Timeline>
+  <TimelineItem title="Constraints equations ban jati hain" meta="nirdesh nahi">
+    Layout aapas mein jude rishton ka ek set hai, jise Cassowary jaisa solver hal karta hai. Aap
+    result bata rahe ho, kadmon ki koi kataar nahi.
+  </TimelineItem>
+  <TimelineItem title="Isiliye order maayne nahi rakhta" meta="lagbhag">
+    Jis view ka naam le rahe ho usse pehle bhi apni view likh sakte ho. Solver poora set ek saath
+    dekhta hai.
+  </TimelineItem>
+  <TimelineItem title="Aur isiliye gol-ghera error hai" meta="crash nahi">
+    Do views jo ek-dusre ke kinaron se bandhi hon aur kahin koi tay bindu na ho — uska koi hal hi
+    nahi. Editor chetavni deta hai, aur chalte waqt unmein se ek sikud jati hai.
+  </TimelineItem>
+  <TimelineItem title="Ek sapaat pass" meta="yahi faayda hai">
+    Poora set ek saath hal hota hai, isliye ped har nesting level par ek baar nahi, kul ek baar
+    measure hota hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`bias`, aur dono taraf bandhi hone par wo karta kya hai">
+View ke dono aamne-saamne kinare baandh do to wo beech mein aa jati hai.
+`layout_constraintHorizontal_bias` use usi phailav par khiskata hai: `0.0` shuru mein, `1.0` ant
+mein, `0.5` beech mein — aur yahi default hai.
+
+```xml title="Bias.xml"
+app:layout_constraintStart_toStartOf="parent"
+app:layout_constraintEnd_toEndOf="parent"
+app:layout_constraintHorizontal_bias="0.25"
+```
+
+Bina guideline ke kisi cheez ko chauthai doori par rakhne ka yahi tarika hai — aur tay margin ke
+ulat, ye har screen ki chaudai par tika rehta hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, jinse view kone mein ja baithti hai">
+**Ek disha mein constraint chhoot jana.** Aadi baandh di par khadi nahi, to view chupchap upar
+baith jati hai. Editor batata hai; build nahi.
+
+**Kisi child par `match_parent`.** Yahan ye support hi nahi hai. Dono taraf constraints ke saath
+`0dp` use karo.
+
+**`ConstraintLayout` ke andar `ConstraintLayout`.** Chal to jata hai, aur jis wajah se aapne use
+chuna tha wahi fenk deta hai. Pehle chain, guideline ya barrier ki taraf jao.
+
+**Jahan barrier chahiye wahan guideline.** Tay rekha angrezi mein sahi dikhti hai aur translate
+kiya hua label lamba hote hi toot jati hai.
+</Pitfall>
+
+## Practice
+
+1. Sirf aadi constraint wali ek view rakho. Chalao, phir khadi wali bhi jodo.
+2. Teen views ki ek row chain banao, aur head ko `spread`, `spread_inside` aur `packed` se ghumao.
+3. 30% par guideline rakhkar do-column wala form banao. Phir guideline ki jagah barrier rakho aur
+   ek label ki lambai dugni kar do.
+4. Nested `LinearLayout` se bani koi screen lekar use sapaat karo. Layout Inspector mein gehrai
+   milao.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Constraint | *Mera kinara, tumhare kinare se*; har disha mein kam se kam ek |
+| `0dp` | Match constraints — `match_parent` ki jagah yahi |
+| `match_parent` | Child par support hi nahi |
+| Chain | Aapas mein bandhi views; head style tay karti hai |
+| `spread` / `spread_inside` / `packed` | Chain jagah kaise baantti hai |
+| Guideline | Percent ya dp par tay, na dikhne wali rekha |
+| Barrier | Sabse badi batai gayi view ke peechhe chalne wali rekha |
+| `bias` | Bandhe hue phailav par view kahan baithegi |
+
+<Interview title="Ye jaldi pata chal jata hai ki kisi ne isse asli screen banai hai ya nahi">
+"Guideline ki jagah barrier kab use karoge?"
+
+Jab rekha ko tay jagah par baithne ke bajaye content ke peechhe chalna ho — jaise aisa label column
+jiski chaudai sabse lamba label tay karta hai. Ye jod dena ki translation yahi jhelta hai, kyunki
+angrezi ke hisaab se set ki gayi guideline label lamba hote hi toot jati hai, wahi hissa hai jo
+tutorial nahi, asli screen jaisa lagta hai.
+</Interview>

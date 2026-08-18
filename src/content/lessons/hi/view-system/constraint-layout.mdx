@@ -1,0 +1,194 @@
+---
+title: "ConstraintLayout: chains, guidelines और barriers"
+description: एक सपाट hierarchy जो वही कहती है जो पहले चार nested layouts कहते थे। नियम कम हैं, पर उनमें से दो हर किसी को पकड़ लेते हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+हर view को कम से कम एक **आड़ी** और एक **खड़ी** constraint चाहिए, वरना वह ऊपर-बाएँ कोने में जा
+बैठती है। Chains, guidelines और barriers इसीलिए हैं ताकि views के आपसी रिश्ते के लिए कभी nesting
+का एक और स्तर न जोड़ना पड़े।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+पिछला पाठ nesting की कीमत पर खत्म हुआ था: हर स्तर एक और measure pass है, और weight वाला स्तर दो।
+चार nested `LinearLayout` से बनी screen यह कीमत हर frame पर चुकाती है।
+
+`ConstraintLayout` वही बात एक ही स्तर में कह देता है। बदले में जगहें ऐसे रिश्ते बन जाती हैं जो आप
+बताते हैं, न कि ऐसा ढाँचा जो आप खड़ा करते हैं।
+
+## Constraint दो किनारों की जोड़ी है
+
+```xml title="res/layout/card.xml" numbered
+<androidx.constraintlayout.widget.ConstraintLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:id="@+id/avatar"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintStart_toEndOf="@id/avatar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/avatar" />
+</androidx.constraintlayout.widget.ConstraintLayout>
+```
+
+हर attribute को *मेरा किनारा, तुम्हारे किनारे से* की तरह पढ़िए: `Start_toEndOf` का मतलब है "मेरा
+start किनारा तुम्हारे end किनारे से जुड़ता है"। दोनों आमने-सामने के किनारे बाँध दीजिए और view
+उनके बीच में आ जाती है।
+
+<Quiz
+  question={'ConstraintLayout के अंदर आपने `android:layout_width="0dp"` रखा। आपने माँगा क्या?'}
+  options={[
+    "शून्य चौड़ाई वाली view, तो कुछ बनेगा ही नहीं",
+    "Match constraints — constraints जितनी जगह छोड़ें, उतना फैल जाओ",
+    "wrap_content जैसा ही, क्योंकि यहाँ 0dp अनदेखा हो जाता है",
+  ]}
+  answer={1}
+  explanation="ConstraintLayout में 0dp का मतलब बदलकर MATCH_CONSTRAINT कर दिया गया है: view उतनी फैलती है जितनी जगह उसकी अपनी constraints देती हैं। यही match_parent की सीधी जगह लेता है, जो यहाँ support ही नहीं होता — match_parent देने पर view अपनी constraints की परवाह किए बिना पूरे parent जितनी हो जाती है और फिर अपने पड़ोसियों के ऊपर चढ़ जाती है। नियम यही है: match_parent कभी नहीं, उसकी जगह 0dp और आमने-सामने की दो constraints।"
+/>
+
+## Chain एक row को बाँटती है
+
+Chain दो या ज्यादा views हैं जो दोनों दिशाओं में एक-दूसरे से बँधी हों। Chain की पहली view —
+**head** — style तय करती है।
+
+| `layout_constraintHorizontal_chainStyle` | नतीजा |
+| --- | --- |
+| `spread` | हर view के चारों तरफ जगह बराबर बँटती है (default) |
+| `spread_inside` | बाहरी views किनारों से चिपकती हैं, जगह बाकी के बीच बँटती है |
+| `packed` | Views पास-पास आ जाती हैं, और पूरा गुच्छा `bias` से जमता है |
+
+Chain वालों को `0dp` और `layout_constraintHorizontal_weight` दे दीजिए, और ठीक वही मिलेगा जो
+`LinearLayout` में `layout_weight` देता था — बिना उस अतिरिक्त measure pass के।
+
+## Guideline और barrier एक चीज नहीं हैं
+
+<Compare
+  left={{
+    title: "Guideline",
+    subtitle: "एक तय, न दिखने वाली रेखा",
+    accent: "sky",
+    points: [
+      "+ किसी किनारे से percent या तय dp पर रखी जाती है",
+      "+ Design grid के लिए सही — 16dp वाला margin column",
+      "+ कोई कीमत नहीं; यह कभी draw ही नहीं होती",
+      "- Content बदलने पर हिलती नहीं",
+    ],
+  }}
+  right={{
+    title: "Barrier",
+    subtitle: "Content के पीछे चलने वाली रेखा",
+    accent: "emerald",
+    points: [
+      "+ जिन views का नाम दिया है, उनमें से सबसे बड़ी के किनारे पर बैठती है",
+      "+ ऐसे label column के लिए सही जहाँ सबसे लंबा label जीतता है",
+      "+ Translation झेल जाती है, जहाँ labels की लंबाई बदलती है",
+      "- Views को id से बुलाती है, तो उसे सँभालना पड़ता है",
+    ],
+  }}
+/>
+
+```xml title="Barrier.xml" numbered
+<androidx.constraintlayout.widget.Barrier
+    android:id="@+id/labelEnd"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    app:barrierDirection="end"
+    app:constraint_referenced_ids="nameLabel,emailLabel,phoneLabel" />
+```
+
+फिर हर value वाला field अपना start `@id/labelEnd` से बाँध देता है, और column सीधा रहता है चाहे
+कोई भी label सबसे लंबा हो — translator के किसी label को दुगना कर देने के बाद भी।
+
+## अंदर की बात: यह एक solver है
+
+<Timeline>
+  <TimelineItem title="Constraints समीकरण बन जाती हैं" meta="निर्देश नहीं">
+    Layout आपस में जुड़े रिश्तों का एक set है, जिसे Cassowary जैसा solver हल करता है। आप नतीजा बता
+    रहे हैं, कदमों की कोई कतार नहीं।
+  </TimelineItem>
+  <TimelineItem title="इसीलिए क्रम मायने नहीं रखता" meta="लगभग">
+    जिस view का नाम ले रहे हैं उससे पहले भी अपनी view लिख सकते हैं। Solver पूरा set एक साथ देखता
+    है।
+  </TimelineItem>
+  <TimelineItem title="और इसीलिए गोल-घेरा error है" meta="crash नहीं">
+    दो views जो एक-दूसरे के किनारों से बँधी हों और कहीं कोई तय बिंदु न हो — उसका कोई हल ही नहीं।
+    Editor चेतावनी देता है, और चलते वक्त उनमें से एक सिकुड़ जाती है।
+  </TimelineItem>
+  <TimelineItem title="एक सपाट pass" meta="यही फायदा है">
+    पूरा set एक साथ हल होता है, इसलिए पेड़ हर nesting स्तर पर एक बार नहीं, कुल एक बार measure
+    होता है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`bias`, और दोनों तरफ बँधी होने पर वह करता क्या है">
+View के दोनों आमने-सामने किनारे बाँध दीजिए तो वह बीच में आ जाती है।
+`layout_constraintHorizontal_bias` उसे उसी फैलाव पर खिसकाता है: `0.0` शुरू में, `1.0` अंत में,
+`0.5` बीच में — और यही default है।
+
+```xml title="Bias.xml"
+app:layout_constraintStart_toStartOf="parent"
+app:layout_constraintEnd_toEndOf="parent"
+app:layout_constraintHorizontal_bias="0.25"
+```
+
+बिना guideline के किसी चीज को चौथाई दूरी पर रखने का यही तरीका है — और तय margin के उलट, यह हर
+screen की चौड़ाई पर टिका रहता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, जिनसे view कोने में जा बैठती है">
+**एक दिशा में constraint छूट जाना।** आड़ी बाँध दी पर खड़ी नहीं, तो view चुपचाप ऊपर बैठ जाती है।
+Editor बताता है; build नहीं।
+
+**किसी child पर `match_parent`।** यहाँ यह support ही नहीं है। दोनों तरफ constraints के साथ `0dp`
+इस्तेमाल कीजिए।
+
+**`ConstraintLayout` के अंदर `ConstraintLayout`।** चल तो जाता है, और जिस वजह से आपने उसे चुना था
+वही फेंक देता है। पहले chain, guideline या barrier की तरफ जाइए।
+
+**जहाँ barrier चाहिए वहाँ guideline।** तय रेखा अंग्रेजी में सही दिखती है और translate किया हुआ
+label लंबा होते ही टूट जाती है।
+</Pitfall>
+
+## अभ्यास
+
+1. सिर्फ आड़ी constraint वाली एक view रखिए। चलाइए, फिर खड़ी वाली भी जोड़िए।
+2. तीन views की एक row chain बनाइए, और head को `spread`, `spread_inside` और `packed` से घुमाइए।
+3. 30% पर guideline रखकर दो-column वाला form बनाइए। फिर guideline की जगह barrier रखिए और एक
+   label की लंबाई दुगनी कर दीजिए।
+4. Nested `LinearLayout` से बनी कोई screen लेकर उसे सपाट कीजिए। Layout Inspector में गहराई
+   मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Constraint | *मेरा किनारा, तुम्हारे किनारे से*; हर दिशा में कम से कम एक |
+| `0dp` | Match constraints — `match_parent` की जगह यही |
+| `match_parent` | Child पर support ही नहीं |
+| Chain | आपस में बँधी views; head style तय करती है |
+| `spread` / `spread_inside` / `packed` | Chain जगह कैसे बाँटती है |
+| Guideline | Percent या dp पर तय, न दिखने वाली रेखा |
+| Barrier | सबसे बड़ी बताई गई view के पीछे चलने वाली रेखा |
+| `bias` | बँधे हुए फैलाव पर view कहाँ बैठेगी |
+
+<Interview title="यह जल्दी पता चल जाता है कि किसी ने इससे असली screen बनाई है या नहीं">
+"Guideline की जगह barrier कब इस्तेमाल करेंगे?"
+
+जब रेखा को तय जगह पर बैठने के बजाय content के पीछे चलना हो — जैसे ऐसा label column जिसकी चौड़ाई
+सबसे लंबा label तय करता है। यह जोड़ देना कि translation यही झेलता है, क्योंकि अंग्रेजी के हिसाब
+से सेट की गई guideline label लंबा होते ही टूट जाती है, वही हिस्सा है जो tutorial नहीं, असली screen
+जैसा लगता है।
+</Interview>
