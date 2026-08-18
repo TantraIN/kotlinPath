@@ -1,0 +1,225 @@
+---
+title: "Custom views: onDraw, Canvas aur Paint"
+description: Jab maujooda widgets ka koi jod aapko wo cheez nahi deta jo chahiye, to aap use khud banate hain. Teen methods tay karti hain ki wo kitni badi hai, kahan baithti hai, aur dikhta kya hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Custom view teen methods mein diye gaye teen jawab hain: `onMeasure` batati hai ki wo kitni badi
+hona chahti hai, `onSizeChanged` uski geometry ek baar nikalti hai, aur `onDraw` `Canvas` par
+pixel rakhti hai. Baaki sab bas inhe jodne ka kaam hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Order taiyar hote-hote bharta hua ek gol chhalla, ek sparkline, ek signature pad — inmein se
+koi bhi sahi attributes wala `TextView` nahi hai. Kuch ki aap darjan bhar views ek ke andar ek
+rakhkar nakal kar sakte hain, aur uski keemat har frame par chukani padegi.
+
+Jo ek view wahi banati hai jo chahiye, wo ek baar measure hoti hai, ek baar draw hoti hai, aur
+code mein padhne layak bani rehti hai.
+
+## Basic structure
+
+```kotlin title="RingProgressView.kt" numbered
+class RingProgressView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0,
+) : View(context, attrs, defStyleAttr) {
+
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 12f
+        color = Color.LTGRAY
+    }
+
+    private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 12f
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val bounds = RectF()
+
+    var progress: Float = 0f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()               // wahi size, naye pixel
+        }
+}
+```
+
+<Note>
+Har `Paint`, `Path`, `Rect` aur `Bitmap` yahin, constructor mein banta hai. `onDraw` har frame
+par chalti hai — jab tak kuch bhi hil raha hai, ek second mein 60 baar — aur wahan kuch naya
+banana yani aapki animation ke beechonbeech ek garbage collection.
+</Note>
+
+## Geometry ek baar, drawing kai baar
+
+```kotlin title="RingProgressView.kt" numbered
+override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+    val inset = arcPaint.strokeWidth / 2f
+    bounds.set(
+        paddingLeft + inset,
+        paddingTop + inset,
+        w - paddingRight - inset,
+        h - paddingBottom - inset,
+    )
+}
+
+override fun onDraw(canvas: Canvas) {
+    canvas.drawArc(bounds, 0f, 360f, false, trackPaint)
+    canvas.drawArc(bounds, -90f, 360f * progress, false, arcPaint)
+}
+```
+
+`onSizeChanged` tab chalti hai jab view ka size tay ho chuka hota hai — pehli `onDraw` se pehle,
+aur rotation ke baad dobara. Jo cheez sirf size par tiki hai wo wahin ki hai, `onDraw` ki nahi.
+
+`inset` isliye hai ki stroke lakeer ke beechonbeech khinchta hai: 12px ke stroke ka aadha hissa
+bounds ke bahar banta aur kat jata.
+
+## Wo farak jo har koi ek baar galat karta hai
+
+<Quiz
+  question="Aapki view ka text badalkar lamba ho sakta hai, jiske liye zyada width chahiye. Use set karne ke baad aap `invalidate()` bulate hain aur text kata hua aata hai. Kya chhoot raha hai?"
+  options={[
+    "`invalidate()` do baar bulana chahiye — ek baar pehle, ek baar baad mein",
+    "`requestLayout()`, kyunki size badla hai aur measurement sirf wahi dobara chalati hai",
+    "`postInvalidate()`, kyunki setter main thread ke bahar chala",
+  ]}
+  answer={1}
+  explanation="invalidate() ka matlab hai mujhe unhin bounds ke andar dobara bana do, jo mere paas pehle se hain. Wo onMeasure kabhi dobara nahi chalati, isliye jis view ko ab zyada jagah chahiye wo apna purana size liye rehti hai aur kat jati hai. requestLayout() us view aur uske upar walon ke liye naya measure aur layout tay karti hai, jiske baad draw waise bhi hota hai. Niyam chhota hai: wahi size ho to invalidate, naya size ho to requestLayout. Sirf rang badalne par requestLayout bulana ulti galti hai — wo poori upar wali kadi ko bewajah measurement se guzar deti hai."
+/>
+
+## `onMeasure`: wo hissa jise log chhod dete hain
+
+`onMeasure` chhod dijiye aur aapki view phir bhi chalegi — jab tak koi `wrap_content` na likh
+de, jiske baad wo poori screen bhar leti hai, kyunki default measurement parent ne jo diya wahi
+maan leti hai.
+
+```kotlin title="RingProgressView.kt" numbered
+override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    val desired = (48 * resources.displayMetrics.density).toInt()
+    val w = resolveSize(desired + paddingLeft + paddingRight, widthMeasureSpec)
+    val h = resolveSize(desired + paddingTop + paddingBottom, heightMeasureSpec)
+    val side = minOf(w, h)            // chhalla gol hi rahe
+    setMeasuredDimension(side, side)
+}
+```
+
+`resolveSize` aapke liye `MeasureSpec` wala teen-tarfa faisla kar deti hai: parent ne pakka size
+diya hai to wahi lo, azad ho to apna size lo, aur had bandhi hai to usse zyada mat jao.
+
+<Warning>
+`onMeasure` ka ant `setMeasuredDimension` bulane par hona chahiye. Nahi hota to framework
+`IllegalStateException: onMeasure() did not set the measured dimension` phenkta hai.
+</Warning>
+
+## XML se aane wale attributes
+
+```xml title="res/values/attrs.xml"
+<declare-styleable name="RingProgressView">
+    <attr name="ringColor" format="color" />
+    <attr name="ringWidth" format="dimension" />
+</declare-styleable>
+```
+
+```kotlin title="RingProgressView.kt" numbered
+init {
+    context.withStyledAttributes(attrs, R.styleable.RingProgressView, defStyleAttr, 0) {
+        arcPaint.color = getColor(R.styleable.RingProgressView_ringColor, Color.BLUE)
+        arcPaint.strokeWidth = getDimension(R.styleable.RingProgressView_ringWidth, 12f)
+    }
+}
+```
+
+`withStyledAttributes` `core-ktx` ka wo lapeta hai jo `TypedArray` ko aapke liye recycle kar deta
+hai. Haath se karke `recycle()` bhool jana ek shared buffer leak kar deta hai.
+
+<Detail summary="Rotation ke aar-paar state sambhalna">
+Custom view wo state rakhti hai jiska framework ko kuch pata nahi, isliye rotation par wo chali
+jati hai, jab tak aap kuch na kahein. Ye chale, iske liye layout mein us view ki ek id honi
+zaruri hai.
+
+```kotlin title="State.kt" numbered
+override fun onSaveInstanceState(): Parcelable =
+    bundleOf("super" to super.onSaveInstanceState(), "progress" to progress)
+
+override fun onRestoreInstanceState(state: Parcelable?) {
+    val bundle = state as Bundle
+    progress = bundle.getFloat("progress")
+    super.onRestoreInstanceState(bundle.getParcelable("super"))
+}
+```
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="`onDraw` likhti hai, rangti nahi" meta="hardware accelerated">
+    Aapki `Canvas` wali baatein ek display list mein darj hoti hain aur GPU par dobara chalai
+    jati hain. Bina badli view ko dobara banana lagbhag muft hai; uski display list dobara banana
+    nahi — isiliye poore hisse par `invalidate` chubhta hai.
+  </TimelineItem>
+  <TimelineItem title="Padding nibhana aapka kaam hai" meta="koi aapke liye nahi lagata">
+    Framework `paddingLeft` waghairah rakh deta hai; unke andar banana poori tarah aapka kaam
+    hai. Padding andekhi karne wali custom view par sabse aam review comment yahi hota hai.
+  </TimelineItem>
+  <TimelineItem title="`ViewGroup` mein `onLayout` bhi hai" meta="sirf tab jab bachche hon">
+    Custom `ViewGroup` har bachche ko measure karta hai, phir `child.layout(l, t, r, b)` se uski
+    jagah tay karta hai. Saadi `View` `onLayout` kabhi nahi likhti.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo har review mein nikalti hain">
+**`onDraw` mein nai cheezein banana.** `Paint()`, `RectF()`, string jodna — sab constructor mein
+ya `onSizeChanged` mein jayega. Lint is par ungli rakhta hai, aur theek rakhta hai.
+
+**Padding andekhi karna.** `paddingLeft` se `width - paddingRight` tak banaiye, `0` se `width`
+tak kabhi nahi.
+
+**`onMeasure` na likhna.** Phir `wrap_content` `match_parent` jaisa bartta hai aur aapka chhalla
+poori screen nigal jata hai.
+
+**Rang badalne par `requestLayout()`.** Wo upar ki poori kadi dobara measure karti hai. Jab tak
+size sach mein na badla ho, `invalidate()` istemal kijiye.
+</Pitfall>
+
+## Practice
+
+1. Ring view banaiye aur `ValueAnimator` se `progress` ko 0 se 1 tak chalaiye.
+2. `onMeasure` hata dijiye, view par `wrap_content` lagaiye, aur dekhiye kya hota hai.
+3. Layout mein padding jodiye aur chhalle ko uske upar bante dekhiye, jab tak aap use nibha na
+   lein.
+4. `Paint` banana `onDraw` ke andar le jaiye, animation chalaiye, aur profiler mein allocation
+   ka graph dekhiye.
+5. Progress aadha rakhkar device ghumaiye, phir `onSaveInstanceState` jodkar dobara ghumaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `onMeasure` | Kitni badi; `setMeasuredDimension` bulana zaruri |
+| `resolveSize` | `MeasureSpec` ke teenon tarike aapke liye sambhalti hai |
+| `onSizeChanged` | Size tay hote hi geometry ek baar nikaliye |
+| `onDraw` | Sirf banaiye; kuch naya mat banaiye |
+| `invalidate()` | Wahi bounds, dobara banao |
+| `requestLayout()` | Size badla, dobara measure karo |
+| Padding | Rakh framework deta hai, lagate aap hain |
+| Custom attributes | `declare-styleable` aur `withStyledAttributes` |
+| `onLayout` | Sirf us `ViewGroup` ke liye jiske bachche hon |
+
+<Interview title="Wo ek line wala jawab jo batata hai ki aapne custom view likhi hai">
+"`invalidate()` kab bulate hain aur `requestLayout()` kab?"
+
+`invalidate()` tab jab view dikhne mein badli hai par size wahi hai; `requestLayout()` tab jab
+uska size badal sakta hai, kyunki us view aur uske upar walon ke liye `onMeasure` sirf wahi
+dobara chalati hai. Jodne layak baat keemat ka farak hai: `invalidate` ek view ko chhuti hai,
+`requestLayout` upar ki poori kadi chalti hai, isliye aadatan doosri utha lene se scrolling
+atakne lagti hai.
+</Interview>
