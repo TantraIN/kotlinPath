@@ -1,0 +1,190 @@
+---
+title: "JUnit: बनावट, assertions और parameterized tests"
+description: JUnit छोटा है। सीखने लायक वह शक्ल है जो तीन सौ tests पर भी पढ़ी जा सके, और वे दो-तीन डिफॉल्ट जो चुपचाप आपके घंटे खा जाते हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Test के तीन हिस्से होते हैं — **सजाइए, चलाइए, दावा कीजिए** — और उन्हें दिखता रखने का अनुशासन ही किसी
+नाकाम test को साल भर बाद समझ में आने लायक बनाता है। JUnit की बाकी हर चीज वह API है जिसे देखकर लिखा जा
+सकता है।
+</KeyIdea>
+
+## शक्ल
+
+```kotlin title="RetryPolicyTest.kt" numbered
+class RetryPolicyTest {
+
+    private lateinit var policy: RetryPolicy
+
+    @Before
+    fun setUp() {
+        policy = RetryPolicy(maxAttempts = 3)
+    }
+
+    @Test
+    fun `server errors are retried`() {
+        val decision = policy.decide(statusCode = 503, attempt = 1)   // चलाइए
+
+        assertTrue(decision is Retry)                                  // दावा कीजिए
+    }
+
+    @Test
+    fun `client errors are not retried`() {
+        val decision = policy.decide(statusCode = 400, attempt = 1)
+
+        assertTrue(decision is GiveUp)
+    }
+}
+```
+
+Backtick वाले नाम हर जगह लेने लायक हैं। नाकामी `client errors are not retried FAILED` बनकर पढ़ी जाती
+है, जो बिना file खोले बता देती है कि क्या टूटा — और test के नाम की पूरी कीमत यही है।
+
+`@Before` **हर** test से पहले चलता है, class में एक बार नहीं। यह जानबूझकर है: हर test को ताजा चीज
+मिलती है, तो कोई test इस पर टिक ही नहीं सकता कि पिछले ने क्या छोड़ा। `@BeforeClass` एक बार चलता है और
+वह सच में महँगी साझा तैयारी के लिए है — और वहाँ रखी कोई भी बदलती चीज tests के बीच साझा हालत बन जाती
+है, और इसी से क्रम मायने रखने लगता है।
+
+## Assertions
+
+```kotlin title="Assertions.kt" numbered
+assertEquals(expected, actual)          // क्रम पर गौर: पहले expected
+assertEquals(3.14, actual, 0.001)       // दशमलव को delta चाहिए
+assertTrue(list.isEmpty())
+assertNull(repository.find(id = 99))
+assertThrows<IllegalArgumentException> { Order(quantity = -1) }
+```
+
+`assertEquals` में **पहले expected** आता है। उलट देने पर भी वह पास होता है और नाकाम भी, पर नाकामी का
+संदेश उलटा पढ़ा जाता है — "expected 4, was 5" जबकि बात उलटी थी — और आप एक मिनट गलत चीज पर शक करते
+रहते हैं।
+
+Delta के बिना दशमलव मिलाना जानी-पहचानी हैरानी है: `0.1 + 0.2` `0.3` नहीं है, तो
+`assertEquals(0.3, sum)` ऐसे गणित पर नाकाम होता है जो बिलकुल सही है।
+
+`assertThrows` वह exception लौटाता है, तो आप उसके संदेश पर भी दावा कर सकते हैं — और जब वह संदेश करार
+का हिस्सा हो तब यह करने लायक है।
+
+<Quiz
+  question="चालीस tests की suite आपके यहाँ पास होती है और CI में नाकाम। नाकाम हुए test को अकेले चलाने पर वह पास हो जाता है। वजह क्या हो सकती है?"
+  options={[
+    "CI धीमा है, तो उस test को लंबा timeout चाहिए",
+    "साझा बदलती हालत — companion object, किसी `@BeforeClass`, या किसी singleton में — tests के बीच चली जाती है, तो नतीजा चलने के क्रम पर टिका है, जो हर मशीन पर अलग होता है",
+    "JUnit डिफॉल्ट से tests साथ-साथ चलाता है, तो वे आपस में दौड़ रहे हैं"
+  ]}
+  answer={1}
+  explanation="क्रम पर टिके test की पहचान ठीक यही है: अकेले पास, suite में नाकाम, और दूसरी मशीन पर suite का बर्ताव अलग। JUnit चलने के क्रम की गारंटी नहीं देता और हर जगह tests को एक जैसा नहीं छाँटता, तो जो test सिर्फ किसी दूसरे के बाद — या पहले — चलने पर पास होता है वह कभी न कभी गलत क्रम में चलेगा ही। वजह लगभग हमेशा ऐसी हालत होती है जो एक test से ज्यादा जीती है: companion object में कोई var, @BeforeClass में रखा कोई बदलता field, ऐप के code का कोई singleton, या tests के बीच दोबारा इस्तेमाल हुई database की file. इलाज है उस हालत को @Before में ले जाना ताकि हर test को ताजा नकल मिले, या @After में उसे शून्य कर देना। साथ-साथ चलना यहाँ झाँसा है — JUnit 4 तब तक एक-एक करके चलता है जब तक आप कुछ और न कहें — और timeout वाली दिक्कत उस test को अकेले चलाने पर भी नाकाम करती।"
+/>
+
+## Parameterized tests
+
+जब वही दावा inputs की एक सारणी पर टिकता हो, तो सारणी ही लिखिए:
+
+```kotlin title="Parameterized.kt" numbered
+@RunWith(Parameterized::class)
+class RetryDecisionTest(
+    private val status: Int,
+    private val expected: Boolean,
+) {
+    companion object {
+        @JvmStatic
+        @Parameterized.Parameters(name = "HTTP {0} retried = {1}")
+        fun cases() = listOf(
+            arrayOf(500, true),
+            arrayOf(503, true),
+            arrayOf(429, true),
+            arrayOf(400, false),
+            arrayOf(404, false),
+        )
+    }
+
+    @Test
+    fun `retry decision matches the policy`() {
+        assertEquals(expected, RetryPolicy().decide(status, attempt = 1) is Retry)
+    }
+}
+```
+
+`name` वाला ढाँचा दिखने से ज्यादा मायने रखता है: उसके बिना नाकामियाँ `[3]` बनकर बताई जाती हैं और आपको
+पंक्तियाँ गिननी पड़ती हैं। उसके साथ आपको `HTTP 429 retried = true` मिलता है, जो उस मामले का नाम लेता
+है।
+
+इसे तब लीजिए जब वे मामले सच में अलग data पर वही दावा हों। जब हर मामले को अपनी अलग सजावट चाहिए, तो
+अलग-अलग tests उस सारणी से साफ हैं जिसमें कुछ खाने बिना इस्तेमाल के पड़े हों।
+
+<Detail summary="JUnit 4 या 5, और Android ज्यादातर 4 पर क्यों है">
+ज्यादातर Android projects अब भी JUnit 4 लेते हैं, क्योंकि AndroidX Test और Espresso उसी के runner पर
+बने हैं। JUnit 5 को instrumented tests के लिए एक plugin चाहिए और वह सहारा कम जमा हुआ है, तो आम
+व्यवस्था है हर जगह JUnit 4, बजाय एक ही project में दो frameworks के।
+
+जो फर्क आपको सच में दिखेंगे:
+
+| JUnit 4 | JUnit 5 |
+| --- | --- |
+| `@Before` / `@After` | `@BeforeEach` / `@AfterEach` |
+| `@BeforeClass` / `@AfterClass` | `@BeforeAll` / `@AfterAll` |
+| `@RunWith` | `@ExtendWith` |
+| `@Test(expected = ...)` | `assertThrows` |
+| `@Ignore` | `@Disabled` |
+| `@RunWith(Parameterized::class)` | `@ValueSource` वाला `@ParameterizedTest` |
+
+JUnit 5 का `@ParameterizedTest` सच में ज्यादा अच्छा है — मामले companion object के बजाय उसी test वाले
+method पर बैठते हैं — तो ऐसा उदाहरण नकल करने से पहले यह जान लेना काम का है कि आपका project किस पर है,
+वरना वह compile ही नहीं होगा।
+
+`@Test(expected = ...)` से JUnit 4 पर भी बचिए। अगर वह exception उस method में *कहीं भी* फेंका जाए तो
+वह पास हो जाता है, उस तैयारी समेत जिसे आप जाँचना चाहते ही नहीं थे। `assertThrows` उसे एक हिस्से तक
+सीमित रखता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली एक दोपहर खा जाती है">
+**साझा बदलती हालत।** क्रम पर टिकी नाकामियाँ जो सिर्फ CI में दिखती हैं।
+
+**Arguments उलटे।** `assertEquals(actual, expected)` अपनी नाकामी उलटी पढ़ता है।
+
+**Delta के बिना दशमलव।** `0.1 + 0.2 != 0.3`, और test का नाकाम होना सही है।
+
+**`@Test(expected = ...)`।** उस method में कुछ भी फेंके तो पास, तैयारी समेत।
+
+**बिना `name` के parameterized।** नाकामियाँ `[3]` कहती हैं और आप पंक्तियाँ गिनते हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. Companion object में `var` रखकर test लिखिए और suite तब तक चलाइए जब तक क्रम काट न ले।
+2. `assertEquals` के arguments उलटिए और नाकामी का संदेश पढ़िए।
+3. `0.1 + 0.2 == 0.3` पर दावा कीजिए और फिर delta से ठीक कीजिए।
+4. पाँच मिलते-जुलते tests को `name` वाले एक parameterized test में बदलिए।
+5. `assertThrows` लीजिए और उसके type के साथ-साथ संदेश पर भी दावा कीजिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| शक्ल | सजाइए, चलाइए, दावा कीजिए — दिखते हुए |
+| Backtick वाले नाम | नाकामी की लाइन बता देती है कि क्या टूटा |
+| `@Before` | हर test से पहले, हर एक को ताजा चीज देता हुआ |
+| `@BeforeClass` | Class में एक बार; वहाँ रखी बदलती चीज साझा हालत है |
+| `assertEquals` | पहले expected, वरना संदेश उलटा पढ़ा जाता है |
+| दशमलव | Delta चाहिए |
+| `assertThrows` | एक हिस्से तक सीमित, और exception लौटाता है |
+| Parameterized | Inputs की सारणी पर वही दावा |
+| `name` वाला ढाँचा | `[3]` को पढ़े जा सकने वाले मामले में बदलता है |
+| JUnit 4 बनाम 5 | Android ज्यादातर 4 पर; annotations अलग हैं |
+
+<Interview title="एक सवाल, ऐसी नाकामी का जो जगह बदलती है">
+"कोई test आपके यहाँ पास होता है और CI में नाकाम। कहाँ से शुरू करेंगे?"
+
+मैं पहले उस नाकाम test को अकेले चलाऊँगा। अगर वह अकेले पास होता है और suite में नाकाम, तो यह tests के
+बीच जाती साझा बदलती हालत है — companion object का कोई `var`, `@BeforeClass` में की गई कोई तैयारी, कोई
+singleton, या दोबारा इस्तेमाल हुई database की file। JUnit चलने के क्रम की गारंटी नहीं देता और हर मशीन
+पर tests को एक जैसा नहीं छाँटता, तो जो test किसी दूसरे के बाद चलने पर टिका है वह कभी न कभी पहले चलेगा।
+
+इलाज है हर test को अपने आप में पूरा बनाना: उस हालत को `@Before` में ले जाना ताकि हर test को ताजा नकल
+मिले, या `@After` में उसे शून्य कर देना। मैं खास तौर पर लंबे timeout की तरफ नहीं जाऊँगा और यह नहीं
+मानूँगा कि CI बस धीमा है, क्योंकि समय वाली दिक्कत उस test को अकेले चलाने पर भी नाकाम करती — और "अकेले
+पास होता है" वाली बात ही उसे खारिज करती है।
+</Interview>

@@ -1,0 +1,192 @@
+---
+title: "JUnit: banawat, assertions aur parameterized tests"
+description: JUnit chhota hai. Seekhne layak wo shakal hai jo teen sau tests par bhi padhi ja sake, aur wo do-teen default jo chupchap aapke ghante kha jate hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Test ke teen hisse hote hain — **sajaiye, chalaiye, dawa kijiye** — aur unhe dikhta rakhne ka anushasan
+hi kisi nakaam test ko saal bhar baad samajh mein aane layak banata hai. JUnit ki baaki har cheez wo
+API hai jise dekhkar likha ja sakta hai.
+</KeyIdea>
+
+## Shakal
+
+```kotlin title="RetryPolicyTest.kt" numbered
+class RetryPolicyTest {
+
+    private lateinit var policy: RetryPolicy
+
+    @Before
+    fun setUp() {
+        policy = RetryPolicy(maxAttempts = 3)
+    }
+
+    @Test
+    fun `server errors are retried`() {
+        val decision = policy.decide(statusCode = 503, attempt = 1)   // chalaiye
+
+        assertTrue(decision is Retry)                                  // dawa kijiye
+    }
+
+    @Test
+    fun `client errors are not retried`() {
+        val decision = policy.decide(statusCode = 400, attempt = 1)
+
+        assertTrue(decision is GiveUp)
+    }
+}
+```
+
+Backtick wale naam har jagah lene layak hain. Nakami `client errors are not retried FAILED` bankar
+padhi jati hai, jo bina file khole bata deti hai ki kya toota — aur test ke naam ki poori keemat yahi
+hai.
+
+`@Before` **har** test se pehle chalta hai, class mein ek baar nahi. Ye jaanbujhkar hai: har test ko
+taza cheez milti hai, to koi test is par tik hi nahi sakta ki pichhle ne kya chhoda. `@BeforeClass` ek
+baar chalta hai aur wo sach mein mehngi share taiyari ke liye hai — aur wahan rakhi koi bhi badalti
+cheez tests ke beech share haalat ban jati hai, aur isi se order maayne rakhne lagta hai.
+
+## Assertions
+
+```kotlin title="Assertions.kt" numbered
+assertEquals(expected, actual)          // order par gaur: pehle expected
+assertEquals(3.14, actual, 0.001)       // dashamlav ko delta chahiye
+assertTrue(list.isEmpty())
+assertNull(repository.find(id = 99))
+assertThrows<IllegalArgumentException> { Order(quantity = -1) }
+```
+
+`assertEquals` mein **pehle expected** aata hai. Ulat dene par bhi wo pass hota hai aur nakaam bhi, par
+nakami ka sandesh ulta padha jata hai — "expected 4, was 5" jabki baat ulti thi — aur aap ek minute
+galat cheez par shak karte rehte ho.
+
+Delta ke bina dashamlav milana jani-pehchani hairani hai: `0.1 + 0.2` `0.3` nahi hai, to
+`assertEquals(0.3, sum)` aise ganit par nakaam hota hai jo bilkul sahi hai.
+
+`assertThrows` wo exception lautata hai, to aap uske sandesh par bhi dawa kar sakte ho — aur jab wo
+sandesh karaar ka hissa ho tab ye karne layak hai.
+
+<Quiz
+  question="Chalees tests ki suite aapke yahan pass hoti hai aur CI mein nakaam. Nakaam hue test ko akele chalane par wo pass ho jata hai. Wajah kya ho sakti hai?"
+  options={[
+    "CI dheema hai, to us test ko lamba timeout chahiye",
+    "Share badalti haalat — companion object, kisi `@BeforeClass`, ya kisi singleton mein — tests ke beech chali jati hai, to result chalne ke order par tika hai, jo har machine par alag hota hai",
+    "JUnit default se tests saath-saath chalata hai, to wo aapas mein daud rahe hain"
+  ]}
+  answer={1}
+  explanation="Order par tike test ki pehchan theek yahi hai: akele pass, suite mein nakaam, aur doosri machine par suite ka behaviour alag. JUnit chalne ke order ki guarantee nahi deta aur har jagah tests ko ek jaisa nahi chhantata, to jo test sirf kisi doosre ke baad — ya pehle — chalne par pass hota hai wo kabhi na kabhi galat order mein chalega hi. Wajah lagbhag hamesha aisi haalat hoti hai jo ek test se zyada jeeti hai: companion object mein koi var, @BeforeClass mein rakha koi badalta field, app ke code ka koi singleton, ya tests ke beech dobara istemal hui database ki file. Ilaaj hai us haalat ko @Before mein le jana taki har test ko taza nakal mile, ya @After mein use shoonya kar dena. Saath-saath chalna yahan jhansa hai — JUnit 4 tab tak ek-ek karke chalta hai jab tak aap kuch aur na kaho — aur timeout wali mushkil us test ko akele chalane par bhi nakaam karti."
+/>
+
+## Parameterized tests
+
+Jab wahi dawa inputs ki ek saarni par tikta ho, to saarni hi likhiye:
+
+```kotlin title="Parameterized.kt" numbered
+@RunWith(Parameterized::class)
+class RetryDecisionTest(
+    private val status: Int,
+    private val expected: Boolean,
+) {
+    companion object {
+        @JvmStatic
+        @Parameterized.Parameters(name = "HTTP {0} retried = {1}")
+        fun cases() = listOf(
+            arrayOf(500, true),
+            arrayOf(503, true),
+            arrayOf(429, true),
+            arrayOf(400, false),
+            arrayOf(404, false),
+        )
+    }
+
+    @Test
+    fun `retry decision matches the policy`() {
+        assertEquals(expected, RetryPolicy().decide(status, attempt = 1) is Retry)
+    }
+}
+```
+
+`name` wala dhancha dikhne se zyada maayne rakhta hai: uske bina nakamiyan `[3]` bankar batai jati hain
+aur aapko panktiyan ginni padti hain. Uske saath aapko `HTTP 429 retried = true` milta hai, jo us
+maamle ka naam leta hai.
+
+Ise tab lijiye jab wo maamle sach mein alag data par wahi dawa hon. Jab har maamle ko apni alag sajawat
+chahiye, to alag-alag tests us saarni se saaf hain jismein kuch khane bina istemal ke pade hon.
+
+<Detail summary="JUnit 4 ya 5, aur Android zyadatar 4 par kyun hai">
+Zyadatar Android projects ab bhi JUnit 4 lete hain, kyunki AndroidX Test aur Espresso usi ke runner par
+bane hain. JUnit 5 ko instrumented tests ke liye ek plugin chahiye aur wo sahara kam jama hua hai, to
+aam vyavastha hai har jagah JUnit 4, bajaye ek hi project mein do frameworks ke.
+
+Jo farak aapko sach mein dikhenge:
+
+| JUnit 4 | JUnit 5 |
+| --- | --- |
+| `@Before` / `@After` | `@BeforeEach` / `@AfterEach` |
+| `@BeforeClass` / `@AfterClass` | `@BeforeAll` / `@AfterAll` |
+| `@RunWith` | `@ExtendWith` |
+| `@Test(expected = ...)` | `assertThrows` |
+| `@Ignore` | `@Disabled` |
+| `@RunWith(Parameterized::class)` | `@ValueSource` wala `@ParameterizedTest` |
+
+JUnit 5 ka `@ParameterizedTest` sach mein zyada achha hai — maamle companion object ke bajaye usi test
+wale method par baithte hain — to aisa udaharan nakal karne se pehle ye jaan lena kaam ka hai ki aapka
+project kis par hai, warna wo compile hi nahi hoga.
+
+`@Test(expected = ...)` se JUnit 4 par bhi bachiye. Agar wo exception us method mein *kahin bhi* phenka
+jaye to wo pass ho jata hai, us taiyari samet jise aap jaanchna chahte hi nahi the. `assertThrows` use
+ek hisse tak seemit rakhta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli ek dopahar kha jati hai">
+**Share badalti haalat.** Order par tiki nakamiyan jo sirf CI mein dikhti hain.
+
+**Arguments ulte.** `assertEquals(actual, expected)` apni nakami ulti padhta hai.
+
+**Delta ke bina dashamlav.** `0.1 + 0.2 != 0.3`, aur test ka nakaam hona sahi hai.
+
+**`@Test(expected = ...)`.** Us method mein kuch bhi phenke to pass, taiyari samet.
+
+**Bina `name` ke parameterized.** Nakamiyan `[3]` kehti hain aur aap panktiyan ginte ho.
+</Pitfall>
+
+## Abhyaas
+
+1. Companion object mein `var` rakhkar test likhiye aur suite tab tak chalaiye jab tak order kaat na le.
+2. `assertEquals` ke arguments ultiye aur nakami ka sandesh padhiye.
+3. `0.1 + 0.2 == 0.3` par dawa kijiye aur phir delta se theek kijiye.
+4. Paanch milte-julte tests ko `name` wale ek parameterized test mein badliye.
+5. `assertThrows` lijiye aur uske type ke saath-saath sandesh par bhi dawa kijiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Shakal | Sajaiye, chalaiye, dawa kijiye — dikhte hue |
+| Backtick wale naam | Nakami ki line bata deti hai ki kya toota |
+| `@Before` | Har test se pehle, har ek ko taza cheez deta hua |
+| `@BeforeClass` | Class mein ek baar; wahan rakhi badalti cheez share haalat hai |
+| `assertEquals` | Pehle expected, warna sandesh ulta padha jata hai |
+| Dashamlav | Delta chahiye |
+| `assertThrows` | Ek hisse tak seemit, aur exception lautata hai |
+| Parameterized | Inputs ki saarni par wahi dawa |
+| `name` wala dhancha | `[3]` ko padhe ja sakne wale maamle mein badalta hai |
+| JUnit 4 banam 5 | Android zyadatar 4 par; annotations alag hain |
+
+<Interview title="Ek sawal, aisi nakami ka jo jagah badalti hai">
+"Koi test aapke yahan pass hota hai aur CI mein nakaam. Kahan se shuru karoge?"
+
+Main pehle us nakaam test ko akele chalaunga. Agar wo akele pass hota hai aur suite mein nakaam, to ye
+tests ke beech jati share badalti haalat hai — companion object ka koi `var`, `@BeforeClass` mein ki
+gayi koi taiyari, koi singleton, ya dobara istemal hui database ki file. JUnit chalne ke order ki
+guarantee nahi deta aur har machine par tests ko ek jaisa nahi chhantata, to jo test kisi doosre ke baad
+chalne par tika hai wo kabhi na kabhi pehle chalega.
+
+Ilaaj hai har test ko apne aap mein poora banana: us haalat ko `@Before` mein le jana taki har test ko
+taza nakal mile, ya `@After` mein use shoonya kar dena. Main khaas taur par lambe timeout ki taraf nahi
+jaunga aur ye nahi manunga ki CI bas dheema hai, kyunki samay wali mushkil us test ko akele chalane par
+bhi nakaam karti — aur "akele pass hota hai" wali baat hi use kharij karti hai.
+</Interview>

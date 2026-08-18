@@ -1,0 +1,189 @@
+---
+title: "JUnit: structure, assertions and parameterized tests"
+description: JUnit is small. What is worth learning is the shape of a test that stays readable at three hundred tests, and the two or three defaults that quietly cost you hours.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A test has three parts — **arrange, act, assert** — and the discipline of keeping them visible is
+what makes a failing test diagnosable a year later. Everything else in JUnit is API surface you can
+look up.
+</KeyIdea>
+
+## The shape
+
+```kotlin title="RetryPolicyTest.kt" numbered
+class RetryPolicyTest {
+
+    private lateinit var policy: RetryPolicy
+
+    @Before
+    fun setUp() {
+        policy = RetryPolicy(maxAttempts = 3)
+    }
+
+    @Test
+    fun `server errors are retried`() {
+        val decision = policy.decide(statusCode = 503, attempt = 1)   // act
+
+        assertTrue(decision is Retry)                                  // assert
+    }
+
+    @Test
+    fun `client errors are not retried`() {
+        val decision = policy.decide(statusCode = 400, attempt = 1)
+
+        assertTrue(decision is GiveUp)
+    }
+}
+```
+
+Backtick names are worth using everywhere. A failure reads `client errors are not retried FAILED`,
+which tells you what broke without opening the file — and that is the entire value of a test name.
+
+`@Before` runs before **every** test, not once for the class. That is deliberate: each test gets a
+fresh subject, so no test can depend on what a previous one left behind. `@BeforeClass` runs once and
+is for genuinely expensive shared setup — and anything mutable you put there becomes shared state
+between tests, which is how execution order starts to matter.
+
+## Assertions
+
+```kotlin title="Assertions.kt" numbered
+assertEquals(expected, actual)          // note the order: expected first
+assertEquals(3.14, actual, 0.001)       // floating point needs a delta
+assertTrue(list.isEmpty())
+assertNull(repository.find(id = 99))
+assertThrows<IllegalArgumentException> { Order(quantity = -1) }
+```
+
+`assertEquals` takes **expected first**. Swapping them still passes and still fails, but the failure
+message reads backwards — "expected 4, was 5" when it was the other way round — and you spend a
+minute doubting the wrong thing.
+
+Comparing floats without a delta is the classic surprise: `0.1 + 0.2` is not `0.3`, so
+`assertEquals(0.3, sum)` fails on arithmetic that is perfectly correct.
+
+`assertThrows` returns the exception, so you can assert on the message too — worth doing when the
+message is part of the contract.
+
+<Quiz
+  question="A suite of forty tests passes locally and fails in CI. Running the failing test on its own passes. What is the likely cause?"
+  options={[
+    "CI is slower, so the test needs a longer timeout",
+    "Shared mutable state — something in a companion object, a `@BeforeClass`, or a singleton — carries over between tests, so the result depends on execution order, which differs between machines",
+    "JUnit runs tests in parallel by default, so the tests are racing"
+  ]}
+  answer={1}
+  explanation="The signature of an order-dependent test is exactly this: passes alone, fails in a suite, and the suite behaves differently on another machine. JUnit does not guarantee execution order and does not sort tests the same way everywhere, so a test that only passes when it runs after — or before — another one will eventually run in the wrong order. The cause is almost always state that outlives a single test: a var in a companion object, a mutable field in @BeforeClass, a singleton the app code holds, or a database file reused between tests. The fix is to move that state into @Before so each test gets a fresh copy, or reset it in @After. Parallelism is a red herring — JUnit 4 is sequential unless you configure otherwise — and a timeout would fail the same test in isolation too."
+/>
+
+## Parameterized tests
+
+When the same assertion holds over a table of inputs, write the table:
+
+```kotlin title="Parameterized.kt" numbered
+@RunWith(Parameterized::class)
+class RetryDecisionTest(
+    private val status: Int,
+    private val expected: Boolean,
+) {
+    companion object {
+        @JvmStatic
+        @Parameterized.Parameters(name = "HTTP {0} retried = {1}")
+        fun cases() = listOf(
+            arrayOf(500, true),
+            arrayOf(503, true),
+            arrayOf(429, true),
+            arrayOf(400, false),
+            arrayOf(404, false),
+        )
+    }
+
+    @Test
+    fun `retry decision matches the policy`() {
+        assertEquals(expected, RetryPolicy().decide(status, attempt = 1) is Retry)
+    }
+}
+```
+
+The `name` template matters more than it looks: without it, failures are reported as `[3]` and you
+have to count rows. With it you get `HTTP 429 retried = true`, which names the case.
+
+Use this when the cases are genuinely the same assertion over different data. When each case needs
+its own arrangement, separate tests are clearer than a table with unused columns.
+
+<Detail summary="JUnit 4 or 5, and why Android is still mostly on 4">
+Most Android projects still use JUnit 4, because AndroidX Test and Espresso are built on its runner.
+JUnit 5 needs a plugin for instrumented tests and the support is less settled, so the common setup is
+JUnit 4 everywhere rather than two frameworks in one project.
+
+The differences you will actually notice:
+
+| JUnit 4 | JUnit 5 |
+| --- | --- |
+| `@Before` / `@After` | `@BeforeEach` / `@AfterEach` |
+| `@BeforeClass` / `@AfterClass` | `@BeforeAll` / `@AfterAll` |
+| `@RunWith` | `@ExtendWith` |
+| `@Test(expected = ...)` | `assertThrows` |
+| `@Ignore` | `@Disabled` |
+| `@RunWith(Parameterized::class)` | `@ParameterizedTest` with `@ValueSource` |
+
+JUnit 5's `@ParameterizedTest` is genuinely nicer — the cases sit on the test method rather than in a
+companion object — so it is worth knowing which one your project is on before copying an example that
+will not compile.
+
+Avoid `@Test(expected = ...)` even on JUnit 4. It passes if the exception is thrown *anywhere* in the
+method, including from the setup you did not mean to test. `assertThrows` scopes it to one block.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one wastes an afternoon">
+**Shared mutable state.** Order-dependent failures that only appear in CI.
+
+**Arguments the wrong way round.** `assertEquals(actual, expected)` reads its failure backwards.
+
+**Floats without a delta.** `0.1 + 0.2 != 0.3`, and the test is right to fail.
+
+**`@Test(expected = ...)`.** Passes if anything in the method throws, including setup.
+
+**Parameterized without a `name`.** Failures say `[3]` and you count rows to find the case.
+</Pitfall>
+
+## Practice
+
+1. Write a test with a `var` in a companion object and run the suite until the order bites.
+2. Swap `assertEquals` arguments and read the failure message.
+3. Assert `0.1 + 0.2 == 0.3` and then fix it with a delta.
+4. Convert five similar tests into one parameterized test with a `name` template.
+5. Use `assertThrows` and assert on the exception message as well as its type.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Shape | Arrange, act, assert — kept visible |
+| Backtick names | The failure line tells you what broke |
+| `@Before` | Runs before every test, giving each a fresh subject |
+| `@BeforeClass` | Once per class; anything mutable there is shared state |
+| `assertEquals` | Expected first, or the message reads backwards |
+| Floats | Need a delta |
+| `assertThrows` | Scoped to a block, and returns the exception |
+| Parameterized | Same assertion over a table of inputs |
+| `name` template | Turns `[3]` into a readable case |
+| JUnit 4 vs 5 | Android is mostly 4; the annotations differ |
+
+<Interview title="A question about a failure that moves">
+"A test passes locally and fails in CI. Where do you start?"
+
+I would run the failing test on its own first. If it passes alone and fails in the suite, that is
+shared mutable state carrying between tests — a `var` in a companion object, something set up in
+`@BeforeClass`, a singleton, or a reused database file. JUnit does not guarantee execution order and
+does not order tests identically on every machine, so a test that depends on running after another
+one will eventually run first.
+
+The fix is to make each test independent: move that state into `@Before` so every test gets a fresh
+copy, or reset it in `@After`. I would specifically not reach for a longer timeout or assume CI is
+just slower, because a timing problem fails the test in isolation too — and the "passes alone" detail
+is what rules that out.
+</Interview>
