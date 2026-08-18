@@ -14,7 +14,7 @@ Room, SQLite के ऊपर तीन annotations है: `@Entity` एक tab
 
 सादा SQLite, एक चीज ढूँढ़ते हुए:
 
-```kotlin title="Raw.kt" numbered
+```kotlin title="Raw.kt" numbered no-glossary
 val cursor = db.rawQuery("SELECT * FROM ordres WHERE id = ?", arrayOf(id))   // गलती compile हो गई
 cursor.use {
     if (it.moveToFirst()) {

@@ -36,7 +36,7 @@ cores के आस-पास रुक जाता है, क्योंक�
 ## `withContext` — आम तौर पर इसी एक switch की जरूरत है
 
 ```kotlin title="Switch.kt" numbered
-class Repository(private val api: Api, private val dao: Dao) {
+class Repository(private val api: Api, private val dao: OrderDao) {
 
     suspend fun user(id: String): User = withContext(Dispatchers.IO) {
         val response = api.fetch(id)      // इंतजार — IO

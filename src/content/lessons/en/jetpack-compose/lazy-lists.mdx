@@ -37,7 +37,7 @@ new ones are composed as they arrive.
 ```kotlin title="Dsl.kt" numbered
 LazyColumn {
     item {                                    // one fixed item
-        Header()
+        ListHeader()
     }
 
     items(orders, key = { it.id }) { order ->  // one per element

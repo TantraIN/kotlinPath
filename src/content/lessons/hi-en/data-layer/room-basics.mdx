@@ -15,7 +15,7 @@ kisi ke phone par hone wala crash nahi.
 
 Saada SQLite, ek cheez dhoondhte hue:
 
-```kotlin title="Raw.kt" numbered
+```kotlin title="Raw.kt" numbered no-glossary
 val cursor = db.rawQuery("SELECT * FROM ordres WHERE id = ?", arrayOf(id))   // galti compile ho gayi
 cursor.use {
     if (it.moveToFirst()) {

@@ -166,7 +166,7 @@ bajaye sealed ped ki tarah likhiye:
 @Serializable
 @JsonClassDiscriminator("type")
 sealed interface PaymentDto {
-    @Serializable @SerialName("card") data class Card(val last4: String) : PaymentDto
+    @Serializable @SerialName("card") data class CardPayment(val last4: String) : PaymentDto
     @Serializable @SerialName("upi") data class Upi(val vpa: String) : PaymentDto
 }
 ```

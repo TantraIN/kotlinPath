@@ -1,5 +1,8 @@
 import { ANDROID_GLOSSARY } from "./android";
 import { ARCHITECTURE_GLOSSARY } from "./architecture";
+import { HILT_GLOSSARY } from "./hilt";
+import { NETWORK_GLOSSARY } from "./network";
+import { PERSISTENCE_GLOSSARY } from "./persistence";
 import { COMPOSE_GLOSSARY } from "./compose";
 import { COROUTINES_GLOSSARY } from "./coroutines";
 import { GRADLE_GLOSSARY } from "./gradle";
@@ -26,6 +29,9 @@ export const GLOSSARY: Glossary = {
   ...ANDROID_GLOSSARY,
   ...COMPOSE_GLOSSARY,
   ...ARCHITECTURE_GLOSSARY,
+  ...NETWORK_GLOSSARY,
+  ...PERSISTENCE_GLOSSARY,
+  ...HILT_GLOSSARY,
   ...GRADLE_GLOSSARY,
   ...MANIFEST_GLOSSARY,
   ...LAYOUT_GLOSSARY,
@@ -43,6 +49,9 @@ const CODE_TERMS = new Set(
     ...ANDROID_GLOSSARY,
     ...COMPOSE_GLOSSARY,
     ...ARCHITECTURE_GLOSSARY,
+    ...NETWORK_GLOSSARY,
+    ...PERSISTENCE_GLOSSARY,
+    ...HILT_GLOSSARY,
     ...GRADLE_GLOSSARY,
   }),
 );

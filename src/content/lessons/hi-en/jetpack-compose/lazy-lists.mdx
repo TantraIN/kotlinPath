@@ -37,7 +37,7 @@ khatam kar di jati hain, aur nai tab banti hain jab wo aati hain.
 ```kotlin title="Dsl.kt" numbered
 LazyColumn {
     item {                                    // ek tay item
-        Header()
+        ListHeader()
     }
 
     items(orders, key = { it.id }) { order ->  // har element ke liye ek

@@ -37,7 +37,7 @@ LazyColumn {
 ```kotlin title="Dsl.kt" numbered
 LazyColumn {
     item {                                    // एक तय item
-        Header()
+        ListHeader()
     }
 
     items(orders, key = { it.id }) { order ->  // हर element के लिए एक

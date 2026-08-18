@@ -83,8 +83,13 @@ const LANG_ALIASES: Record<string, string> = {
  * term like `applicationContext` could never be annotated. The shape is kept
  * deliberately strict — a comment or a call expression contains spaces, slashes
  * or brackets and is skipped, so prose that merely mentions a term stays plain.
+ *
+ * The optional leading `@` matters: Shiki hands an annotation back as one span
+ * including the sigil, so without it `@Composable` and every other annotation
+ * failed this test and could never be annotated. Glossary keys are stored
+ * without the `@`, and `resolveTerm` strips it.
  */
-const IDENT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.?$/;
+const IDENT_CHAIN = /^@?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.?$/;
 
 /**
  * XML element and attribute names, which Kotlin's shape does not cover: they
@@ -124,7 +129,7 @@ function glossaryTransformer(scope: GlossaryScope): ShikiTransformer {
       if (!trimmed || !shape.test(trimmed)) return;
 
       // The whole span is one term — annotate it in place, no extra element.
-      const whole = raw === trimmed ? resolveTerm(trimmed, scope) : null;
+      const whole = raw === trimmed ? resolveTerm(trimmed.replace(/^@/, ""), scope) : null;
       if (whole) {
         node.properties = {
           ...node.properties,
