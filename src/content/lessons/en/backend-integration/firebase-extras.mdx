@@ -1,0 +1,190 @@
+---
+title: "Storage, Crashlytics, Analytics and Remote Config"
+description: Four SDKs that each solve one problem well. What connects them is that three of them are worth adding before you need them, and one has consequences you should choose rather than inherit.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Crashlytics only reports crashes that happen **after** it is installed, and Remote Config only helps if
+it shipped **before** the emergency. Both are near-free until used, which makes adding them on day one
+the obvious call — while Analytics starts collecting immediately and brings obligations with it.
+</KeyIdea>
+
+## Storage
+
+```kotlin title="Storage.kt" numbered
+val ref = storage.reference.child("users/$uid/avatar.jpg")
+
+val task = ref.putFile(uri)
+task.addOnProgressListener { progress = it.bytesTransferred * 100 / it.totalByteCount }
+task.await()
+
+val url = ref.downloadUrl.await()          // a long-lived, unguessable URL
+```
+
+Storage has its own security rules, separate from Firestore's, and they default to requiring
+authentication — which is why a rule set you never wrote is usually the reason an upload fails.
+
+```js title="storage.rules" numbered
+match /users/{userId}/{file} {
+  allow read:  if request.auth != null;
+  allow write: if request.auth != null && request.auth.uid == userId
+               && request.resource.size < 5 * 1024 * 1024
+               && request.resource.contentType.matches('image/.*');
+}
+```
+
+The size and content-type checks are the ones people skip and then regret: without them any signed-in
+user can upload a two-gigabyte file to your bucket, and you pay for it.
+
+`downloadUrl` returns a URL with a token in it that works for anyone who has it, indefinitely. That is
+fine for a public avatar and wrong for a private document — for those, keep the path and fetch through
+the SDK, which applies the rules on every read.
+
+Uploads belong in a worker, not a `viewModelScope`, for the reason the WorkManager lesson gave: a user
+who backs out mid-upload has cancelled their own upload.
+
+## Crashlytics
+
+```kotlin title="Crashlytics.kt" numbered
+FirebaseCrashlytics.getInstance().apply {
+    setUserId(uid)                                   // not an email or a name
+    setCustomKey("screen", "order_detail")
+    log("refresh tapped")                            // breadcrumbs, kept with the next crash
+}
+```
+
+The breadcrumbs are what turn a stack trace into something diagnosable. A crash report tells you where
+it broke; the `log` lines and custom keys tell you what the user was doing, which is usually the part
+you cannot reproduce.
+
+Be careful what goes in them. `setUserId` should be an opaque id, never an email address, and a `log`
+line with a token or a phone number has just sent personal data to a third party — the same accidental
+leak the secrets lesson described.
+
+Crashlytics also needs the mapping file from the R8 lesson to deobfuscate release stack traces. The
+Gradle plugin uploads it automatically, and when someone disables that to speed up a build, the reports
+become unreadable and nobody notices until an incident.
+
+<Quiz
+  question="A team ships a broken feature. They need it off within hours, but the Play review and staged rollout mean a fix reaches everyone in days. Remote Config is in the app but every flag defaults to enabled. What does that tell you about how to use it?"
+  options={[
+    "They should have shipped faster; Remote Config cannot help with an already-released build",
+    "The default must be the safe value, because the default is what runs before the first fetch and for anyone who cannot reach Firebase — a flag defaulting to enabled is a kill switch that does not work when you most need it",
+    "Remote Config should be fetched synchronously at startup so the value is always current"
+  ]}
+  answer={1}
+  explanation="Remote Config genuinely does solve this, and the team has installed the mechanism with the polarity reversed. Values come from three places in order: your in-app defaults, the last successfully fetched values, and a fresh fetch — so on a cold start with no network, or in the seconds before the first fetch completes, the in-app default is what runs. A new feature defaulting to enabled therefore stays enabled for exactly the users whose connection is worst. Defaulting it to disabled and enabling it remotely inverts that: the fetch turns things on rather than off, and the absence of a fetch is safe. Fetching synchronously at startup is the other tempting answer and is worse — it puts a network call on the critical path from the startup lesson, and it still fails offline."
+/>
+
+## Remote Config
+
+```kotlin title="RemoteConfig.kt" numbered
+remoteConfig.setDefaultsAsync(mapOf("new_checkout_enabled" to false))   // safe default
+
+remoteConfig.setConfigSettingsAsync(
+    remoteConfigSettings { minimumFetchIntervalInSeconds = 3600 },      // 12h in production
+)
+
+remoteConfig.fetchAndActivate().await()
+if (remoteConfig.getBoolean("new_checkout_enabled")) { newCheckout() }
+```
+
+`fetchAndActivate` fetches and applies in one step. `fetch` then `activate` separately lets you apply
+the new values at a moment you choose — at the next screen change rather than mid-flow, so a flag does
+not flip while the user is halfway through something.
+
+`minimumFetchIntervalInSeconds` exists because fetches are throttled server-side. Setting it low in
+development is normal; leaving it low in production gets you throttled, at which point the kill switch
+you were relying on stops responding.
+
+## Analytics
+
+```kotlin title="Analytics.kt" numbered
+firebaseAnalytics.setAnalyticsCollectionEnabled(false)     // until the user agrees
+
+firebaseAnalytics.logEvent("order_placed") {
+    param("payment_method", "upi")
+    param("item_count", 3L)
+}
+```
+
+Analytics is added transitively by several other Firebase SDKs and starts collecting on its own, which
+is the part to notice: it is a decision you inherit rather than make.
+
+That has three consequences. Your Play Data Safety declaration must match what you actually collect,
+and misdeclaring it is a real rejection reason. Where GDPR or similar applies, collection needs consent
+first — hence disabling it until the user agrees. And user properties are for cohorts, not identities:
+putting an email address in one is both a policy violation and a leak.
+
+<Detail summary="App Check, which the other lessons kept mentioning">
+Firebase security rules answer "is this user allowed to do this". App Check answers a different
+question: "did this request come from my real app at all".
+
+```kotlin title="AppCheck.kt" numbered
+FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+    PlayIntegrityAppCheckProviderFactory.getInstance(),
+)
+```
+
+Without it, anyone can take the values from `google-services.json` — which ship in every APK — and call
+your Firestore, Storage and Functions from a script. Rules still apply, so they cannot read another
+user's data, but they can sign up ten thousand accounts, burn your phone-auth quota, or scrape
+everything a legitimate user is allowed to see.
+
+Enable it in **monitoring mode** first. Enforcing immediately locks out every user on an older version
+of your app, and the monitoring dashboard tells you what fraction of your traffic is already attesting
+before you make that irreversible.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second one is a kill switch that does not work">
+**Storage rules with no size or type limit.** Any signed-in user can fill your bucket, at your expense.
+
+**Flags defaulting to enabled.** The default runs before the first fetch and offline.
+
+**A low fetch interval in production.** You get throttled exactly when you need the flag.
+
+**Personal data in Crashlytics keys or logs.** An opaque id only; the rest is a leak.
+
+**Inheriting Analytics collection.** Declare it on Play and get consent where required.
+</Pitfall>
+
+## Practice
+
+1. Upload a 100MB file with permissive Storage rules, then add a size limit and retry.
+2. Add breadcrumbs to a screen, force a crash, and read the report.
+3. Ship a flag defaulting to enabled, go offline, and confirm the feature runs anyway.
+4. Set `minimumFetchIntervalInSeconds` to zero and fetch repeatedly until throttled.
+5. Turn on App Check in monitoring mode and read what fraction of traffic attests.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Storage rules | Separate from Firestore's; add size and content-type limits |
+| `downloadUrl` | Works for anyone who has it, indefinitely |
+| Uploads | In a worker, not `viewModelScope` |
+| Crashlytics | Only sees crashes after it is installed |
+| Breadcrumbs | Turn a stack trace into something diagnosable |
+| Mapping file | Uploaded by the plugin; without it, reports are unreadable |
+| Remote Config defaults | Must be the safe value |
+| `fetch` then `activate` | Apply at a moment you choose |
+| Fetch interval | Low in production means throttled |
+| App Check | Proves the request came from your real app |
+
+<Interview title="A question about a kill switch that fails when it matters">
+"How would you use Remote Config as a kill switch?"
+
+With the default set to the safe value — which for a new feature means disabled. Remote Config resolves
+in order: in-app defaults, then the last fetched values, then a fresh fetch. So the default is what runs
+on a cold start before the first fetch completes, and for anyone whose connection is poor. A flag
+defaulting to enabled is therefore a kill switch that keeps the feature on for exactly the users you
+would least like it to.
+
+Two other things I would get right. Set a realistic `minimumFetchIntervalInSeconds` in production,
+because a low one gets the app throttled and the flag stops responding at the moment you need it. And
+separate `fetch` from `activate`, so a value changes at a screen boundary rather than mid-flow — a flag
+flipping while a user is halfway through checkout is its own bug.
+</Interview>

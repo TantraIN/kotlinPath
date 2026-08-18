@@ -1,0 +1,194 @@
+---
+title: "Storage, Crashlytics, Analytics aur Remote Config"
+description: Chaar SDKs, har ek apni ek mushkil theek se hal karti hai. Inhe jodta ye hai ki teen ko zarurat padne se pehle jodna banta hai, aur ek ke natije aise hain jinhe virasat mein lene ke bajaye chunna chahiye.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Crashlytics sirf un crashes ki khabar deta hai jo uske lagne ke **baad** hon, aur Remote Config tabhi
+kaam aata hai jab wo us aapat se **pehle** bheja gaya ho. Dono istemal tak lagbhag muft hain, jisse unhe
+pehle hi din jodna saaf faisla ban jata hai — jabki Analytics turant jama karna shuru kar deta hai aur
+apne saath zimmedariyan lata hai.
+</KeyIdea>
+
+## Storage
+
+```kotlin title="Storage.kt" numbered
+val ref = storage.reference.child("users/$uid/avatar.jpg")
+
+val task = ref.putFile(uri)
+task.addOnProgressListener { progress = it.bytesTransferred * 100 / it.totalByteCount }
+task.await()
+
+val url = ref.downloadUrl.await()          // lambi umar wala, andaze se na lagne wala URL
+```
+
+Storage ke apne security rules hain, Firestore walon se alag, aur wo default se pehchan maangte hain —
+isiliye jo rules aapne kabhi likhe hi nahi wahi aam taur par upload nakaam hone ki wajah hote hain.
+
+```js title="storage.rules" numbered
+match /users/{userId}/{file} {
+  allow read:  if request.auth != null;
+  allow write: if request.auth != null && request.auth.uid == userId
+               && request.resource.size < 5 * 1024 * 1024
+               && request.resource.contentType.matches('image/.*');
+}
+```
+
+Naap aur content-type wali jaanchein hi log chhodte hain aur phir pachhtate hain: unke bina koi bhi
+signed-in user aapke bucket mein do gigabyte ki file chadha sakta hai, aur paise aap dete ho.
+
+`downloadUrl` aisa URL lautata hai jismein token hota hai aur jo us kisi ke liye bhi hamesha chalta hai
+jiske paas wo hai. Sarvajanik avatar ke liye wo theek hai aur kisi niji dastavez ke liye galat — unke liye
+path rakhiye aur SDK se laiye, jo har padhai par rules lagata hai.
+
+Uploads worker ki jagah hain, `viewModelScope` ki nahi, usi wajah se jo WorkManager wale lesson ne di
+thi: jo user beech mein peeche laut jata hai usne apna hi upload rok diya.
+
+## Crashlytics
+
+```kotlin title="Crashlytics.kt" numbered
+FirebaseCrashlytics.getInstance().apply {
+    setUserId(uid)                                   // koi email ya naam nahi
+    setCustomKey("screen", "order_detail")
+    log("refresh tapped")                            // kadiyan, agli crash ke saath rakhi jati hain
+}
+```
+
+Wo kadiyan hi kisi stack trace ko samajh mein aane layak banati hain. Crash ki report batati hai ki toota
+kahan; `log` ki linein aur apni keys batati hain ki user kar kya raha tha, aur aam taur par wahi hissa aap
+dobara paida nahi kar paate.
+
+Unmein jata kya hai, ismein sambhaliye. `setUserId` koi apardarshi id honi chahiye, kabhi koi email nahi,
+aur token ya phone number wali `log` ki line ne abhi-abhi niji data kisi teesre ko bhej diya — wahi
+ittefaqan hota risav jo secrets wale lesson ne bataya tha.
+
+Crashlytics ko release ke stack traces kholne ke liye R8 wale lesson ki mapping ki file bhi chahiye.
+Gradle wala plugin use khud bhej deta hai, aur jab koi build tez karne ke liye use band kar deta hai, to
+reportein na padhe jane layak ho jati hain aur kisi ghatna tak kisi ko pata nahi chalta.
+
+<Quiz
+  question="Koi team tooti hui suvidha bhej deti hai. Unhe use ghanton mein band karna hai, par Play ki sameeksha aur dheere-dheere failne ka matlab hai ki sudhaar sab tak dinon mein pahunchega. Remote Config app mein hai par har flag ka default chalu hai. Ye uske istemal ke baare mein kya batata hai?"
+  options={[
+    "Unhe tez bhejna chahiye tha; pehle se nikal chuke build par Remote Config madad nahi kar sakta",
+    "Default safe value honi chahiye, kyunki pehli fetch se pehle aur un sabke liye jo Firebase tak pahunch nahi paate, chalta default hi hai — chalu par default rakha flag aisa kill switch hai jo theek tab kaam nahi karta jab sabse zyada chahiye",
+    "Remote Config ko shuru mein order se fetch karna chahiye taki value hamesha taza ho"
+  ]}
+  answer={1}
+  explanation="Remote Config ise sach mein hal karta hai, aur us team ne wo vyavastha ulti disha mein laga rakhi hai. Values teen jagahon se isi order mein aati hain: app ke andar ke default, aakhri safal fetch ki values, aur nai fetch — to bina network wale cold start par, ya pehli fetch poori hone se pehle ke secondon mein, chalta app ke andar ka default hi hai. Isliye chalu par default rakhi nai suvidha theek unhin users ke liye chalu reh jati hai jinka connection sabse kharab hai. Use band par default rakhkar door se chalu karna ise palat deta hai: tab fetch cheezein chalu karti hai, band nahi, aur fetch ka na hona safe hai. Shuru mein order se fetch karna doosra lubhavna jawab hai aur wo usse bhi bura hai — wo startup wale lesson ke asli raaste par network ki call rakh deta hai, aur offline mein wo phir bhi nakaam rehta hai."
+/>
+
+## Remote Config
+
+```kotlin title="RemoteConfig.kt" numbered
+remoteConfig.setDefaultsAsync(mapOf("new_checkout_enabled" to false))   // safe default
+
+remoteConfig.setConfigSettingsAsync(
+    remoteConfigSettings { minimumFetchIntervalInSeconds = 3600 },      // production mein 12 ghante
+)
+
+remoteConfig.fetchAndActivate().await()
+if (remoteConfig.getBoolean("new_checkout_enabled")) { newCheckout() }
+```
+
+`fetchAndActivate` ek hi kadam mein lata aur lagu karta hai. `fetch` aur `activate` alag-alag lene se aap
+nai values apne chune pal par lagu kar sakte ho — agli screen badalne par, na ki kisi kaam ke beech mein,
+taki user ke aadhe raaste mein hote hue koi flag na palte.
+
+`minimumFetchIntervalInSeconds` isliye hai ki fetch ki raftar server ki taraf se bandhi hai. Banate waqt
+use chhota rakhna aam hai; production mein chhota chhod dene par aapki raftar baandh di jati hai, aur us
+pal wo kill switch jawab dena band kar deta hai jis par aap tike the.
+
+## Analytics
+
+```kotlin title="Analytics.kt" numbered
+firebaseAnalytics.setAnalyticsCollectionEnabled(false)     // user ke manne tak
+
+firebaseAnalytics.logEvent("order_placed") {
+    param("payment_method", "upi")
+    param("item_count", 3L)
+}
+```
+
+Analytics kai doosri Firebase wali SDKs ke saath apne aap jud jati hai aur khud jama karna shuru kar deti
+hai, aur gaur karne ki baat yahi hai: wo aisa faisla hai jo aap lete nahi, virasat mein paate ho.
+
+Uske teen natije hain. Play ki Data Safety wali aapki ghoshna usse mel khani chahiye jo aap sach mein jama
+karte ho, aur use galat batana asli asweekriti ki wajah hai. Jahan GDPR ya waisa kuch lagu ho wahan jama
+karne se pehle sehmati chahiye — isiliye user ke manne tak use band rakhiye. Aur user ki khoobiyan samoohon
+ke liye hain, pehchan ke liye nahi: kisi mein email ka pata daalna neeti ka ullanghan bhi hai aur risav
+bhi.
+
+<Detail summary="App Check, jiska zikr baaki lesson karte aaye hain">
+Firebase ke security rules is sawal ka jawab dete hain ki "is user ko ye karne ki ijazat hai ya nahi".
+App Check alag sawal ka jawab deta hai: "ye request mere asli app se aayi bhi thi ya nahi".
+
+```kotlin title="AppCheck.kt" numbered
+FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+    PlayIntegrityAppCheckProviderFactory.getInstance(),
+)
+```
+
+Uske bina koi bhi `google-services.json` ki values le sakta hai — jo har APK mein jati hain — aur kisi
+script se aapke Firestore, Storage tatha Functions ko bula sakta hai. Rules phir bhi lagu hain, to wo kisi
+doosre user ka data nahi padh sakta, par wo das hazar khate bana sakta hai, aapka phone wali pehchan ka
+quota jala sakta hai, ya wo sab kheench sakta hai jo kisi jayaz user ko dikhta hai.
+
+Pehle **nigrani wali haalat** mein chalu kijiye. Seedhe manwana aapke app ki purani version wale har user
+ko bahar kar deta hai, aur nigrani wala dashboard us apalat faisle se pehle bata deta hai ki aapke kitne
+traffic ki gawahi pehle se ho rahi hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri aisa kill switch hai jo chalta hi nahi">
+**Bina naap ya kism ki had wale Storage ke rules.** Koi bhi signed-in user aapka bucket bhar sakta hai,
+aapke kharche par.
+
+**Chalu par default rakhe flags.** Default pehli fetch se pehle aur offline mein chalta hai.
+
+**Production mein chhota fetch ka antaral.** Theek tab raftar bandhti hai jab wo flag chahiye.
+
+**Crashlytics ki keys ya logs mein niji data.** Sirf apardarshi id; baaki risav hai.
+
+**Analytics ka jama karna virasat mein lena.** Use Play par bataiye aur jahan zaruri ho sehmati lijiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Dheele Storage ke rules ke saath 100MB ki file chadhaiye, phir naap ki had jodkar dobara kijiye.
+2. Kisi screen par kadiyan jodiye, jabran crash karaiye, aur report padhiye.
+3. Chalu par default rakha flag bhejiye, offline hoiye, aur pakka kijiye ki suvidha phir bhi chalti hai.
+4. `minimumFetchIntervalInSeconds` shoonya kijiye aur baar-baar fetch kijiye jab tak raftar na bandh jaye.
+5. App Check nigrani wali haalat mein chalu kijiye aur padhiye ki kitne traffic ki gawahi hoti hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Storage ke rules | Firestore walon se alag; naap aur kism ki hadein jodiye |
+| `downloadUrl` | Jiske paas hai uske liye hamesha chalta hai |
+| Uploads | Worker mein, `viewModelScope` mein nahi |
+| Crashlytics | Sirf apne lagne ke baad wali crashes dekhta hai |
+| Kadiyan | Stack trace ko samajh mein aane layak banati hain |
+| Mapping ki file | Plugin bhejta hai; uske bina reportein padhi nahi jatin |
+| Remote Config ke default | Safe value honi chahiye |
+| `fetch` phir `activate` | Apne chune pal par lagu kijiye |
+| Fetch ka antaral | Production mein chhota yani raftar bandhi hui |
+| App Check | Sabit karta hai ki request aapke asli app se aayi |
+
+<Interview title="Ek sawal, aise kill switch ka jo zarurat ke waqt nakaam rehta hai">
+"Remote Config ko kill switch ki tarah aap kaise loge?"
+
+Default ko safe value par rakhkar — jo kisi nai suvidha ke liye band hai. Remote Config isi order mein hal
+karta hai: app ke andar ke default, phir aakhri layi gayi values, phir nai fetch. To cold start par pehli
+fetch poori hone se pehle, aur un sabke liye jinka connection kamzor hai, chalta default hi hai. Isliye
+chalu par default rakha flag aisa kill switch hai jo theek unhin users ke liye suvidha chalu rakhta hai
+jinke liye aap sabse kam chahte.
+
+Do aur cheezein main theek rakhunga. Production mein `minimumFetchIntervalInSeconds` vastavik rakhiye,
+kyunki chhota rakhne par app ki raftar bandh jati hai aur wo flag theek us pal jawab dena band kar deta hai
+jab aapko chahiye. Aur `fetch` ko `activate` se alag rakhiye, taki koi value kisi screen ki sarhad par
+badle, beech raaste mein nahi — user ke checkout ke aadhe mein hote hue flag ka palatna apne aap mein ek
+bug hai.
+</Interview>

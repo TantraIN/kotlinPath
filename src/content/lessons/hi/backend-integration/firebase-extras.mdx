@@ -1,0 +1,191 @@
+---
+title: "Storage, Crashlytics, Analytics और Remote Config"
+description: चार SDKs, हर एक अपनी एक दिक्कत ठीक से हल करती है। इन्हें जोड़ता यह है कि तीन को जरूरत पड़ने से पहले जोड़ना बनता है, और एक के नतीजे ऐसे हैं जिन्हें विरासत में लेने के बजाय चुनना चाहिए।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Crashlytics सिर्फ उन crashes की खबर देता है जो उसके लगने के **बाद** हों, और Remote Config तभी काम आता
+है जब वह उस आपात से **पहले** भेजा गया हो। दोनों इस्तेमाल तक लगभग मुफ्त हैं, जिससे उन्हें पहले ही दिन
+जोड़ना साफ फैसला बन जाता है — जबकि Analytics तुरंत जमा करना शुरू कर देता है और अपने साथ जिम्मेदारियाँ
+लाता है।
+</KeyIdea>
+
+## Storage
+
+```kotlin title="Storage.kt" numbered
+val ref = storage.reference.child("users/$uid/avatar.jpg")
+
+val task = ref.putFile(uri)
+task.addOnProgressListener { progress = it.bytesTransferred * 100 / it.totalByteCount }
+task.await()
+
+val url = ref.downloadUrl.await()          // लंबी उम्र वाला, अंदाजे से न लगने वाला URL
+```
+
+Storage के अपने security rules हैं, Firestore वालों से अलग, और वे डिफॉल्ट से पहचान माँगते हैं — इसीलिए
+जो rules आपने कभी लिखे ही नहीं वही आमतौर पर upload नाकाम होने की वजह होते हैं।
+
+```js title="storage.rules" numbered
+match /users/{userId}/{file} {
+  allow read:  if request.auth != null;
+  allow write: if request.auth != null && request.auth.uid == userId
+               && request.resource.size < 5 * 1024 * 1024
+               && request.resource.contentType.matches('image/.*');
+}
+```
+
+नाप और content-type वाली जाँचें ही लोग छोड़ते हैं और फिर पछताते हैं: उनके बिना कोई भी signed-in user
+आपके bucket में दो gigabyte की file चढ़ा सकता है, और पैसे आप देते हैं।
+
+`downloadUrl` ऐसा URL लौटाता है जिसमें token होता है और जो उस किसी के लिए भी हमेशा चलता है जिसके पास वह
+है। सार्वजनिक avatar के लिए वह ठीक है और किसी निजी दस्तावेज के लिए गलत — उनके लिए path रखिए और SDK से
+लाइए, जो हर पढ़ाई पर rules लगाता है।
+
+Uploads worker की जगह हैं, `viewModelScope` की नहीं, उसी वजह से जो WorkManager वाले पाठ ने दी थी: जो
+user बीच में पीछे लौट जाता है उसने अपना ही upload रोक दिया।
+
+## Crashlytics
+
+```kotlin title="Crashlytics.kt" numbered
+FirebaseCrashlytics.getInstance().apply {
+    setUserId(uid)                                   // कोई email या नाम नहीं
+    setCustomKey("screen", "order_detail")
+    log("refresh tapped")                            // कड़ियाँ, अगली crash के साथ रखी जाती हैं
+}
+```
+
+वे कड़ियाँ ही किसी stack trace को समझ में आने लायक बनाती हैं। Crash की रिपोर्ट बताती है कि टूटा कहाँ;
+`log` की लाइनें और अपनी keys बताती हैं कि user कर क्या रहा था, और आमतौर पर वही हिस्सा आप दोबारा पैदा
+नहीं कर पाते।
+
+उनमें जाता क्या है, इसमें सँभलिए। `setUserId` कोई अपारदर्शी id होनी चाहिए, कभी कोई email नहीं, और token
+या phone नंबर वाली `log` की लाइन ने अभी-अभी निजी data किसी तीसरे को भेज दिया — वही इत्तेफाकन होता रिसाव
+जो secrets वाले पाठ ने बताया था।
+
+Crashlytics को release के stack traces खोलने के लिए R8 वाले पाठ की mapping की file भी चाहिए। Gradle
+वाला plugin उसे खुद भेज देता है, और जब कोई build तेज करने के लिए उसे बंद कर देता है, तो रिपोर्टें न
+पढ़े जाने लायक हो जाती हैं और किसी घटना तक किसी को पता नहीं चलता।
+
+<Quiz
+  question="कोई team टूटी हुई सुविधा भेज देती है। उन्हें उसे घंटों में बंद करना है, पर Play की समीक्षा और धीरे-धीरे फैलने का मतलब है कि सुधार सब तक दिनों में पहुँचेगा। Remote Config ऐप में है पर हर flag का डिफॉल्ट चालू है। यह उसके इस्तेमाल के बारे में क्या बताता है?"
+  options={[
+    "उन्हें तेज भेजना चाहिए था; पहले से निकल चुके build पर Remote Config मदद नहीं कर सकता",
+    "डिफॉल्ट सुरक्षित value होनी चाहिए, क्योंकि पहली fetch से पहले और उन सबके लिए जो Firebase तक पहुँच नहीं पाते, चलता डिफॉल्ट ही है — चालू पर डिफॉल्ट रखा flag ऐसा kill switch है जो ठीक तब काम नहीं करता जब सबसे ज्यादा चाहिए",
+    "Remote Config को शुरू में क्रम से fetch करना चाहिए ताकि value हमेशा ताजा हो"
+  ]}
+  answer={1}
+  explanation="Remote Config इसे सच में हल करता है, और उस team ने वह व्यवस्था उलटी दिशा में लगा रखी है। Values तीन जगहों से इसी क्रम में आती हैं: ऐप के अंदर के डिफॉल्ट, आखिरी सफल fetch की values, और नई fetch — तो बिना network वाले cold start पर, या पहली fetch पूरी होने से पहले के सेकंडों में, चलता ऐप के अंदर का डिफॉल्ट ही है। इसलिए चालू पर डिफॉल्ट रखी नई सुविधा ठीक उन्हीं users के लिए चालू रह जाती है जिनका connection सबसे खराब है। उसे बंद पर डिफॉल्ट रखकर दूर से चालू करना इसे पलट देता है: तब fetch चीजें चालू करती है, बंद नहीं, और fetch का न होना सुरक्षित है। शुरू में क्रम से fetch करना दूसरा लुभावना जवाब है और वह उससे भी बुरा है — वह startup वाले पाठ के असली रास्ते पर network की call रख देता है, और offline में वह फिर भी नाकाम रहता है।"
+/>
+
+## Remote Config
+
+```kotlin title="RemoteConfig.kt" numbered
+remoteConfig.setDefaultsAsync(mapOf("new_checkout_enabled" to false))   // सुरक्षित डिफॉल्ट
+
+remoteConfig.setConfigSettingsAsync(
+    remoteConfigSettings { minimumFetchIntervalInSeconds = 3600 },      // production में 12 घंटे
+)
+
+remoteConfig.fetchAndActivate().await()
+if (remoteConfig.getBoolean("new_checkout_enabled")) { newCheckout() }
+```
+
+`fetchAndActivate` एक ही कदम में लाता और लागू करता है। `fetch` और `activate` अलग-अलग लेने से आप नई
+values अपने चुने पल पर लागू कर सकते हैं — अगली screen बदलने पर, न कि किसी काम के बीच में, ताकि user के
+आधे रास्ते में होते हुए कोई flag न पलटे।
+
+`minimumFetchIntervalInSeconds` इसलिए है कि fetch की रफ्तार server की तरफ से बँधी है। बनाते वक्त उसे
+छोटा रखना आम है; production में छोटा छोड़ देने पर आपकी रफ्तार बाँध दी जाती है, और उस पल वह kill switch
+जवाब देना बंद कर देता है जिस पर आप टिके थे।
+
+## Analytics
+
+```kotlin title="Analytics.kt" numbered
+firebaseAnalytics.setAnalyticsCollectionEnabled(false)     // user के मानने तक
+
+firebaseAnalytics.logEvent("order_placed") {
+    param("payment_method", "upi")
+    param("item_count", 3L)
+}
+```
+
+Analytics कई दूसरी Firebase वाली SDKs के साथ अपने आप जुड़ जाती है और खुद जमा करना शुरू कर देती है, और
+गौर करने की बात यही है: वह ऐसा फैसला है जो आप लेते नहीं, विरासत में पाते हैं।
+
+उसके तीन नतीजे हैं। Play की Data Safety वाली आपकी घोषणा उससे मेल खानी चाहिए जो आप सच में जमा करते हैं,
+और उसे गलत बताना असली अस्वीकृति की वजह है। जहाँ GDPR या वैसा कुछ लागू हो वहाँ जमा करने से पहले सहमति
+चाहिए — इसीलिए user के मानने तक उसे बंद रखिए। और user की खूबियाँ समूहों के लिए हैं, पहचान के लिए नहीं:
+किसी में email का पता डालना नीति का उल्लंघन भी है और रिसाव भी।
+
+<Detail summary="App Check, जिसका जिक्र बाकी पाठ करते आए हैं">
+Firebase के security rules इस सवाल का जवाब देते हैं कि "इस user को यह करने की इजाजत है या नहीं"।
+App Check अलग सवाल का जवाब देता है: "यह request मेरे असली ऐप से आई भी थी या नहीं"।
+
+```kotlin title="AppCheck.kt" numbered
+FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+    PlayIntegrityAppCheckProviderFactory.getInstance(),
+)
+```
+
+उसके बिना कोई भी `google-services.json` की values ले सकता है — जो हर APK में जाती हैं — और किसी script
+से आपके Firestore, Storage तथा Functions को बुला सकता है। Rules फिर भी लागू हैं, तो वह किसी दूसरे user
+का data नहीं पढ़ सकता, पर वह दस हजार खाते बना सकता है, आपका phone वाली पहचान का quota जला सकता है, या
+वह सब खींच सकता है जो किसी जायज user को दिखता है।
+
+पहले **निगरानी वाली हालत** में चालू कीजिए। सीधे मनवाना आपके ऐप की पुरानी version वाले हर user को बाहर
+कर देता है, और निगरानी वाला dashboard उस अपलट फैसले से पहले बता देता है कि आपके कितने traffic की गवाही
+पहले से हो रही है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और दूसरी ऐसा kill switch है जो चलता ही नहीं">
+**बिना नाप या किस्म की हद वाले Storage के rules।** कोई भी signed-in user आपका bucket भर सकता है, आपके
+खर्चे पर।
+
+**चालू पर डिफॉल्ट रखे flags।** डिफॉल्ट पहली fetch से पहले और offline में चलता है।
+
+**Production में छोटा fetch का अंतराल।** ठीक तब रफ्तार बँधती है जब वह flag चाहिए।
+
+**Crashlytics की keys या logs में निजी data।** सिर्फ अपारदर्शी id; बाकी रिसाव है।
+
+**Analytics का जमा करना विरासत में लेना।** उसे Play पर बताइए और जहाँ जरूरी हो सहमति लीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. ढीले Storage के rules के साथ 100MB की file चढ़ाइए, फिर नाप की हद जोड़कर दोबारा कीजिए।
+2. किसी screen पर कड़ियाँ जोड़िए, जबरन crash कराइए, और रिपोर्ट पढ़िए।
+3. चालू पर डिफॉल्ट रखा flag भेजिए, offline होइए, और पक्का कीजिए कि सुविधा फिर भी चलती है।
+4. `minimumFetchIntervalInSeconds` शून्य कीजिए और बार-बार fetch कीजिए जब तक रफ्तार न बँध जाए।
+5. App Check निगरानी वाली हालत में चालू कीजिए और पढ़िए कि कितने traffic की गवाही होती है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Storage के rules | Firestore वालों से अलग; नाप और किस्म की हदें जोड़िए |
+| `downloadUrl` | जिसके पास है उसके लिए हमेशा चलता है |
+| Uploads | Worker में, `viewModelScope` में नहीं |
+| Crashlytics | सिर्फ अपने लगने के बाद वाली crashes देखता है |
+| कड़ियाँ | Stack trace को समझ में आने लायक बनाती हैं |
+| Mapping की file | Plugin भेजता है; उसके बिना रिपोर्टें पढ़ी नहीं जातीं |
+| Remote Config के डिफॉल्ट | सुरक्षित value होनी चाहिए |
+| `fetch` फिर `activate` | अपने चुने पल पर लागू कीजिए |
+| Fetch का अंतराल | Production में छोटा यानी रफ्तार बँधी हुई |
+| App Check | साबित करता है कि request आपके असली ऐप से आई |
+
+<Interview title="एक सवाल, ऐसे kill switch का जो जरूरत के वक्त नाकाम रहता है">
+"Remote Config को kill switch की तरह आप कैसे लेंगे?"
+
+डिफॉल्ट को सुरक्षित value पर रखकर — जो किसी नई सुविधा के लिए बंद है। Remote Config इसी क्रम में हल करता
+है: ऐप के अंदर के डिफॉल्ट, फिर आखिरी लाई गई values, फिर नई fetch। तो cold start पर पहली fetch पूरी होने
+से पहले, और उन सबके लिए जिनका connection कमजोर है, चलता डिफॉल्ट ही है। इसलिए चालू पर डिफॉल्ट रखा flag
+ऐसा kill switch है जो ठीक उन्हीं users के लिए सुविधा चालू रखता है जिनके लिए आप सबसे कम चाहते।
+
+दो और चीजें मैं ठीक रखूँगा। Production में `minimumFetchIntervalInSeconds` वास्तविक रखिए, क्योंकि छोटा
+रखने पर ऐप की रफ्तार बँध जाती है और वह flag ठीक उस पल जवाब देना बंद कर देता है जब आपको चाहिए। और `fetch`
+को `activate` से अलग रखिए, ताकि कोई value किसी screen की सरहद पर बदले, बीच रास्ते में नहीं — user के
+checkout के आधे में होते हुए flag का पलटना अपने आप में एक bug है।
+</Interview>
