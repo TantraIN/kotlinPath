@@ -1,0 +1,202 @@
+---
+title: LazyColumn, LazyRow, grids aur keys
+description: Aisi lists jo sirf wahi banati hain jo aapko dikh raha hai. Recycling, ViewHolder aur DiffUtil sab chale gaye — unki jagah ek parameter hai, jiska naam key hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`LazyColumn` sirf wahi items banata hai jo abhi screen par hain. Uska content block ek **DSL hai,
+koi composable body nahi**, isiliye aap `for` loop likhne ke bajaye `items(list)` bulate hain —
+aur isiliye is poore paath mein `key` parameter sabse zyada maayne rakhta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Wrong.kt"
+Column(Modifier.verticalScroll(rememberScrollState())) {
+    orders.forEach { OrderRow(it) }        // dason hazar banata hai
+}
+```
+
+Ye scroll to hota hai, aur pehle frame se pehle har row bana dalta hai. Das hazar orders ke saath
+screen aati hi nahi.
+
+```kotlin title="Right.kt" numbered
+LazyColumn {
+    items(orders, key = { it.id }) { order ->
+        OrderRow(order)
+    }
+}
+```
+
+Sirf dikhti rows aur thoda sa aage ka hissa banta hai. Jo rows scroll hokar bahar jati hain wo
+khatam kar di jati hain, aur nai tab banti hain jab wo aati hain.
+
+## Content block ek DSL hai
+
+```kotlin title="Dsl.kt" numbered
+LazyColumn {
+    item {                                    // ek tay item
+        Header()
+    }
+
+    items(orders, key = { it.id }) { order ->  // har element ke liye ek
+        OrderRow(order)
+    }
+
+    itemsIndexed(orders) { index, order ->      // jab jagah ka number chahiye
+        OrderRow(order, showDivider = index > 0)
+    }
+
+    stickyHeader {                             // apne samooh ke scroll hote waqt tika rehta hai
+        Text("Today")
+    }
+}
+```
+
+<Note>
+Us block ke andar aap `LazyListScope` par functions bula rahe hain, kuch compose nahi kar rahe.
+Isiliye wahan kisi `Text` ke charon taraf seedha `if` nahi chalta — `item { if (...) Text(...) }`
+likhna padta hai, kyunki list mein kuch darj `item` hi karata hai.
+</Note>
+
+## Wo parameter jo tay karta hai ki aapki list sahi hai ya nahi
+
+<Quiz
+  question="Checkboxes wali ek list mein koi `key` nahi hai. Aap pehli row mita dete hain. Jo checkbox row 2 par laga tha wo ab row 1 par laga dikhta hai, jo ek alag order hai. Kyun?"
+  options={[
+    "List ko `notifyItemRemoved` chahiye, jo Compose apne aap kar deta hai",
+    "Bina key ke items ki pehchan unke index se hoti hai, to state item ke bajaye jagah se chipki rehti hai",
+    "Lazy list ke andar checkbox ka state yaad rakha hi nahi ja sakta",
+  ]}
+  answer={1}
+  explanation="Jab tak aap key na dein, Compose har item ko list mein uski jagah se pehchanta hai. Koi item hatne par neeche ki har cheez ek khana upar khisak jati hai, aur yaad rakhi hui har value — koi checkbox, koi khula hua hissa, chalti hui koi animation, row ke andar ka scroll — item ke peeche jane ke bajaye usi khane se chipki reh jati hai. key = { it.id } dene par runtime ko pata rehta hai ki kaun sa item kaun sa hai, to state item ke saath chalti hai aur hatna theek se animate hota hai. Isse ye bhi rukta hai ki maujooda scroll ke upar item judne par list uchhal jaye, kyunki runtime wahi index nahi, wahi item screen par rakh sakta hai."
+/>
+
+## Grids wahi baat hain, bas khanon ka tarika jud jata hai
+
+```kotlin title="Grid.kt" numbered
+LazyVerticalGrid(
+    columns = GridCells.Adaptive(minSize = 128.dp),
+    contentPadding = PaddingValues(16.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
+) {
+    items(photos, key = { it.id }) { PhotoTile(it) }
+}
+```
+
+| Khanon ka tarika | Kya karta hai |
+| --- | --- |
+| `GridCells.Fixed(3)` | Width kuch bhi ho, hamesha teen columns |
+| `GridCells.Adaptive(128.dp)` | Us kam se kam width par jitne columns samayein |
+| `GridCells.FixedSize(80.dp)` | Khane ka naap pakka, bachi jagah aakhir mein |
+
+`Adaptive` se hi ek grid bina doosri layout file ke phone aur tablet dono par chalti hai.
+
+## Padding, doori, aur wo do jo ek jaise nahi hain
+
+```kotlin title="Padding.kt"
+LazyColumn(
+    contentPadding = PaddingValues(vertical = 16.dp),   // content ke saath scroll hota hai
+    verticalArrangement = Arrangement.spacedBy(8.dp),   // sirf items ke beech
+    modifier = Modifier.padding(16.dp),                 // scroll wala ilaka hi chhota kar deta hai
+)
+```
+
+`contentPadding` list ke siron par wo jagah chhodta hai jo content ke saath scroll hokar chali
+jati hai; `Modifier.padding` khud scroll wali khidki chhoti kar deta hai, to items uske kinare par
+kat jate hain. `Scaffold` ke bars ke neeche rakhi list ke liye lagbhag hamesha `contentPadding` hi
+chahiye.
+
+<Detail summary="Scroll ki haalat, aur use bina sab kuch recompose kiye padhna">
+```kotlin title="ScrollState.kt" numbered
+val listState = rememberLazyListState()
+val showScrollToTop by remember {
+    derivedStateOf { listState.firstVisibleItemIndex > 5 }
+}
+
+LazyColumn(state = listState) { }
+```
+
+Scroll karte waqt `listState.firstVisibleItemIndex` lagatar badalta hai. Use seedhe kisi composable
+mein padhne se scroll ke har frame par recomposition hoti. `derivedStateOf` har badlaav par hisab
+to dobara karta hai par *khabar* sirf tab karta hai jab uska jawab badle — to button ek baar aata
+aur ek baar jata hai, screen ek second mein 60 baar recompose nahi hoti. Side effects wale paath
+mein is par poori baat hai.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Sirf dikhte items hote hain" meta="maang par bante hain">
+    Khidki ke bahar wale items bante hi nahi. Scroll karne par naye bante hain aur jo chale gaye wo
+    khatam kar diye jate hain.
+  </TimelineItem>
+  <TimelineItem title="Na ViewHolder, na DiffUtil" meta="wo kaam key karta hai">
+    Recycle karne ko kuch hai hi nahi, kyunki koi `View` cheezein hi nahi hain. Pehchan `key` se
+    aati hai, jo `DiffUtil` mein `areItemsTheSame` kar raha tha.
+  </TimelineItem>
+  <TimelineItem title="`contentType` dobara istemal mein madad karta hai" meta="mili-juli lists ke liye">
+    List ko ye bata dena ki headers aur rows alag tarah ki cheezein hain, use har tarah ka
+    composition dhancha dobara banane ke bajaye dobara istemal karne deta hai.
+  </TimelineItem>
+  <TimelineItem title="`Modifier.animateItem`" meta="LazyItemScope mein">
+    Keys hone par list ko pata rehta hai ki item hatkar kahin aur gaya hai, badla nahi gaya, to wo
+    us hilne ko animate kar sakti hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, aur pehli to crash kar deti hai">
+**Khade scroll wale `Column` ke andar `LazyColumn`.** Parent bina had ki height deta hai, to list
+ko pata hi nahi chal sakta ki dikh kya raha hai. Wo *"Vertically scrollable component was measured
+with an infinity maximum height constraints"* phenk deti hai. Ise sapaat kijiye: header ko
+`item {}` mein le jaiye.
+
+**Koi `key` nahi.** State items ke bajaye jagahon ke peeche chalti hai, hatna galat animate hota
+hai aur jodne par scroll uchhal jata hai.
+
+**`items(list.size)` aur haath se index lagana.** Keys to gayin hi, aur purana pada index ab baasi
+row nahi, seedha crash hai.
+
+**Item ki body mein bhaari kaam.** Kisi item ke andar chhaantna ya format karna har us item ke liye
+chalta hai jo scroll hokar guzarta hai. Ye ek baar, list ke upar kijiye.
+</Pitfall>
+
+## Practice
+
+1. Das hazar rows scroll wale `Column` mein aur `LazyColumn` mein banaiye, aur dono ke pehle frame
+   ka samay napiye.
+2. Phailne wale hisse wali rows ki ek list bina keys ke banaiye, sabse upar wali row mitaiye, aur
+   galat row ko phaila hua rehte dekhiye. Keys jodkar dohraiye.
+3. Scroll wale `Column` mein `LazyColumn` rakhiye, exception padhiye, phir `item {}` se theek
+   kijiye.
+4. `GridCells.Fixed(2)` ki jagah `GridCells.Adaptive(140.dp)` rakhiye aur khidki ka naap badliye.
+5. `derivedStateOf` se scroll-to-top button jodiye, phir uski jagah seedhe
+   `firstVisibleItemIndex` padhiye aur recomposition ki ginti milaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `LazyColumn` | Sirf wahi banata hai jo dikh raha hai |
+| Content block | `LazyListScope` wala DSL, koi composable body nahi |
+| `item` / `items` / `itemsIndexed` | Ek tay item, har element ke liye ek, ya index ke saath |
+| `key` | Pehchan; state jagah ke bajaye item ke peeche chalti hai |
+| `contentType` | Mili-juli list ko har tarah ka dhancha dobara istemal karne deta hai |
+| `LazyVerticalGrid` | Wahi tarika, `Fixed`, `Adaptive` ya `FixedSize` khanon ke saath |
+| `contentPadding` | Content ke saath scroll hota hai; `Modifier.padding` khidki kaatta hai |
+| `rememberLazyListState` | Scroll ki jagah; use `derivedStateOf` se padhiye |
+| Ek ke andar ek | Usi disha mein scroll hote parent ke andar lazy list phenk deti hai |
+
+<Interview title="Wo sawal jo chalti hui list aur sahi list ko alag karta hai">
+"Lazy list mein `key` parameter karta kya hai?"
+
+Wo har item ko ek pakki pehchan deta hai, to yaad rakhi hui state, animations aur scroll ki jagah
+item ke peeche chalti hain, uske index ke peeche nahi. Uske bina, koi row mitane par neeche wali
+row miti hui row ki state pehne reh jati hai. Jodne layak line hai ye milan: `key` theek wahi kaam
+kar raha hai jo view system mein `DiffUtil.areItemsTheSame` karta tha, aur isiliye `DiffUtil` ke
+baaki hisse ka yahan koi jod nahi hai.
+</Interview>

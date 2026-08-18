@@ -1,0 +1,199 @@
+---
+title: LazyColumn, LazyRow, grids और keys
+description: ऐसी lists जो सिर्फ वही बनाती हैं जो आपको दिख रहा है। Recycling, ViewHolder और DiffUtil सब चले गए — उनकी जगह एक parameter है, जिसका नाम key है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`LazyColumn` सिर्फ वही items बनाता है जो अभी screen पर हैं। उसका content block एक **DSL है, कोई
+composable body नहीं**, इसीलिए आप `for` loop लिखने के बजाय `items(list)` बुलाते हैं — और इसीलिए
+इस पूरे पाठ में `key` parameter सबसे ज्यादा मायने रखता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Wrong.kt"
+Column(Modifier.verticalScroll(rememberScrollState())) {
+    orders.forEach { OrderRow(it) }        // दसों हजार बनाता है
+}
+```
+
+यह scroll तो होता है, और पहले frame से पहले हर row बना डालता है। दस हजार orders के साथ screen
+आती ही नहीं।
+
+```kotlin title="Right.kt" numbered
+LazyColumn {
+    items(orders, key = { it.id }) { order ->
+        OrderRow(order)
+    }
+}
+```
+
+सिर्फ दिखती rows और थोड़ा सा आगे का हिस्सा बनता है। जो rows scroll होकर बाहर जाती हैं वे खत्म कर
+दी जाती हैं, और नई तब बनती हैं जब वे आती हैं।
+
+## Content block एक DSL है
+
+```kotlin title="Dsl.kt" numbered
+LazyColumn {
+    item {                                    // एक तय item
+        Header()
+    }
+
+    items(orders, key = { it.id }) { order ->  // हर element के लिए एक
+        OrderRow(order)
+    }
+
+    itemsIndexed(orders) { index, order ->      // जब जगह का नंबर चाहिए
+        OrderRow(order, showDivider = index > 0)
+    }
+
+    stickyHeader {                             // अपने समूह के scroll होते वक्त टिका रहता है
+        Text("Today")
+    }
+}
+```
+
+<Note>
+उस block के अंदर आप `LazyListScope` पर functions बुला रहे हैं, कुछ compose नहीं कर रहे। इसीलिए
+वहाँ किसी `Text` के चारों तरफ सीधा `if` नहीं चलता — `item { if (...) Text(...) }` लिखना पड़ता है,
+क्योंकि list में कुछ दर्ज `item` ही कराता है।
+</Note>
+
+## वह parameter जो तय करता है कि आपकी list सही है या नहीं
+
+<Quiz
+  question="Checkboxes वाली एक list में कोई `key` नहीं है। आप पहली row मिटा देते हैं। जो checkbox row 2 पर लगा था वह अब row 1 पर लगा दिखता है, जो एक अलग order है। क्यों?"
+  options={[
+    "List को `notifyItemRemoved` चाहिए, जो Compose अपने आप कर देता है",
+    "बिना key के items की पहचान उनके index से होती है, तो state item के बजाय जगह से चिपकी रहती है",
+    "Lazy list के अंदर checkbox का state याद रखा ही नहीं जा सकता",
+  ]}
+  answer={1}
+  explanation="जब तक आप key न दें, Compose हर item को list में उसकी जगह से पहचानता है। कोई item हटने पर नीचे की हर चीज एक खाना ऊपर खिसक जाती है, और याद रखी हुई हर value — कोई checkbox, कोई खुला हुआ हिस्सा, चलती हुई कोई animation, row के अंदर का scroll — item के पीछे जाने के बजाय उसी खाने से चिपकी रह जाती है। key = { it.id } देने पर runtime को पता रहता है कि कौन सा item कौन सा है, तो state item के साथ चलती है और हटना ठीक से animate होता है। इससे यह भी रुकता है कि मौजूदा scroll के ऊपर item जुड़ने पर list उछल जाए, क्योंकि runtime वही index नहीं, वही item screen पर रख सकता है।"
+/>
+
+## Grids वही बात हैं, बस खानों का तरीका जुड़ जाता है
+
+```kotlin title="Grid.kt" numbered
+LazyVerticalGrid(
+    columns = GridCells.Adaptive(minSize = 128.dp),
+    contentPadding = PaddingValues(16.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
+) {
+    items(photos, key = { it.id }) { PhotoTile(it) }
+}
+```
+
+| खानों का तरीका | क्या करता है |
+| --- | --- |
+| `GridCells.Fixed(3)` | चौड़ाई कुछ भी हो, हमेशा तीन columns |
+| `GridCells.Adaptive(128.dp)` | उस कम से कम चौड़ाई पर जितने columns समाएँ |
+| `GridCells.FixedSize(80.dp)` | खाने का नाप पक्का, बची जगह आखिर में |
+
+`Adaptive` से ही एक grid बिना दूसरी layout file के phone और tablet दोनों पर चलती है।
+
+## Padding, दूरी, और वे दो जो एक जैसे नहीं हैं
+
+```kotlin title="Padding.kt"
+LazyColumn(
+    contentPadding = PaddingValues(vertical = 16.dp),   // content के साथ scroll होता है
+    verticalArrangement = Arrangement.spacedBy(8.dp),   // सिर्फ items के बीच
+    modifier = Modifier.padding(16.dp),                 // scroll वाला इलाका ही छोटा कर देता है
+)
+```
+
+`contentPadding` list के सिरों पर वह जगह छोड़ता है जो content के साथ scroll होकर चली जाती है;
+`Modifier.padding` खुद scroll वाली खिड़की छोटी कर देता है, तो items उसके किनारे पर कट जाते हैं।
+`Scaffold` के bars के नीचे रखी list के लिए लगभग हमेशा `contentPadding` ही चाहिए।
+
+<Detail summary="Scroll की हालत, और उसे बिना सब कुछ recompose किए पढ़ना">
+```kotlin title="ScrollState.kt" numbered
+val listState = rememberLazyListState()
+val showScrollToTop by remember {
+    derivedStateOf { listState.firstVisibleItemIndex > 5 }
+}
+
+LazyColumn(state = listState) { }
+```
+
+Scroll करते वक्त `listState.firstVisibleItemIndex` लगातार बदलता है। उसे सीधे किसी composable में
+पढ़ने से scroll के हर frame पर recomposition होती। `derivedStateOf` हर बदलाव पर हिसाब तो दोबारा
+करता है पर *खबर* सिर्फ तब करता है जब उसका जवाब बदले — तो button एक बार आता और एक बार जाता है,
+screen सेकंड में साठ बार recompose नहीं होती। Side effects वाले पाठ में इस पर पूरी बात है।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="सिर्फ दिखते items होते हैं" meta="माँग पर बनते हैं">
+    खिड़की के बाहर वाले items बनते ही नहीं। Scroll करने पर नए बनते हैं और जो चले गए वे खत्म कर
+    दिए जाते हैं।
+  </TimelineItem>
+  <TimelineItem title="न ViewHolder, न DiffUtil" meta="वह काम key करता है">
+    Recycle करने को कुछ है ही नहीं, क्योंकि कोई `View` चीजें ही नहीं हैं। पहचान `key` से आती है,
+    जो `DiffUtil` में `areItemsTheSame` कर रहा था।
+  </TimelineItem>
+  <TimelineItem title="`contentType` दोबारा इस्तेमाल में मदद करता है" meta="मिली-जुली lists के लिए">
+    List को यह बता देना कि headers और rows अलग तरह की चीजें हैं, उसे हर तरह का composition ढाँचा
+    दोबारा बनाने के बजाय दोबारा इस्तेमाल करने देता है।
+  </TimelineItem>
+  <TimelineItem title="`Modifier.animateItem`" meta="LazyItemScope में">
+    Keys होने पर list को पता रहता है कि item हटकर कहीं और गया है, बदला नहीं गया, तो वह उस हिलने को
+    animate कर सकती है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, और पहली तो crash कर देती है">
+**खड़े scroll वाले `Column` के अंदर `LazyColumn`।** Parent बिना हद की ऊँचाई देता है, तो list को
+पता ही नहीं चल सकता कि दिख क्या रहा है। वह *"Vertically scrollable component was measured with an
+infinity maximum height constraints"* फेंक देती है। इसे सपाट कीजिए: header को `item {}` में ले
+जाइए।
+
+**कोई `key` नहीं।** State items के बजाय जगहों के पीछे चलती है, हटना गलत animate होता है और जोड़ने
+पर scroll उछल जाता है।
+
+**`items(list.size)` और हाथ से index लगाना।** Keys तो गईं ही, और पुराना पड़ा index अब बासी row
+नहीं, सीधा crash है।
+
+**Item की body में भारी काम।** किसी item के अंदर छाँटना या format करना हर उस item के लिए चलता है
+जो scroll होकर गुजरता है। यह एक बार, list के ऊपर कीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. दस हजार rows scroll वाले `Column` में और `LazyColumn` में बनाइए, और दोनों के पहले frame का समय
+   नापिए।
+2. फैलने वाले हिस्से वाली rows की एक list बिना keys के बनाइए, सबसे ऊपर वाली row मिटाइए, और गलत
+   row को फैला हुआ रहते देखिए। Keys जोड़कर दोहराइए।
+3. Scroll वाले `Column` में `LazyColumn` रखिए, exception पढ़िए, फिर `item {}` से ठीक कीजिए।
+4. `GridCells.Fixed(2)` की जगह `GridCells.Adaptive(140.dp)` रखिए और खिड़की का नाप बदलिए।
+5. `derivedStateOf` से scroll-to-top button जोड़िए, फिर उसकी जगह सीधे `firstVisibleItemIndex`
+   पढ़िए और recomposition की गिनती मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `LazyColumn` | सिर्फ वही बनाता है जो दिख रहा है |
+| Content block | `LazyListScope` वाला DSL, कोई composable body नहीं |
+| `item` / `items` / `itemsIndexed` | एक तय item, हर element के लिए एक, या index के साथ |
+| `key` | पहचान; state जगह के बजाय item के पीछे चलती है |
+| `contentType` | मिली-जुली list को हर तरह का ढाँचा दोबारा इस्तेमाल करने देता है |
+| `LazyVerticalGrid` | वही तरीका, `Fixed`, `Adaptive` या `FixedSize` खानों के साथ |
+| `contentPadding` | Content के साथ scroll होता है; `Modifier.padding` खिड़की काटता है |
+| `rememberLazyListState` | Scroll की जगह; उसे `derivedStateOf` से पढ़िए |
+| एक के अंदर एक | उसी दिशा में scroll होते parent के अंदर lazy list फेंक देती है |
+
+<Interview title="वह सवाल जो चलती हुई list और सही list को अलग करता है">
+"Lazy list में `key` parameter करता क्या है?"
+
+वह हर item को एक पक्की पहचान देता है, तो याद रखी हुई state, animations और scroll की जगह item के
+पीछे चलती हैं, उसके index के पीछे नहीं। उसके बिना, कोई row मिटाने पर नीचे वाली row मिटी हुई row
+की state पहने रह जाती है। जोड़ने लायक line है यह मिलान: `key` ठीक वही काम कर रहा है जो view
+system में `DiffUtil.areItemsTheSame` करता था, और इसीलिए `DiffUtil` के बाकी हिस्से का यहाँ कोई
+जोड़ नहीं है।
+</Interview>

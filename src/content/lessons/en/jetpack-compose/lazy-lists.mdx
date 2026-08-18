@@ -1,0 +1,199 @@
+---
+title: LazyColumn, LazyRow, grids and keys
+description: Lists that compose only what you can see. The recycling, the ViewHolder and the DiffUtil are gone — what replaces them is one parameter called key.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A `LazyColumn` composes only the items currently on screen. Its content block is a **DSL, not a
+composable body**, which is why you call `items(list)` instead of writing a `for` loop — and why
+the `key` parameter matters more than anything else in this lesson.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Wrong.kt"
+Column(Modifier.verticalScroll(rememberScrollState())) {
+    orders.forEach { OrderRow(it) }        // composes all 10,000
+}
+```
+
+That scrolls, and it composes every row before the first frame. With ten thousand orders the
+screen simply does not appear.
+
+```kotlin title="Right.kt" numbered
+LazyColumn {
+    items(orders, key = { it.id }) { order ->
+        OrderRow(order)
+    }
+}
+```
+
+Only the visible rows plus a small buffer are composed. Rows that scroll away are disposed, and
+new ones are composed as they arrive.
+
+## The content block is a DSL
+
+```kotlin title="Dsl.kt" numbered
+LazyColumn {
+    item {                                    // one fixed item
+        Header()
+    }
+
+    items(orders, key = { it.id }) { order ->  // one per element
+        OrderRow(order)
+    }
+
+    itemsIndexed(orders) { index, order ->      // when you need the position
+        OrderRow(order, showDivider = index > 0)
+    }
+
+    stickyHeader {                             // stays pinned while its group scrolls
+        Text("Today")
+    }
+}
+```
+
+<Note>
+Inside that block you are calling functions on `LazyListScope`, not composing. That is why a bare
+`if` around a `Text` does not work there — you need `item { if (...) Text(...) }`, because the
+`item` is what registers something with the list.
+</Note>
+
+## The parameter that decides whether your list is correct
+
+<Quiz
+  question="A list of checkboxes has no `key`. You delete the first row. The checkbox that was ticked on row 2 is now ticked on row 1, which is a different order. Why?"
+  options={[
+    "The list needs `notifyItemRemoved`, which Compose does automatically",
+    "Without a key, items are identified by their index, so state stays with the position rather than the item",
+    "Checkbox state cannot be remembered inside a lazy list at all",
+  ]}
+  answer={1}
+  explanation="Compose identifies each item by its position in the list unless you give it a key. When an item is removed, everything below shifts up by one, and every remembered value — a checkbox, an expansion, a running animation, a scroll position inside the row — stays attached to the slot rather than following its data. Adding key = { it.id } tells the runtime which item is which, so state moves with the item and removals animate correctly. It also stops the list jumping when items are inserted above the current scroll position, because the runtime can keep the same item on screen instead of the same index."
+/>
+
+## Grids are the same idea with a cell strategy
+
+```kotlin title="Grid.kt" numbered
+LazyVerticalGrid(
+    columns = GridCells.Adaptive(minSize = 128.dp),
+    contentPadding = PaddingValues(16.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
+) {
+    items(photos, key = { it.id }) { PhotoTile(it) }
+}
+```
+
+| Cell strategy | What it does |
+| --- | --- |
+| `GridCells.Fixed(3)` | Always three columns, whatever the width |
+| `GridCells.Adaptive(128.dp)` | As many columns as fit at that minimum width |
+| `GridCells.FixedSize(80.dp)` | Fixed cell size, leftover space at the end |
+
+`Adaptive` is what makes one grid work on a phone and a tablet without a second layout file.
+
+## Padding, spacing and the two that are not the same
+
+```kotlin title="Padding.kt"
+LazyColumn(
+    contentPadding = PaddingValues(vertical = 16.dp),   // scrolls with the content
+    verticalArrangement = Arrangement.spacedBy(8.dp),   // between items only
+    modifier = Modifier.padding(16.dp),                 // clips the scroll area
+)
+```
+
+`contentPadding` leaves room at the ends of the list that scrolls away with the content;
+`Modifier.padding` shrinks the scrolling viewport itself, so items get clipped at its edge. For a
+list under a `Scaffold`'s bars, `contentPadding` is almost always what you want.
+
+<Detail summary="Scroll state, and reading it without recomposing everything">
+```kotlin title="ScrollState.kt" numbered
+val listState = rememberLazyListState()
+val showScrollToTop by remember {
+    derivedStateOf { listState.firstVisibleItemIndex > 5 }
+}
+
+LazyColumn(state = listState) { }
+```
+
+`listState.firstVisibleItemIndex` changes constantly while scrolling. Reading it directly in a
+composable would recompose on every frame of the scroll. `derivedStateOf` recomputes on every
+change but only *notifies* when its result changes — so the button appears and disappears once,
+instead of the screen recomposing sixty times a second. It gets a full treatment in the
+side-effects lesson.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Only visible items exist" meta="composed on demand">
+    Items outside the viewport are not composed at all. Scrolling composes new ones and disposes
+    the ones that left.
+  </TimelineItem>
+  <TimelineItem title="No ViewHolder, no DiffUtil" meta="the key does that job">
+    There is nothing to recycle, because there are no `View` objects. Identity comes from `key`,
+    which is what `areItemsTheSame` was doing in `DiffUtil`.
+  </TimelineItem>
+  <TimelineItem title="`contentType` helps reuse" meta="for mixed lists">
+    Telling the list that headers and rows are different types lets it reuse each kind's
+    composition structure instead of rebuilding it.
+  </TimelineItem>
+  <TimelineItem title="`Modifier.animateItem`" meta="in LazyItemScope">
+    With keys in place, the list knows an item moved rather than being replaced, so it can animate
+    the move.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four, and the first one crashes">
+**A `LazyColumn` inside a vertically scrolling `Column`.** The parent offers unbounded height, so
+the list cannot know what is visible. It throws *"Vertically scrollable component was measured
+with an infinity maximum height constraints"*. Flatten it: move the header into an `item {}`.
+
+**No `key`.** State follows positions instead of items, deletions animate wrongly and the scroll
+jumps on insert.
+
+**`items(list.size)` and indexing by hand.** You lose keys, and an out-of-date index is now a
+crash rather than a stale row.
+
+**Heavy work in the item body.** Sorting or formatting inside an item runs for every item as it
+scrolls past. Do it once, above the list.
+</Pitfall>
+
+## Practice
+
+1. Render ten thousand rows in a scrolling `Column` and in a `LazyColumn`, and time the first
+   frame of each.
+2. Build a list of rows with an expandable section and no keys, delete the top row, and watch the
+   wrong row stay expanded. Add keys and repeat.
+3. Nest a `LazyColumn` in a scrolling `Column`, read the exception, then fix it with `item {}`.
+4. Swap `GridCells.Fixed(2)` for `GridCells.Adaptive(140.dp)` and resize the window.
+5. Add a scroll-to-top button using `derivedStateOf`, then read `firstVisibleItemIndex` directly
+   instead and compare the recomposition counts.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `LazyColumn` | Composes only what is visible |
+| Content block | A `LazyListScope` DSL, not a composable body |
+| `item` / `items` / `itemsIndexed` | One fixed item, one per element, or with the index |
+| `key` | Identity; state follows the item instead of the position |
+| `contentType` | Lets a mixed list reuse structure per kind |
+| `LazyVerticalGrid` | Same model, with `Fixed`, `Adaptive` or `FixedSize` cells |
+| `contentPadding` | Scrolls with the content; `Modifier.padding` clips the viewport |
+| `rememberLazyListState` | Scroll position; read it through `derivedStateOf` |
+| Nesting | A lazy list inside a same-direction scrollable throws |
+
+<Interview title="The question that separates a working list from a correct one">
+"What does the `key` parameter in a lazy list do?"
+
+It gives each item a stable identity, so remembered state, animations and scroll position follow
+the item rather than its index. Without it, deleting a row leaves the row below wearing the
+deleted row's state. The line worth adding is the comparison: `key` is doing exactly the job
+`DiffUtil.areItemsTheSame` did in the view system, which is why the rest of `DiffUtil` has no
+equivalent here.
+</Interview>
