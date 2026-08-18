@@ -1,0 +1,242 @@
+---
+title: Paging 3 aur kabhi na khatam hone wali lists
+description: Hazaar rows lana tab tak chalta hai jab tak kisi ke paas das hazaar na hon. Paging pehle memory ka faisla hai aur scrolling wali suvidha baad mein, aur RemoteMediator wo jagah hai jahan wo is phase ki baaki har cheez se milta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Paging isliye hai ki **list ki koi had nahi hai aur memory ki hai**. Library ka asli kaam hai lade
+hue pages ki ek khiskati khidki rakhna, jo scroll hokar nikal gaya use gira dena, aur ye sab tab
+karna jab user ab bhi scroll kar raha hai — isiliye ise khud likhna theek nahi padta.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Wo roop jo har koi pehle likhta hai:
+
+```kotlin title="Manual.kt" numbered
+private var page = 0
+private val all = mutableListOf<Order>()
+
+fun loadMore() = viewModelScope.launch {
+    val next = api.orders(page = page++)        // har scroll par dobara chalta hai
+    all += next                                 // hamesha badhta rehta hai
+    _state.value = OrderUiState(all.toList())   // har baar poori list ki nakal
+}
+```
+
+Yahan ki har mushkil sirf bade paimane par dikhti hai. Coroutine ke bahar likha `page++` yani do tez
+scroll page 3 do baar laate hain aur page 4 chhod dete hain. `all` kabhi ghatta nahi, to das hazaar
+orders yani memory mein das hazaar objects. Har emission poori list ki nakal karta hai. Aur bina ek
+aur flag ke retry ya neeche ka loading wala chakkar rakhne ki koi jagah nahi hai.
+
+## Teenon hisse
+
+```kotlin title="OrderPagingSource.kt" numbered
+class OrderPagingSource(private val api: OrderApi) : PagingSource<Int, OrderDto>() {
+
+    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, OrderDto> = try {
+        val page = params.key ?: 1
+        val orders = api.orders(page = page, limit = params.loadSize)
+        LoadResult.Page(
+            data = orders,
+            prevKey = if (page == 1) null else page - 1,
+            nextKey = if (orders.isEmpty()) null else page + 1,   // null yani: aur kuch nahi
+        )
+    } catch (e: IOException) {
+        LoadResult.Error(e)                     // UI retry de sakta hai
+    }
+
+    override fun getRefreshKey(state: PagingState<Int, OrderDto>): Int? =
+        state.anchorPosition?.let { state.closestPageToPosition(it)?.nextKey?.minus(1) }
+}
+```
+
+```kotlin title="OrderRepository.kt" numbered
+fun orders(): Flow<PagingData<Order>> = Pager(
+    config = PagingConfig(pageSize = 20, prefetchDistance = 5),
+    pagingSourceFactory = { OrderPagingSource(api) },
+).flow.map { paging -> paging.map(OrderDto::toDomain) }
+```
+
+```kotlin title="OrderScreen.kt" numbered
+val orders = viewModel.orders.collectAsLazyPagingItems()
+
+LazyColumn {
+    items(orders.itemCount, key = orders.itemKey { it.id }) { index ->
+        orders[index]?.let { OrderRow(it) }     // wo page ladne tak null
+    }
+}
+```
+
+`orders[index]` ka null lautna koi error nahi hai — wo us row ki jagah rakhne wala hai jiska page abhi
+lad raha hai. Use aam haalat maniye aur koi dhancha dikhaiye.
+
+<Note>
+`getRefreshKey` wahi hai jise log `null` chhod dete hain aur pachhtate hain. Wo iska jawab hai:
+refresh ke baad kaunsa page dobara lade taki user lagbhag wahin rahe jahan tha? `null` lautaiye aur
+har refresh use wapas sabse upar patak deta hai — jo pull-to-refresh par aisa lagta hai mano app ne
+uski jagah kho di, kyunki sach mein khoi.
+</Note>
+
+## Loading ki haalat saath hi aati hai
+
+```kotlin title="LoadState.kt" numbered
+when (val refresh = orders.loadState.refresh) {
+    is LoadState.Loading -> FullScreenSpinner()
+    is LoadState.Error   -> ErrorScreen(refresh.error) { orders.retry() }
+    is LoadState.NotLoading -> if (orders.itemCount == 0) EmptyState()
+}
+
+if (orders.loadState.append is LoadState.Loading) item { BottomSpinner() }
+```
+
+`refresh` pehli baar ladna ya haath se kiya gaya refresh hai; `append` neeche aur lana; `prepend`
+upar. Inhe alag rakhne se hi page paanch ka nakaam ladna poori chalti screen ko error se badalne ke
+bajaye neeche ek chhota retry dikha pata hai — ye farak haath se likhe roop mein kaha hi nahi ja sakta
+tha.
+
+<Quiz
+  question="Paged list ke peeche Room hai, aur peeche chalti koi sync nai rows likhti hai. User ke scroll karte waqt list phadphadati aur uchhalti hai. Ho kya raha hai?"
+  options={[
+    "Database mein kisi bhi badlaav par Paging sab kuch dobara ladta hai, jo Room ke saath tala nahi ja sakta",
+    "`items` wali call mein koi pakki `key` nahi hai, to har invalidation par Compose jagah badal chuki rows ko nai maan leta hai",
+    "`pageSize` bahut chhota hai, to list lagatar ladti rehti hai",
+  ]}
+  answer={1}
+  explanation="Table badalte hi Room us PagingSource ko amanya kar deta hai, Paging un pages ko dobara ladta hai, aur bina pakki key ke Compose har row ki pehchan uski jagah se karta hai. To jo row index 7 se index 9 par jati hai wo kisi aur cheez jaisi dikhti hai — uski yaad rakhi hui state phenk di jati hai, uski animation dobara shuru hoti hai, aur poori list phadphadati dikhti hai. key = orders.itemKey { it.id } jodne se pehchan khane ke bajaye order se bandh jati hai, to jagah badli hui row wahi row pehchani jati hai aur bas khisak jati hai. Ye wahi pehchan wala niyam hai jo kisi bhi LazyColumn par hai, par paging use kahin zyada saaf dikhata hai kyunki peeche chalti sync ke neeche invalidation lagatar hota rehta hai. Haan, chhota pageSize zyada baar ladai karata hai, par usse uchhalna nahi hota — wo lakshan khaas taur par pehchan ka hai."
+/>
+
+## RemoteMediator, jahan paging offline-first se milta hai
+
+`PagingSource` ek hi jagah se padhta hai. Asli app database se padhte hain aur use network se bharte
+hain, jo doosra kaam hai:
+
+```kotlin title="OrderRemoteMediator.kt" numbered
+@OptIn(ExperimentalPagingApi::class)
+class OrderRemoteMediator(
+    private val api: OrderApi,
+    private val db: AppDatabase,
+) : RemoteMediator<Int, OrderEntity>() {
+
+    override suspend fun load(
+        loadType: LoadType,
+        state: PagingState<Int, OrderEntity>,
+    ): MediatorResult = try {
+        val page = when (loadType) {
+            LoadType.REFRESH -> 1
+            LoadType.PREPEND -> return MediatorResult.Success(endOfPaginationReached = true)
+            LoadType.APPEND  -> db.keyDao().nextKey() ?: return MediatorResult.Success(true)
+        }
+
+        val orders = api.orders(page = page, limit = state.config.pageSize)
+
+        db.withTransaction {                                   // ek invalidation, kai nahi
+            if (loadType == LoadType.REFRESH) db.orderDao().clear()
+            db.keyDao().setNextKey(if (orders.isEmpty()) null else page + 1)
+            db.orderDao().upsert(orders.map(OrderDto::toEntity))
+        }
+        MediatorResult.Success(endOfPaginationReached = orders.isEmpty())
+    } catch (e: IOException) {
+        MediatorResult.Error(e)
+    }
+}
+```
+
+```kotlin title="Wiring.kt" numbered
+Pager(
+    config = PagingConfig(pageSize = 20),
+    remoteMediator = OrderRemoteMediator(api, db),
+    pagingSourceFactory = { db.orderDao().pagingSource() },   // padhna hamesha Room se
+).flow
+```
+
+Us jod ko repository wale lesson ke saamne rakhkar padhiye: `PagingSource` database hai,
+`RemoteMediator` sirf usmein likhta hai, aur sach ka iklauta thikana bana rehta hai. App offline mein
+rakhe hue data ke pages palatta hai aur network lautne par khaali jagahein bhar deta hai, bina offline
+ke liye kisi alag raaste ke.
+
+`withTransaction` wahi baat hai jo Room wale lesson mein thi. Transaction ke bahar teen DAO calls yani
+teen invalidations, to ek page bhar ke data ke liye Paging teen baar dobara ladta hai.
+
+<Detail summary="Remote keys wali table kyun hoti hai">
+`RemoteMediator` database se ye nahi puch sakta ki "ye row kis page ki hai" — kisi row ko ye pata hi
+nahi hota. To paging ki haalat kahin rakhni padti hai, aam taur par ek chhoti table mein:
+
+```kotlin title="RemoteKey.kt" numbered
+@Entity(tableName = "remote_keys")
+data class RemoteKeyEntity(
+    @PrimaryKey val id: String = "orders",
+    val nextKey: Int?,
+)
+```
+
+Use unhin rows ke saath ek hi transaction mein likha jata hai jinke baare mein wo batati hai, aur agar
+likhte waqt process mar jaye to dono ka mel isi se bana rehta hai. Alag-alag likhiye aur ye ho sakta
+hai ki rows saheji gayin aur key aage badhi hi nahi, to app hamesha page 3 dobara lata rehta hai.
+
+Cursor wali API ke liye — jo page ki sankhya ke bajaye koi bematlab sa `next` token lautati hai — ye
+table koi bachat nahi, wo iklauti jagah hai jahan wo token reh sakta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo sirf lambi list par dikhti hain">
+**`items` mein pakki `key` na hona.** Har invalidation par phadphadahat aur rows ki khoi hui state.
+Upar wala quiz dekhiye.
+
+**`getRefreshKey` ko andekha karna.** Har refresh user ko wapas sabse upar patak deta hai.
+
+**`RemoteMediator` mein transaction ke bahar kai likhaiyan.** Ek page bhar ka data, kai invalidations,
+kai ladaiyan.
+
+**Null item ko bug manna.** Wo lad rahe page ki jagah rakhne wala hai — koi dhancha dikhaiye.
+
+**`PagingData` ko list ki tarah lena.** Uska koi `size` nahi hai aur collect karne ke baad use chhana
+nahi ja sakta. Query mein chhaniye, ya flow ke andar `PagingData.filter` se.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi list ke pages palatiye, phir bahut neeche scroll karte hue `itemCount` log kijiye aur kul ke
+   bajaye khidki dekhiye.
+2. `items` se `key` hataiye, peeche koi insert chalaiye, aur list ko phadphadate dekhiye.
+3. `getRefreshKey` se `null` lautaiye, aadhe raaste pull-to-refresh kijiye, aur dekhiye ki aap kahan
+   pahunchte ho.
+4. Ek `RemoteMediator` jodiye aur ek scroll ke baad app ko airplane mode mein daaliye — rakhe hue
+   pages phir bhi palatne chahiye.
+5. Page teen par network nakaam karaiye aur pakka kijiye ki poori screen ki error ke bajaye neeche
+   retry dikhta hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Kyun | List ki had nahi hai, memory ki hai |
+| `PagingSource` | Ek page lata hai aur agli key batata hai |
+| `nextKey = null` | Aur data nahi hai |
+| `getRefreshKey` | Kahan se dobara lade taki user ki jagah bani rahe |
+| `Pager` + `PagingConfig` | Page ka naap aur kitna pehle se lana hai |
+| `collectAsLazyPagingItems` | Compose wala pul; null item yani lad raha hai |
+| `loadState` | `refresh`, `append`, `prepend` — alag-alag sambhale jate hain |
+| `RemoteMediator` | Database bharta hai; `PagingSource` phir bhi usi ko padhta hai |
+| Remote keys | Paging ki haalat, rows ke saath usi transaction mein likhi |
+| Pakki `key` | Pehchan id se, jagah se nahi — warna list phadphadati hai |
+
+<Interview title="Ek sawal, jiska achha jawab memory se shuru hota hai">
+"Poori list lane ke bajaye Paging kyun?"
+
+Kyunki list ki koi had nahi hai aur memory ki hai. Paging lade hue pages ki ek khidki rakhta hai aur
+jo daayre se bahar scroll ho gaya use gira deta hai, to das hazaar rows wali list ki keemat sau rows
+wali jitni hi rehti hai. Wo mujhe wo cheezein bhi deta hai jo haath se likhe roop mein hamesha chhoot
+jati hain — doharai gayi requests ka hat jana, taki tez scroll ek hi page do baar na laye, aur
+alag-alag `refresh`, `append` tatha `prepend` ki haalatein, taki page paanch ki nakami chalti screen
+ko badalne ke bajaye neeche retry dikhaye.
+
+Jis hisse par main zor doonga wo `RemoteMediator` hai, kyunki wahi paging ko sach ke iklaute thikane
+ke saath chalne layak banata hai: `PagingSource` Room se padhta hai aur mediator sirf usmein likhta
+hai, to app offline mein rakhe hue data ke pages palatta hai, bina kisi alag raaste ke. Wahan jo
+bareeki maayne rakhti hai wo hai rows aur remote key ko ek hi transaction mein likhna — alag-alag
+likhne par process marne se saheji hui rows aur purani key bach jati hai, aur app wahi page hamesha
+dobara lata rehta hai.
+</Interview>
