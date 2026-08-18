@@ -1,0 +1,171 @@
+---
+title: LiveData vs StateFlow
+description: Two observable state holders that look interchangeable and are not. The difference that matters is who is responsible for stopping when the screen goes away.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`LiveData` is lifecycle-aware **by construction** — it stops delivering when the screen stops.
+`StateFlow` is not; it is a plain Kotlin primitive, and lifecycle awareness is added at the place
+you collect it. Everything else follows from that one difference.
+</KeyIdea>
+
+## Why this matters
+
+`StateFlow` is the current answer for new code: it is plain Kotlin, so the same `ViewModel` works on
+Android, on a server and in a shared multiplatform module, and it carries the whole operator
+vocabulary of `Flow`. `LiveData` is still in every codebase older than a couple of years, so you
+need to read it, and interviews still ask.
+
+```kotlin title="Both.kt" numbered
+// LiveData
+private val _orders = MutableLiveData<List<Order>>()
+val orders: LiveData<List<Order>> = _orders
+
+// StateFlow
+private val _orders = MutableStateFlow<List<Order>>(emptyList())
+val orders: StateFlow<List<Order>> = _orders.asStateFlow()
+```
+
+| | `LiveData` | `StateFlow` |
+| --- | --- | --- |
+| Lives in | `androidx.lifecycle` | `kotlinx.coroutines` |
+| Lifecycle-aware | Yes, built in | No — you add it when collecting |
+| Initial value | Optional; can be empty | Required |
+| Duplicate values | Delivered | Dropped — it conflates by equality |
+| Operators | `map`, `switchMap`, little else | The whole `Flow` vocabulary |
+| Testable without Android | No | Yes |
+| Multiplatform | No | Yes |
+
+## The bug that comes with the migration
+
+<Quiz
+  question="You collect a `StateFlow` with `lifecycleScope.launch { viewModel.state.collect { render(it) } }`. The screen goes to the background and the app keeps doing work. Why?"
+  options={[
+    "`lifecycleScope` only cancels on destroy, so collection continues while the screen is merely stopped",
+    "`StateFlow` cannot be collected from an `Activity` at all",
+    "The flow needs `distinctUntilChanged` to stop emitting",
+  ]}
+  answer={0}
+  explanation="lifecycleScope is cancelled when the lifecycle is destroyed, not when it stops. A screen that is merely backgrounded still has a live scope, so the collector keeps running, keeps the upstream flow active, and keeps updating views nobody can see — which on a real screen means network calls and database queries continuing behind a lock screen. This is exactly the behaviour LiveData gave you for free, and it is why the collection helpers exist: repeatOnLifecycle(Lifecycle.State.STARTED) in a view, or collectAsStateWithLifecycle in Compose. The fix is never on the ViewModel side; it is at the point of collection."
+/>
+
+```kotlin title="Collect.kt" numbered
+// In a Fragment or Activity
+viewLifecycleOwner.lifecycleScope.launch {
+    viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+
+// In Compose
+val state by viewModel.state.collectAsStateWithLifecycle()
+```
+
+## State and events are not the same thing
+
+```kotlin title="Kinds.kt" numbered
+// State: always has a current value, and a new subscriber gets it
+val uiState: StateFlow<OrderUiState>
+
+// Events: happen once, and have no "current" value
+val effects: SharedFlow<UiEffect>
+```
+
+<Warning>
+`StateFlow` conflates by equality, so emitting the same value twice delivers once. Use it for an
+error *message* and the second identical failure shows nothing. Either model errors as state the
+user dismisses — which is usually the better design — or send them through a `SharedFlow` or
+`Channel` where two identical events stay two events.
+</Warning>
+
+## Turning a cold flow into screen state
+
+```kotlin title="StateIn.kt" numbered
+val orders: StateFlow<List<Order>> = repository.observeOrders()
+    .map { it.filter(Order::isOpen) }
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+```
+
+`stateIn` runs the upstream once and shares the result. `WhileSubscribed(5_000)` stops the upstream
+five seconds after the last collector leaves — long enough to survive a rotation without restarting
+a database query, short enough that a backgrounded screen stops working within seconds.
+
+<Detail summary="Why five seconds, and what the alternatives do">
+`SharingStarted.Eagerly` starts immediately and never stops, so the flow runs even when no screen
+exists. `Lazily` starts on the first collector and then never stops. `WhileSubscribed(0)` stops
+instantly, which means a rotation tears down and restarts the query — usually a visible flicker and
+a wasted round trip.
+
+Five seconds is the widely used compromise, and the number is not magic: it is comfortably longer
+than a configuration change and comfortably shorter than a user's attention elsewhere.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="`LiveData` observes a `LifecycleOwner`" meta="it holds the awareness">
+    Each observer is registered with a lifecycle, and delivery is suspended below `STARTED`. That is
+    why it never needed a helper.
+  </TimelineItem>
+  <TimelineItem title="`StateFlow` is just a value with subscribers" meta="no Android in it">
+    It knows nothing about screens, which is exactly why it works in a shared module — and why the
+    collector has to supply the lifecycle rule.
+  </TimelineItem>
+  <TimelineItem title="`repeatOnLifecycle` restarts the block" meta="not merely pauses it">
+    It cancels the coroutine at `STOPPED` and runs the block again at `STARTED`, so anything inside
+    must be safe to restart.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four, and the first three are the same mistake in different places">
+**A bare `collect` in `lifecycleScope`.** Work continues in the background.
+
+**`collectAsState` instead of `collectAsStateWithLifecycle`.** The Compose version of the same bug.
+
+**Observing `LiveData` with `this` in a fragment.** Use `viewLifecycleOwner`, or the observer
+outlives the view and fires against a destroyed one.
+
+**`StateFlow` for one-shot events.** Two identical errors deliver once, and a rotation re-delivers
+the last one — a snackbar that reappears every time you turn the phone.
+</Pitfall>
+
+## Practice
+
+1. Collect a `StateFlow` without `repeatOnLifecycle`, background the app, and watch the logs keep
+   moving.
+2. Add `repeatOnLifecycle(STARTED)` and confirm they stop.
+3. Emit the same error string twice through a `StateFlow` and count how many times the UI reacts.
+4. Convert a `LiveData` to a flow with `asFlow()` and back with `asLiveData()`.
+5. Compare `WhileSubscribed(0)` and `WhileSubscribed(5_000)` by rotating the screen with a database
+   query behind the flow.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `LiveData` | Lifecycle-aware by construction; Android-only |
+| `StateFlow` | Plain Kotlin; you add lifecycle awareness when collecting |
+| `repeatOnLifecycle` | The view-system way to collect safely |
+| `collectAsStateWithLifecycle` | The Compose way |
+| `lifecycleScope` alone | Cancels on destroy, not on stop — not enough |
+| Conflation | `StateFlow` drops equal consecutive values |
+| Events | `SharedFlow` or `Channel`, or model them as dismissible state |
+| `stateIn` | Shares an upstream flow as screen state |
+| `WhileSubscribed(5_000)` | Survives rotation, stops seconds after the screen goes |
+
+<Interview title="A question that is really about background work">
+"Would you use `LiveData` or `StateFlow` today, and what changes?"
+
+`StateFlow` for new code, because it is plain Kotlin — testable without Android, usable in a shared
+module, and it brings the full `Flow` operator set. What changes is responsibility: `LiveData` was
+lifecycle-aware itself, while a `StateFlow` collector must be made lifecycle-aware with
+`repeatOnLifecycle` or `collectAsStateWithLifecycle`. Skipping that is the single most common
+migration bug, because nothing breaks — the app just keeps working in the background.
+</Interview>

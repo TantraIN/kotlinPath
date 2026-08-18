@@ -1,0 +1,173 @@
+---
+title: LiveData banam StateFlow
+description: Do observable state rakhne wale, jo ek jaise lagte hain aur hain nahi. Jo farak maayne rakhta hai wo ye hai ki screen ke jane par rukne ka zimma kiska hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`LiveData` **banawat se hi** lifecycle samajhta hai — screen rukte hi wo dena band kar deta hai.
+`StateFlow` nahi samajhta; wo saada Kotlin ka hissa hai, aur lifecycle ki samajh wahan jodi jati hai
+jahan aap use collect karte hain. Baaki sab isi ek farak se nikalta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Naye code ke liye aaj ka jawab `StateFlow` hai: wo saada Kotlin hai, to wahi `ViewModel` Android
+par, kisi server par aur shared multiplatform module mein chalta hai, aur uske saath `Flow` ki poori
+shabdawali aati hai. `LiveData` do-teen saal se purane har codebase mein hai, to use padhna aana
+chahiye, aur interviews mein aaj bhi pucha jata hai.
+
+```kotlin title="Both.kt" numbered
+// LiveData
+private val _orders = MutableLiveData<List<Order>>()
+val orders: LiveData<List<Order>> = _orders
+
+// StateFlow
+private val _orders = MutableStateFlow<List<Order>>(emptyList())
+val orders: StateFlow<List<Order>> = _orders.asStateFlow()
+```
+
+| | `LiveData` | `StateFlow` |
+| --- | --- | --- |
+| Kahan rehta hai | `androidx.lifecycle` | `kotlinx.coroutines` |
+| Lifecycle samajhta hai | Haan, banawat se | Nahi — collect karte waqt aap jodte hain |
+| Shuruati value | Optional; khaali bhi ho sakta hai | Zaruri |
+| Ek jaisi values | Pahunchai jati hain | Chhod di jati hain — wo barabari se daba deta hai |
+| Operators | `map`, `switchMap`, aur kuch khaas nahi | `Flow` ki poori shabdawali |
+| Bina Android ke test | Nahi | Haan |
+| Multiplatform | Nahi | Haan |
+
+## Wo bug jo is badlaav ke saath aata hai
+
+<Quiz
+  question="Aap `lifecycleScope.launch { viewModel.state.collect { render(it) } }` se `StateFlow` collect karte hain. Screen peeche chali jati hai aur app kaam karti rehti hai. Kyun?"
+  options={[
+    "`lifecycleScope` sirf destroy hone par rukta hai, to screen ke sirf ruk jane par collect chalta rehta hai",
+    "`StateFlow` `Activity` se collect kiya hi nahi ja sakta",
+    "Flow ko emit karna band karne ke liye `distinctUntilChanged` chahiye",
+  ]}
+  answer={0}
+  explanation="lifecycleScope tab rukta hai jab lifecycle destroy hota hai, rukne bhar par nahi. Jo screen sirf peeche gayi hai uska scope ab bhi zinda hai, to collector chalta rehta hai, upar wala flow chalu rakhta hai, aur un views ko badalta rehta hai jinhe koi dekh nahi sakta — asli screen par iska matlab hai band screen ke peeche bhi network calls aur database ki queries chalte rehna. LiveData aapko theek yahi bartaav muft mein deta tha, aur isiliye collect karne wale helpers hain: view mein repeatOnLifecycle(Lifecycle.State.STARTED), aur Compose mein collectAsStateWithLifecycle. Ilaaj kabhi ViewModel ki taraf nahi hota; wo collect karne ki jagah par hota hai."
+/>
+
+```kotlin title="Collect.kt" numbered
+// Kisi Fragment ya Activity mein
+viewLifecycleOwner.lifecycleScope.launch {
+    viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+
+// Compose mein
+val state by viewModel.state.collectAsStateWithLifecycle()
+```
+
+## State aur ghatnayein ek cheez nahi hain
+
+```kotlin title="Kinds.kt" numbered
+// State: uske paas hamesha ek maujooda value hoti hai, aur naye subscriber ko wahi milti hai
+val uiState: StateFlow<OrderUiState>
+
+// Ghatnayein: ek baar hoti hain, aur unki koi "maujooda" value nahi hoti
+val effects: SharedFlow<UiEffect>
+```
+
+<Warning>
+`StateFlow` barabari se daba deta hai, to wahi value do baar bhejne par ek hi baar pahunchti hai.
+Error ke *message* ke liye use lijiye aur doosri baar wahi nakami hone par kuch nahi dikhega. Ya to
+errors ko aisi state banaiye jise user hatata hai — jo aam taur par behtar design hai — ya unhe kisi
+`SharedFlow` ya `Channel` se bhejiye, jahan do ek jaisi ghatnayein do hi ghatnayein rehti hain.
+</Warning>
+
+## Kisi thande flow ko screen ki state banana
+
+```kotlin title="StateIn.kt" numbered
+val orders: StateFlow<List<Order>> = repository.observeOrders()
+    .map { it.filter(Order::isOpen) }
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+```
+
+`stateIn` upar wale flow ko ek baar chalata hai aur result sabmein baantta hai.
+`WhileSubscribed(5_000)` aakhri collector ke jane ke paanch second baad upar wala rok deta hai —
+itna lamba ki rotation mein database ki query dobara shuru na karni pade, aur itna chhota ki peeche
+gayi screen kuch hi second mein kaam karna band kar de.
+
+<Detail summary="Paanch second kyun, aur baaki vikalp karte kya hain">
+`SharingStarted.Eagerly` turant shuru hota hai aur kabhi rukta nahi, to flow tab bhi chalta hai jab
+koi screen hai hi nahi. `Lazily` pehle collector par shuru hota hai aur phir kabhi nahi rukta.
+`WhileSubscribed(0)` turant rok deta hai, yani rotation par query tootkar dobara shuru hoti hai —
+aam taur par ek dikhti hui jhilmilahat aur ek bekar gaya chakkar.
+
+Paanch second wo aam samjhauta hai, aur ye aankda jaadui nahi hai: wo configuration badalne se aaram
+se lamba hai aur user ke kahin aur dhyan lagane se aaram se chhota.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="`LiveData` kisi `LifecycleOwner` ko dekhta hai" meta="samajh usi ke paas hai">
+    Har observer kisi lifecycle ke saath darj hota hai, aur `STARTED` se neeche dena rok diya jata
+    hai. Isiliye use kabhi kisi helper ki zarurat nahi padi.
+  </TimelineItem>
+  <TimelineItem title="`StateFlow` bas subscribers wali ek value hai" meta="usmein Android hai hi nahi">
+    Use screens ka kuch pata nahi, aur theek isiliye wo shared module mein chalta hai — aur isiliye
+    lifecycle ka niyam collector ko dena padta hai.
+  </TimelineItem>
+  <TimelineItem title="`repeatOnLifecycle` block dobara chalata hai" meta="sirf rokta nahi">
+    Wo `STOPPED` par coroutine rok deta hai aur `STARTED` par block dobara chalata hai, to uske andar
+    ki har cheez dobara chalne layak honi chahiye.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, aur pehli teen alag-alag jagahon par ek hi galti hain">
+**`lifecycleScope` mein seedha `collect`.** Kaam peeche bhi chalta rehta hai.
+
+**`collectAsStateWithLifecycle` ki jagah `collectAsState`.** Wahi bug, Compose wale roop mein.
+
+**Fragment mein `LiveData` ko `this` se observe karna.** `viewLifecycleOwner` lijiye, warna observer
+view se zyada ji jata hai aur khatam ho chuki view par chalta hai.
+
+**Ek baar hone wali ghatnaon ke liye `StateFlow`.** Do ek jaise errors ek hi baar pahunchte hain, aur
+rotation par aakhri wala dobara pahunch jata hai — ek snackbar jo har baar phone ghumane par laut
+aata hai.
+</Pitfall>
+
+## Practice
+
+1. Bina `repeatOnLifecycle` ke `StateFlow` collect kijiye, app peeche kijiye, aur logs ko chalte hue
+   dekhiye.
+2. `repeatOnLifecycle(STARTED)` jodiye aur unhe rukte dekhiye.
+3. Wahi error wali string `StateFlow` se do baar bhejiye aur giniye ki UI kitni baar jawab deta hai.
+4. Kisi `LiveData` ko `asFlow()` se flow banaiye aur `asLiveData()` se wapas.
+5. Flow ke peeche koi database query rakhkar screen ghumaiye aur `WhileSubscribed(0)` tatha
+   `WhileSubscribed(5_000)` milaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `LiveData` | Banawat se lifecycle samajhta hai; sirf Android ka |
+| `StateFlow` | Saada Kotlin; lifecycle ki samajh collect karte waqt aap jodte hain |
+| `repeatOnLifecycle` | View system mein surakshit collect karne ka tarika |
+| `collectAsStateWithLifecycle` | Compose wala tarika |
+| Akela `lifecycleScope` | Destroy par rukta hai, rukne par nahi — kaafi nahi |
+| Dabana | `StateFlow` lagatar aai ek jaisi values chhod deta hai |
+| Ghatnayein | `SharedFlow` ya `Channel`, ya unhe hatai ja sakne wali state banaiye |
+| `stateIn` | Upar wale flow ko screen ki state ki tarah baantta hai |
+| `WhileSubscribed(5_000)` | Rotation jhel jata hai, screen jane ke kuch second baad ruk jata hai |
+
+<Interview title="Wo sawal jo asal mein peeche chalte kaam ke baare mein hai">
+"Aaj `LiveData` lenge ya `StateFlow`, aur kya badalta hai?"
+
+Naye code ke liye `StateFlow`, kyunki wo saada Kotlin hai — bina Android ke test hota hai, shared
+module mein chalta hai, aur `Flow` ke saare operators saath lata hai. Jo badalta hai wo zimmedari
+hai: `LiveData` khud lifecycle samajhta tha, jabki `StateFlow` ke collector ko `repeatOnLifecycle`
+ya `collectAsStateWithLifecycle` se lifecycle samjhana padta hai. Ise chhod dena is badlaav ka sabse
+aam bug hai, kyunki tootta kuch nahi — app bas peeche chalti rehti hai.
+</Interview>

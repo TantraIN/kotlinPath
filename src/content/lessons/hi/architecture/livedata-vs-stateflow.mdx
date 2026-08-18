@@ -1,0 +1,171 @@
+---
+title: LiveData बनाम StateFlow
+description: दो observable state रखने वाले, जो एक जैसे लगते हैं और हैं नहीं। जो फर्क मायने रखता है वह यह है कि screen के जाने पर रुकने का जिम्मा किसका है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`LiveData` **बनावट से ही** lifecycle समझता है — screen रुकते ही वह देना बंद कर देता है। `StateFlow`
+नहीं समझता; वह सादा Kotlin का हिस्सा है, और lifecycle की समझ वहाँ जोड़ी जाती है जहाँ आप उसे collect
+करते हैं। बाकी सब इसी एक फर्क से निकलता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+नए code के लिए आज का जवाब `StateFlow` है: वह सादा Kotlin है, तो वही `ViewModel` Android पर, किसी
+server पर और साझा multiplatform module में चलता है, और उसके साथ `Flow` की पूरी शब्दावली आती है।
+`LiveData` दो-तीन साल से पुराने हर codebase में है, तो उसे पढ़ना आना चाहिए, और interviews में आज भी
+पूछा जाता है।
+
+```kotlin title="Both.kt" numbered
+// LiveData
+private val _orders = MutableLiveData<List<Order>>()
+val orders: LiveData<List<Order>> = _orders
+
+// StateFlow
+private val _orders = MutableStateFlow<List<Order>>(emptyList())
+val orders: StateFlow<List<Order>> = _orders.asStateFlow()
+```
+
+| | `LiveData` | `StateFlow` |
+| --- | --- | --- |
+| कहाँ रहता है | `androidx.lifecycle` | `kotlinx.coroutines` |
+| Lifecycle समझता है | हाँ, बनावट से | नहीं — collect करते वक्त आप जोड़ते हैं |
+| शुरुआती value | वैकल्पिक; खाली भी हो सकता है | जरूरी |
+| एक जैसी values | पहुँचाई जाती हैं | छोड़ दी जाती हैं — वह बराबरी से दबा देता है |
+| Operators | `map`, `switchMap`, और कुछ खास नहीं | `Flow` की पूरी शब्दावली |
+| बिना Android के test | नहीं | हाँ |
+| Multiplatform | नहीं | हाँ |
+
+## वह bug जो इस बदलाव के साथ आता है
+
+<Quiz
+  question="आप `lifecycleScope.launch { viewModel.state.collect { render(it) } }` से `StateFlow` collect करते हैं। Screen पीछे चली जाती है और app काम करती रहती है। क्यों?"
+  options={[
+    "`lifecycleScope` सिर्फ destroy होने पर रुकता है, तो screen के सिर्फ रुक जाने पर collect चलता रहता है",
+    "`StateFlow` `Activity` से collect किया ही नहीं जा सकता",
+    "Flow को emit करना बंद करने के लिए `distinctUntilChanged` चाहिए",
+  ]}
+  answer={0}
+  explanation="lifecycleScope तब रुकता है जब lifecycle destroy होता है, रुकने भर पर नहीं। जो screen सिर्फ पीछे गई है उसका scope अब भी जिंदा है, तो collector चलता रहता है, ऊपर वाला flow चालू रखता है, और उन views को बदलता रहता है जिन्हें कोई देख नहीं सकता — असली screen पर इसका मतलब है बंद screen के पीछे भी network calls और database की queries चलते रहना। LiveData आपको ठीक यही बरताव मुफ्त में देता था, और इसीलिए collect करने वाले helpers हैं: view में repeatOnLifecycle(Lifecycle.State.STARTED), और Compose में collectAsStateWithLifecycle। इलाज कभी ViewModel की तरफ नहीं होता; वह collect करने की जगह पर होता है।"
+/>
+
+```kotlin title="Collect.kt" numbered
+// किसी Fragment या Activity में
+viewLifecycleOwner.lifecycleScope.launch {
+    viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.state.collect { render(it) }
+    }
+}
+
+// Compose में
+val state by viewModel.state.collectAsStateWithLifecycle()
+```
+
+## State और घटनाएँ एक चीज नहीं हैं
+
+```kotlin title="Kinds.kt" numbered
+// State: उसके पास हमेशा एक मौजूदा value होती है, और नए subscriber को वही मिलती है
+val uiState: StateFlow<OrderUiState>
+
+// घटनाएँ: एक बार होती हैं, और उनकी कोई "मौजूदा" value नहीं होती
+val effects: SharedFlow<UiEffect>
+```
+
+<Warning>
+`StateFlow` बराबरी से दबा देता है, तो वही value दो बार भेजने पर एक ही बार पहुँचती है। Error के
+*संदेश* के लिए उसे लीजिए और दूसरी बार वही नाकामी होने पर कुछ नहीं दिखेगा। या तो errors को ऐसी state
+बनाइए जिसे user हटाता है — जो आमतौर पर बेहतर design है — या उन्हें किसी `SharedFlow` या `Channel` से
+भेजिए, जहाँ दो एक जैसी घटनाएँ दो ही घटनाएँ रहती हैं।
+</Warning>
+
+## किसी ठंडे flow को screen की state बनाना
+
+```kotlin title="StateIn.kt" numbered
+val orders: StateFlow<List<Order>> = repository.observeOrders()
+    .map { it.filter(Order::isOpen) }
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+```
+
+`stateIn` ऊपर वाले flow को एक बार चलाता है और नतीजा सबमें बाँटता है। `WhileSubscribed(5_000)` आखिरी
+collector के जाने के पाँच सेकंड बाद ऊपर वाला रोक देता है — इतना लंबा कि rotation में database की
+query दोबारा शुरू न करनी पड़े, और इतना छोटा कि पीछे गई screen कुछ ही सेकंड में काम करना बंद कर दे।
+
+<Detail summary="पाँच सेकंड क्यों, और बाकी विकल्प करते क्या हैं">
+`SharingStarted.Eagerly` तुरंत शुरू होता है और कभी रुकता नहीं, तो flow तब भी चलता है जब कोई screen
+है ही नहीं। `Lazily` पहले collector पर शुरू होता है और फिर कभी नहीं रुकता। `WhileSubscribed(0)`
+तुरंत रोक देता है, यानी rotation पर query टूटकर दोबारा शुरू होती है — आमतौर पर एक दिखती हुई झिलमिलाहट
+और एक बेकार गया चक्कर।
+
+पाँच सेकंड वह आम समझौता है, और यह आँकड़ा जादुई नहीं है: वह configuration बदलने से आराम से लंबा है और
+user के कहीं और ध्यान लगाने से आराम से छोटा।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="`LiveData` किसी `LifecycleOwner` को देखता है" meta="समझ उसी के पास है">
+    हर observer किसी lifecycle के साथ दर्ज होता है, और `STARTED` से नीचे देना रोक दिया जाता है।
+    इसीलिए उसे कभी किसी helper की जरूरत नहीं पड़ी।
+  </TimelineItem>
+  <TimelineItem title="`StateFlow` बस subscribers वाली एक value है" meta="उसमें Android है ही नहीं">
+    उसे screens का कुछ पता नहीं, और ठीक इसीलिए वह साझा module में चलता है — और इसीलिए lifecycle का
+    नियम collector को देना पड़ता है।
+  </TimelineItem>
+  <TimelineItem title="`repeatOnLifecycle` block दोबारा चलाता है" meta="सिर्फ रोकता नहीं">
+    वह `STOPPED` पर coroutine रोक देता है और `STARTED` पर block दोबारा चलाता है, तो उसके अंदर की हर
+    चीज दोबारा चलने लायक होनी चाहिए।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, और पहली तीन अलग-अलग जगहों पर एक ही गलती हैं">
+**`lifecycleScope` में सीधा `collect`।** काम पीछे भी चलता रहता है।
+
+**`collectAsStateWithLifecycle` की जगह `collectAsState`।** वही bug, Compose वाले रूप में।
+
+**Fragment में `LiveData` को `this` से observe करना।** `viewLifecycleOwner` लीजिए, वरना observer
+view से ज्यादा जी जाता है और खत्म हो चुकी view पर चलता है।
+
+**एक बार होने वाली घटनाओं के लिए `StateFlow`।** दो एक जैसे errors एक ही बार पहुँचते हैं, और rotation
+पर आखिरी वाला दोबारा पहुँच जाता है — एक snackbar जो हर बार phone घुमाने पर लौट आता है।
+</Pitfall>
+
+## अभ्यास
+
+1. बिना `repeatOnLifecycle` के `StateFlow` collect कीजिए, app पीछे कीजिए, और logs को चलते हुए
+   देखिए।
+2. `repeatOnLifecycle(STARTED)` जोड़िए और उन्हें रुकते देखिए।
+3. वही error वाली string `StateFlow` से दो बार भेजिए और गिनिए कि UI कितनी बार जवाब देता है।
+4. किसी `LiveData` को `asFlow()` से flow बनाइए और `asLiveData()` से वापस।
+5. Flow के पीछे कोई database query रखकर screen घुमाइए और `WhileSubscribed(0)` तथा
+   `WhileSubscribed(5_000)` मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `LiveData` | बनावट से lifecycle समझता है; सिर्फ Android का |
+| `StateFlow` | सादा Kotlin; lifecycle की समझ collect करते वक्त आप जोड़ते हैं |
+| `repeatOnLifecycle` | View system में सुरक्षित collect करने का तरीका |
+| `collectAsStateWithLifecycle` | Compose वाला तरीका |
+| अकेला `lifecycleScope` | Destroy पर रुकता है, रुकने पर नहीं — काफी नहीं |
+| दबाना | `StateFlow` लगातार आई एक जैसी values छोड़ देता है |
+| घटनाएँ | `SharedFlow` या `Channel`, या उन्हें हटाई जा सकने वाली state बनाइए |
+| `stateIn` | ऊपर वाले flow को screen की state की तरह बाँटता है |
+| `WhileSubscribed(5_000)` | Rotation झेल जाता है, screen जाने के कुछ सेकंड बाद रुक जाता है |
+
+<Interview title="वह सवाल जो असल में पीछे चलते काम के बारे में है">
+"आज `LiveData` लेंगे या `StateFlow`, और क्या बदलता है?"
+
+नए code के लिए `StateFlow`, क्योंकि वह सादा Kotlin है — बिना Android के test होता है, साझा module
+में चलता है, और `Flow` के सारे operators साथ लाता है। जो बदलता है वह जिम्मेदारी है: `LiveData` खुद
+lifecycle समझता था, जबकि `StateFlow` के collector को `repeatOnLifecycle` या
+`collectAsStateWithLifecycle` से lifecycle समझाना पड़ता है। इसे छोड़ देना इस बदलाव का सबसे आम bug
+है, क्योंकि टूटता कुछ नहीं — app बस पीछे चलती रहती है।
+</Interview>
