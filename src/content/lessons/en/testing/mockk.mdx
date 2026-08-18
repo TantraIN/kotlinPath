@@ -1,0 +1,177 @@
+---
+title: "MockK: mocks, stubs and verification"
+description: MockK is the Kotlin mocking library, and the useful skill is knowing when not to reach for it — because a mock that stubs everything is a test that asserts your test is written correctly.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A mock lets you say **what a collaborator returns** and **assert that it was called**. The first is
+usually better done with a fake; the second is the one thing a fake cannot do. Reach for MockK when
+the interaction *is* the thing you are testing.
+</KeyIdea>
+
+## The basics
+
+```kotlin title="Mocks.kt" numbered
+private val repository = mockk<OrderRepository>()
+
+@Test
+fun `shows an error when refresh fails`() = runTest {
+    coEvery { repository.refresh() } returns Outcome.Failure(DataError.Network.Offline)
+
+    val viewModel = OrderViewModel(repository)
+    viewModel.refresh()
+
+    assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+    coVerify(exactly = 1) { repository.refresh() }
+}
+```
+
+`every` stubs a normal function; `coEvery` stubs a `suspend` one. Same for `verify` and `coVerify`.
+Forgetting the `co` prefix on a suspend function gives a confusing error rather than a helpful one, so
+it is worth recognising.
+
+An unstubbed call on a plain `mockk` **throws**. That is a feature: a test only stubs what it needs,
+so an unexpected call fails loudly rather than silently returning null.
+
+```kotlin title="Relaxed.kt" numbered
+val analytics = mockk<Analytics>(relaxed = true)      // every function returns a default
+val repository = mockk<OrderRepository>(relaxUnitFun = true)  // only Unit functions relaxed
+```
+
+`relaxed = true` makes everything return a zero value — `0`, `null`, an empty list. It is convenient
+and it is also how a test stops noticing that the code called something it should not have. Prefer
+`relaxUnitFun = true`, which relaxes only the functions that return `Unit` — usually the logging and
+analytics you genuinely do not care about — and leaves everything else strict.
+
+## Matchers
+
+```kotlin title="Matchers.kt" numbered
+coEvery { repository.find(any()) } returns null
+coEvery { repository.find(match { it > 100 }) } returns Order(id = 101)
+coEvery { repository.save(capture(slot)) } returns Unit     // grab the argument
+
+verify { analytics.log("order_placed", any()) }
+verify(exactly = 0) { repository.delete(any()) }            // assert it did NOT happen
+```
+
+`verify(exactly = 0)` is the underrated one. "This code must not delete anything" is a real
+requirement, and it is the kind of thing that regresses silently.
+
+A `slot` captures the argument so you can assert on it afterwards, which is usually clearer than
+building an elaborate `match` predicate:
+
+```kotlin title="Slot.kt" numbered
+val slot = slot<Order>()
+coEvery { repository.save(capture(slot)) } returns Unit
+
+viewModel.placeOrder(quantity = 3)
+
+assertEquals(3, slot.captured.quantity)
+```
+
+<Quiz
+  question="A `ViewModel` test mocks the repository, stubs `refresh()` to return success, and verifies `refresh()` was called once. It passes. A bug ships where refreshing shows stale data. Why did the test not catch it?"
+  options={[
+    "The mock needed `relaxed = true` so the other repository functions would work",
+    "The test asserted that a call happened, not that the resulting state was right — it would pass even if the `ViewModel` ignored the result entirely",
+    "`coVerify` does not work reliably with `runTest`"
+  ]}
+  answer={1}
+  explanation="The test describes the ViewModel's calls rather than its output, so the only thing it can catch is the call disappearing. Everything after the call — reading the result, mapping it, updating state — is unasserted, and a ViewModel that fetched fresh data and then rendered the old list would pass this test unchanged. This is the failure mode that makes people distrust mock-heavy suites: they are green, they are numerous, and they are checking that the code is written the way the test author imagined rather than that it works. The fix is to assert on state — refresh, then assert the exposed StateFlow holds the new data — and keep coVerify for the cases where the interaction genuinely is the requirement, like a token refresh happening exactly once. If the test only needs a canned return value, a fake repository does that with less ceremony and no stubbing at all."
+/>
+
+## Where a fake is simply better
+
+```kotlin title="Fake.kt" numbered
+// with MockK
+coEvery { repository.observeOrders() } returns flowOf(listOf(order1, order2))
+coEvery { repository.refresh() } returns Outcome.Success(Unit)
+coEvery { repository.find(1) } returns order1
+coEvery { repository.find(2) } returns order2
+
+// with a fake
+val repository = FakeOrderRepository().apply { emit(listOf(order1, order2)) }
+```
+
+Four stubs against one line, and the fake keeps working when a test needs a fifth function. More
+importantly the fake has *behaviour*: save an order and `find` returns it, because the fake stores it.
+With mocks you have to stub that relationship by hand, and it is easy to stub something the real
+implementation would never do.
+
+<Detail summary="Objects, statics and constructors — the sharp tools">
+MockK can mock things that are normally unmockable, which is occasionally necessary and usually a
+sign the code should be restructured:
+
+```kotlin title="Sharp.kt" numbered
+mockkObject(FeatureFlags)                      // a Kotlin object
+every { FeatureFlags.newCheckout } returns true
+
+mockkStatic(Uri::class)                        // Android's static Uri.parse
+every { Uri.parse(any()) } returns mockUri
+
+mockkConstructor(Retrofit.Builder::class)      // intercept construction
+```
+
+Two rules make these safe to use. Always unmock in `@After` — `unmockkObject`, `unmockkAll` — because
+these are global and a leaked mock breaks an unrelated test later in the suite, with a failure that
+points nowhere near the cause. And treat each use as a note that a dependency is not injected: a
+`FeatureFlags` object you have to `mockkObject` is a `FeatureFlags` you could have passed into the
+constructor, which the DI phase already argued for.
+
+`mockkStatic` for Android framework statics is the one genuinely reasonable case, since you cannot
+inject `Uri.parse` — though even there, wrapping it in a small interface you own makes the test
+simpler.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second one produces a green suite that proves nothing">
+**`every` on a suspend function.** Use `coEvery` and `coVerify`, or the error will confuse you.
+
+**Verifying calls instead of asserting state.** Passes even if the result is ignored.
+
+**`relaxed = true` everywhere.** Unexpected calls silently return defaults instead of failing.
+
+**Not unmocking objects and statics.** They are global; a leak breaks an unrelated test later.
+
+**Mocking a value class or a data class.** Construct the real thing — it is simpler and more honest.
+</Pitfall>
+
+## Practice
+
+1. Stub a suspend function with `every` and read the error you get.
+2. Write a test that only verifies a call, then break the code after the call and watch it still pass.
+3. Replace four stubs with a fake and compare the two tests.
+4. Use `verify(exactly = 0)` to assert a delete never happens.
+5. `mockkObject` without unmocking, then run the whole suite and find the unrelated failure.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `every` / `coEvery` | Stub a normal / `suspend` function |
+| `verify` / `coVerify` | Assert a call happened |
+| Unstubbed call | Throws, which is what you want |
+| `relaxed = true` | Returns defaults for everything; usually too much |
+| `relaxUnitFun = true` | Relaxes only `Unit` functions — the better default |
+| `verify(exactly = 0)` | Assert something did *not* happen |
+| `slot` | Capture an argument and assert on it |
+| Fakes | Fewer lines, real behaviour, survive refactoring |
+| Mocks | For when the interaction is the requirement |
+| `mockkObject` / `mockkStatic` | Global — always unmock in `@After` |
+
+<Interview title="A question about a green suite that proves nothing">
+"When would you use a mock rather than a fake?"
+
+When the interaction itself is the requirement — a token refresh happening exactly once even though
+five calls got a `401`, or an analytics event firing with the right parameters. Those are assertions
+about a call, and a fake cannot make them.
+
+For everything else I prefer a fake, because it has real behaviour: save something and it comes back,
+so the test reads as a sequence of actions instead of a list of stubs, and it survives a refactor. The
+failure mode I would call out with mock-heavy tests is verifying a call instead of asserting state — a
+test that stubs `refresh()` and verifies it was called passes even if the `ViewModel` ignores the
+result entirely, which is exactly the bug you wanted to catch. So I assert on what the class exposes,
+and keep verification for the cases where a call is genuinely the contract.
+</Interview>

@@ -1,0 +1,178 @@
+---
+title: "MockK: mocks, stubs और verification"
+description: MockK Kotlin वाली mocking library है, और काम का हुनर यह जानना है कि उसे कब नहीं उठाना — क्योंकि जो mock हर चीज stub कर देता है वह ऐसा test बनाता है जो सिर्फ यह जाँचता है कि आपका test ठीक लिखा है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Mock से आप कह सकते हैं कि **कोई साथी क्या लौटाएगा** और यह **दावा कर सकते हैं कि उसे बुलाया गया**।
+पहला काम आमतौर पर नकली चीज बेहतर करती है; दूसरा वही एक काम है जो नकली चीज नहीं कर सकती। MockK तब
+उठाइए जब वह लेन-देन *ही* आपकी जाँच का विषय हो।
+</KeyIdea>
+
+## बुनियाद
+
+```kotlin title="Mocks.kt" numbered
+private val repository = mockk<OrderRepository>()
+
+@Test
+fun `shows an error when refresh fails`() = runTest {
+    coEvery { repository.refresh() } returns Outcome.Failure(DataError.Network.Offline)
+
+    val viewModel = OrderViewModel(repository)
+    viewModel.refresh()
+
+    assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+    coVerify(exactly = 1) { repository.refresh() }
+}
+```
+
+`every` आम function को stub करता है; `coEvery` किसी `suspend` वाले को। वही `verify` और `coVerify` के
+लिए। Suspend function पर `co` लगाना भूलने से मददगार के बजाय उलझाने वाला error मिलता है, तो उसे पहचान
+लेना काम का है।
+
+सादे `mockk` पर बिना stub की गई call **फेंकती है**। यह सुविधा है: test सिर्फ वही stub करता है जो उसे
+चाहिए, तो कोई अनचाही call चुपचाप null लौटाने के बजाय जोर से नाकाम होती है।
+
+```kotlin title="Relaxed.kt" numbered
+val analytics = mockk<Analytics>(relaxed = true)      // हर function कोई डिफॉल्ट लौटाता है
+val repository = mockk<OrderRepository>(relaxUnitFun = true)  // सिर्फ Unit वाले ढीले
+```
+
+`relaxed = true` हर चीज को शून्य जैसी value लौटाने लगाता है — `0`, `null`, खाली list। वह सुविधाजनक है
+और यह भी कि इसी से test उन calls को नोटिस करना बंद कर देता है जो code को करनी ही नहीं चाहिए थीं।
+`relaxUnitFun = true` बेहतर है, जो सिर्फ `Unit` लौटाने वाले functions ढीले करता है — आमतौर पर वही
+logging और analytics जिनकी सच में परवाह नहीं — और बाकी सब सख्त छोड़ देता है।
+
+## Matchers
+
+```kotlin title="Matchers.kt" numbered
+coEvery { repository.find(any()) } returns null
+coEvery { repository.find(match { it > 100 }) } returns Order(id = 101)
+coEvery { repository.save(capture(slot)) } returns Unit     // argument पकड़िए
+
+verify { analytics.log("order_placed", any()) }
+verify(exactly = 0) { repository.delete(any()) }            // दावा कि यह हुआ ही नहीं
+```
+
+`verify(exactly = 0)` कम आँका जाने वाला है। "यह code कुछ मिटाए नहीं" असली जरूरत है, और यह वही किस्म
+की चीज है जो चुपचाप वापस लौट आती है।
+
+`slot` argument पकड़ लेता है ताकि आप बाद में उस पर दावा कर सकें, और यह आमतौर पर किसी लंबी-चौड़ी `match`
+शर्त से साफ है:
+
+```kotlin title="Slot.kt" numbered
+val slot = slot<Order>()
+coEvery { repository.save(capture(slot)) } returns Unit
+
+viewModel.placeOrder(quantity = 3)
+
+assertEquals(3, slot.captured.quantity)
+```
+
+<Quiz
+  question="कोई `ViewModel` वाला test repository को mock करता है, `refresh()` को सफल लौटाने के लिए stub करता है, और दावा करता है कि `refresh()` एक बार बुलाया गया। वह पास होता है। ऐसा bug निकलता है जिसमें refresh करने पर पुराना data दिखता है। उस test ने उसे पकड़ा क्यों नहीं?"
+  options={[
+    "उस mock को `relaxed = true` चाहिए था ताकि repository के बाकी functions चलते",
+    "उस test ने दावा किया कि call हुई, यह नहीं कि उससे बनी state सही है — वह तब भी पास होता जब `ViewModel` उस नतीजे को पूरी तरह अनदेखा कर देता",
+    "`coVerify` `runTest` के साथ भरोसे से नहीं चलता"
+  ]}
+  answer={1}
+  explanation="वह test ViewModel के output के बजाय उसकी calls बताता है, तो वह सिर्फ एक चीज पकड़ सकता है: उस call का गायब हो जाना। Call के बाद की हर चीज — नतीजा पढ़ना, उसे बदलना, state ताजा करना — बिना दावे के है, और ऐसा ViewModel जो ताजा data लाकर फिर पुरानी list दिखाता, इस test को बिना बदले पास कर जाता। यही वह किस्म की नाकामी है जिससे लोग mock वाली suites पर भरोसा करना छोड़ देते हैं: वे हरी हैं, वे बहुत सारी हैं, और वे यह जाँच रही हैं कि code उसी तरह लिखा है जैसा test लिखने वाले ने सोचा था, न कि यह कि वह चलता है। इलाज है state पर दावा करना — refresh कीजिए, फिर दावा कीजिए कि बाहर दिख रहा StateFlow नया data रखता है — और coVerify को उन्हीं मामलों के लिए रखिए जहाँ वह लेन-देन सच में जरूरत है, जैसे token refresh का ठीक एक बार होना। अगर test को सिर्फ एक बना-बनाया जवाब चाहिए, तो नकली repository वह कम तामझाम में और बिना किसी stub के देता है।"
+/>
+
+## जहाँ नकली चीज बस बेहतर है
+
+```kotlin title="Fake.kt" numbered
+// MockK के साथ
+coEvery { repository.observeOrders() } returns flowOf(listOf(order1, order2))
+coEvery { repository.refresh() } returns Outcome.Success(Unit)
+coEvery { repository.find(1) } returns order1
+coEvery { repository.find(2) } returns order2
+
+// नकली चीज के साथ
+val repository = FakeOrderRepository().apply { emit(listOf(order1, order2)) }
+```
+
+एक लाइन के सामने चार stubs, और जब किसी test को पाँचवाँ function चाहिए तब भी नकली चीज चलती रहती है।
+उससे अहम यह कि नकली चीज के पास *बर्ताव* है: order सहेजिए और `find` उसे लौटा देता है, क्योंकि नकली
+चीज ने उसे रखा। Mocks के साथ वह रिश्ता आपको हाथ से stub करना पड़ता है, और ऐसी चीज stub कर देना आसान
+है जो असली implementation कभी करता ही नहीं।
+
+<Detail summary="Objects, statics और constructors — तेज धार वाले औजार">
+MockK उन चीजों को भी mock कर सकता है जो आमतौर पर mock नहीं होतीं, जो कभी-कभी जरूरी होता है और आमतौर
+पर इशारा है कि code की बनावट बदलनी चाहिए:
+
+```kotlin title="Sharp.kt" numbered
+mockkObject(FeatureFlags)                      // कोई Kotlin object
+every { FeatureFlags.newCheckout } returns true
+
+mockkStatic(Uri::class)                        // Android का static Uri.parse
+every { Uri.parse(any()) } returns mockUri
+
+mockkConstructor(Retrofit.Builder::class)      // बनने को बीच में रोकिए
+```
+
+दो नियम इन्हें सुरक्षित बनाते हैं। `@After` में हमेशा unmock कीजिए — `unmockkObject`, `unmockkAll` —
+क्योंकि ये सब जगह लागू होते हैं और छूटा हुआ mock suite में आगे किसी बेमतलब test को तोड़ देता है, ऐसी
+नाकामी के साथ जो वजह के आस-पास भी इशारा नहीं करती। और हर इस्तेमाल को इस बात का पर्चा मानिए कि कोई
+dependency inject नहीं की गई: जिस `FeatureFlags` object को `mockkObject` करना पड़ रहा है वह वही है
+जिसे आप constructor में भेज सकते थे, और DI वाला phase इसकी दलील दे चुका है।
+
+Android के framework वाले statics के लिए `mockkStatic` इकलौता सच में जायज मामला है, क्योंकि आप
+`Uri.parse` को inject कर ही नहीं सकते — हालाँकि वहाँ भी उसे अपने एक छोटे interface में लपेट देना
+test को आसान बना देता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और दूसरी ऐसी हरी suite बनाती है जो कुछ साबित नहीं करती">
+**Suspend function पर `every`।** `coEvery` और `coVerify` लीजिए, वरना error उलझा देगा।
+
+**State पर दावे के बजाय calls जाँचना।** नतीजा अनदेखा कर देने पर भी पास हो जाता है।
+
+**हर जगह `relaxed = true`।** अनचाही calls नाकाम होने के बजाय चुपचाप डिफॉल्ट लौटाती हैं।
+
+**Objects और statics को unmock न करना।** वे सब जगह लागू हैं; छूटने पर आगे कोई बेमतलब test टूटता है।
+
+**किसी value class या data class को mock करना।** असली चीज बनाइए — वह आसान भी है और ईमानदार भी।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी suspend function को `every` से stub कीजिए और जो error मिले उसे पढ़िए।
+2. ऐसा test लिखिए जो सिर्फ call जाँचता है, फिर call के बाद वाला code तोड़िए और उसे फिर भी पास होते
+   देखिए।
+3. चार stubs की जगह नकली चीज रखिए और दोनों tests मिलाइए।
+4. `verify(exactly = 0)` से दावा कीजिए कि कोई delete कभी नहीं होता।
+5. बिना unmock किए `mockkObject` कीजिए, फिर पूरी suite चलाइए और वह बेमतलब नाकामी ढूँढ़िए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `every` / `coEvery` | आम / `suspend` function stub कीजिए |
+| `verify` / `coVerify` | दावा कीजिए कि call हुई |
+| बिना stub की call | फेंकती है, और यही चाहिए |
+| `relaxed = true` | हर चीज पर डिफॉल्ट; आमतौर पर जरूरत से ज्यादा |
+| `relaxUnitFun = true` | सिर्फ `Unit` वाले ढीले — बेहतर डिफॉल्ट |
+| `verify(exactly = 0)` | दावा कि कोई चीज हुई *नहीं* |
+| `slot` | Argument पकड़कर उस पर दावा कीजिए |
+| नकली चीजें | कम लाइनें, असली बर्ताव, refactor में बचती हैं |
+| Mocks | जब वह लेन-देन ही जरूरत हो |
+| `mockkObject` / `mockkStatic` | सब जगह लागू — `@After` में हमेशा unmock |
+
+<Interview title="एक सवाल, ऐसी हरी suite का जो कुछ साबित नहीं करती">
+"नकली चीज के बजाय mock आप कब लेंगे?"
+
+जब वह लेन-देन खुद ही जरूरत हो — पाँच calls को `401` मिलने पर भी token refresh का ठीक एक बार होना, या
+सही parameters के साथ किसी analytics घटना का चलना। वे किसी call के बारे में दावे हैं, और नकली चीज उन्हें
+नहीं कर सकती।
+
+बाकी हर चीज के लिए मैं नकली चीज लेता हूँ, क्योंकि उसका असली बर्ताव है: कुछ सहेजिए और वह वापस मिलता है,
+तो test stubs की सूची के बजाय कामों की कड़ी की तरह पढ़ा जाता है, और वह refactor में बचता है। Mock वाले
+tests में जिस नाकामी पर मैं उँगली रखूँगा वह है state पर दावे के बजाय call जाँचना — जो test `refresh()`
+stub करके यह जाँचता है कि वह बुलाया गया, वह तब भी पास होता है जब `ViewModel` उस नतीजे को पूरी तरह
+अनदेखा कर दे, और ठीक वही bug आप पकड़ना चाहते थे। तो मैं उस पर दावा करता हूँ जो class बाहर दिखाती है,
+और verification उन्हीं मामलों के लिए रखता हूँ जहाँ कोई call सच में करार है।
+</Interview>

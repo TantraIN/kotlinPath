@@ -1,0 +1,183 @@
+---
+title: "MockK: mocks, stubs aur verification"
+description: MockK Kotlin wali mocking library hai, aur kaam ka hunar ye janna hai ki use kab nahi uthana — kyunki jo mock har cheez stub kar deta hai wo aisa test banata hai jo sirf ye dekhta hai ki aapka test theek likha hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Mock se aap keh sakte ho ki **koi saathi kya lautayega** aur ye **dawa kar sakte ho ki use bulaya
+gaya**. Pehla kaam aam taur par nakli cheez behtar karti hai; doosra wahi ek kaam hai jo nakli cheez
+nahi kar sakti. MockK tab uthaiye jab wo len-den *hi* aapki padtal ka vishay ho.
+</KeyIdea>
+
+## Buniyad
+
+```kotlin title="Mocks.kt" numbered
+private val repository = mockk<OrderRepository>()
+
+@Test
+fun `shows an error when refresh fails`() = runTest {
+    coEvery { repository.refresh() } returns Outcome.Failure(DataError.Network.Offline)
+
+    val viewModel = OrderViewModel(repository)
+    viewModel.refresh()
+
+    assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+    coVerify(exactly = 1) { repository.refresh() }
+}
+```
+
+`every` aam function ko stub karta hai; `coEvery` kisi `suspend` wale ko. Wahi `verify` aur `coVerify`
+ke liye. Suspend function par `co` lagana bhoolne se madadgar ke bajaye uljhane wala error milta hai,
+to use pehchan lena kaam ka hai.
+
+Saade `mockk` par bina stub ki gayi call **phenkti hai**. Ye suvidha hai: test sirf wahi stub karta hai
+jo use chahiye, to koi anchahi call chupchap null lautane ke bajaye zor se nakaam hoti hai.
+
+```kotlin title="Relaxed.kt" numbered
+val analytics = mockk<Analytics>(relaxed = true)      // har function koi default lautata hai
+val repository = mockk<OrderRepository>(relaxUnitFun = true)  // sirf Unit wale dheele
+```
+
+`relaxed = true` har cheez ko shoonya jaisi value lautane lagata hai — `0`, `null`, khaali list. Wo
+suvidhajanak hai aur ye bhi ki isi se test un calls ko notice karna band kar deta hai jo code ko karni
+hi nahi chahiye thin. `relaxUnitFun = true` behtar hai, jo sirf `Unit` lautane wale functions dheele
+karta hai — aam taur par wahi logging aur analytics jinki sach mein parwah nahi — aur baaki sab sakht
+chhod deta hai.
+
+## Matchers
+
+```kotlin title="Matchers.kt" numbered
+coEvery { repository.find(any()) } returns null
+coEvery { repository.find(match { it > 100 }) } returns Order(id = 101)
+coEvery { repository.save(capture(slot)) } returns Unit     // argument pakadiye
+
+verify { analytics.log("order_placed", any()) }
+verify(exactly = 0) { repository.delete(any()) }            // dawa ki ye hua hi nahi
+```
+
+`verify(exactly = 0)` kam aanka jane wala hai. "Ye code kuch mitaye nahi" asli zarurat hai, aur ye wahi
+kism ki cheez hai jo chupchap wapas laut aati hai.
+
+`slot` argument pakad leta hai taki aap baad mein us par dawa kar sako, aur ye aam taur par kisi
+lambi-chaudi `match` shart se saaf hai:
+
+```kotlin title="Slot.kt" numbered
+val slot = slot<Order>()
+coEvery { repository.save(capture(slot)) } returns Unit
+
+viewModel.placeOrder(quantity = 3)
+
+assertEquals(3, slot.captured.quantity)
+```
+
+<Quiz
+  question="Koi `ViewModel` wala test repository ko mock karta hai, `refresh()` ko safal lautane ke liye stub karta hai, aur dawa karta hai ki `refresh()` ek baar bulaya gaya. Wo pass hota hai. Aisa bug nikalta hai jismein refresh karne par purana data dikhta hai. Us test ne use pakda kyun nahi?"
+  options={[
+    "Us mock ko `relaxed = true` chahiye tha taki repository ke baaki functions chalte",
+    "Us test ne dawa kiya ki call hui, ye nahi ki usse bani state sahi hai — wo tab bhi pass hota jab `ViewModel` us result ko poori tarah andekha kar deta",
+    "`coVerify` `runTest` ke saath bharose se nahi chalta"
+  ]}
+  answer={1}
+  explanation="Wo test ViewModel ke output ke bajaye uski calls batata hai, to wo sirf ek cheez pakad sakta hai: us call ka gayab ho jana. Call ke baad ki har cheez — result padhna, use badalna, state taza karna — bina dawe ke hai, aur aisa ViewModel jo taza data lakar phir purani list dikhata, is test ko bina badle pass kar jata. Yahi wo kism ki nakami hai jisse log mock wali suites par bharosa karna chhod dete hain: wo hari hain, wo bahut saari hain, aur wo ye dekh rahi hain ki code usi tarah likha hai jaisa test likhne wale ne socha tha, na ki ye ki wo chalta hai. Ilaaj hai state par dawa karna — refresh kijiye, phir dawa kijiye ki bahar dikh raha StateFlow naya data rakhta hai — aur coVerify ko unhin mamlon ke liye rakhiye jahan wo len-den sach mein zarurat hai, jaise token refresh ka theek ek baar hona. Agar test ko sirf ek bana-banaya jawab chahiye, to nakli repository wo kam tamjhaam mein aur bina kisi stub ke deta hai."
+/>
+
+## Jahan nakli cheez bas behtar hai
+
+```kotlin title="Fake.kt" numbered
+// MockK ke saath
+coEvery { repository.observeOrders() } returns flowOf(listOf(order1, order2))
+coEvery { repository.refresh() } returns Outcome.Success(Unit)
+coEvery { repository.find(1) } returns order1
+coEvery { repository.find(2) } returns order2
+
+// nakli cheez ke saath
+val repository = FakeOrderRepository().apply { emit(listOf(order1, order2)) }
+```
+
+Ek line ke saamne chaar stubs, aur jab kisi test ko paanchwan function chahiye tab bhi nakli cheez
+chalti rehti hai. Usse ahem ye ki nakli cheez ke paas *behaviour* hai: order sahejiye aur `find` use
+lauta deta hai, kyunki nakli cheez ne use rakha. Mocks ke saath wo rishta aapko haath se stub karna
+padta hai, aur aisi cheez stub kar dena aasan hai jo asli implementation kabhi karta hi nahi.
+
+<Detail summary="Objects, statics aur constructors — tez dhaar wale auzar">
+MockK un cheezon ko bhi mock kar sakta hai jo aam taur par mock nahi hotin, jo kabhi-kabhi zaruri hota
+hai aur aam taur par ishara hai ki code ki banawat badalni chahiye:
+
+```kotlin title="Sharp.kt" numbered
+mockkObject(FeatureFlags)                      // koi Kotlin object
+every { FeatureFlags.newCheckout } returns true
+
+mockkStatic(Uri::class)                        // Android ka static Uri.parse
+every { Uri.parse(any()) } returns mockUri
+
+mockkConstructor(Retrofit.Builder::class)      // banne ko beech mein rokiye
+```
+
+Do niyam inhe safe banate hain. `@After` mein hamesha unmock kijiye — `unmockkObject`, `unmockkAll` —
+kyunki ye sab jagah lagu hote hain aur chhoota hua mock suite mein aage kisi bematlab test ko tod deta
+hai, aisi nakami ke saath jo wajah ke aas-paas bhi ishara nahi karti. Aur har istemal ko is baat ka
+parcha maniye ki koi dependency inject nahi ki gayi: jis `FeatureFlags` object ko `mockkObject` karna
+pad raha hai wo wahi hai jise aap constructor mein bhej sakte the, aur DI wala phase iski daleel de
+chuka hai.
+
+Android ke framework wale statics ke liye `mockkStatic` iklauta sach mein jayaz maamla hai, kyunki aap
+`Uri.parse` ko inject kar hi nahi sakte — halanki wahan bhi use apne ek chhote interface mein lapet
+dena test ko aasan bana deta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri aisi hari suite banati hai jo kuch sabit nahi karti">
+**Suspend function par `every`.** `coEvery` aur `coVerify` lijiye, warna error uljha dega.
+
+**State par dawe ke bajaye calls dekhna.** Result andekha kar dene par bhi pass ho jata hai.
+
+**Har jagah `relaxed = true`.** Anchahi calls nakaam hone ke bajaye chupchap default lautati hain.
+
+**Objects aur statics ko unmock na karna.** Wo sab jagah lagu hain; chhootne par aage koi bematlab test
+tootta hai.
+
+**Kisi value class ya data class ko mock karna.** Asli cheez banaiye — wo aasan bhi hai aur imandaar
+bhi.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi suspend function ko `every` se stub kijiye aur jo error mile use padhiye.
+2. Aisa test likhiye jo sirf call dekhta hai, phir call ke baad wala code todiye aur use phir bhi pass
+   hote dekhiye.
+3. Chaar stubs ki jagah nakli cheez rakhiye aur dono tests milaiye.
+4. `verify(exactly = 0)` se dawa kijiye ki koi delete kabhi nahi hota.
+5. Bina unmock kiye `mockkObject` kijiye, phir poori suite chalaiye aur wo bematlab nakami dhoondhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `every` / `coEvery` | Aam / `suspend` function stub kijiye |
+| `verify` / `coVerify` | Dawa kijiye ki call hui |
+| Bina stub ki call | Phenkti hai, aur yahi chahiye |
+| `relaxed = true` | Har cheez par default; aam taur par zarurat se zyada |
+| `relaxUnitFun = true` | Sirf `Unit` wale dheele — behtar default |
+| `verify(exactly = 0)` | Dawa ki koi cheez hui *nahi* |
+| `slot` | Argument pakadkar us par dawa kijiye |
+| Nakli cheezein | Kam linein, asli behaviour, refactor mein bachti hain |
+| Mocks | Jab wo len-den hi zarurat ho |
+| `mockkObject` / `mockkStatic` | Sab jagah lagu — `@After` mein hamesha unmock |
+
+<Interview title="Ek sawal, aisi hari suite ka jo kuch sabit nahi karti">
+"Nakli cheez ke bajaye mock aap kab loge?"
+
+Jab wo len-den khud hi zarurat ho — paanch calls ko `401` milne par bhi token refresh ka theek ek baar
+hona, ya sahi parameters ke saath kisi analytics ghatna ka chalna. Wo kisi call ke baare mein dawe hain,
+aur nakli cheez unhe nahi kar sakti.
+
+Baaki har cheez ke liye main nakli cheez leta hoon, kyunki uska asli behaviour hai: kuch sahejiye aur wo
+wapas milta hai, to test stubs ki list ke bajaye kaamon ki kadi ki tarah padha jata hai, aur wo refactor
+mein bachta hai. Mock wale tests mein jis nakami par main ungli rakhunga wo hai state par dawe ke bajaye
+call dekhna — jo test `refresh()` stub karke ye dekhta hai ki wo bulaya gaya, wo tab bhi pass hota hai
+jab `ViewModel` us result ko poori tarah andekha kar de, aur theek wahi bug aap pakadna chahte the. To
+main us par dawa karta hoon jo class bahar dikhati hai, aur verification unhin mamlon ke liye rakhta
+hoon jahan koi call sach mein karaar hai.
+</Interview>
