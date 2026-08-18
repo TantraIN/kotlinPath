@@ -1,0 +1,223 @@
+---
+title: Room ke memory wale tests aur MockWebServer
+description: Ye wo tests hain jinki jagah koi nakli cheez nahi le sakti. Nakli repository aapko kabhi nahi bataega ki aapki SQL galat hai ya aapka JSON padha nahi jata — wo sirf asli library, asli string par chalkar, bata sakti hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Data ki parat wo jagah hai jahan aapka code **kisi aur ke parser** se milta hai. Room aapki SQL compile
+karta hai aur kotlinx.serialization server ka JSON padhta hai, aur inmein se koi nakli banaya ja hi
+nahi sakta — to yahi wo iklauti jagah hai jahan asli cheez lena hi test ka maksad hai.
+</KeyIdea>
+
+## Room, memory mein
+
+```kotlin title="OrderDaoTest.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class OrderDaoTest {
+
+    private lateinit var db: AppDatabase
+    private lateinit var dao: OrderDao
+
+    @Before
+    fun setUp() {
+        db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            AppDatabase::class.java,
+        ).build()
+        dao = db.orderDao()
+    }
+
+    @After
+    fun tearDown() = db.close()
+
+    @Test
+    fun `pending orders are returned newest first`() = runTest {
+        dao.insertAll(listOf(order(1, created = 100), order(2, created = 300)))
+
+        val result = dao.pendingOrders().first()
+
+        assertEquals(listOf(2, 1), result.map { it.id })
+    }
+}
+```
+
+`inMemoryDatabaseBuilder` asli SQLite database deta hai jo disk ko chhoota hi nahi aur band hote hi
+gayab ho jata hai — to tests tez hain aur ek-doosre mein haalat nahi chhod sakte. `@After` mein use
+band karna maayne rakhta hai: uske bina file ka haath bacha rehta hai aur aage koi test aisi rows pa
+sakta hai jo usne daali hi nahi.
+
+Robolectric ke saath ye aam JVM wale unit test ki tarah ek-do second mein chalta hai. Uske bina
+`AndroidJUnit4` ka matlab emulator hai, aur yahi farak hai inhe har baar sahejne par chalane aur sirf
+CI mein chalane ke beech.
+
+Nakli DAO jo sabit nahi kar sakta aur ye karta hai: ki `ORDER BY created_at DESC` sahi likha hai, ki wo
+column hai, ki aapka `@TypeConverter` aage-peeche theek chalta hai, aur ki `@Relation` wali query sach
+mein bachche jodti hai.
+
+<Note>
+`allowMainThreadQueries()` bahut saare udaharanon mein dikhta hai. Jin tests ki aapko parwah hai unmein
+ise mat lijiye — ye theek wahi cheez chhupa deta hai jisse Room ke threading wale niyam bachate hain,
+aur jo query sirf isliye chali ki test ne use main thread par chhoot di wo app mein tab bhi galat
+rahegi.
+</Note>
+
+## Migrations, wo iklauta test jo data bachata hai
+
+```kotlin title="MigrationTest.kt" numbered
+@get:Rule
+val helper = MigrationTestHelper(
+    InstrumentationRegistry.getInstrumentation(),
+    AppDatabase::class.java,
+)
+
+@Test
+fun migrate2To3_keepsExistingOrders() {
+    helper.createDatabase(TEST_DB, 2).apply {
+        execSQL("INSERT INTO orders (id, title) VALUES (1, 'Coffee')")
+        close()
+    }
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 3, true, MIGRATION_2_3)
+
+    db.query("SELECT title FROM orders WHERE id = 1").use {
+        assertTrue(it.moveToFirst())
+        assertEquals("Coffee", it.getString(0))
+    }
+}
+```
+
+Ye Android app ka sabse keemti test hai, kyunki yahi iklauti jagah hai jahan galti aisa data mita deti
+hai jo user ko wapas nahi milega. Ise `exportSchema = true` aur commit ki gayi `app/schemas/` wali JSON
+chahiye, aur `runMigrationsAndValidate` usi se milata hai.
+
+*Data* par dawa kijiye, sirf is par nahi ki migration chal gaya. Jo migration poora hokar table khaali
+kar deta hai wo us test ko pass kar jata hai jo sirf exception na aane ko dekhta hai.
+
+<Quiz
+  question="Koi repository wala test nakli `OrderApi` leta hai jo bane-banaye `OrderDto` lautata hai. Wo pass hota hai. Production mein screen khaali rehti hai, kyunki server ne ek field ka naam `order_id` kar diya. Us test ne ise kyun chhod diya?"
+  options={[
+    "Us nakli cheez ko saade DTO ke bajaye `Response` wala lapeta hua roop lautana chahiye tha",
+    "Koi JSON padha hi nahi gaya — nakli cheez ne pehle se bani hui objects lautain, to jo iklauta kadam nakaam ho sakta tha wo poori tarah chhoot gaya",
+    "Ise pakadne ke liye `kotlinx.serialization` ko `ignoreUnknownKeys = false` chahiye"
+  ]}
+  answer={1}
+  explanation="Nakli cheez Kotlin ki objects lautati hai, to test ne us hisse ko chhodkar baaki sab chalaya jo toota. Deserialization hi wo jagah hai jahan naam badli field null ya koi default ban jati hai, aur nakli API use kabhi chalati hi nahi — jisse is kism ka bug warna achhi likhi test suite ko bhi nahi dikhta. MockWebServer ise theek karta hai, asli socket par asli JSON ki string paroskar, to Retrofit aur converter apna sachcha kaam karte hain aur naam badli field test ko usi tarah nakaam karti hai jaise production mein karti hai. Usse bhi behtar, asli server se pakda hua jawab fixture ki tarah lijiye, taki karaar badalte hi test toote. ignoreUnknownKeys saath ki par alag baat hai: use band karne se judi hui koi nai field crash karati hai, chhootne ke bajaye, aur wo aam taur par galat sauda hai — jis field ka aapko pata hi nahi tha wo shayad hi kabhi wahi hoti hai jo maayne rakhti hai."
+/>
+
+## MockWebServer
+
+```kotlin title="ApiTest.kt" numbered
+private lateinit var server: MockWebServer
+private lateinit var api: OrderApi
+
+@Before
+fun setUp() {
+    server = MockWebServer().apply { start() }
+    api = Retrofit.Builder()
+        .baseUrl(server.url("/"))                     // nakli server ki taraf ishara
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+        .create(OrderApi::class.java)
+}
+
+@After
+fun tearDown() = server.shutdown()
+
+@Test
+fun `parses the orders response`() = runTest {
+    server.enqueue(MockResponse().setBody(readFixture("orders.json")))
+
+    val orders = api.orders()
+
+    assertEquals(2, orders.size)
+    assertEquals("/v1/orders", server.takeRequest().path)     // URL bhi karaar ka hissa hai
+}
+```
+
+`takeRequest()` kam aanka jane wala aadha hissa hai. Wo lautata hai ki aapke code ne sach mein bheja kya
+— path, headers, body — to aap dawa kar sakte ho ki auth ka header laga tha aur ki null hone par
+`@Query` wala parameter chhoot gaya, aur ye dono asli bugs hain jinhe kitni bhi nakli responses nahi
+pakadtin.
+
+```kotlin title="Errors.kt" numbered
+server.enqueue(MockResponse().setResponseCode(503))                   // server ki error
+server.enqueue(MockResponse().setResponseCode(200).setBody("{ bad"))  // bigdi body
+server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))  // timeout
+```
+
+Wo teen linein network wale lesson ke error raaston ko theek se dekhti hain: `503` dobara jana chahiye,
+bigdi body crash ke bajaye parse ki nakami banni chahiye, aur timeout bina sambhale exception ke bajaye
+"offline". Yahan zyadatar keemat nakamiyan dekhne mein hi hai, kyunki seedha raasta to haath se waise
+bhi chal jata hai.
+
+<Detail summary="Fixtures, aur unhe imandaar rakhna">
+Asli pakde hue responses `src/test/resources` mein rakhiye aur unhe padhiye:
+
+```kotlin title="Fixture.kt" numbered
+fun readFixture(name: String): String =
+    javaClass.classLoader!!.getResourceAsStream("fixtures/$name")!!
+        .bufferedReader().use { it.readText() }
+```
+
+Asli server se nakal kiya fixture usse kahin zyada keemti hai jo aapne haath se likha, kyunki haath se
+likhe mein sirf wo fields hoti hain jo aapko yaad rahin — aur jis null ki aapne ummid nahi ki, khaali
+array, ajeeb tareekh ka dhancha, theek wahi production mein todte hain.
+
+Tedhe maamlon ke liye bhi fixture rakhiye: khaali list, aisa record jismein har vaikalpik field gayab
+ho, bahut lambi string. Wahi khaali screen ya behti hui layout bante hain, aur dhancha ek baar ban jane
+ke baad unhe jodne ki koi keemat nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli poori kavayad bematlab kar deti hai">
+**Asli JSON ke bajaye nakli API.** Jo iklauta kadam nakaam ho sakta hai — padhna — wo chalta hi nahi.
+
+**Database band ya server shutdown na karna.** Haalat aur ports aage ke tests mein riste hain.
+
+**`allowMainThreadQueries()`.** Wo threading wala niyam chhupata hai jo app ko phir bhi manna hai.
+
+**Migrations ko "exception nahi aaya" par dekhna.** Jo table khaali kar de wo bhi pass ho jata hai.
+
+**Sirf seedha raasta dekhna.** Error wali shakhayein hi wo hain jinhe koi haath se nahi chalata.
+</Pitfall>
+
+## Abhyaas
+
+1. Jaanbujhkar galat likhe column ke saath DAO ka test likhiye aur compile ki error padhiye.
+2. Rows daaliye, migration chalaiye, aur dawa kijiye ki wo rows bachin.
+3. Nakli API ki jagah MockWebServer aur pakda hua fixture rakhiye.
+4. `takeRequest()` se dawa kijiye ki auth ka header laga tha.
+5. Bigdi body line mein lagaiye aur dekhiye ki aapka code crash ke bajaye use badalta hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Ye tests kyun | Nakli cheez na SQL dekh sakti hai na JSON padh sakti hai |
+| `inMemoryDatabaseBuilder` | Asli SQLite, koi disk nahi, band hote hi gayab |
+| `@After` mein close | Warna haalat agle test mein risti hai |
+| Robolectric | Inhe JVM par secondon mein chalata hai |
+| `MigrationTestHelper` | Sabse keemti test jo aap likh sakte ho |
+| Data par dawa | Sirf ye nahi ki migration poora hua |
+| MockWebServer | Asli socket par asli JSON |
+| `takeRequest()` | Dawa kijiye ki aapke code ne bheja kya |
+| Error wale responses | `503`, bigdi body, timeout — asli keemat |
+| Fixtures | Server se pakde hue, tedhe maamlon samet |
+
+<Interview title="Ek sawal, us bug ka jo achhi unit suite se bhi chhoot jata hai">
+"Agar repository ke unit tests pehle se hain to MockWebServer se padtal kyun?"
+
+Kyunki nakli API wala unit test aisi Kotlin objects lautata hai jo pehle hi ban chuki hain, to wo us
+kadam ko chalata hi nahi jo sach mein tootta hai. Deserialization hi wo jagah hai jahan naam badli field
+null ban jati hai aur badla hua type exception, aur nakli cheez use poori tarah chhod deti hai — isi
+tarah achhe tests wala repository bhi server ke badalne ke baad khaali screen bhej deta hai.
+
+MockWebServer asli socket par asli JSON ki string parosta hai, to Retrofit aur converter apna sachcha
+kaam karte hain. Main fixture ke taur par pakda hua jawab lunga taki karaar badalte hi test toote, aur
+mehnat zyadatar nakamiyon par lagaunga, seedhe raaste par nahi — `503`, bigdi body, timeout — kyunki
+wahi shakhayein hain jinhe koi haath se nahi chalata. Aur `takeRequest()` se main ye dawa kar sakta hoon
+ki bheja kya gaya, jo auth ke gayab header ko pakad leta hai, aur kitni bhi nakli responses use nahi
+pakadtin.
+</Interview>

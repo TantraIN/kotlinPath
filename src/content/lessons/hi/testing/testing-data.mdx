@@ -1,0 +1,217 @@
+---
+title: Room के memory वाले tests और MockWebServer
+description: ये वे tests हैं जिनकी जगह कोई नकली चीज नहीं ले सकती। नकली repository आपको कभी नहीं बताएगा कि आपकी SQL गलत है या आपका JSON पढ़ा नहीं जाता — वह सिर्फ असली library, असली string पर चलकर, बता सकती है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Data की परत वह जगह है जहाँ आपका code **किसी और के parser** से मिलता है। Room आपकी SQL compile करता है
+और kotlinx.serialization server का JSON पढ़ता है, और इनमें से कोई नकली बनाया जा ही नहीं सकता — तो यही
+वह इकलौती जगह है जहाँ असली चीज लेना ही test का मकसद है।
+</KeyIdea>
+
+## Room, memory में
+
+```kotlin title="OrderDaoTest.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class OrderDaoTest {
+
+    private lateinit var db: AppDatabase
+    private lateinit var dao: OrderDao
+
+    @Before
+    fun setUp() {
+        db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            AppDatabase::class.java,
+        ).build()
+        dao = db.orderDao()
+    }
+
+    @After
+    fun tearDown() = db.close()
+
+    @Test
+    fun `pending orders are returned newest first`() = runTest {
+        dao.insertAll(listOf(order(1, created = 100), order(2, created = 300)))
+
+        val result = dao.pendingOrders().first()
+
+        assertEquals(listOf(2, 1), result.map { it.id })
+    }
+}
+```
+
+`inMemoryDatabaseBuilder` असली SQLite database देता है जो disk को छूता ही नहीं और बंद होते ही गायब हो
+जाता है — तो tests तेज हैं और एक-दूसरे में हालत नहीं छोड़ सकते। `@After` में उसे बंद करना मायने रखता
+है: उसके बिना file का हाथ बचा रहता है और आगे कोई test ऐसी rows पा सकता है जो उसने डाली ही नहीं।
+
+Robolectric के साथ यह आम JVM वाले unit test की तरह एक-दो सेकंड में चलता है। उसके बिना `AndroidJUnit4`
+का मतलब emulator है, और यही फर्क है इन्हें हर बार सहेजने पर चलाने और सिर्फ CI में चलाने के बीच।
+
+नकली DAO जो साबित नहीं कर सकता और यह करता है: कि `ORDER BY created_at DESC` सही लिखा है, कि वह column
+है, कि आपका `@TypeConverter` आगे-पीछे ठीक चलता है, और कि `@Relation` वाली query सच में बच्चे जोड़ती
+है।
+
+<Note>
+`allowMainThreadQueries()` बहुत सारे उदाहरणों में दिखता है। जिन tests की आपको परवाह है उनमें इसे मत
+लीजिए — यह ठीक वही चीज छिपा देता है जिससे Room के threading वाले नियम बचाते हैं, और जो query सिर्फ
+इसलिए चली कि test ने उसे main thread पर छूट दी वह ऐप में तब भी गलत रहेगी।
+</Note>
+
+## Migrations, वह इकलौता test जो data बचाता है
+
+```kotlin title="MigrationTest.kt" numbered
+@get:Rule
+val helper = MigrationTestHelper(
+    InstrumentationRegistry.getInstrumentation(),
+    AppDatabase::class.java,
+)
+
+@Test
+fun migrate2To3_keepsExistingOrders() {
+    helper.createDatabase(TEST_DB, 2).apply {
+        execSQL("INSERT INTO orders (id, title) VALUES (1, 'Coffee')")
+        close()
+    }
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 3, true, MIGRATION_2_3)
+
+    db.query("SELECT title FROM orders WHERE id = 1").use {
+        assertTrue(it.moveToFirst())
+        assertEquals("Coffee", it.getString(0))
+    }
+}
+```
+
+यह Android ऐप का सबसे कीमती test है, क्योंकि यही इकलौती जगह है जहाँ गलती ऐसा data मिटा देती है जो user
+को वापस नहीं मिलेगा। इसे `exportSchema = true` और commit की गई `app/schemas/` वाली JSON चाहिए, और
+`runMigrationsAndValidate` उसी से मिलाता है।
+
+*Data* पर दावा कीजिए, सिर्फ इस पर नहीं कि migration चल गया। जो migration पूरा होकर table खाली कर देता
+है वह उस test को पास कर जाता है जो सिर्फ exception न आने की जाँच करता है।
+
+<Quiz
+  question="कोई repository वाला test नकली `OrderApi` लेता है जो बने-बनाए `OrderDto` लौटाता है। वह पास होता है। Production में screen खाली रहती है, क्योंकि server ने एक field का नाम `order_id` कर दिया। उस test ने इसे क्यों छोड़ दिया?"
+  options={[
+    "उस नकली चीज को सादे DTO के बजाय `Response` वाला लपेटा हुआ रूप लौटाना चाहिए था",
+    "कोई JSON पढ़ा ही नहीं गया — नकली चीज ने पहले से बनी हुई objects लौटाईं, तो जो इकलौता कदम नाकाम हो सकता था वह पूरी तरह छूट गया",
+    "इसे पकड़ने के लिए `kotlinx.serialization` को `ignoreUnknownKeys = false` चाहिए"
+  ]}
+  answer={1}
+  explanation="नकली चीज Kotlin की objects लौटाती है, तो test ने उस हिस्से को छोड़कर बाकी सब चलाया जो टूटा। Deserialization ही वह जगह है जहाँ नाम बदली field null या कोई डिफॉल्ट बन जाती है, और नकली API उसे कभी चलाती ही नहीं — जिससे इस किस्म का bug वरना अच्छी लिखी test suite को भी नहीं दिखता। MockWebServer इसे ठीक करता है, असली socket पर असली JSON की string परोसकर, तो Retrofit और converter अपना सच्चा काम करते हैं और नाम बदली field test को उसी तरह नाकाम करती है जैसे production में करती है। उससे भी बेहतर, असली server से पकड़ा हुआ जवाब fixture की तरह लीजिए, ताकि करार बदलते ही test टूटे। ignoreUnknownKeys साथ की पर अलग बात है: उसे बंद करने से जुड़ी हुई कोई नई field crash कराती है, छूटने के बजाय, और वह आमतौर पर गलत सौदा है — जिस field का आपको पता ही नहीं था वह शायद ही कभी वही होती है जो मायने रखती है।"
+/>
+
+## MockWebServer
+
+```kotlin title="ApiTest.kt" numbered
+private lateinit var server: MockWebServer
+private lateinit var api: OrderApi
+
+@Before
+fun setUp() {
+    server = MockWebServer().apply { start() }
+    api = Retrofit.Builder()
+        .baseUrl(server.url("/"))                     // नकली server की तरफ इशारा
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+        .create(OrderApi::class.java)
+}
+
+@After
+fun tearDown() = server.shutdown()
+
+@Test
+fun `parses the orders response`() = runTest {
+    server.enqueue(MockResponse().setBody(readFixture("orders.json")))
+
+    val orders = api.orders()
+
+    assertEquals(2, orders.size)
+    assertEquals("/v1/orders", server.takeRequest().path)     // URL भी करार का हिस्सा है
+}
+```
+
+`takeRequest()` कम आँका जाने वाला आधा हिस्सा है। वह लौटाता है कि आपके code ने सच में भेजा क्या — path,
+headers, body — तो आप दावा कर सकते हैं कि auth का header लगा था और कि null होने पर `@Query` वाला
+parameter छूट गया, और ये दोनों असली bugs हैं जिन्हें कितनी भी नकली responses नहीं पकड़तीं।
+
+```kotlin title="Errors.kt" numbered
+server.enqueue(MockResponse().setResponseCode(503))                   // server की error
+server.enqueue(MockResponse().setResponseCode(200).setBody("{ bad"))  // बिगड़ी body
+server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))  // timeout
+```
+
+वे तीन लाइनें network वाले पाठ के error रास्तों को ठीक से जाँचती हैं: `503` दोबारा जाना चाहिए, बिगड़ी
+body crash के बजाय parse की नाकामी बननी चाहिए, और timeout बिना सँभाले exception के बजाय "offline"।
+यहाँ ज्यादातर कीमत नाकामियाँ जाँचने में ही है, क्योंकि सीधा रास्ता तो हाथ से वैसे भी चल जाता है।
+
+<Detail summary="Fixtures, और उन्हें ईमानदार रखना">
+असली पकड़े हुए responses `src/test/resources` में रखिए और उन्हें पढ़िए:
+
+```kotlin title="Fixture.kt" numbered
+fun readFixture(name: String): String =
+    javaClass.classLoader!!.getResourceAsStream("fixtures/$name")!!
+        .bufferedReader().use { it.readText() }
+```
+
+असली server से नकल किया fixture उससे कहीं ज्यादा कीमती है जो आपने हाथ से लिखा, क्योंकि हाथ से लिखे
+में सिर्फ वे fields होती हैं जो आपको याद रहीं — और जिस null की आपने उम्मीद नहीं की, खाली array, अजीब
+तारीख का ढाँचा, ठीक वही production में तोड़ते हैं।
+
+टेढ़े मामलों के लिए भी fixture रखिए: खाली list, ऐसा record जिसमें हर वैकल्पिक field गायब हो, बहुत लंबी
+string। वही खाली screen या बहती हुई layout बनते हैं, और ढाँचा एक बार बन जाने के बाद उन्हें जोड़ने की
+कोई कीमत नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली पूरी कवायद बेमतलब कर देती है">
+**असली JSON के बजाय नकली API।** जो इकलौता कदम नाकाम हो सकता है — पढ़ना — वह चलता ही नहीं।
+
+**Database बंद या server shutdown न करना।** हालत और ports आगे के tests में रिसते हैं।
+
+**`allowMainThreadQueries()`।** वह threading वाला नियम छिपाता है जो ऐप को फिर भी मानना है।
+
+**Migrations को "exception नहीं आया" पर जाँचना।** जो table खाली कर दे वह भी पास हो जाता है।
+
+**सिर्फ सीधा रास्ता जाँचना।** Error वाली शाखाएँ ही वे हैं जिन्हें कोई हाथ से नहीं चलाता।
+</Pitfall>
+
+## अभ्यास
+
+1. जानबूझकर गलत लिखे column के साथ DAO का test लिखिए और compile की error पढ़िए।
+2. Rows डालिए, migration चलाइए, और दावा कीजिए कि वे rows बचीं।
+3. नकली API की जगह MockWebServer और पकड़ा हुआ fixture रखिए।
+4. `takeRequest()` से दावा कीजिए कि auth का header लगा था।
+5. बिगड़ी body कतार में लगाइए और देखिए कि आपका code crash के बजाय उसे बदलता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| ये tests क्यों | नकली चीज न SQL जाँच सकती है न JSON पढ़ सकती है |
+| `inMemoryDatabaseBuilder` | असली SQLite, कोई disk नहीं, बंद होते ही गायब |
+| `@After` में close | वरना हालत अगले test में रिसती है |
+| Robolectric | इन्हें JVM पर सेकंडों में चलाता है |
+| `MigrationTestHelper` | सबसे कीमती test जो आप लिख सकते हैं |
+| Data पर दावा | सिर्फ यह नहीं कि migration पूरा हुआ |
+| MockWebServer | असली socket पर असली JSON |
+| `takeRequest()` | दावा कीजिए कि आपके code ने भेजा क्या |
+| Error वाले responses | `503`, बिगड़ी body, timeout — असली कीमत |
+| Fixtures | Server से पकड़े हुए, टेढ़े मामलों समेत |
+
+<Interview title="एक सवाल, उस bug का जो अच्छी unit suite से भी छूट जाता है">
+"अगर repository के unit tests पहले से हैं तो MockWebServer से जाँच क्यों?"
+
+क्योंकि नकली API वाला unit test ऐसी Kotlin objects लौटाता है जो पहले ही बन चुकी हैं, तो वह उस कदम को
+चलाता ही नहीं जो सच में टूटता है। Deserialization ही वह जगह है जहाँ नाम बदली field null बन जाती है और
+बदला हुआ type exception, और नकली चीज उसे पूरी तरह छोड़ देती है — इसी तरह अच्छे tests वाला repository
+भी server के बदलने के बाद खाली screen भेज देता है।
+
+MockWebServer असली socket पर असली JSON की string परोसता है, तो Retrofit और converter अपना सच्चा काम
+करते हैं। मैं fixture के तौर पर पकड़ा हुआ जवाब लूँगा ताकि करार बदलते ही test टूटे, और मेहनत ज्यादातर
+नाकामियों पर लगाऊँगा, सीधे रास्ते पर नहीं — `503`, बिगड़ी body, timeout — क्योंकि वही शाखाएँ हैं जिन्हें
+कोई हाथ से नहीं चलाता। और `takeRequest()` से मैं यह दावा कर सकता हूँ कि भेजा क्या गया, जो auth के गायब
+header को पकड़ लेता है, और कितनी भी नकली responses उसे नहीं पकड़तीं।
+</Interview>
