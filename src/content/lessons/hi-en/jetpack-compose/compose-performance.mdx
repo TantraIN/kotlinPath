@@ -1,5 +1,5 @@
 ---
-title: Stability, skipping aur recomposition ki jaanch-padtaal
+title: Stability, skipping aur recomposition ka debugging
 description: Compose ki performance ek hi sawal hai, baar-baar pucha hua — kya ye call chhodi ja sakti hai? Baaki sab stability se, state kahan padhi ja rahi hai isse, aur andaza lagane ke bajaye napne se nikalta hai.
 updated: 2026-08-14
 ---
@@ -27,7 +27,7 @@ Achhi baat ye hai ki ye pasand-napasand ka mamla nahi, napi ja sakne wali cheez 
 | Wahi class ek `var` ke saath | Nahi | Andar ki cheez bina khabar badal sakti hai |
 | `List<T>`, `Map<K, V>`, `Set<T>` | Nahi | Interfaces, jinhe koi badalne wali class lagu kar sakti hai |
 | `ImmutableList<T>` | Haan | `kotlinx.collections.immutable` se |
-| Aise module ki class jismein Compose compiler nahi | Nahi | Uski jaanch ho hi nahi sakti |
+| Aise module ki class jismein Compose compiler nahi | Nahi | Use analyse hi nahi kiya ja sakta |
 | `State<T>` | Haan | Badalti hai, par uske badlaav dikhte hain |
 
 <Quiz
