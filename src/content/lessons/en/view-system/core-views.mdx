@@ -1,0 +1,192 @@
+---
+title: TextView, EditText, ImageView and input controls
+description: Four widgets with dozens of attributes each, of which about six actually change behaviour rather than appearance. Those six are the lesson.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Most attributes on these views only change how something looks. A handful change what the view
+**does** — which keyboard opens, how an image is cropped, whether text is clipped or wrapped —
+and those are the ones that produce bug reports.
+</KeyIdea>
+
+## Why this matters
+
+A number field that opens a full keyboard, an avatar squashed into an oval, a title that vanishes
+instead of ellipsising: none of these are styling problems, and none are caught by a compiler.
+
+They are all one attribute, and each one has a small closed set of values worth knowing by heart.
+
+## TextView: the attributes that change behaviour
+
+```xml title="res/layout/item.xml" numbered
+<TextView
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="@string/headline"
+    android:maxLines="2"
+    android:ellipsize="end"
+    android:textAppearance="?attr/textAppearanceTitleMedium" />
+```
+
+| Attribute | What it decides |
+| --- | --- |
+| `maxLines` | How many lines before the text stops |
+| `ellipsize` | What happens at the cut: `start`, `middle`, `end`, `marquee` |
+| `autoLink` | Turns `web`, `email`, `phone` matches into tappable links |
+| `textAppearance` | The whole type style in one attribute, from the theme |
+
+<Note>
+`ellipsize` does nothing on its own. Without `maxLines` there is no cut to ellipsise, so the text
+simply wraps forever — which is why "my ellipsis is not showing" is nearly always a missing
+`maxLines`.
+</Note>
+
+## EditText: `inputType` is the one that matters
+
+```xml title="res/layout/form.xml" numbered
+<EditText
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:hint="@string/phone_hint"
+    android:inputType="phone"
+    android:imeOptions="actionNext" />
+```
+
+`inputType` decides three things at once: which keyboard appears, whether autocorrect and
+capitalisation run, and whether the text is masked. `imeOptions` decides what the bottom-right
+key on that keyboard says and does.
+
+<Quiz
+  question={'You set `android:inputType="number"` on a field. Is the value now guaranteed to be a number?'}
+  options={[
+    "Yes — the field rejects anything that is not a digit",
+    "No — it changes the keyboard, but pasted or IME text can still be anything",
+    "Yes, but only on API 26 and above",
+  ]}
+  answer={1}
+  explanation="inputType is a hint to the keyboard, not a validator. It picks the numeric keypad and it applies a filter for typed characters, but a paste, an autofill, a hardware keyboard or a third-party IME can all put arbitrary text in the field. So it improves the experience and proves nothing: still parse with toIntOrNull and still handle null. Treating an input type as validation is how a crash reaches production from a field that looked safe."
+/>
+
+## ImageView: `scaleType` is the whole game
+
+| `scaleType` | What it does |
+| --- | --- |
+| `fitCenter` | Fits inside, keeps ratio — the default, so it letterboxes |
+| `centerCrop` | Fills the view, keeps ratio, crops the overflow |
+| `centerInside` | Like `fitCenter` but never scales up |
+| `center` | No scaling at all; big images overflow and are clipped |
+| `fitXY` | Fills exactly, ignores ratio — the one that squashes faces |
+
+<Tip bare>
+Avatars and photo tiles almost always want `centerCrop`. The default `fitCenter` is why an image
+that should fill a square instead sits in the middle with bars around it.
+</Tip>
+
+## The input controls
+
+<Tabs>
+  <Tab label="Switch and CheckBox">
+
+Both are a `CompoundButton` with an `isChecked` state and one listener. A `Switch` implies the
+change takes effect immediately; a `CheckBox` implies it applies when the user confirms.
+
+```kotlin title="Toggle.kt"
+binding.notifications.setOnCheckedChangeListener { _, isChecked ->
+    viewModel.onNotificationsChanged(isChecked)
+}
+```
+
+  </Tab>
+  <Tab label="RadioGroup">
+
+Radio buttons are only mutually exclusive when they share a `RadioGroup` parent. Outside one,
+each is an independent toggle — a common surprise.
+
+```xml title="Radio.xml"
+<RadioGroup
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+    <RadioButton android:id="@+id/card" android:text="@string/card" />
+    <RadioButton android:id="@+id/upi" android:text="@string/upi" />
+</RadioGroup>
+```
+
+  </Tab>
+  <Tab label="Spinner">
+
+A dropdown backed by an adapter. It fires `onItemSelected` once during setup, before the user has
+touched anything — guard against acting on that first call.
+
+  </Tab>
+</Tabs>
+
+## Under the hood: why text is the expensive part
+
+<Timeline>
+  <TimelineItem title="Measuring text means laying it out" meta="twice, sometimes">
+    To answer "how tall am I", a `TextView` has to break the string into lines at the given width.
+    That work is repeated whenever the width changes.
+  </TimelineItem>
+  <TimelineItem title="Which is why lists feel it first" meta="every bind">
+    A `RecyclerView` row that sets long text re-measures on every bind. `PrecomputedText` moves
+    that work to a background thread.
+  </TimelineItem>
+  <TimelineItem title="And why fixed heights help" meta="when you can">
+    A row with a known height skips the negotiation entirely — which is what
+    `setHasFixedSize(true)` tells a `RecyclerView`.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`hint` is not a label">
+A `hint` disappears the moment the user types, so a form built only from hints leaves someone
+halfway through with no idea what each field was.
+
+`TextInputLayout` solves this by floating the hint above the field once it has content. That is
+covered with the rest of Material in the styles lesson, and it is the reason a bare `EditText` is
+rare in a modern form.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that reach a real user">
+**Treating `inputType` as validation.** It shapes the keyboard. Parse and check anyway.
+
+**Leaving `scaleType` at the default for photos.** `fitCenter` letterboxes; you almost certainly
+wanted `centerCrop`.
+
+**`ellipsize` with no `maxLines`.** Nothing to ellipsise, so nothing happens.
+
+**Hardcoded `android:text`.** It cannot be translated, and lint will tell you so — which is the
+whole point of the resources lesson.
+</Pitfall>
+
+## Practice
+
+1. Put four `EditText` fields side by side with `inputType` of `text`, `number`, `phone` and
+   `textPassword`. Photograph the keyboard each one opens.
+2. Paste letters into the `number` field. Note that it accepts them.
+3. Show the same wide photo in five `ImageView`s, one per `scaleType`, all the same size.
+4. Set `ellipsize="end"` with no `maxLines`, then add `maxLines="1"`. Compare.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `maxLines` + `ellipsize` | Both, or neither works |
+| `autoLink` | Makes URLs, emails and numbers tappable |
+| `inputType` | Keyboard, autocorrect and masking — not validation |
+| `imeOptions` | What the action key says and does |
+| `scaleType` | `centerCrop` fills, `fitCenter` letterboxes, `fitXY` squashes |
+| `RadioGroup` | The only thing that makes radio buttons exclusive |
+| `Spinner` | Fires its listener once before the user acts |
+| `hint` | Vanishes on typing; a label does not |
+
+<Interview title="Sounds simple, and separates careful people from fast ones">
+"Does `inputType` of `number` guarantee you get a number?"
+
+No — it selects a keyboard and filters typed characters, but paste, autofill, hardware keyboards
+and third-party IMEs all bypass that. The answer worth giving ends with what you do instead:
+parse with `toIntOrNull` and handle the failure, because the field is a suggestion and the
+validation is yours.
+</Interview>

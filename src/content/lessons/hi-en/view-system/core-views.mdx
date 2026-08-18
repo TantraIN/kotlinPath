@@ -1,0 +1,197 @@
+---
+title: TextView, EditText, ImageView aur input controls
+description: Chaar widgets, har ek par darjanon attributes, jinmein se lagbhag chhah hi dikhawat nahi, bartav badalte hain. Wahi chhah is lesson ka topic hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+In views ke zyadatar attributes sirf ye badalte hain ki koi cheez dikhti kaisi hai. Gine-chune ye
+badalte hain ki view **karti kya hai** — kaun sa keyboard khulega, image kaise kategi, text
+katega ya liptega — aur bug report wahi banate hain.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Number wala field jo poora keyboard khol deta hai, avatar jo dabkar andakar ho gaya, title jo
+ellipsis ke bajaye gayab ho gaya: inmein se koi styling ki problem nahi hai, aur inmein se koi
+compiler nahi pakadta.
+
+Ye sab ek-ek attribute hain, aur har ek ki values ka ek chhota, bandha hua set hai jo yaad rakhne
+laayak hai.
+
+## TextView: wo attributes jo bartav badalte hain
+
+```xml title="res/layout/item.xml" numbered
+<TextView
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="@string/headline"
+    android:maxLines="2"
+    android:ellipsize="end"
+    android:textAppearance="?attr/textAppearanceTitleMedium" />
+```
+
+| Attribute | Kya tay karta hai |
+| --- | --- |
+| `maxLines` | Kitni lines ke baad text ruk jaye |
+| `ellipsize` | Katne ki jagah kya ho: `start`, `middle`, `end`, `marquee` |
+| `autoLink` | `web`, `email`, `phone` jaise milan ko dabane laayak link bana deta hai |
+| `textAppearance` | Poori type style ek hi attribute mein, theme se |
+
+<Note>
+`ellipsize` akela kuch nahi karta. `maxLines` ke bina katne ki koi jagah hi nahi, to text bas
+lipatta rehta hai — isiliye "mera ellipsis dikh nahi raha" lagbhag hamesha chhoota hua `maxLines`
+hota hai.
+</Note>
+
+## EditText: asli baat `inputType` hai
+
+```xml title="res/layout/form.xml" numbered
+<EditText
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:hint="@string/phone_hint"
+    android:inputType="phone"
+    android:imeOptions="actionNext" />
+```
+
+`inputType` ek saath teen cheezein tay karta hai: kaun sa keyboard aayega, autocorrect aur
+capitalisation chalenge ya nahi, aur text chhupaya jayega ya nahi. `imeOptions` tay karta hai ki
+us keyboard ki neeche-daayin key par kya likha hoga aur wo karegi kya.
+
+<Quiz
+  question={'Aapne kisi field par `android:inputType="number"` rakha. Kya ab value ka number hona pakka hai?'}
+  options={[
+    "Haan — field ank ke alawa kuch leta hi nahi",
+    "Nahi — ye keyboard badalta hai, par paste kiya hua ya IME se aaya text kuch bhi ho sakta hai",
+    "Haan, par sirf API 26 aur usse upar",
+  ]}
+  answer={1}
+  explanation="inputType keyboard ke liye ishara hai, koi validator nahi. Ye ankon wala keypad chunta hai aur type kiye characters par filter bhi lagata hai, par paste, autofill, hardware keyboard ya koi teesra IME — ye sab field mein kuch bhi daal sakte hain. Yaani ye anubhav sudharta hai aur sabit kuch nahi karta: phir bhi toIntOrNull se parse karo aur null sambhalo. Input type ko validation maan lena hi wo rasta hai jisse safe dikhte field se crash production tak pahunchta hai."
+/>
+
+## ImageView: poora khel `scaleType` ka hai
+
+| `scaleType` | Kya karta hai |
+| --- | --- |
+| `fitCenter` | Andar baitha deta hai, anupat rakhta hai — default, to kinaron par pattiyan chhodta hai |
+| `centerCrop` | View bhar deta hai, anupat rakhta hai, bahar ka hissa kaat deta hai |
+| `centerInside` | `fitCenter` jaisa, par kabhi bada nahi karta |
+| `center` | Koi scaling nahi; badi images bahar nikalkar kat jati hain |
+| `fitXY` | Theek-theek bhar deta hai, anupat chhod deta hai — yahi chehre dabata hai |
+
+<Tip bare>
+Avatars aur photo tiles ko lagbhag hamesha `centerCrop` chahiye. Default `fitCenter` hi wajah hai
+ki jis image ko chaukor bharna chahiye wo beech mein, chaaron taraf pattiyon ke saath baithi
+rehti hai.
+</Tip>
+
+## Input controls
+
+<Tabs>
+  <Tab label="Switch aur CheckBox">
+
+Dono `CompoundButton` hain, jinmein `isChecked` state hai aur ek listener. `Switch` ka matlab hai
+badlav turant lagu; `CheckBox` ka matlab hai user ke pakka karne par lagu.
+
+```kotlin title="Toggle.kt"
+binding.notifications.setOnCheckedChangeListener { _, isChecked ->
+    viewModel.onNotificationsChanged(isChecked)
+}
+```
+
+  </Tab>
+  <Tab label="RadioGroup">
+
+Radio buttons aapas mein tabhi alag-alag hote hain jab unka parent ek hi `RadioGroup` ho. Uske
+bahar har ek apna alag toggle hai — ye aksar chaunkata hai.
+
+```xml title="Radio.xml"
+<RadioGroup
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+    <RadioButton android:id="@+id/card" android:text="@string/card" />
+    <RadioButton android:id="@+id/upi" android:text="@string/upi" />
+</RadioGroup>
+```
+
+  </Tab>
+  <Tab label="Spinner">
+
+Adapter par tika dropdown. Ye setup ke dauraan hi ek baar `onItemSelected` chala deta hai, isse
+pehle ki user ne kuch chhua bhi ho — us pehli call par kuch karne se bacho.
+
+  </Tab>
+</Tabs>
+
+## Andar ki baat: mehnga hissa text kyun hai
+
+<Timeline>
+  <TimelineItem title="Text measure karna matlab use jamana" meta="kabhi-kabhi do baar">
+    "Main kitni oonchi hoon" ka jawab dene ke liye `TextView` ko di hui chaudai par string ko lines
+    mein todna padta hai. Chaudai badalte hi wo kaam doharata hai.
+  </TimelineItem>
+  <TimelineItem title="Isiliye lists par sabse pehle asar dikhta hai" meta="har bind par">
+    Lamba text rakhne wali `RecyclerView` row har bind par dobara measure hoti hai.
+    `PrecomputedText` us kaam ko background thread par le jata hai.
+  </TimelineItem>
+  <TimelineItem title="Aur isiliye tay oonchai madad karti hai" meta="jab mumkin ho">
+    Jis row ki oonchai pata hai wo poori baatcheet chhod deti hai — `setHasFixedSize(true)`
+    `RecyclerView` ko yahi batata hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`hint` label nahi hai">
+User ke type karte hi `hint` gayab ho jata hai, isliye sirf hints se bana form beech mein pahunche
+aadmi ko ye pata hi nahi rehne deta ki kaun sa field kis cheez ka tha.
+
+`TextInputLayout` ise aise hal karta hai ki content aate hi hint ko field ke upar taira deta hai.
+Baaki Material ke saath ye styles wale lesson mein aayega, aur yahi wajah hai ki aajkal ke form
+mein saada `EditText` kam hi dikhta hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo asli user tak pahunchti hain">
+**`inputType` ko validation maan lena.** Ye keyboard ka roop tay karta hai. Parse aur jaanch phir
+bhi karo.
+
+**Photos ke liye `scaleType` default par chhod dena.** `fitCenter` pattiyan chhodta hai; aapko
+lagbhag pakka `centerCrop` chahiye tha.
+
+**Bina `maxLines` ke `ellipsize`.** Ellipsise karne ko kuch hai hi nahi, to kuch hota hi nahi.
+
+**Code mein likha `android:text`.** Wo translate nahi ho sakta, aur lint aapko ye bata bhi dega —
+yahi to resources wale lesson ki poori baat thi.
+</Pitfall>
+
+## Practice
+
+1. Chaar `EditText` agal-bagal rakho, `inputType` mein `text`, `number`, `phone` aur
+   `textPassword`. Har ek se khulne wale keyboard ki tasveer lo.
+2. `number` wale field mein akshar paste karo. Dekho ki wo unhe le leta hai.
+3. Wahi chaudi photo paanch `ImageView` mein dikhao, har ek mein alag `scaleType`, naap sabka ek
+   jaisa.
+4. Bina `maxLines` ke `ellipsize="end"` rakho, phir `maxLines="1"` jodo. Milao.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `maxLines` + `ellipsize` | Dono, warna koi kaam nahi karta |
+| `autoLink` | URLs, emails aur numbers ko dabane laayak banata hai |
+| `inputType` | Keyboard, autocorrect aur chhupana — validation nahi |
+| `imeOptions` | Action key par kya likha hai aur wo karti kya hai |
+| `scaleType` | `centerCrop` bharta hai, `fitCenter` pattiyan chhodta hai, `fitXY` dabata hai |
+| `RadioGroup` | Iklauti cheez jo radio buttons ko alag-alag banati hai |
+| `Spinner` | User ke kuch karne se pehle hi ek baar listener chala deta hai |
+| `hint` | Type karte hi gayab; label nahi hota |
+
+<Interview title="Sunne mein aasan, aur savdhan logon ko jaldbaazon se alag kar deta hai">
+"Kya `number` wala `inputType` ye pakka kar deta hai ki aapko number hi milega?"
+
+Nahi — wo keyboard chunta hai aur type kiye characters par filter lagata hai, par paste, autofill,
+hardware keyboard aur teesre IME, sab use bagal se nikal jate hain. Batane laayak jawab is par
+khatam hota hai ki aap karte kya ho: `toIntOrNull` se parse karo aur nakami sambhalo, kyunki field
+ek sujhav hai aur validation aapki zimmedari.
+</Interview>

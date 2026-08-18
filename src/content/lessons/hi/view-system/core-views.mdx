@@ -1,0 +1,192 @@
+---
+title: TextView, EditText, ImageView और input controls
+description: चार widgets, हर एक पर दर्जनों attributes, जिनमें से लगभग छह ही दिखावट नहीं, बर्ताव बदलते हैं। वही छह इस पाठ का विषय हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+इन views के ज्यादातर attributes सिर्फ यह बदलते हैं कि कोई चीज दिखती कैसी है। गिने-चुने यह बदलते
+हैं कि view **करती क्या है** — कौन सा keyboard खुलेगा, image कैसे कटेगी, text कटेगा या लिपटेगा —
+और bug report वही बनाते हैं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Number वाला field जो पूरा keyboard खोल देता है, avatar जो दबकर अंडाकार हो गया, title जो ellipsis
+के बजाय गायब हो गया: इनमें से कोई styling की समस्या नहीं है, और इनमें से कोई compiler नहीं पकड़ता।
+
+ये सब एक-एक attribute हैं, और हर एक की values का एक छोटा, बँधा हुआ set है जो याद रखने लायक है।
+
+## TextView: वे attributes जो बर्ताव बदलते हैं
+
+```xml title="res/layout/item.xml" numbered
+<TextView
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="@string/headline"
+    android:maxLines="2"
+    android:ellipsize="end"
+    android:textAppearance="?attr/textAppearanceTitleMedium" />
+```
+
+| Attribute | क्या तय करता है |
+| --- | --- |
+| `maxLines` | कितनी lines के बाद text रुक जाए |
+| `ellipsize` | कटने की जगह क्या हो: `start`, `middle`, `end`, `marquee` |
+| `autoLink` | `web`, `email`, `phone` जैसे मिलान को दबाने लायक link बना देता है |
+| `textAppearance` | पूरी type style एक ही attribute में, theme से |
+
+<Note>
+`ellipsize` अकेला कुछ नहीं करता। `maxLines` के बिना कटने की कोई जगह ही नहीं, तो text बस लिपटता
+रहता है — इसीलिए "मेरा ellipsis दिख नहीं रहा" लगभग हमेशा छूटा हुआ `maxLines` होता है।
+</Note>
+
+## EditText: असली बात `inputType` है
+
+```xml title="res/layout/form.xml" numbered
+<EditText
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:hint="@string/phone_hint"
+    android:inputType="phone"
+    android:imeOptions="actionNext" />
+```
+
+`inputType` एक साथ तीन चीजें तय करता है: कौन सा keyboard आएगा, autocorrect और capitalisation
+चलेंगे या नहीं, और text छुपाया जाएगा या नहीं। `imeOptions` तय करता है कि उस keyboard की
+नीचे-दाईं key पर क्या लिखा होगा और वह करेगी क्या।
+
+<Quiz
+  question={'आपने किसी field पर `android:inputType="number"` रखा। क्या अब value का number होना पक्का है?'}
+  options={[
+    "हाँ — field अंक के अलावा कुछ लेता ही नहीं",
+    "नहीं — यह keyboard बदलता है, पर paste किया हुआ या IME से आया text कुछ भी हो सकता है",
+    "हाँ, पर सिर्फ API 26 और उससे ऊपर",
+  ]}
+  answer={1}
+  explanation="inputType keyboard के लिए इशारा है, कोई validator नहीं। यह अंकों वाला keypad चुनता है और टाइप किए characters पर filter भी लगाता है, पर paste, autofill, hardware keyboard या कोई तीसरा IME — ये सब field में कुछ भी डाल सकते हैं। यानी यह अनुभव सुधारता है और साबित कुछ नहीं करता: फिर भी toIntOrNull से parse कीजिए और null सँभालिए। Input type को validation मान लेना ही वह रास्ता है जिससे safe दिखते field से crash production तक पहुँचता है।"
+/>
+
+## ImageView: पूरा खेल `scaleType` का है
+
+| `scaleType` | क्या करता है |
+| --- | --- |
+| `fitCenter` | अंदर बैठा देता है, अनुपात रखता है — default, तो किनारों पर पट्टियाँ छोड़ता है |
+| `centerCrop` | View भर देता है, अनुपात रखता है, बाहर का हिस्सा काट देता है |
+| `centerInside` | `fitCenter` जैसा, पर कभी बड़ा नहीं करता |
+| `center` | कोई scaling नहीं; बड़ी images बाहर निकलकर कट जाती हैं |
+| `fitXY` | ठीक-ठीक भर देता है, अनुपात छोड़ देता है — यही चेहरे दबाता है |
+
+<Tip bare>
+Avatars और photo tiles को लगभग हमेशा `centerCrop` चाहिए। Default `fitCenter` ही वजह है कि जिस
+image को चौकोर भरना चाहिए वह बीच में, चारों तरफ पट्टियों के साथ बैठी रहती है।
+</Tip>
+
+## Input controls
+
+<Tabs>
+  <Tab label="Switch और CheckBox">
+
+दोनों `CompoundButton` हैं, जिनमें `isChecked` state है और एक listener। `Switch` का मतलब है बदलाव
+तुरंत लागू; `CheckBox` का मतलब है user के पक्का करने पर लागू।
+
+```kotlin title="Toggle.kt"
+binding.notifications.setOnCheckedChangeListener { _, isChecked ->
+    viewModel.onNotificationsChanged(isChecked)
+}
+```
+
+  </Tab>
+  <Tab label="RadioGroup">
+
+Radio buttons आपस में तभी अलग-अलग होते हैं जब उनका parent एक ही `RadioGroup` हो। उसके बाहर हर एक
+अपना अलग toggle है — यह अक्सर चौंकाता है।
+
+```xml title="Radio.xml"
+<RadioGroup
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+    <RadioButton android:id="@+id/card" android:text="@string/card" />
+    <RadioButton android:id="@+id/upi" android:text="@string/upi" />
+</RadioGroup>
+```
+
+  </Tab>
+  <Tab label="Spinner">
+
+Adapter पर टिका dropdown। यह setup के दौरान ही एक बार `onItemSelected` चला देता है, इससे पहले कि
+user ने कुछ छुआ भी हो — उस पहली call पर कुछ करने से बचिए।
+
+  </Tab>
+</Tabs>
+
+## अंदर की बात: महँगा हिस्सा text क्यों है
+
+<Timeline>
+  <TimelineItem title="Text measure करना मतलब उसे जमाना" meta="कभी-कभी दो बार">
+    "मैं कितनी ऊँची हूँ" का जवाब देने के लिए `TextView` को दी हुई चौड़ाई पर string को lines में
+    तोड़ना पड़ता है। चौड़ाई बदलते ही वह काम दोहराता है।
+  </TimelineItem>
+  <TimelineItem title="इसीलिए lists पर सबसे पहले असर दिखता है" meta="हर bind पर">
+    लंबा text रखने वाली `RecyclerView` row हर bind पर दोबारा measure होती है। `PrecomputedText`
+    उस काम को background thread पर ले जाता है।
+  </TimelineItem>
+  <TimelineItem title="और इसीलिए तय ऊँचाई मदद करती है" meta="जब मुमकिन हो">
+    जिस row की ऊँचाई पता है वह पूरी बातचीत छोड़ देती है — `setHasFixedSize(true)` `RecyclerView` को
+    यही बताता है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`hint` label नहीं है">
+User के टाइप करते ही `hint` गायब हो जाता है, इसलिए सिर्फ hints से बना form बीच में पहुँचे आदमी को
+यह पता ही नहीं रहने देता कि कौन सा field किस चीज का था।
+
+`TextInputLayout` इसे ऐसे हल करता है कि content आते ही hint को field के ऊपर तैरा देता है। बाकी
+Material के साथ यह styles वाले पाठ में आएगा, और यही वजह है कि आजकल के form में सादा `EditText`
+कम ही दिखता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो असली user तक पहुँचती हैं">
+**`inputType` को validation मान लेना।** यह keyboard का रूप तय करता है। Parse और जाँच फिर भी
+कीजिए।
+
+**Photos के लिए `scaleType` default पर छोड़ देना।** `fitCenter` पट्टियाँ छोड़ता है; आपको लगभग
+पक्का `centerCrop` चाहिए था।
+
+**बिना `maxLines` के `ellipsize`।** Ellipsise करने को कुछ है ही नहीं, तो कुछ होता ही नहीं।
+
+**Code में लिखा `android:text`।** वह translate नहीं हो सकता, और lint आपको यह बता भी देगा — यही तो
+resources वाले पाठ की पूरी बात थी।
+</Pitfall>
+
+## अभ्यास
+
+1. चार `EditText` अगल-बगल रखिए, `inputType` में `text`, `number`, `phone` और `textPassword`। हर
+   एक से खुलने वाले keyboard की तस्वीर लीजिए।
+2. `number` वाले field में अक्षर paste कीजिए। देखिए कि वह उन्हें ले लेता है।
+3. वही चौड़ी photo पाँच `ImageView` में दिखाइए, हर एक में अलग `scaleType`, नाप सबका एक जैसा।
+4. बिना `maxLines` के `ellipsize="end"` रखिए, फिर `maxLines="1"` जोड़िए। मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `maxLines` + `ellipsize` | दोनों, वरना कोई काम नहीं करता |
+| `autoLink` | URLs, emails और numbers को दबाने लायक बनाता है |
+| `inputType` | Keyboard, autocorrect और छुपाना — validation नहीं |
+| `imeOptions` | Action key पर क्या लिखा है और वह करती क्या है |
+| `scaleType` | `centerCrop` भरता है, `fitCenter` पट्टियाँ छोड़ता है, `fitXY` दबाता है |
+| `RadioGroup` | इकलौती चीज जो radio buttons को अलग-अलग बनाती है |
+| `Spinner` | User के कुछ करने से पहले ही एक बार listener चला देता है |
+| `hint` | टाइप करते ही गायब; label नहीं होता |
+
+<Interview title="सुनने में आसान, और सावधान लोगों को जल्दबाजों से अलग कर देता है">
+"क्या `number` वाला `inputType` यह पक्का कर देता है कि आपको number ही मिलेगा?"
+
+नहीं — वह keyboard चुनता है और टाइप किए characters पर filter लगाता है, पर paste, autofill,
+hardware keyboard और तीसरे IME, सब उसे बगल से निकल जाते हैं। बताने लायक जवाब इस पर खत्म होता है कि
+आप करते क्या हैं: `toIntOrNull` से parse कीजिए और नाकामी सँभालिए, क्योंकि field एक सुझाव है और
+validation आपकी जिम्मेदारी।
+</Interview>
