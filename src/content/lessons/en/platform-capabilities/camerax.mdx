@@ -1,0 +1,168 @@
+---
+title: "CameraX: preview, capture and analysis"
+description: Camera2 makes you handle every device's quirks yourself. CameraX puts a tested compatibility layer in front of it, and organises everything around use cases you bind to a lifecycle.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+CameraX asks **what do you want the camera for** — preview, capture, analysis — and binds those use
+cases to a lifecycle. Binding is the whole model: the camera opens when the lifecycle starts and
+closes when it stops, so the release bugs that dominate Camera2 code stop existing.
+</KeyIdea>
+
+## Before you write any of it
+
+If the app needs a single photo, it probably needs no camera code at all:
+
+```kotlin title="NoCamera.kt" numbered
+val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+    if (saved) showPhoto(uri)
+}
+takePhoto.launch(uri)          // the user's camera app takes it — no CAMERA permission
+```
+
+That is a permission you do not request, a preview you do not build, and a device compatibility
+surface you do not own. Use CameraX when the camera is part of the experience — a scanner, a custom
+capture flow, live analysis — not when you just need a picture.
+
+## The three use cases
+
+```kotlin title="Camera.kt" numbered
+val provider = ProcessCameraProvider.awaitInstance(context)
+
+val preview = Preview.Builder().build().apply {
+    surfaceProvider = previewView.surfaceProvider
+}
+
+val capture = ImageCapture.Builder()
+    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+    .build()
+
+val analysis = ImageAnalysis.Builder()
+    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+    .build()
+    .apply {
+        setAnalyzer(executor) { image ->
+            try { scanner.process(image) } finally { image.close() }   // always
+        }
+    }
+
+provider.unbindAll()
+provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture, analysis)
+```
+
+`bindToLifecycle` is what removes the release problem: you never call `open`, never call `close`, and
+the camera follows the lifecycle you handed it.
+
+`unbindAll` before binding matters because a device supports a limited number of simultaneous use
+cases, and rebinding without unbinding throws once you exceed it — which happens on a rotation if you
+bind in the wrong place.
+
+<Quiz
+  question="An `ImageAnalysis` analyzer runs a barcode scanner. It reads the first frame and then the preview freezes and no more frames arrive. What is wrong?"
+  options={[
+    "`STRATEGY_KEEP_ONLY_LATEST` drops every frame after the first",
+    "The analyzer is not calling `image.close()`, so the fixed image buffer pool is never returned and the pipeline stalls",
+    "The analyzer must run on the main thread"
+  ]}
+  answer={1}
+  explanation="CameraX hands the analyzer an ImageProxy from a small fixed pool of buffers — typically two or three. Until you close one, that buffer cannot be reused, so once they are all held the pipeline has nowhere to write and simply stops. Because the preview shares the same camera session, it freezes too, which makes it look like a camera failure rather than a leak. The rule is that every path out of the analyzer must close the image, including the ones that throw, which is why the try/finally above is not decoration — an exception from the scanner on one odd frame stalls the camera permanently. Backpressure is a separate concern: KEEP_ONLY_LATEST drops frames while you are busy, which is what you want for a scanner, and it still requires closing the one you were given."
+/>
+
+## Capturing
+
+```kotlin title="Capture.kt" numbered
+val options = ImageCapture.OutputFileOptions.Builder(
+    contentResolver,
+    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+    ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, "scan.jpg")
+        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+    },
+).build()
+
+capture.takePicture(options, executor, object : ImageCapture.OnImageSavedCallback {
+    override fun onImageSaved(output: ImageCapture.OutputFileResults) { /* output.savedUri */ }
+    override fun onError(exception: ImageCaptureException) { /* surface it */ }
+})
+```
+
+Writing through `MediaStore` is the storage lesson's rule applied here: you describe the file and get
+a `Uri`, rather than building a path that has not worked since Android 10.
+
+`CAPTURE_MODE_MINIMIZE_LATENCY` versus `MAXIMIZE_QUALITY` is a real choice. A scanner wants latency; a
+photo the user keeps wants quality, and the difference is visible on both axes.
+
+<Detail summary="Rotation, which is the other thing everyone gets wrong">
+A captured image's orientation comes from the device, not the preview, and the two disagree the
+moment the user rotates:
+
+```kotlin title="Rotation.kt" numbered
+// tell the use cases which way is up, whenever the display changes
+capture.targetRotation = previewView.display.rotation
+analysis.targetRotation = previewView.display.rotation
+```
+
+With `screenOrientation="portrait"` locked, the activity is never recreated on rotation, so nothing
+updates this by itself — and photos come out sideways for anyone holding the phone in landscape.
+A `DisplayListener`, or `OrientationEventListener` for finer steps, is what keeps it correct.
+
+For analysis, `ImageProxy.imageInfo.rotationDegrees` tells the analyzer how the buffer is oriented,
+and passing it to a barcode or ML Kit detector is what makes scanning work in landscape rather than
+mysteriously failing.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one stalls the camera">
+**Not closing every `ImageProxy`.** The buffer pool empties and the whole session freezes. Use
+`try/finally`.
+
+**Binding without `unbindAll`.** Rebinding on rotation exceeds the device's use case limit and throws.
+
+**Ignoring `targetRotation`.** Sideways photos for anyone in landscape, especially with a locked
+orientation.
+
+**Analysing on the main thread.** Use a dedicated executor; a slow analyzer will drop frames rather
+than jank, but only if it is off the main thread.
+
+**Writing CameraX for one photo.** `TakePicture` needs no permission and no preview.
+</Pitfall>
+
+## Practice
+
+1. Take a photo with `ActivityResultContracts.TakePicture` and no `CAMERA` permission.
+2. Remove `image.close()` from an analyzer and count the frames before it stalls.
+3. Throw an exception inside the analyzer and confirm `finally` keeps the camera alive.
+4. Lock the activity to portrait, rotate the phone, and inspect the captured photo.
+5. Compare `MINIMIZE_LATENCY` and `MAXIMIZE_QUALITY` on the same scene.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| One photo | `TakePicture` — no permission, no preview, no CameraX |
+| Use cases | `Preview`, `ImageCapture`, `ImageAnalysis`, `VideoCapture` |
+| `bindToLifecycle` | The camera opens and closes with the lifecycle |
+| `unbindAll` first | Devices support a limited number of bound use cases |
+| `image.close()` | Mandatory on every path, or the pipeline stalls |
+| Backpressure | `KEEP_ONLY_LATEST` for a scanner, `BLOCK_PRODUCER` to see every frame |
+| Capture mode | Latency for scanning, quality for photos |
+| `MediaStore` | Describe the file, receive a `Uri` |
+| `targetRotation` | Update it, or photos are sideways |
+| `rotationDegrees` | What the analyzer needs to read a rotated frame |
+
+<Interview title="A question about a stall that looks like a crash">
+"A camera preview freezes after a few frames. Where would you look?"
+
+At the analyzer, and specifically at whether it closes every `ImageProxy`. CameraX hands frames out
+of a small fixed buffer pool, so an analyzer that keeps one — including on a path that throws — runs
+the pool dry, and then the pipeline has nowhere to write. Because the preview shares the session it
+freezes too, which makes a leak look like a camera failure. `try/finally` around the analysis is the
+fix.
+
+The related thing I would check is where binding happens. Rebinding without `unbindAll` on rotation
+exceeds the device's limit on simultaneous use cases and throws, and `bindToLifecycle` exists so I
+never have to open or release the camera myself — which is the class of bug CameraX was built to
+remove.
+</Interview>

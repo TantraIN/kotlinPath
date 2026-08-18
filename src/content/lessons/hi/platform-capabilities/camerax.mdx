@@ -1,0 +1,168 @@
+---
+title: "CameraX: preview, capture और analysis"
+description: Camera2 हर device की टेढ़ चीजें आपसे सँभलवाता है। CameraX उसके आगे जाँची-परखी compatibility की परत रख देता है, और सब कुछ उन use cases के इर्द-गिर्द सजाता है जिन्हें आप किसी lifecycle से बाँधते हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+CameraX पूछता है कि **camera आपको किसलिए चाहिए** — preview, capture, analysis — और उन use cases को
+किसी lifecycle से बाँध देता है। बाँधना ही पूरा मॉडल है: lifecycle शुरू होने पर camera खुलता है और
+रुकने पर बंद होता है, तो Camera2 के code पर छाए रहने वाले release के bugs होते ही नहीं।
+</KeyIdea>
+
+## कुछ भी लिखने से पहले
+
+अगर ऐप को एक तस्वीर चाहिए, तो शायद उसे camera का कोई code चाहिए ही नहीं:
+
+```kotlin title="NoCamera.kt" numbered
+val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+    if (saved) showPhoto(uri)
+}
+takePhoto.launch(uri)          // तस्वीर user का camera ऐप लेता है — कोई CAMERA permission नहीं
+```
+
+वह एक permission है जो आप माँगते नहीं, एक preview है जो आप बनाते नहीं, और devices की अनुकूलता वाली
+एक सतह है जो आपकी नहीं। CameraX तब लीजिए जब camera अनुभव का हिस्सा हो — कोई scanner, तस्वीर लेने का
+अपना तरीका, जिंदा analysis — तब नहीं जब आपको बस एक तस्वीर चाहिए।
+
+## तीनों use cases
+
+```kotlin title="Camera.kt" numbered
+val provider = ProcessCameraProvider.awaitInstance(context)
+
+val preview = Preview.Builder().build().apply {
+    surfaceProvider = previewView.surfaceProvider
+}
+
+val capture = ImageCapture.Builder()
+    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+    .build()
+
+val analysis = ImageAnalysis.Builder()
+    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+    .build()
+    .apply {
+        setAnalyzer(executor) { image ->
+            try { scanner.process(image) } finally { image.close() }   // हमेशा
+        }
+    }
+
+provider.unbindAll()
+provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture, analysis)
+```
+
+`bindToLifecycle` ही release वाली दिक्कत हटाता है: आप कभी `open` नहीं बुलाते, कभी `close` नहीं, और
+camera उस lifecycle के पीछे चलता है जो आपने उसे थमाया।
+
+बाँधने से पहले `unbindAll` इसलिए मायने रखता है कि device एक साथ गिने-चुने use cases ही सँभालता है, और
+बिना unbind किए दोबारा बाँधने पर वह हद पार होते ही फेंकता है — जो rotation पर तब होता है जब आप गलत
+जगह बाँधते हैं।
+
+<Quiz
+  question="कोई `ImageAnalysis` वाला analyzer barcode scanner चलाता है। वह पहला frame पढ़ता है और फिर preview जम जाती है और कोई frame नहीं आता। गलत क्या है?"
+  options={[
+    "`STRATEGY_KEEP_ONLY_LATEST` पहले के बाद हर frame गिरा देता है",
+    "वह analyzer `image.close()` नहीं बुला रहा, तो तय गिनती वाले image buffers लौटते ही नहीं और पूरी कड़ी अटक जाती है",
+    "Analyzer को main thread पर चलना चाहिए"
+  ]}
+  answer={1}
+  explanation="CameraX analyzer को गिने-चुने buffers के छोटे भंडार से एक ImageProxy थमाता है — आमतौर पर दो या तीन। जब तक आप एक बंद न करें, वह buffer दोबारा काम नहीं आ सकता, तो जैसे ही सब पकड़े जाते हैं कड़ी के पास लिखने को जगह नहीं बचती और वह बस रुक जाती है। Preview उसी camera session में है, इसलिए वह भी जम जाती है, जिससे यह leak के बजाय camera की नाकामी जैसी दिखती है। नियम यह है कि analyzer से निकलने वाला हर रास्ता उस image को बंद करे, उन रास्तों समेत जो फेंकते हैं, इसीलिए ऊपर वाला try/finally सजावट नहीं है — किसी एक अजीब frame पर scanner का exception camera को हमेशा के लिए अटका देता है। Backpressure अलग बात है: KEEP_ONLY_LATEST आपके व्यस्त रहते frames गिरा देता है, जो scanner के लिए वही है जो चाहिए, और उसमें भी जो frame मिला है उसे बंद करना पड़ता है।"
+/>
+
+## तस्वीर लेना
+
+```kotlin title="Capture.kt" numbered
+val options = ImageCapture.OutputFileOptions.Builder(
+    contentResolver,
+    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+    ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, "scan.jpg")
+        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+    },
+).build()
+
+capture.takePicture(options, executor, object : ImageCapture.OnImageSavedCallback {
+    override fun onImageSaved(output: ImageCapture.OutputFileResults) { /* output.savedUri */ }
+    override fun onError(exception: ImageCaptureException) { /* इसे दिखाइए */ }
+})
+```
+
+`MediaStore` से लिखना यहाँ storage वाले पाठ का नियम लागू होना है: आप file का हुलिया बताते हैं और एक
+`Uri` पाते हैं, न कि ऐसा path बनाते हैं जो Android 10 से चला ही नहीं।
+
+`CAPTURE_MODE_MINIMIZE_LATENCY` बनाम `MAXIMIZE_QUALITY` असली चुनाव है। Scanner को देर न लगना चाहिए;
+जिस तस्वीर को user रखेगा उसे गुणवत्ता चाहिए, और दोनों तरफ फर्क साफ दिखता है।
+
+<Detail summary="घुमाव, जो दूसरी चीज है जिसे सब गलत करते हैं">
+ली गई तस्वीर की दिशा device से आती है, preview से नहीं, और user के घुमाते ही दोनों उलट जाते हैं:
+
+```kotlin title="Rotation.kt" numbered
+// जब भी display बदले, use cases को बताइए कि ऊपर किधर है
+capture.targetRotation = previewView.display.rotation
+analysis.targetRotation = previewView.display.rotation
+```
+
+`screenOrientation="portrait"` बाँध रखा हो तो rotation पर activity दोबारा बनती ही नहीं, तो इसे अपने
+आप कुछ बदलता नहीं — और जो phone को आड़ा पकड़ता है उसकी तस्वीरें टेढ़ी आती हैं। `DisplayListener`, या
+बारीक कदमों के लिए `OrientationEventListener`, इसे सही रखता है।
+
+Analysis के लिए `ImageProxy.imageInfo.rotationDegrees` analyzer को बताता है कि वह buffer किस दिशा में
+है, और उसे barcode या ML Kit वाले detector को देना ही scanning को आड़े में चलाता है, वरना वह रहस्यमय
+तरीके से नाकाम होती रहती है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली camera को अटका देती है">
+**हर `ImageProxy` बंद न करना।** Buffers का भंडार खाली हो जाता है और पूरा session जम जाता है।
+`try/finally` लीजिए।
+
+**बिना `unbindAll` के बाँधना।** Rotation पर दोबारा बाँधना device की use case वाली हद पार करके फेंकता
+है।
+
+**`targetRotation` अनदेखा करना।** आड़े पकड़ने वाले हर इंसान के लिए टेढ़ी तस्वीरें, खास तौर पर बँधी हुई
+orientation के साथ।
+
+**Main thread पर analysis।** अलग executor लीजिए; धीमा analyzer अटकाने के बजाय frames गिराएगा, पर तभी
+जब वह main thread से हटकर हो।
+
+**एक तस्वीर के लिए CameraX लिखना।** `TakePicture` को न permission चाहिए न preview।
+</Pitfall>
+
+## अभ्यास
+
+1. `ActivityResultContracts.TakePicture` से और बिना `CAMERA` permission के तस्वीर लीजिए।
+2. Analyzer से `image.close()` हटाइए और अटकने से पहले के frames गिनिए।
+3. Analyzer के अंदर exception फेंकिए और पक्का कीजिए कि `finally` camera को जिंदा रखता है।
+4. Activity को portrait पर बाँधिए, phone घुमाइए, और ली हुई तस्वीर देखिए।
+5. एक ही दृश्य पर `MINIMIZE_LATENCY` और `MAXIMIZE_QUALITY` मिलाइए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| एक तस्वीर | `TakePicture` — न permission, न preview, न CameraX |
+| Use cases | `Preview`, `ImageCapture`, `ImageAnalysis`, `VideoCapture` |
+| `bindToLifecycle` | Camera lifecycle के साथ खुलता और बंद होता है |
+| पहले `unbindAll` | Devices गिने-चुने बँधे use cases ही सँभालते हैं |
+| `image.close()` | हर रास्ते पर जरूरी, वरना कड़ी अटक जाती है |
+| Backpressure | Scanner को `KEEP_ONLY_LATEST`, हर frame देखने को `BLOCK_PRODUCER` |
+| Capture mode | Scanning को कम देर, तस्वीरों को गुणवत्ता |
+| `MediaStore` | File का हुलिया बताइए, `Uri` पाइए |
+| `targetRotation` | इसे बदलते रहिए, वरना तस्वीरें टेढ़ी |
+| `rotationDegrees` | घुमे हुए frame को पढ़ने के लिए analyzer को यही चाहिए |
+
+<Interview title="एक सवाल, ऐसे अटकने का जो crash जैसा दिखता है">
+"Camera की preview कुछ frames बाद जम जाती है। आप कहाँ देखेंगे?"
+
+Analyzer में, और खास तौर पर यह कि वह हर `ImageProxy` बंद करता है या नहीं। CameraX frames गिने-चुने
+buffers के छोटे भंडार से देता है, तो जो analyzer एक पकड़े रह जाता है — उन रास्तों समेत जो फेंकते हैं
+— वह भंडार सुखा देता है, और फिर कड़ी के पास लिखने को जगह नहीं बचती। Preview उसी session में है इसलिए
+वह भी जम जाती है, जिससे leak camera की नाकामी जैसा दिखता है। इलाज है analysis के इर्द-गिर्द
+`try/finally`।
+
+साथ की जो चीज मैं देखूँगा वह है कि बाँधना कहाँ हो रहा है। Rotation पर बिना `unbindAll` के दोबारा
+बाँधना device की एक साथ बँधे use cases वाली हद पार करके फेंकता है, और `bindToLifecycle` इसीलिए है कि
+मुझे camera खुद कभी खोलना या छोड़ना न पड़े — और यही वह किस्म के bugs हैं जिन्हें हटाने के लिए CameraX
+बना था।
+</Interview>
