@@ -74,7 +74,7 @@ onAllNodesWithText("Pending")[0]                   // जब कई मिलत
 है, दो एक जैसी rows जिन्हें अलग बताना है।
 
 <Quiz
-  question="कोई test `setContent` के तुरंत बाद `onNodeWithText(\"Loaded\").assertIsDisplayed()` करता है, जबकि वह screen `LaunchedEffect` में data लाती है। वह नाकाम होता है, कहता है कोई node नहीं मिली। `Thread.sleep(500)` जोड़ने से ठीक हो जाता है। सही इलाज क्या है?"
+  question="कोई test `setContent` के तुरंत बाद दावा करता है कि Loaded लिखी हुई node दिख रही है, जबकि वह screen `LaunchedEffect` में data लाती है। वह नाकाम होता है, कहता है कोई node नहीं मिली। `Thread.sleep(500)` जोड़ने से ठीक हो जाता है। सही इलाज क्या है?"
   options={[
     "वह sleep रहने दीजिए — async UI को सच में जमने का वक्त चाहिए",
     "वह rule घड़ी खुद आगे बढ़ाता है और Compose से तालमेल रखता है, पर test ने उस effect के पूरा होने से पहले दावा कर दिया। `waitUntil { onAllNodesWithText(\"Loaded\").fetchSemanticsNodes().isNotEmpty() }` लीजिए, या data लाने के बजाय state सीधे दीजिए",

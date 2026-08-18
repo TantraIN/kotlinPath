@@ -74,7 +74,7 @@ label becomes wrong.
 scroll, two identical rows you need to tell apart.
 
 <Quiz
-  question="A test does `onNodeWithText(\"Loaded\").assertIsDisplayed()` right after `setContent`, where the screen loads data in a `LaunchedEffect`. It fails, saying no node was found. Adding a `Thread.sleep(500)` fixes it. What is the correct fix?"
+  question="Right after `setContent`, a test asserts that a node with the text Loaded is displayed, where the screen loads data in a `LaunchedEffect`. It fails, saying no node was found. Adding a `Thread.sleep(500)` fixes it. What is the correct fix?"
   options={[
     "Keep the sleep — asynchronous UI genuinely needs time to settle",
     "The rule auto-advances the clock and synchronises with Compose, but the test asserted before the effect completed. Use `waitUntil { onAllNodesWithText(\"Loaded\").fetchSemanticsNodes().isNotEmpty() }`, or drive the state directly instead of loading it",

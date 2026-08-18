@@ -74,7 +74,7 @@ ho jane ke baad bhi pass hota rehta hai.
 karna hai, do ek jaisi rows jinhe alag batana hai.
 
 <Quiz
-  question="Koi test `setContent` ke turant baad `onNodeWithText(\"Loaded\").assertIsDisplayed()` karta hai, jabki wo screen `LaunchedEffect` mein data lati hai. Wo nakaam hota hai, kehta hai koi node nahi mili. `Thread.sleep(500)` jodne se theek ho jata hai. Sahi ilaaj kya hai?"
+  question="Koi test `setContent` ke turant baad dawa karta hai ki Loaded likhi hui node dikh rahi hai, jabki wo screen `LaunchedEffect` mein data lati hai. Wo nakaam hota hai, kehta hai koi node nahi mili. `Thread.sleep(500)` jodne se theek ho jata hai. Sahi ilaaj kya hai?"
   options={[
     "Wo sleep rehne dijiye — async UI ko sach mein jamne ka waqt chahiye",
     "Wo rule ghadi khud aage badhata hai aur Compose se taalmel rakhta hai, par test ne us effect ke poora hone se pehle dawa kar diya. `waitUntil { onAllNodesWithText(\"Loaded\").fetchSemanticsNodes().isNotEmpty() }` lijiye, ya data lane ke bajaye state seedhe dijiye",
