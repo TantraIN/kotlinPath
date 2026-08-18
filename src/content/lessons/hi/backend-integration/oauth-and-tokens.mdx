@@ -1,0 +1,173 @@
+---
+title: "OAuth 2.0, token का ताजा होना और सुरक्षित sessions"
+description: OAuth का बहाव छोटा है। लंबा वह सब है जो उसके इर्द-गिर्द है — refresh token रहता कहाँ है, पाँच requests को एक साथ 401 मिलने पर क्या होता है, और sign-out को असल में क्या-क्या पलटना पड़ता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+OAuth छोटी उम्र वाले **access token** के बदले लंबी पहुँच देता है, और नए tokens लाने के लिए **refresh
+token** लेता है। Access token लाने वाले का credential है — जिसके पास है वही आप हैं — तो उसकी छोटी उम्र
+ही सुरक्षा है, और refresh token वह चीज है जिसकी हिफाजत करनी है।
+</KeyIdea>
+
+## बहाव, PKCE के साथ
+
+```text title="Authorization Code + PKCE" numbered
+1. ऐप कोई बेतरतीब verifier बनाता है, SHA-256(verifier) को challenge की तरह भेजता है
+2. browser: user sign in करके इजाजत देता है
+3. एक बार चलने वाले code के साथ वापसी
+4. ऐप code + verifier देकर tokens लेता है
+5. server जाँचता है कि SHA-256(verifier) == challenge
+```
+
+PKCE इसलिए है कि mobile वाला ऐप कोई client का राज रख ही नहीं सकता — secrets वाले पाठ ने वजह बताई थी।
+उसके बिना, जो ऐप वही scheme दर्ज कर ले वह उस वापसी को बीच में पकड़कर उस code से tokens ले सकता है। उसके
+साथ वह code उस verifier के बिना बेकार है, जो उस ऐप से कभी बाहर गया ही नहीं जिसने वह बहाव शुरू किया था।
+
+दो नियम जो वैकल्पिक नहीं हैं। **Custom Tab** लीजिए, `WebView` नहीं: `WebView` आपके ऐप को user का
+password टाइप होते हुए पढ़ने देता है, और provider ठीक यही रोकना चाहता है, तो ज्यादातर identity वाले
+providers अब उसके अंदर पहचान करने से मना कर देते हैं। और हमेशा जाँचिए कि आपका भेजा `state` वैसा ही वापस
+आया — वही उस वापसी पर cross-site request forgery रोकता है।
+
+## Tokens रखना
+
+```kotlin title="TokenStore.kt" numbered
+class TokenStore(private val dataStore: DataStore<Preferences>, private val crypto: Crypto) {
+
+    suspend fun save(tokens: Tokens) = dataStore.edit {
+        it[ACCESS]  = tokens.access                          // छोटी उम्र; सादा भी चल जाता है
+        it[REFRESH] = crypto.encrypt(tokens.refresh)         // लंबी उम्र; Keystore के सहारे
+    }
+}
+```
+
+यह असमानता जानबूझकर है। एक घंटे में खत्म होता access token सीमित इनाम है; refresh token तब तक user बनकर
+चलने का खुला परवाना है जब तक वह रद्द न हो, तो उसे secrets वाले पाठ की Keystore की key मिलती है।
+
+`EncryptedSharedPreferences` हटाई जा चुकी है, तो यह सीधे DataStore के साथ ली गई Keystore की key है।
+
+<Quiz
+  question="कोई ऐप अपना token OkHttp के `Authenticator` में ताजा करता है। कमजोर connection पर users बताते हैं कि वे बेतरतीब तरीके से sign out हो जाते हैं। Logs एक सेकंड के अंदर कई refresh की calls दिखाते हैं, और एक को छोड़कर सब नाकाम। हो क्या रहा है?"
+  options={[
+    "Refresh वाला endpoint ऐप की रफ्तार बाँध रहा है; बढ़ता हुआ backoff जोड़िए",
+    "साथ-साथ गई कई requests में से हर एक को 401 मिला और हर एक ने refresh चला दिया। Server ने पहली पर refresh token बदल दिया, तो बाकी ऐसा token लेकर पहुँचीं जो अभी-अभी बेकार हुआ था — refresh एक-एक करके चलना चाहिए, और ताले के अंदर यह दोबारा देखना चाहिए कि किसी और thread ने पहले ही refresh तो नहीं कर लिया",
+    "`Authenticator` की जगह `Interceptor` होना चाहिए, जो साथ-साथ नहीं चलता"
+  ]}
+  answer={1}
+  explanation="यह OkHttp वाले पाठ की साथ-साथ चलने वाली दिक्कत है, बस यहाँ उसका नतीजा ठोस रूप में है। Authenticator हर नाकाम request पर बुलाया जाता है, ऐप में एक बार नहीं, तो साथ-साथ गई पाँच calls जिन्हें 401 मिला, पाँचों एक ही पल उस तक पहुँचती हैं। अगर server refresh tokens बदलता है — और उसे बदलना चाहिए, क्योंकि इसी से चुराया हुआ token पकड़ में आता है — तो पहला refresh सफल होकर उस token को बेकार कर देता है जो बाकी चार अब भी पकड़े हैं, तो वे नाकाम होती हैं और ऐप मान लेता है कि session मर गया। इलाज के दो हिस्से हैं और सिर्फ एक करने पर वह bug बना रहता है: किसी mutex से refresh को एक-एक करके चलाइए ताकि सिर्फ एक चले, और ताले के अंदर दोबारा देखिए कि access token पहले ही बदल तो नहीं गया, क्योंकि इंतजार करते thread के ताला पाने तक वह काम आमतौर पर हो चुका होता है जिसके लिए वह कतार में था। Backoff से मदद नहीं मिलती, क्योंकि उन requests की रफ्तार बाँधी नहीं जा रही — वे पहले से खप चुका token लेकर पहुँच रही हैं।"
+/>
+
+## सही तरीके से ताजा करना
+
+```kotlin title="TokenAuthenticator.kt" numbered
+class TokenAuthenticator(private val store: TokenStore, private val api: AuthApi) : Authenticator {
+
+    private val mutex = Mutex()
+
+    override fun authenticate(route: Route?, response: Response): Request? {
+        if (response.priorResponse != null) return null          // पहले ही दोबारा भेजा; हार मानिए
+
+        val stale = response.request.header("Authorization")
+
+        return runBlocking {
+            mutex.withLock {
+                val current = store.accessToken()
+                if (current != null && "Bearer $current" != stale) {
+                    return@withLock response.request.withToken(current)   // किसी और ने ताजा कर दिया
+                }
+                when (val refreshed = api.refresh(store.refreshToken())) {
+                    is Ok    -> { store.save(refreshed.tokens); response.request.withToken(refreshed.tokens.access) }
+                    is Failed -> { store.clear(); null }         // सच में sign out
+                }
+            }
+        }
+    }
+}
+```
+
+तीन चीजें बोझ उठा रही हैं। `priorResponse` तब घूमते रहने से रोकता है जब नया token भी ठुकरा दिया जाए।
+Mutex का मतलब है कि सिर्फ एक refresh चलता है। और ताले के अंदर की वह दोबारा जाँच ही बाकी चार requests को
+सस्ता बनाती है — उनके ताला पाने तक जो token उन्हें चाहिए था वह पहले से मौजूद होता है।
+
+`null` लौटाना ही "हार मान रहा हूँ" कहने का तरीका है, और उसे tokens साफ करके signed-out वाली हालत सामने
+लानी चाहिए, चुपचाप नाकाम नहीं होना चाहिए।
+
+<Detail summary="Sign-out को क्या-क्या पलटना पड़ता है">
+Tokens को स्थानीय रूप से मिटाना सबसे छोटा हिस्सा है:
+
+```kotlin title="SignOut.kt" numbered
+suspend fun signOut() {
+    api.revoke(store.refreshToken())        // 1. server को बताइए, ताकि वह token चलना बंद करे
+    store.clear()                           // 2. स्थानीय tokens
+    FirebaseMessaging.getInstance().deleteToken()   // 3. वरना अगले user को ये pushes मिलेंगे
+    database.clearAllTables()               // 4. पिछले user का रखा हुआ data
+    workManager.cancelAllWork()             // 5. कतार में पड़ी syncs, जो अब किसी की तरफ से नहीं चलेंगी
+}
+```
+
+Revoke वाली call छोड़ देना आम है, और उसका मतलब है कि चुराया हुआ refresh token उस user के sign out मान
+लेने के बाद भी चलता रहता है — और साझा device पर कोई sign out करता ही इसीलिए है।
+
+तीसरा और चौथा कदम चुपचाप के खतरे नहीं, दिखते हुए bugs बनाते हैं: push वाले पाठ का FCM का token, और वह
+Room का database जो अब भी पिछले user के orders पकड़े है, तो अगला sign in करने वाला उन्हें पहली sync
+पूरी होने तक एक पल के लिए देख लेता है।
+
+साथ का सवाल यह है कि **बीच session में आया 401** क्या करे। सब कुछ साफ करके user को login वाली screen
+पर छोड़ देना उसका किया-कराया गँवा देता है। बेहतर है screen वहीं रखना, session को खत्म हुआ मानना, और
+वहीं दोबारा पहचान माँगना — यही उस ऐप और उस ऐप का फर्क है जो उबर आता है और जो कमजोर connection की सजा
+देता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली लोगों को बेतरतीब तरीके से sign out कर देती है">
+**बिना कतार के refresh।** साथ-साथ आए 401 हर एक refresh कराते हैं, और बदलना बाकी को बेकार कर देता है।
+
+**`priorResponse` न जाँचना।** ठुकराया गया refresh हमेशा के लिए घूमता रहता है।
+
+**Login के पन्ने के लिए `WebView`।** आपका ऐप password पढ़ सकता है; providers लगातार मना कर रहे हैं।
+
+**सादी storage में refresh token।** वह खुला परवाना है; उसे Keystore की key से encrypt कीजिए।
+
+**सिर्फ स्थानीय रूप से साफ करता sign-out।** वह token अब भी चलता है, और अगले user को रखा हुआ data दिखता
+है।
+</Pitfall>
+
+## अभ्यास
+
+1. खत्म हो चुके token के साथ साथ-साथ पाँच requests भेजिए और refresh की calls गिनिए।
+2. Mutex जोड़िए, फिर उसके अंदर दोबारा जाँच जोड़िए, और फिर गिनिए।
+3. किसी नकली refresh वाले endpoint से ठुकराया गया token लौटाइए और बिना `priorResponse` के घूमना देखिए।
+4. बिना revoke किए sign out कीजिए, फिर पुराने refresh token को `curl` से आजमाइए।
+5. Room साफ किए बिना sign out कीजिए, किसी और की तरह sign in कीजिए, और पहला frame देखिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Access token | छोटी उम्र वाला credential; छोटी उम्र ही सुरक्षा है |
+| Refresh token | खुला परवाना; Keystore की key से encrypt कीजिए |
+| PKCE | क्योंकि mobile वाला ऐप client का राज रख नहीं सकता |
+| Custom Tab | `WebView` नहीं; आपके ऐप को password दिखना ही नहीं चाहिए |
+| `state` | जाँचिए कि वैसा ही वापस आया |
+| `Authenticator` | हर नाकाम request पर बुलाया जाता है, एक बार नहीं |
+| Mutex | एक बार में एक refresh |
+| ताले के अंदर दोबारा जाँच | कतार में पड़ी requests को सस्ता बनाती है |
+| `priorResponse` | कभी न रुकने वाला refresh रोकता है |
+| Sign-out | Revoke, tokens साफ, FCM का token मिटाइए, रखा data साफ |
+
+<Interview title="एक सवाल, ऐसे bug का जो सिर्फ खराब connection पर दिखता है">
+"कमजोर connection पर users बेतरतीब तरीके से sign out हो जाते हैं। आप कहाँ देखेंगे?"
+
+Refresh वाले रास्ते में, और खास तौर पर यह कि वह एक-एक करके चलता है या नहीं। OkHttp का `Authenticator`
+हर नाकाम request पर बुलाया जाता है, तो साथ-साथ गई कई calls जिन्हें `401` मिला, सब एक साथ refresh चला
+देती हैं। अगर server refresh tokens बदलता है — और उसे बदलना चाहिए — तो पहला refresh उस token को बेकार
+कर देता है जो बाकी पकड़े हैं, वे नाकाम होती हैं, और ऐप मान लेता है कि session मर गया। यह सिर्फ खराब
+connection पर दिखता है क्योंकि तभी requests इकट्ठी होकर एक साथ खत्म होती हैं।
+
+इलाज है mutex, ताकि सिर्फ एक refresh चले, और ताले के अंदर दोबारा जाँच: इंतजार करती request के ताला पाने
+तक वह token आमतौर पर पहले ही ताजा हो चुका होता है, तो उसे दोबारा refresh करने के बजाय वही लेना चाहिए।
+मैं यह भी देखूँगा कि `priorResponse` सँभाला गया है या नहीं, क्योंकि उसके बिना ठुकराया गया refresh हमेशा
+घूमता रहता है, और यह कि हार मानना सच में tokens साफ करके signed-out वाली हालत सामने लाता है, चुपचाप
+नाकाम नहीं होता।
+</Interview>

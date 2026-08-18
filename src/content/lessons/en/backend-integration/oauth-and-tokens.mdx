@@ -1,0 +1,174 @@
+---
+title: "OAuth 2.0, token refresh and secure sessions"
+description: The OAuth flow is short. What is long is everything around it — where the refresh token lives, what happens when five requests get a 401 at once, and what sign-out actually has to undo.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+OAuth trades a short-lived **access token** for long-lived access, using a **refresh token** to get new
+ones. The access token is a bearer credential — whoever holds it is you — so its short life is the
+security, and the refresh token is the thing that must be protected.
+</KeyIdea>
+
+## The flow, with PKCE
+
+```text title="Authorization Code + PKCE" numbered
+1. app generates a random verifier, sends SHA-256(verifier) as the challenge
+2. browser: user signs in and consents
+3. redirect back with a one-time code
+4. app exchanges code + verifier for tokens
+5. server checks SHA-256(verifier) == challenge
+```
+
+PKCE exists because a mobile app cannot keep a client secret — the secrets lesson covered why. Without
+it, an app that registers the same custom scheme could intercept the redirect and exchange the code for
+tokens. With it, the code is useless without the verifier, which never left the app that started the
+flow.
+
+Two rules that are not optional. Use a **Custom Tab**, not a `WebView`: a `WebView` lets your app read
+the user's password as they type it, which is exactly what the provider is trying to prevent, and most
+identity providers now refuse to authenticate inside one. And always check the `state` parameter you
+sent comes back unchanged, which is what prevents a cross-site request forgery on the callback.
+
+## Storing tokens
+
+```kotlin title="TokenStore.kt" numbered
+class TokenStore(private val dataStore: DataStore<Preferences>, private val crypto: Crypto) {
+
+    suspend fun save(tokens: Tokens) = dataStore.edit {
+        it[ACCESS]  = tokens.access                          // short-lived; plain is acceptable
+        it[REFRESH] = crypto.encrypt(tokens.refresh)         // long-lived; Keystore-backed
+    }
+}
+```
+
+That asymmetry is deliberate. An access token expiring in an hour is a limited prize; a refresh token
+is a standing grant to impersonate the user until it is revoked, so it gets the Keystore key from the
+secrets lesson.
+
+`EncryptedSharedPreferences` is deprecated, so this is a Keystore key used with DataStore directly.
+
+<Quiz
+  question="An app refreshes its token in an OkHttp `Authenticator`. Under a poor connection, users report being signed out at random. The logs show several refresh calls within a second, and all but one fail. What is happening?"
+  options={[
+    "The refresh endpoint is rate-limiting the app; add exponential backoff",
+    "Several parallel requests each got a 401 and each triggered a refresh. The server rotated the refresh token on the first one, so the rest presented a token that had just been invalidated — the refresh must be serialised, and inside the lock it must re-check whether another thread already refreshed",
+    "The `Authenticator` should be an `Interceptor`, which does not run concurrently"
+  ]}
+  answer={1}
+  explanation="This is the concurrency problem from the OkHttp lesson, with the consequence made concrete. An Authenticator is called per failed request, not once per app, so five parallel calls that all get a 401 all reach it at the same moment. If the server rotates refresh tokens — and it should, since that is what makes a stolen one detectable — the first refresh succeeds and invalidates the token the other four are still holding, so they fail and the app concludes the session is dead. The fix has two halves and doing only one leaves the bug: serialise the refresh with a mutex so only one runs, and inside the lock re-check whether the access token has already changed, because by the time a waiting thread acquires the lock the work it was queuing for is usually done. Backoff does not help, since the requests are not being rate-limited — they are presenting an already-consumed token."
+/>
+
+## Refreshing correctly
+
+```kotlin title="TokenAuthenticator.kt" numbered
+class TokenAuthenticator(private val store: TokenStore, private val api: AuthApi) : Authenticator {
+
+    private val mutex = Mutex()
+
+    override fun authenticate(route: Route?, response: Response): Request? {
+        if (response.priorResponse != null) return null          // already retried; give up
+
+        val stale = response.request.header("Authorization")
+
+        return runBlocking {
+            mutex.withLock {
+                val current = store.accessToken()
+                if (current != null && "Bearer $current" != stale) {
+                    return@withLock response.request.withToken(current)   // someone else refreshed
+                }
+                when (val refreshed = api.refresh(store.refreshToken())) {
+                    is Ok    -> { store.save(refreshed.tokens); response.request.withToken(refreshed.tokens.access) }
+                    is Failed -> { store.clear(); null }         // genuinely signed out
+                }
+            }
+        }
+    }
+}
+```
+
+Three things are load-bearing. `priorResponse` stops an endless refresh loop when the new token is also
+rejected. The mutex means only one refresh runs. And the re-check inside the lock is what makes the
+other four requests cheap — by the time they acquire it, the token they needed is already there.
+
+Returning `null` is how you say "give up", and that must clear the tokens and surface a signed-out
+state, not fail silently.
+
+<Detail summary="What sign-out has to undo">
+Deleting the tokens locally is the smallest part:
+
+```kotlin title="SignOut.kt" numbered
+suspend fun signOut() {
+    api.revoke(store.refreshToken())        // 1. tell the server, so the token stops working
+    store.clear()                           // 2. local tokens
+    FirebaseMessaging.getInstance().deleteToken()   // 3. or the next user gets these pushes
+    database.clearAllTables()               // 4. the previous user's cached data
+    workManager.cancelAllWork()             // 5. queued syncs that would run as nobody
+}
+```
+
+Skipping the revoke call is the common one, and it means a stolen refresh token keeps working after the
+user thought they signed out — which is the whole reason someone signs out on a shared device.
+
+Steps 3 and 4 are the ones that produce visible bugs rather than silent risk: the FCM token from the
+push lesson, and a Room database still holding the previous user's orders, so the next person to sign in
+sees them for a moment before the first sync completes.
+
+The related question is what a **401 mid-session** should do. Clearing everything and dropping the user
+at a login screen loses whatever they were doing. Better is to keep the screen, mark the session
+expired, and prompt to re-authenticate in place — the difference between an app that recovers and one
+that punishes a flaky connection.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one signs people out at random">
+**Unsynchronised refresh.** Parallel 401s each refresh, and rotation invalidates the others.
+
+**No `priorResponse` check.** A rejected refresh loops forever.
+
+**A `WebView` for the login page.** Your app can read the password; providers increasingly refuse.
+
+**A refresh token in plain storage.** It is a standing grant; encrypt it with a Keystore key.
+
+**Sign-out that only clears locally.** The token still works, and the next user sees cached data.
+</Pitfall>
+
+## Practice
+
+1. Fire five parallel requests with an expired token and count the refresh calls.
+2. Add a mutex, then add the re-check inside it, and count again.
+3. Return a rejected token from a fake refresh endpoint and watch the loop without `priorResponse`.
+4. Sign out without revoking, then use the old refresh token from `curl`.
+5. Sign out without clearing Room, sign in as someone else, and watch the first frame.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Access token | Short-lived bearer credential; the short life is the security |
+| Refresh token | A standing grant; encrypt it with a Keystore key |
+| PKCE | Because a mobile app cannot keep a client secret |
+| Custom Tab | Not a `WebView`; your app must not see the password |
+| `state` | Check it comes back unchanged |
+| `Authenticator` | Called per failed request, not once |
+| Mutex | One refresh at a time |
+| Re-check inside the lock | Makes the queued requests cheap |
+| `priorResponse` | Stops an endless refresh loop |
+| Sign-out | Revoke, clear tokens, delete the FCM token, clear cached data |
+
+<Interview title="A question about a bug that only appears on a bad connection">
+"Users are signed out at random on a poor connection. Where do you look?"
+
+At the refresh path, and specifically whether it is serialised. An OkHttp `Authenticator` is called per
+failed request, so several parallel calls that all get a `401` all trigger a refresh at once. If the
+server rotates refresh tokens — and it should — the first refresh invalidates the token the others are
+holding, they fail, and the app concludes the session is dead. It only shows up on a bad connection
+because that is when requests bunch up and expire together.
+
+The fix is a mutex so only one refresh runs, plus a re-check inside the lock: by the time a waiting
+request acquires it, the token is usually already refreshed, so it should use that rather than
+refreshing again. I would also check `priorResponse` is handled, since without it a rejected refresh
+loops forever, and that giving up actually clears the tokens and surfaces a signed-out state instead of
+failing quietly.
+</Interview>

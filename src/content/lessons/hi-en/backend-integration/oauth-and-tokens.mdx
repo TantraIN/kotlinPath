@@ -1,0 +1,181 @@
+---
+title: "OAuth 2.0, token ka taza hona aur safe sessions"
+description: OAuth ka bahav chhota hai. Lamba wo sab hai jo uske ird-gird hai — refresh token rehta kahan hai, paanch requests ko ek saath 401 milne par kya hota hai, aur sign-out ko asal mein kya-kya palatna padta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+OAuth chhoti umar wale **access token** ke badle lambi pahunch deta hai, aur naye tokens lane ke liye
+**refresh token** leta hai. Access token lane wale ka credential hai — jiske paas hai wahi aap ho — to
+uski chhoti umar hi suraksha hai, aur refresh token wo cheez hai jiski hifazat karni hai.
+</KeyIdea>
+
+## Bahav, PKCE ke saath
+
+```text title="Authorization Code + PKCE" numbered
+1. app koi betarteeb verifier banata hai, SHA-256(verifier) ko challenge ki tarah bhejta hai
+2. browser: user sign in karke ijazat deta hai
+3. ek baar chalne wale code ke saath wapsi
+4. app code + verifier dekar tokens leta hai
+5. server dekhta hai ki SHA-256(verifier) == challenge
+```
+
+PKCE isliye hai ki mobile wala app koi client ka raaz rakh hi nahi sakta — secrets wale lesson ne wajah
+batai thi. Uske bina, jo app wahi scheme darj kar le wo us wapsi ko beech mein pakadkar us code se tokens
+le sakta hai. Uske saath wo code us verifier ke bina bekaar hai, jo us app se kabhi bahar gaya hi nahi
+jisne wo bahav shuru kiya tha.
+
+Do niyam jo vaikalpik nahi hain. **Custom Tab** lijiye, `WebView` nahi: `WebView` aapke app ko user ka
+password type hote hue padhne deta hai, aur provider theek yahi rokna chahta hai, to zyadatar identity
+wale providers ab uske andar pehchan karne se mana kar dete hain. Aur hamesha dekhiye ki aapka bheja
+`state` waisa hi wapas aaya — wahi us wapsi par cross-site request forgery rokta hai.
+
+## Tokens rakhna
+
+```kotlin title="TokenStore.kt" numbered
+class TokenStore(private val dataStore: DataStore<Preferences>, private val crypto: Crypto) {
+
+    suspend fun save(tokens: Tokens) = dataStore.edit {
+        it[ACCESS]  = tokens.access                          // chhoti umar; saada bhi chal jata hai
+        it[REFRESH] = crypto.encrypt(tokens.refresh)         // lambi umar; Keystore ke sahare
+    }
+}
+```
+
+Ye asamanta jaanbujhkar hai. Ek ghante mein khatam hota access token seemit inaam hai; refresh token tab
+tak user bankar chalne ka khula parwana hai jab tak wo radd na ho, to use secrets wale lesson ki Keystore
+ki key milti hai.
+
+`EncryptedSharedPreferences` hatai ja chuki hai, to ye seedhe DataStore ke saath li gayi Keystore ki key
+hai.
+
+<Quiz
+  question="Koi app apna token OkHttp ke `Authenticator` mein taza karta hai. Kamzor connection par users batate hain ki wo betarteeb tarike se sign out ho jate hain. Logs ek second ke andar kai refresh ki calls dikhate hain, aur ek ko chhodkar sab nakaam. Ho kya raha hai?"
+  options={[
+    "Refresh wala endpoint app ki raftar baandh raha hai; badhta hua backoff jodiye",
+    "Saath-saath gayi kai requests mein se har ek ko 401 mila aur har ek ne refresh chala diya. Server ne pehli par refresh token badal diya, to baaki aisa token lekar pahunchin jo abhi-abhi bekaar hua tha — refresh ek-ek karke chalna chahiye, aur taale ke andar ye dobara dekhna chahiye ki kisi aur thread ne pehle hi refresh to nahi kar liya",
+    "`Authenticator` ki jagah `Interceptor` hona chahiye, jo saath-saath nahi chalta"
+  ]}
+  answer={1}
+  explanation="Ye OkHttp wale lesson ki saath-saath chalne wali mushkil hai, bas yahan uska asar thos roop mein hai. Authenticator har nakaam request par bulaya jata hai, app mein ek baar nahi, to saath-saath gayi paanch calls jinhe 401 mila, paanchon ek hi pal us tak pahunchti hain. Agar server refresh tokens badalta hai — aur use badalna chahiye, kyunki isi se churaya hua token pakad mein aata hai — to pehla refresh safal hokar us token ko bekaar kar deta hai jo baaki chaar ab bhi pakde hain, to wo nakaam hoti hain aur app maan leta hai ki session mar gaya. Ilaaj ke do hisse hain aur sirf ek karne par wo bug bana rehta hai: kisi mutex se refresh ko ek-ek karke chalaiye taki sirf ek chale, aur taale ke andar dobara dekhiye ki access token pehle hi badal to nahi gaya, kyunki intezar karte thread ke taala pane tak wo kaam aam taur par ho chuka hota hai jiske liye wo line mein tha. Backoff se madad nahi milti, kyunki un requests ki raftar bandhi nahi ja rahi — wo pehle se khap chuka token lekar pahunch rahi hain."
+/>
+
+## Sahi tarike se taza karna
+
+```kotlin title="TokenAuthenticator.kt" numbered
+class TokenAuthenticator(private val store: TokenStore, private val api: AuthApi) : Authenticator {
+
+    private val mutex = Mutex()
+
+    override fun authenticate(route: Route?, response: Response): Request? {
+        if (response.priorResponse != null) return null          // pehle hi dobara bheja; haar maniye
+
+        val stale = response.request.header("Authorization")
+
+        return runBlocking {
+            mutex.withLock {
+                val current = store.accessToken()
+                if (current != null && "Bearer $current" != stale) {
+                    return@withLock response.request.withToken(current)   // kisi aur ne taza kar diya
+                }
+                when (val refreshed = api.refresh(store.refreshToken())) {
+                    is Ok    -> { store.save(refreshed.tokens); response.request.withToken(refreshed.tokens.access) }
+                    is Failed -> { store.clear(); null }         // sach mein sign out
+                }
+            }
+        }
+    }
+}
+```
+
+Teen cheezein bojh utha rahi hain. `priorResponse` tab ghoomte rehne se rokta hai jab naya token bhi
+thukra diya jaye. Mutex ka matlab hai ki sirf ek refresh chalta hai. Aur taale ke andar ki wo dobara
+padtal hi baaki chaar requests ko sasta banati hai — unke taala pane tak jo token unhe chahiye tha wo
+pehle se maujood hota hai.
+
+`null` lautana hi "haar maan raha hoon" kehne ka tarika hai, aur use tokens saaf karke signed-out wali
+haalat saamne laani chahiye, chupchap nakaam nahi hona chahiye.
+
+<Detail summary="Sign-out ko kya-kya palatna padta hai">
+Tokens ko sthaniya roop se mitana sabse chhota hissa hai:
+
+```kotlin title="SignOut.kt" numbered
+suspend fun signOut() {
+    api.revoke(store.refreshToken())        // 1. server ko bataiye, taki wo token chalna band kare
+    store.clear()                           // 2. sthaniya tokens
+    FirebaseMessaging.getInstance().deleteToken()   // 3. warna agle user ko ye pushes milenge
+    database.clearAllTables()               // 4. pichhle user ka rakha hua data
+    workManager.cancelAllWork()             // 5. line mein padi syncs, jo ab kisi ki taraf se nahi chalengi
+}
+```
+
+Revoke wali call chhod dena aam hai, aur uska matlab hai ki churaya hua refresh token us user ke sign out
+maan lene ke baad bhi chalta rehta hai — aur share device par koi sign out karta hi isiliye hai.
+
+Teesra aur chautha kadam chupchap ke khatre nahi, dikhte hue bugs banate hain: push wale lesson ka FCM ka
+token, aur wo Room ka database jo ab bhi pichhle user ke orders pakde hai, to agla sign in karne wala unhe
+pehli sync poori hone tak ek pal ke liye dekh leta hai.
+
+Saath ka sawal ye hai ki **beech session mein aaya 401** kya kare. Sab kuch saaf karke user ko login wali
+screen par chhod dena uska kiya-karaya ganwa deta hai. Behtar hai screen wahin rakhna, session ko khatam
+hua manna, aur wahin dobara pehchan maangna — yahi us app aur us app ka farak hai jo ubar aata hai aur jo
+kamzor connection ki saza deta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli logon ko betarteeb tarike se sign out kar deti hai">
+**Bina line ke refresh.** Saath-saath aaye 401 har ek refresh karate hain, aur badalna baaki ko bekaar kar
+deta hai.
+
+**`priorResponse` na dekhna.** Thukraya gaya refresh hamesha ke liye ghoomta rehta hai.
+
+**Login ke panne ke liye `WebView`.** Aapka app password padh sakta hai; providers lagatar mana kar rahe
+hain.
+
+**Saadi storage mein refresh token.** Wo khula parwana hai; use Keystore ki key se encrypt kijiye.
+
+**Sirf sthaniya roop se saaf karta sign-out.** Wo token ab bhi chalta hai, aur agle user ko rakha hua data
+dikhta hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Khatam ho chuke token ke saath saath-saath paanch requests bhejiye aur refresh ki calls giniye.
+2. Mutex jodiye, phir uske andar dobara padtal jodiye, aur phir giniye.
+3. Kisi nakli refresh wale endpoint se thukraya gaya token lautaiye aur bina `priorResponse` ke ghoomna
+   dekhiye.
+4. Bina revoke kiye sign out kijiye, phir purane refresh token ko `curl` se aazmaiye.
+5. Room saaf kiye bina sign out kijiye, kisi aur ki tarah sign in kijiye, aur pehla frame dekhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Access token | Chhoti umar wala credential; chhoti umar hi suraksha hai |
+| Refresh token | Khula parwana; Keystore ki key se encrypt kijiye |
+| PKCE | Kyunki mobile wala app client ka raaz rakh nahi sakta |
+| Custom Tab | `WebView` nahi; aapke app ko password dikhna hi nahi chahiye |
+| `state` | Dekhiye ki waisa hi wapas aaya |
+| `Authenticator` | Har nakaam request par bulaya jata hai, ek baar nahi |
+| Mutex | Ek baar mein ek refresh |
+| Taale ke andar dobara padtal | Line mein padi requests ko sasta banati hai |
+| `priorResponse` | Kabhi na rukne wala refresh rokta hai |
+| Sign-out | Revoke, tokens saaf, FCM ka token mitaiye, rakha data saaf |
+
+<Interview title="Ek sawal, aise bug ka jo sirf kharab connection par dikhta hai">
+"Kamzor connection par users betarteeb tarike se sign out ho jate hain. Aap kahan dekhoge?"
+
+Refresh wale raaste mein, aur khaas taur par ye ki wo ek-ek karke chalta hai ya nahi. OkHttp ka
+`Authenticator` har nakaam request par bulaya jata hai, to saath-saath gayi kai calls jinhe `401` mila, sab
+ek saath refresh chala deti hain. Agar server refresh tokens badalta hai — aur use badalna chahiye — to
+pehla refresh us token ko bekaar kar deta hai jo baaki pakde hain, wo nakaam hoti hain, aur app maan leta
+hai ki session mar gaya. Ye sirf kharab connection par dikhta hai kyunki tabhi requests ikatthi hokar ek
+saath khatam hoti hain.
+
+Ilaaj hai mutex, taki sirf ek refresh chale, aur taale ke andar dobara padtal: intezar karti request ke
+taala pane tak wo token aam taur par pehle hi taza ho chuka hota hai, to use dobara refresh karne ke bajaye
+wahi lena chahiye. Main ye bhi dekhunga ki `priorResponse` sambhala gaya hai ya nahi, kyunki uske bina
+thukraya gaya refresh hamesha ghoomta rehta hai, aur ye ki haar manna sach mein tokens saaf karke
+signed-out wali haalat saamne lata hai, chupchap nakaam nahi hota.
+</Interview>
