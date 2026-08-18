@@ -1,0 +1,220 @@
+---
+title: Navigation in Compose, type-safe routes
+description: A back stack of destinations owned by one controller, with routes that are Kotlin types instead of strings. The interesting part is what you are allowed to put in an argument.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A `NavController` owns a **back stack of destinations**, and a `NavHost` maps each destination to a
+composable. Since Navigation 2.8 a route is a `@Serializable` Kotlin type, so a wrong argument is a
+compile error rather than a malformed string.
+</KeyIdea>
+
+## Why this matters
+
+Routes used to be strings you built by hand — `"order/$id?tab=$tab"` — with the arguments declared
+separately and parsed back out. A typo compiled fine and crashed on tap.
+
+```kotlin title="Routes.kt" numbered
+@Serializable
+object Home
+
+@Serializable
+data class OrderDetail(val id: String, val showInvoice: Boolean = false)
+```
+
+```kotlin title="Nav.kt" numbered
+val navController = rememberNavController()
+
+NavHost(navController = navController, startDestination = Home) {
+
+    composable<Home> {
+        HomeScreen(onOpenOrder = { id -> navController.navigate(OrderDetail(id)) })
+    }
+
+    composable<OrderDetail> { entry ->
+        val route: OrderDetail = entry.toRoute()
+        OrderDetailScreen(id = route.id, showInvoice = route.showInvoice)
+    }
+}
+```
+
+The destination is constructed like any other data class, so a missing argument or a wrong type
+never reaches a device.
+
+## What may go in an argument
+
+<Quiz
+  question="You want to open a detail screen for an order you already have in memory. Should the route carry the whole `Order` object or just its id?"
+  options={[
+    "The whole object — it avoids a second load and the route is type-safe anyway",
+    "Just the id, because arguments are serialised into saved state and must stay small and current",
+    "Neither; navigation arguments should always be empty and data passed through a singleton",
+  ]}
+  answer={1}
+  explanation="Route arguments are serialised and stored in the back stack's saved state, which rides in the same size-limited Bundle as everything else the system saves. A whole object risks TransactionTooLargeException on a slow device, and worse, it is a copy: if the order updates while the detail screen is open, the screen keeps showing the version captured at navigation time. Pass the id and let the destination load from the single source of truth. The exception is genuinely small display data — a title you want on screen before the load finishes — and even then the loaded value should replace it."
+/>
+
+## Controlling the back stack
+
+```kotlin title="Options.kt" numbered
+navController.navigate(Checkout) {
+    popUpTo(Cart) { inclusive = true }   // remove Cart and everything above it
+    launchSingleTop = true               // do not stack a second Checkout
+}
+```
+
+| Option | What it does |
+| --- | --- |
+| `popUpTo(X)` | Pops the stack back to `X` before navigating |
+| `inclusive = true` | Also pops `X` itself |
+| `launchSingleTop` | Reuses the destination if it is already on top |
+| `saveState` / `restoreState` | Keeps and restores each tab's stack |
+
+```kotlin title="BottomNav.kt" numbered
+navController.navigate(tab) {
+    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+    launchSingleTop = true
+    restoreState = true
+}
+```
+
+That is the standard bottom-navigation behaviour: switching tabs does not pile destinations up,
+and returning to a tab puts you back where you were.
+
+<Warning>
+`launchSingleTop` is not a nicety. Without it, a user who double-taps a row gets two identical
+screens on the stack and has to press back twice — one of the most common bug reports on a
+navigation implementation.
+</Warning>
+
+## Never navigate during composition
+
+```kotlin title="Effect.kt" numbered
+// Wrong: runs during composition, and may run many times
+if (state.isLoggedOut) navController.navigate(Login)
+
+// Right: an effect, keyed on the thing that triggers it
+LaunchedEffect(state.isLoggedOut) {
+    if (state.isLoggedOut) navController.navigate(Login)
+}
+```
+
+Navigation is a side effect: it changes something outside this composable. In a composable body it
+can fire several times for one state change, leaving duplicate entries on the stack.
+
+## Nested graphs and where a `ViewModel` lives
+
+```kotlin title="Nested.kt" numbered
+@Serializable object CheckoutGraph
+@Serializable object Address
+@Serializable object Payment
+
+navigation<CheckoutGraph>(startDestination = Address) {
+    composable<Address> { AddressScreen() }
+    composable<Payment> { PaymentScreen() }
+}
+```
+
+```kotlin title="Shared.kt" numbered
+@Composable
+fun PaymentScreen(navController: NavController) {
+    val parentEntry = remember(navController) {
+        navController.getBackStackEntry(CheckoutGraph)
+    }
+    val viewModel: CheckoutViewModel = viewModel(parentEntry)
+}
+```
+
+A `ViewModel` scoped to the graph entry lives exactly as long as the flow does — created when you
+enter checkout, cleared when you leave it. That is how the address screen and the payment screen
+share state without an argument between them, and it is the current answer to "how do I return a
+result to the previous screen".
+
+<Detail summary="Keeping the controller out of your screens">
+Screens should take lambdas, not a `NavController` — the same reason they should not take a
+`ViewModel`:
+
+```kotlin title="Screens.kt" numbered
+// The host knows about navigation
+composable<Home> {
+    HomeScreen(
+        onOpenOrder = { navController.navigate(OrderDetail(it)) },
+        onOpenSettings = { navController.navigate(Settings) },
+    )
+}
+
+// The screen knows only that something happens
+@Composable
+fun HomeScreen(onOpenOrder: (String) -> Unit, onOpenSettings: () -> Unit) { }
+```
+
+Now `HomeScreen` can be previewed, tested, and reused inside a different flow, and every
+destination it can reach is visible in one file.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="A back stack entry is a lifecycle owner" meta="and a ViewModelStoreOwner">
+    Each entry has its own lifecycle and its own `ViewModel` store, which is why a `ViewModel`
+    scoped to an entry is cleared when that entry is popped.
+  </TimelineItem>
+  <TimelineItem title="Routes are serialised" meta="type-safe on top of a Bundle">
+    The `@Serializable` type is turned into arguments and saved state underneath, so the size limit
+    of a `Bundle` still applies.
+  </TimelineItem>
+  <TimelineItem title="Only the current entry is RESUMED" meta="the ones below are STARTED at most">
+    A screen you navigated away from is not resumed, so lifecycle-aware collection stops there
+    without you doing anything.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four that produce confusing back-button behaviour">
+**Passing objects as arguments.** Size limits, and a snapshot that goes stale.
+
+**Navigating in a composable body.** Duplicate destinations from one state change.
+
+**No `launchSingleTop`.** Double taps stack identical screens.
+
+**Passing the `NavController` into every screen.** Every screen becomes untestable and every
+destination it can reach becomes invisible.
+</Pitfall>
+
+## Practice
+
+1. Define two `@Serializable` routes, one with an argument, and navigate between them.
+2. Deliberately pass the wrong argument type and read the compile error.
+3. Build a bottom bar without `saveState` and `restoreState`, then add them, and compare what
+   happens when you return to a scrolled tab.
+4. Double-tap a list row without `launchSingleTop` and count how many back presses it takes.
+5. Move a navigation call from a composable body into a `LaunchedEffect` and watch the duplicate
+   entries disappear.
+6. Scope a `ViewModel` to a nested graph and confirm it is cleared when the flow ends.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `NavController` | Owns the back stack |
+| `NavHost` | Maps destinations to composables |
+| Type-safe routes | `@Serializable` types; wrong arguments fail at compile time |
+| `toRoute()` | Reads the typed arguments back out |
+| Arguments | Ids and small values only — they live in saved state |
+| `popUpTo` / `inclusive` | Trim the stack before navigating |
+| `launchSingleTop` | No duplicate destination on a double tap |
+| `saveState` / `restoreState` | Per-tab stacks for bottom navigation |
+| Navigate from an effect | Never from a composable body |
+| Graph-scoped `ViewModel` | Shares state across one flow and clears when it ends |
+
+<Interview title="A question that separates wiring screens from designing a flow">
+"How would you pass data between two destinations?"
+
+Pass an id in the route and let the destination load the data, because arguments are serialised
+into saved state and a whole object is both size-limited and a stale copy. For data genuinely
+shared across a multi-step flow, scope a `ViewModel` to the nested graph's back stack entry so it
+lives exactly as long as the flow. Mentioning that the old `savedStateHandle` result trick still
+exists but is no longer the recommended route shows the answer is current.
+</Interview>

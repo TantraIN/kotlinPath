@@ -1,0 +1,224 @@
+---
+title: Compose mein navigation, type-safe routes
+description: Ek controller ke paas destinations ka back stack, aur routes jo strings nahi balki Kotlin ke types hain. Dilchasp hissa ye hai ki kisi argument mein rakhne ki ijazat kis cheez ko hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`NavController` ke paas **destinations ka ek back stack** hota hai, aur `NavHost` har destination
+ko kisi composable se jodta hai. Navigation 2.8 se route ek `@Serializable` Kotlin type hai, to
+galat argument compile error hai, koi bigdi hui string nahi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Pehle routes aisi strings hoti thin jinhe aap haath se jodte the — `"order/$id?tab=$tab"` —
+arguments alag se ghoshit hote aur wapas parse kiye jate. Ek typo compile ho jata aur tap par crash
+karta.
+
+```kotlin title="Routes.kt" numbered
+@Serializable
+object Home
+
+@Serializable
+data class OrderDetail(val id: String, val showInvoice: Boolean = false)
+```
+
+```kotlin title="Nav.kt" numbered
+val navController = rememberNavController()
+
+NavHost(navController = navController, startDestination = Home) {
+
+    composable<Home> {
+        HomeScreen(onOpenOrder = { id -> navController.navigate(OrderDetail(id)) })
+    }
+
+    composable<OrderDetail> { entry ->
+        val route: OrderDetail = entry.toRoute()
+        OrderDetailScreen(id = route.id, showInvoice = route.showInvoice)
+    }
+}
+```
+
+Destination kisi aur data class ki tarah hi banta hai, to chhoota hua argument ya galat type kabhi
+kisi device tak pahunchta hi nahi.
+
+## Argument mein ja kya sakta hai
+
+<Quiz
+  question="Aap aise order ki detail screen kholna chahte hain jo pehle se aapke paas memory mein hai. Route mein poora `Order` jana chahiye ya sirf uski id?"
+  options={[
+    "Poora object — isse dobara load bachta hai aur route waise bhi type-safe hai",
+    "Sirf id, kyunki arguments saved state mein serialise hote hain aur unhe chhota aur taza rehna hai",
+    "Dono nahi; navigation ke arguments hamesha khaali rahein aur data kisi singleton se jaye",
+  ]}
+  answer={1}
+  explanation="Route ke arguments serialise hokar back stack ke saved state mein rakhe jate hain, jo usi naap ki had wale Bundle mein sawari karta hai jismein system baaki sab kuch sambhalta hai. Poora object kisi dheeme device par TransactionTooLargeException ka khatra hai, aur usse bhi badi baat, wo ek copy hai: detail screen khuli rehte hue order badal gaya to screen wahi roop dikhati rahegi jo navigate karte waqt pakda gaya tha. Id bhejiye aur destination ko sach ke iklaute thikane se data lane dijiye. Chhoot sirf sach mein chhoti dikhane wali cheez ko hai — jaise koi title jo load poora hone se pehle screen par chahiye — aur tab bhi load hui value ko uski jagah le leni chahiye."
+/>
+
+## Back stack ko sambhalna
+
+```kotlin title="Options.kt" numbered
+navController.navigate(Checkout) {
+    popUpTo(Cart) { inclusive = true }   // Cart aur uske upar sab hata do
+    launchSingleTop = true               // doosra Checkout upar mat chadhao
+}
+```
+
+| Vikalp | Kya karta hai |
+| --- | --- |
+| `popUpTo(X)` | Navigate karne se pehle stack ko `X` tak wapas lata hai |
+| `inclusive = true` | Khud `X` ko bhi hata deta hai |
+| `launchSingleTop` | Destination pehle se sabse upar ho to usi ko dobara leta hai |
+| `saveState` / `restoreState` | Har tab ka apna stack sambhalta aur lautata hai |
+
+```kotlin title="BottomNav.kt" numbered
+navController.navigate(tab) {
+    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+    launchSingleTop = true
+    restoreState = true
+}
+```
+
+Yahi bottom navigation ka aam bartaav hai: tabs badalne se destinations ka dher nahi lagta, aur kisi
+tab par lautne par aap wahin pahunchte hain jahan chhoda tha.
+
+<Warning>
+`launchSingleTop` koi sajawat nahi hai. Iske bina jo user kisi row par do baar tap kar deta hai use
+stack par do ek jaisi screens milti hain aur do baar back dabana padta hai — kisi navigation par
+aane wali sabse aam bug reports mein se ek.
+</Warning>
+
+## Composition ke dauran navigate kabhi nahi
+
+```kotlin title="Effect.kt" numbered
+// Galat: composition ke dauran chalta hai, aur kai baar chal sakta hai
+if (state.isLoggedOut) navController.navigate(Login)
+
+// Sahi: ek effect, usi cheez ki key par jo ise chalati hai
+LaunchedEffect(state.isLoggedOut) {
+    if (state.isLoggedOut) navController.navigate(Login)
+}
+```
+
+Navigation ek side effect hai: wo is composable ke bahar ki cheez badalta hai. Composable ki body
+mein wo ek hi state badlaav par kai baar chal sakta hai, aur stack par ek jaisi entries chhod jata
+hai.
+
+## Andar wale graphs, aur `ViewModel` kahan rehta hai
+
+```kotlin title="Nested.kt" numbered
+@Serializable object CheckoutGraph
+@Serializable object Address
+@Serializable object Payment
+
+navigation<CheckoutGraph>(startDestination = Address) {
+    composable<Address> { AddressScreen() }
+    composable<Payment> { PaymentScreen() }
+}
+```
+
+```kotlin title="Shared.kt" numbered
+@Composable
+fun PaymentScreen(navController: NavController) {
+    val parentEntry = remember(navController) {
+        navController.getBackStackEntry(CheckoutGraph)
+    }
+    val viewModel: CheckoutViewModel = viewModel(parentEntry)
+}
+```
+
+Graph ki entry se bandha `ViewModel` theek utna hi jeeta hai jitna wo poora silsila — checkout mein
+ghuste hi banta hai, nikalte hi mit jata hai. Address wali screen aur payment wali screen bina
+aapas mein koi argument bheje isi tarah state share karti hain, aur "pichhli screen ko result kaise
+lautaun" ka aaj ka jawab bhi yahi hai.
+
+<Detail summary="Controller ko apni screens se bahar rakhna">
+Screens ko lambdas lene chahiye, `NavController` nahi — usi wajah se jisse unhe `ViewModel` nahi
+lena chahiye:
+
+```kotlin title="Screens.kt" numbered
+// Navigation ki jankari host ke paas hai
+composable<Home> {
+    HomeScreen(
+        onOpenOrder = { navController.navigate(OrderDetail(it)) },
+        onOpenSettings = { navController.navigate(Settings) },
+    )
+}
+
+// Screen ko sirf itna pata hai ki kuch hota hai
+@Composable
+fun HomeScreen(onOpenOrder: (String) -> Unit, onOpenSettings: () -> Unit) { }
+```
+
+Ab `HomeScreen` preview ho sakti hai, test ho sakti hai, aur kisi doosre silsile mein dobara
+istemal ho sakti hai, aur wo jin-jin destinations tak ja sakti hai wo sab ek hi file mein dikhte
+hain.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Back stack ki har entry ek lifecycle owner hai" meta="aur ek ViewModelStoreOwner">
+    Har entry ka apna lifecycle aur apna `ViewModel` bhandar hota hai, isiliye entry se bandha
+    `ViewModel` us entry ke hatte hi mit jata hai.
+  </TimelineItem>
+  <TimelineItem title="Routes serialise hote hain" meta="Bundle ke upar tiki type-safety">
+    `@Serializable` type neeche jakar arguments aur saved state ban jata hai, to `Bundle` ki naap
+    wali had yahan bhi lagu hai.
+  </TimelineItem>
+  <TimelineItem title="RESUMED sirf maujooda entry hoti hai" meta="neeche wali zyada se zyada STARTED">
+    Jis screen se aap aage badh chuke hain wo resume nahi hoti, to lifecycle samajhne wala collect
+    wahan apne aap ruk jata hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo back button ka bartaav uljha deti hain">
+**Arguments mein objects bhejna.** Naap ki hadein, aur ek aisi jhalak jo baasi ho jati hai.
+
+**Composable ki body mein navigate karna.** Ek state badlaav se ek jaisi kai destinations.
+
+**`launchSingleTop` na lagana.** Do baar tap karne par ek jaisi screens ka dher.
+
+**Har screen mein `NavController` bhejna.** Har screen test ke layak nahi rehti aur wo jin
+destinations tak ja sakti hai wo dikhna band ho jati hain.
+</Pitfall>
+
+## Practice
+
+1. Do `@Serializable` routes banaiye, ek mein argument ho, aur unke beech navigate kijiye.
+2. Jaanbujhkar galat type ka argument bhejiye aur compile error padhiye.
+3. `saveState` aur `restoreState` ke bina bottom bar banaiye, phir unhe jodiye, aur scroll ki hui
+   tab par lautne par farak dekhiye.
+4. `launchSingleTop` ke bina kisi row par do baar tap kijiye aur giniye ki back kitni baar dabana
+   padta hai.
+5. Navigation ki ek call composable ki body se hatakar `LaunchedEffect` mein le jaiye aur dohri
+   entries ko gayab hote dekhiye.
+6. Kisi andar wale graph se `ViewModel` bandhiye aur silsila khatam hone par uska mitna parkhiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `NavController` | Back stack ka maalik |
+| `NavHost` | Destinations ko composables se jodta hai |
+| Type-safe routes | `@Serializable` types; galat arguments compile par hi pakde jate hain |
+| `toRoute()` | Type wale arguments wapas padhta hai |
+| Arguments | Sirf ids aur chhoti values — wo saved state mein rehte hain |
+| `popUpTo` / `inclusive` | Navigate karne se pehle stack chhaantta hai |
+| `launchSingleTop` | Do baar tap par dohri destination nahi |
+| `saveState` / `restoreState` | Bottom navigation mein har tab ka apna stack |
+| Effect se navigate | Composable ki body se kabhi nahi |
+| Graph se bandha `ViewModel` | Ek silsile bhar state share karta hai aur uske khatam hote hi mitta hai |
+
+<Interview title="Wo sawal jo screens jodne aur silsila banane ko alag karta hai">
+"Do destinations ke beech data kaise bhejenge?"
+
+Route mein id bhejenge aur destination ko data lane denge, kyunki arguments saved state mein
+serialise hote hain aur poora object naap ki had mein bhi bandha hai aur baasi copy bhi hai. Jo data
+sach mein kai kadmon wale ek silsile mein share hai, uske liye `ViewModel` ko andar wale graph ki
+back stack entry se bandhenge taki wo theek us silsile jitna jiye. Ye bata dena ki `savedStateHandle`
+wali purani tarkeeb aaj bhi hai par sujhaya hua raasta nahi rahi, dikhata hai ki jawab aaj ka hai.
+</Interview>
