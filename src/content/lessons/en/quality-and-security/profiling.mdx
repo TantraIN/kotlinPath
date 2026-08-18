@@ -1,0 +1,154 @@
+---
+title: Profiling CPU, memory and network
+description: Profiling replaces a guess with a measurement. The skill is not driving the tools — it is asking a question narrow enough that the trace can answer it.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Start from a **symptom you can reproduce**, not from the tools. "The list stutters when I fling it
+after opening a photo" is a question a trace can answer; "the app feels slow" is not, and it is why
+most profiling sessions end with nothing found.
+</KeyIdea>
+
+## Measure the right build
+
+```kotlin title="build.gradle.kts" numbered
+buildTypes {
+    release { isMinifyEnabled = true }
+    create("benchmark") {
+        initWith(buildTypes.getByName("release"))
+        signingConfig = signingConfigs.getByName("debug")
+        isDebuggable = false                       // debuggable changes everything
+        proguardFiles("benchmark-rules.pro")
+    }
+}
+```
+
+A debug build is not slow in a way that scales — it is slow differently. It skips R8, disables some
+JIT optimisation, and Compose's debug build does not apply the compiler's skipping optimisations at
+all. Numbers from it are not a quieter version of the truth; they are a different number.
+
+So: profile a release-like build, on a real mid-range device, with the app already warm unless
+startup is what you are measuring.
+
+## The three views, and what each answers
+
+| View | Answers |
+| --- | --- |
+| CPU | Where the time went, per thread, per frame |
+| Memory | What is allocated, what is retained, and by whom |
+| Network | Every request, its size, its timing, and whether it was cached |
+| Energy | What is holding wake locks or the GPS on |
+
+The CPU one has two recording modes worth telling apart:
+
+- **Sampling** takes a stack snapshot every few milliseconds. Cheap, so it barely distorts what you
+  are measuring — and it can miss a function that runs often but briefly.
+- **Tracing** records every enter and exit. Complete, and slow enough to change the timing it
+  reports, which makes short methods look far more expensive than they are.
+
+Start with sampling. Reach for tracing only when you already know the region and need exact counts.
+
+<Quiz
+  question="A screen takes 800ms to appear. A method trace shows `OrderMapper.toDomain` accounting for most of the time. Rewriting it saves 20ms. What most likely went wrong?"
+  options={[
+    "The mapper needed a more efficient algorithm than the rewrite used",
+    "Method tracing adds per-call overhead, so a small function called thousands of times looks dominant — the real cost was the call count, not the function, and a sampling profile or `systrace` would have shown the actual distribution",
+    "The trace was recorded on the wrong thread"
+  ]}
+  answer={1}
+  explanation="Instrumented method tracing records an enter and an exit for every call, and that fixed cost is charged to whichever function is called most. So a two-line mapper invoked ten thousand times accumulates a large share of the trace while contributing almost nothing to real time — the profiler is reporting its own overhead attributed to your code. The signal you were actually given is the call count: ten thousand calls to map one screen usually means mapping inside a loop, or re-mapping the whole list on every emission rather than only what changed. Sampling profiles do not have this distortion because they cost the same regardless of call frequency, which is why they are the right default. Perfetto with your own trace sections is better still, since it shows where wall-clock time went rather than where CPU cycles were attributed."
+/>
+
+## Your own trace sections
+
+The most useful profiling change is usually in your code, not in the tool:
+
+```kotlin title="Trace.kt" numbered
+import androidx.tracing.trace
+
+suspend fun loadOrders(): List<Order> = trace("loadOrders") {
+    val dtos = trace("network") { api.orders() }
+    trace("map") { dtos.map(OrderDto::toDomain) }
+}
+```
+
+`androidx.tracing` sections appear as labelled blocks in Perfetto and cost almost nothing when
+tracing is off. Naming the phases of a slow operation turns "800ms somewhere" into "620ms in network,
+90ms mapping" in one run, and that is usually the whole investigation.
+
+Compose has its own: enabling composition tracing shows which composables recomposed and how often,
+which answers the question the CPU view cannot — that the work is not slow, it is happening too many
+times.
+
+<Detail summary="Perfetto, and reading a frame">
+The Android Profiler is convenient; Perfetto is what you use when the question is about frames.
+
+A frame has a budget — 16.7ms at 60Hz, 8.3ms at 120Hz — and the frame timeline shows each frame
+against it, in colour. What matters is not that a frame was slow but **which part** was: your
+`Choreographer#doFrame` work, layout, draw, or the GPU.
+
+Two patterns worth recognising:
+
+**A long gap before your work starts.** The main thread was busy with something else — often a
+`Binder` transaction, a `SharedPreferences` read, or a synchronous database query on the main thread.
+The fix is not making your frame faster; it is getting the other work off that thread.
+
+**Regular spikes every few frames.** Usually garbage collection, visible as `HeapTaskDaemon` activity,
+which points back at allocation in a hot path rather than at the frame itself.
+
+`adb shell dumpsys gfxinfo <package> framestats` gives the same distribution as numbers, which is what
+you want in CI where you cannot look at a timeline.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first invalidates everything after it">
+**Profiling a debug build.** Different numbers, not quieter ones — especially in Compose.
+
+**Method tracing first.** Its overhead is charged to whatever is called most, which misleads.
+
+**No reproducible symptom.** Without one you cannot tell whether a change helped.
+
+**Optimising what the trace shows first.** Check it is on the critical path before touching it.
+
+**Measuring on a flagship.** Your users' mid-range device has a different bottleneck.
+</Pitfall>
+
+## Practice
+
+1. Record the same interaction on a debug and a release build and compare the numbers.
+2. Wrap a slow operation in three `trace()` sections and find which one owns the time.
+3. Take a sampling profile and a method trace of the same action and compare what each blames.
+4. Open a Perfetto trace and find one frame that missed its budget, and why.
+5. Run `dumpsys gfxinfo` before and after a fix and compare the janky-frame percentage.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Start with | A symptom you can reproduce |
+| Build | Release-like; debug numbers are different, not quieter |
+| Device | Mid-range, like your users' |
+| Sampling | Cheap, barely distorts — the right default |
+| Method tracing | Complete, and charges its overhead to hot callers |
+| `trace("name")` | Your own labelled sections, nearly free |
+| Composition tracing | Answers "how often", which CPU time cannot |
+| Frame budget | 16.7ms at 60Hz, 8.3ms at 120Hz |
+| Perfetto | For frames and for what the main thread was doing instead |
+| `gfxinfo framestats` | The same distribution, as numbers, for CI |
+
+<Interview title="A question about a misleading profile">
+"A profile blames a small mapping function for most of a slow screen. Do you rewrite it?"
+
+Not before checking how the profile was taken. Instrumented method tracing records an enter and exit
+per call, so its overhead lands on whatever is called most often — a two-line mapper invoked ten
+thousand times can dominate a trace while costing almost nothing in real time. The number I would
+actually read there is the call count, because ten thousand calls to render one screen usually means
+mapping inside a loop, or re-mapping the whole list on every emission instead of what changed.
+
+I would re-measure with a sampling profile, which costs the same regardless of call frequency, or
+better with my own `trace()` sections around the phases — network, mapping, rendering — because that
+turns "800ms somewhere" into a breakdown in one run. And I would do it on a release-like build, since
+debug numbers are a different number rather than a quieter one.
+</Interview>

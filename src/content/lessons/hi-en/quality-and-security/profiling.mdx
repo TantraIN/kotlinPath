@@ -1,0 +1,162 @@
+---
+title: CPU, memory aur network ki profiling
+description: Profiling andaze ki jagah naap rakh deti hai. Hunar auzar chalana nahi hai — hunar itna sankra sawal puchna hai ki trace uska jawab de sake.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Shuruat **aise lakshan se** kijiye jise aap dobara paida kar sako, auzaron se nahi. "Tasveer kholne ke
+baad list ko jhatka dene par wo atakti hai" aisa sawal hai jiska jawab trace de sakta hai; "app dheema
+lagta hai" nahi, aur isiliye zyadatar profiling bina kuch mile khatam hoti hai.
+</KeyIdea>
+
+## Sahi build naapiye
+
+```kotlin title="build.gradle.kts" numbered
+buildTypes {
+    release { isMinifyEnabled = true }
+    create("benchmark") {
+        initWith(buildTypes.getByName("release"))
+        signingConfig = signingConfigs.getByName("debug")
+        isDebuggable = false                       // debuggable hona sab kuch badal deta hai
+        proguardFiles("benchmark-rules.pro")
+    }
+}
+```
+
+Debug wala build aise dheema nahi hai ki wo anupat mein ho — wo alag tarah se dheema hai. Wo R8 chhod
+deta hai, kuch JIT wali behtari band kar deta hai, aur Compose ka debug build compiler ki chhodne wali
+behtari lagata hi nahi. Usse mile aankde sach ka dheema roop nahi hain; wo alag aankde hain.
+
+To: release jaisa build naapiye, asli manjhole device par, aur app ko pehle se garam rakhkar — jab tak
+naapne ki cheez startup hi na ho.
+
+## Teen nazrein, aur har ek kiska jawab deti hai
+
+| Nazar | Jawab |
+| --- | --- |
+| CPU | Samay kahan gaya, har thread par, har frame par |
+| Memory | Kya bana, kya ruka hua hai, aur kiski wajah se |
+| Network | Har request, uska naap, uska samay, aur wo cache se aayi ya nahi |
+| Energy | Kaun wake locks ya GPS pakde hai |
+
+CPU wali mein recording ke do tarike alag pehchanne layak hain:
+
+- **Sampling** har kuch milliseconds par stack ki jhalak leta hai. Sasta, to jo aap naap rahe ho use
+  bigadta nahi — aur wo aisa function chook sakta hai jo baar-baar par thodi der chalta hai.
+- **Tracing** har ghusne-nikalne ko darj karta hai. Poora, aur itna dheema ki wo apne hi bataye samay
+  ko badal deta hai, jisse chhote methods kahin zyada mehnge dikhte hain.
+
+Sampling se shuru kijiye. Tracing tabhi uthaiye jab aap ilaka pehle se jante ho aur aapko theek-theek
+ginti chahiye.
+
+<Quiz
+  question="Koi screen aane mein 800ms leti hai. Method wala trace batata hai ki zyadatar samay `OrderMapper.toDomain` mein gaya. Use dobara likhne se 20ms bachte hain. Sabse sambhavit galti kya hui?"
+  options={[
+    "Us mapper ko dobara likhne mein jo tarika liya gaya usse behtar algorithm chahiye tha",
+    "Method tracing har call par apna bojh jodti hai, to hazaron baar bulaya gaya chhota function haavi dikhta hai — asli keemat wo function nahi, calls ki ginti thi, aur sampling wala profile ya `systrace` asli bantwara dikha deta",
+    "Wo trace galat thread par liya gaya tha"
+  ]}
+  answer={1}
+  explanation="Instrumented method tracing har call par ghusna aur nikalna darj karti hai, aur wo tay bojh usi function ke khate mein jata hai jo sabse zyada bulaya jata hai. To das hazar baar bulaya gaya do line ka mapper trace ka bada hissa jama kar leta hai jabki asli samay mein uska yogdan lagbhag kuch nahi — profiler aapke code ke khate mein apna hi bojh bata raha hai. Jo sanket aapko sach mein mila wo calls ki ginti hai: ek screen banane ke liye das hazar calls ka aam taur par matlab hai kisi loop ke andar mapping, ya har emission par sirf badle hue ke bajaye poori list dobara map karna. Sampling wale profiles mein ye bigaad nahi hota kyunki calls ki ginti chahe jo ho unki keemat wahi rehti hai, aur isiliye wo sahi default hain. Apne trace wale hisson ke saath Perfetto usse bhi behtar hai, kyunki wo dikhata hai ki ghadi ka samay kahan gaya, na ki CPU ke chakkar kiske khate mein gaye."
+/>
+
+## Apne trace wale hisse
+
+Profiling ka sabse kaam ka badlaav aam taur par aapke code mein hota hai, auzar mein nahi:
+
+```kotlin title="Trace.kt" numbered
+import androidx.tracing.trace
+
+suspend fun loadOrders(): List<Order> = trace("loadOrders") {
+    val dtos = trace("network") { api.orders() }
+    trace("map") { dtos.map(OrderDto::toDomain) }
+}
+```
+
+`androidx.tracing` wale hisse Perfetto mein naam wale khanon ki tarah dikhte hain aur tracing band hone
+par unki keemat lagbhag kuch nahi. Kisi dheeme kaam ke charnon ko naam dena "kahin 800ms" ko ek hi baar
+mein "620ms network mein, 90ms mapping" bana deta hai, aur aam taur par poori chhanbeen yahi hai.
+
+Compose ki apni hai: composition wali tracing chalu karne par dikhta hai ki kaun se composables
+recompose hue aur kitni baar, jo us sawal ka jawab deti hai jo CPU wali nazar nahi de sakti — ki kaam
+dheema nahi hai, wo bahut zyada baar ho raha hai.
+
+<Detail summary="Perfetto, aur ek frame padhna">
+Android Profiler suvidhajanak hai; Perfetto wo hai jo aap tab lete ho jab sawal frames ka ho.
+
+Har frame ka ek budget hai — 60Hz par 16.7ms, 120Hz par 8.3ms — aur frame ki timeline har frame ko us
+budget ke saamne, rangon mein dikhati hai. Maayne ye nahi rakhta ki koi frame dheema tha balki ye ki
+**kaunsa hissa** tha: aapka `Choreographer#doFrame` wala kaam, layout, draw, ya GPU.
+
+Do tarike pehchanne layak hain:
+
+**Aapke kaam ke shuru hone se pehle lamba khaali antaral.** Main thread kisi aur cheez mein laga tha —
+aksar koi `Binder` wala len-den, koi `SharedPreferences` ka padhna, ya main thread par chalti koi
+database ki query. Ilaaj aapke frame ko tez karna nahi hai; ilaaj us doosre kaam ko us thread se hatana
+hai.
+
+**Har kuch frames par niyamit uchhal.** Aam taur par garbage collection, jo `HeapTaskDaemon` ki halchal
+bankar dikhti hai, aur wo us frame ke bajaye kisi garam raaste mein ho rahi allocation ki taraf ishara
+karti hai.
+
+`adb shell dumpsys gfxinfo <package> framestats` wahi bantwara aankdon mein deta hai, aur CI mein jahan
+aap timeline dekh nahi sakte wahan aapko yahi chahiye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli apne baad ki har cheez bekaar kar deti hai">
+**Debug wale build ki profiling.** Alag aankde, dheeme roop nahi — khaas taur par Compose mein.
+
+**Pehle method tracing.** Uska bojh usi ke khate mein jata hai jo sabse zyada bulaya jata hai, jo
+bharmata hai.
+
+**Dobara paida na hone wala lakshan.** Uske bina aap bata hi nahi sakte ki badlaav se faayda hua ya
+nahi.
+
+**Trace jo pehle dikhaye use theek karna.** Chhoone se pehle dekhiye ki wo asli raaste par hai bhi ya
+nahi.
+
+**Mehnge phone par naapna.** Aapke users ke manjhole device ki adchan alag hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Wahi kaam debug aur release wale builds par darj kijiye aur aankde milaiye.
+2. Kisi dheeme kaam ko teen `trace()` hisson mein lapetiye aur dekhiye ki samay kiska hai.
+3. Usi kaam ka sampling wala profile aur method wala trace lijiye aur milaiye ki dono kise doshi batate
+   hain.
+4. Koi Perfetto trace kholiye aur aisa ek frame dhoondhiye jo apna budget chooka, aur wajah bhi.
+5. Kisi sudhaar se pehle aur baad mein `dumpsys gfxinfo` chalaiye aur atke frames ka pratishat milaiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Shuruat | Aise lakshan se jise dobara paida kar sako |
+| Build | Release jaisa; debug ke aankde alag hain, dheeme nahi |
+| Device | Manjhola, aapke users jaisa |
+| Sampling | Sasta, bigadta nahi — sahi default |
+| Method tracing | Poora, aur apna bojh garam bulane walon ke khate mein daalta hai |
+| `trace("name")` | Aapke apne naam wale hisse, lagbhag muft |
+| Composition tracing | "Kitni baar" ka jawab, jo CPU ka samay nahi de sakta |
+| Frame ka budget | 60Hz par 16.7ms, 120Hz par 8.3ms |
+| Perfetto | Frames ke liye, aur ye janne ke liye ki main thread kya kar raha tha |
+| `gfxinfo framestats` | Wahi bantwara, aankdon mein, CI ke liye |
+
+<Interview title="Ek sawal, bharmate profile ka">
+"Koi profile kisi dheemi screen ke zyadatar samay ke liye chhote mapping wale function ko doshi batata hai. Aap use dobara likhoge?"
+
+Pehle ye dekhe bina nahi ki wo profile liya kaise gaya. Instrumented method tracing har call par ghusna
+aur nikalna darj karti hai, to uska bojh usi par aa baithta hai jo sabse zyada bulaya jata hai — das
+hazar baar bulaya gaya do line ka mapper trace par haavi ho sakta hai aur asli samay mein lagbhag kuch
+bhi kharch na kare. Wahan jo aankda main sach mein padhunga wo calls ki ginti hai, kyunki ek screen
+banane ke liye das hazar calls ka aam taur par matlab hai loop ke andar mapping, ya har emission par
+badle hue ke bajaye poori list dobara map karna.
+
+Main sampling wale profile se dobara naapunga, jiski keemat calls ki ginti se nahi badalti, ya usse
+behtar charnon ke ird-gird apne `trace()` hisson se — network, mapping, banana — kyunki wo "kahin 800ms"
+ko ek hi baar mein bantwara bana deta hai. Aur ye sab main release jaise build par karunga, kyunki debug
+ke aankde dheeme roop nahi, alag aankde hain.
+</Interview>
