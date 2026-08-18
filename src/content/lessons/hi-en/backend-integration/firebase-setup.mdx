@@ -1,0 +1,166 @@
+---
+title: Firebase ki taiyari aur BoM
+description: Firebase ek darjan alag-alag libraries hain jinhe versions par sehmat hona padta hai. BoM wahi sehmati hai, aur `google-services.json` wo config ki file hai jise log raaz maante hain jabki wo hai nahi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firebase ki SDKs andar ka code share karti hain aur versions ke alag hone par uljhane wale tarikon se
+tootti hain. **BoM** isiliye hai ki aap ek version batao aur har Firebase wali library usi ke peeche
+chale — aur isiliye aap Firebase ki dependencies bina version ke likhte ho.
+</KeyIdea>
+
+## Taiyari
+
+```kotlin title="app/build.gradle.kts" numbered
+plugins {
+    id("com.google.gms.google-services")
+}
+
+dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))   // iklauta version
+
+    implementation("com.google.firebase:firebase-auth")                   // koi version nahi
+    implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-analytics")
+}
+```
+
+`platform(...)` hi BoM ko chalata hai: wo koi library jodne ke bajaye aapas mein chalne wale versions ka
+samooh batata hai. Uske baad har Firebase wali dependency wahi version leti hai jo wo BoM batata hai.
+
+Kisi ek library ka version haath se baandh dena poori baat hara deta hai — naye BoM ke saath
+`firebase-auth:22.1.0` aapko theek wahi bemel deta hai jise rokne ke liye BoM hai, aur nakami aam taur
+par build ki error nahi balki chalte waqt ka `NoSuchMethodError` hoti hai.
+
+`google-services` wala plugin build ke waqt `google-services.json` padhkar use un resources mein badal
+deta hai jinhe SDKs shuru hote waqt padhti hain. To wo file build ka input hai, chalte waqt ladi jane
+wali cheez nahi.
+
+## `google-services.json` raaz nahi hai
+
+Usmein aapke project ki id, ek API ki key, aur wo package ke naam hain jo aapne darj kiye. Log aam taur
+par aadatan use `.gitignore` mein daal dete hain, aur wo aadat galat hai: usse naye logon ka judna
+dukhdayi aur CI mushkil ho jati hai, aur suraksha ka koi faayda nahi, kyunki wo file har APK ke andar
+waise bhi jati hai.
+
+Firebase ke project ki hifazat us file ke chhupe hone se nahi hoti:
+
+| Hifazat | Wo karti kya hai |
+| --- | --- |
+| Security rules | Tay karte hain ki har document kaun padh aur likh sakta hai |
+| API key ki pabandiyan | Key ko aapke package aur hastakshar wale certificate se baandhti hain |
+| App Check | Gawahi deta hai ki request aapke asli app se aayi hai |
+
+Bina pabandi wali key aur dheele rules khule pade hain, chahe wo file commit ho ya na ho. Bandhi hui key
+aur sakht rules safe hain, chahe wo file sarvajanik hi kyun na ho.
+
+<Quiz
+  question="Koi team `google-services.json` commit karti hai, aur suraksha ki sameeksha use leak hui credential batati hai. Kya wo sameeksha sahi hai?"
+  options={[
+    "Haan — usmein API ki key hai, to use itihas se hatakar badalna padega",
+    "Nahi. Wo file har APK ke andar jati hai, to wo kabhi raaz thi hi nahi; maayne ye rakhta hai ki Firestore ke rules pahunch seemit karte hain ya nahi aur API ki key package tatha hastakshar wale certificate se bandhi hai ya nahi. Use git se hatane se hamlawar ke kar sakne mein kuch nahi badalta",
+    "Haan, par sirf tab jab project Realtime Database ke bajaye Firestore le"
+  ]}
+  answer={1}
+  explanation="Us file ka saaman kisi bhi chhapi hui APK se kareeb ek minute mein nikala ja sakta hai, to use raaz manna kuch bachata nahi aur sthaniya taiyari tatha CI ko mushkil bana deta hai. Us sameeksha ne sahi ilaka pakda hai aur galat cheez. Jo sawal maayne rakhte hain wo hain ki Firestore ke security rules sach mein padhna-likhna seemit karte hain ya nahi — test wali haalat mein chhode gaye rules kisi ko bhi, jiske paas project ki id ho, poora database padhne dete hain, aur wo project ki id usi file mein hai — ki Google Cloud ke console mein API ki key aapke package ke naam aur hastakshar wale certificate se bandhi hai ya nahi, aur ki App Check chalu hai ya nahi taki kisi script se aayi requests thukra di jayein. Sach mein leak hui Firebase ki credential alag dikhti hai: service account wali JSON, jismein niji key hoti hai, aur wo server ki file hai jo app tak pahunchni hi nahi chahiye."
+/>
+
+## Mahaul
+
+Banane aur production ke liye ek hi Firebase project taiyari ki sabse aam galti hai, kyunki test wala
+data aur asli users ka data ek hi database mein pahunch jate hain. Do projects aur do config ki files
+lijiye:
+
+```kotlin title="Flavours" numbered
+android {
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev")  { applicationIdSuffix = ".dev" }
+        create("prod") { }
+    }
+}
+```
+
+```text title="Layout" numbered
+app/src/dev/google-services.json     <- banane wala Firebase project
+app/src/prod/google-services.json    <- production wala
+```
+
+Plugin usi flavour se mel khati file uthata hai. `applicationIdSuffix` utna hi maayne rakhta hai: usse
+dono builds ek hi device par reh sakte hain, aur iska matlab ye bhi hai ki dev wala build ittefaqan
+production ke push notifications ke liye darj nahi ho sakta.
+
+<Detail summary="Abhi kya jodein, aur kiska intezar karein">
+Do SDKs pehle hi din jodne layak hain, zarurat padne se pehle.
+
+**Crashlytics**, kyunki wo sirf unhin crashes ki khabar deta hai jo uske lagne ke baad hon. Pehli aisi
+crash ki report dekhkar use jodna, jise aap dobara paida nahi kar pa rahe, mahina bhar der hai.
+
+**Remote Config**, kyunki bina release kisi suvidha ko band karne ki vyavastha wahi hai. Istemal karne
+tak uski koi keemat nahi, aur jis din zarurat padti hai usi din aap utni tezi se bhej nahi sakte.
+
+Jisse sambhalna hai wo hai **Analytics**, jo kai doosri SDKs ke saath default se jud jati hai aur turant
+jama karna shuru kar deti hai. Uske natije hain jinhe aapko virasat mein lene ke bajaye soch-samajhkar
+tay karna chahiye: privacy policy ki zimmedari, Play ki Data Safety wali ghoshna jo aapke sach mein jama
+kiye se mel khani chahiye, aur jahan lagu ho wahan GDPR ki sehmati. User ke manne tak
+`setAnalyticsCollectionEnabled(false)` imandaar default hai, aur Play par data jama karna galat batana
+asli asweekriti ki wajah hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli build waqt nahi, chalte waqt tootti hai">
+**Kisi ek Firebase library ka version baandhna.** BoM theek usi bemel ko rokne ke liye hai.
+
+**`google-services.json` ko raaz manna.** Wo APK mein jati hai; uski jagah rules aur key sambhaliye.
+
+**Dev aur prod ke liye ek project.** Test wala data asli database mein utarta hai.
+
+**Pehli rahasyamay crash ke baad Crashlytics jodna.** Wo sirf apne lagne ke baad wali crashes dekhta hai.
+
+**Analytics ka jama karna virasat mein lena.** Use Play par bataiye, aur jahan zaruri ho wahan sehmati
+lijiye.
+</Pitfall>
+
+## Abhyaas
+
+1. BoM ke saath kisi ek Firebase library ko purane version par baandhiye aur chalte waqt ki nakami
+   dhoondhiye.
+2. Alag config ki files ke saath dev aur prod wale flavours banaiye aur pakka kijiye ki dono saath lagte
+   hain.
+3. Apni hi release APK se `google-services.json` ki values nikaliye.
+4. Firestore ke rules kholiye aur dekhiye ki wo ab bhi test wali haalat mein to nahi hain.
+5. Apni API ki key ko package aur hastakshar wale certificate se baandhiye, phir use `curl` se aazmaiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| BoM | Ek version; har Firebase library usi ke peeche |
+| `platform(...)` | Versions batata hai, library jodta nahi |
+| Ek library baandhna | Wahi bemel dobara bana deta hai jise BoM rokta hai |
+| `google-services.json` | Build ka input, aur raaz nahi |
+| Asli hifazat | Security rules, key ki pabandiyan, App Check |
+| Service account wali JSON | Asli raaz; sirf server ki taraf |
+| Do projects | Dev aur prod, har flavour ki apni config ke saath |
+| `applicationIdSuffix` | Ek hi device par dono; push ke tokens aapas mein nahi uljhte |
+| Crashlytics | Zarurat padne se pehle jodiye |
+| Analytics | Use bataiye, aur jahan zaruri ho wahan sehmati lijiye |
+
+<Interview title="Ek sawal, jo cheez aur khatre ko alag karta hai">
+"Kya `google-services.json` version control mein commit honi chahiye?"
+
+Lagbhag har maamle mein haan. Wo build ka input hai jise `google-services` wala plugin resources mein
+badal deta hai, aur uska saaman har APK ke andar jata hai — to koi bhi use kisi chhape hue build se ek
+minute mein nikal sakta hai. Use gitignore karna naye logon ke judne aur CI ko mushkil banata hai aur
+bachata kuch nahi.
+
+Jis khatre se use aksar uljhaya jata hai wo asli hai, par wo kahin aur rehta hai: ki Firestore ke
+security rules sach mein padhna-likhna seemit karte hain ya nahi, kyunki test wali haalat mein chhode
+gaye rules us file mein padi project ki id ko hi sab kuch padhne ke liye kaafi bana dete hain; ki API ki
+key package ke naam aur hastakshar wale certificate se bandhi hai ya nahi; aur ki App Check chalu hai ya
+nahi taki jo requests asli app se nahi aayin wo thukra di jayein. Jo file sach mein kabhi commit nahi
+honi chahiye wo service account wali JSON hai — usmein niji key hoti hai aur wo server ki jagah hai, app
+mein kabhi nahi.
+</Interview>

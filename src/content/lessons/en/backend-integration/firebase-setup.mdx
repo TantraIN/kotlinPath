@@ -1,0 +1,158 @@
+---
+title: Firebase setup and the BoM
+description: Firebase is a dozen independent libraries that must agree on versions. The BoM is how they agree, and `google-services.json` is a config file people treat as a secret when it is not.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firebase's SDKs share internal code and break in confusing ways when their versions disagree. The
+**BoM** exists so you name one version and every Firebase library follows it — which is why you list
+Firebase dependencies without version numbers.
+</KeyIdea>
+
+## The setup
+
+```kotlin title="app/build.gradle.kts" numbered
+plugins {
+    id("com.google.gms.google-services")
+}
+
+dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))   // the only version
+
+    implementation("com.google.firebase:firebase-auth")                   // no versions
+    implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-analytics")
+}
+```
+
+`platform(...)` is what makes the BoM work: it declares a set of compatible versions rather than
+adding a library. Every Firebase dependency after it resolves to whatever that BoM specifies.
+
+Pinning one library's version by hand defeats the point — `firebase-auth:22.1.0` alongside a newer BoM
+gives you exactly the mismatch the BoM exists to prevent, and the failure is usually a
+`NoSuchMethodError` at run time rather than a build error.
+
+The `google-services` plugin reads `google-services.json` at build time and turns it into resources
+the SDKs read at startup. So the file is a build input, not something loaded at run time.
+
+## `google-services.json` is not a secret
+
+It contains your project id, an API key, and the package names you registered. People commonly add it
+to `.gitignore` on instinct, and that is the wrong instinct: it makes onboarding painful and CI harder
+for no security benefit, because the file ships inside every APK anyway.
+
+What actually protects a Firebase project is not the file being hidden:
+
+| Protection | What it does |
+| --- | --- |
+| Security rules | Decide who can read and write each document |
+| API key restrictions | Lock the key to your package and signing certificate |
+| App Check | Attests that requests come from your genuine app |
+
+An unrestricted key with permissive rules is wide open whether or not the file is committed. A
+restricted key with strict rules is safe even though the file is public.
+
+<Quiz
+  question="A team commits `google-services.json`, and a security review flags it as a leaked credential. Is the review right?"
+  options={[
+    "Yes — it contains an API key, so it must be removed from history and rotated",
+    "No. That file ships inside every APK, so it was never secret; what matters is whether Firestore rules restrict access and whether the API key is locked to the package and signing certificate. Removing it from git changes nothing an attacker can do",
+    "Yes, but only if the project uses Firestore rather than Realtime Database"
+  ]}
+  answer={1}
+  explanation="The file's contents are extractable from any published APK in about a minute, so treating it as a secret protects nothing while making local setup and CI harder. The review has identified the right area and the wrong artefact. The questions that matter are whether Firestore security rules actually restrict reads and writes — a rule set left in test mode allows anyone with the project id to read the whole database, and the project id is in that file — whether the API key is restricted to your package name and signing certificate in the Google Cloud console, and whether App Check is enabled so requests from a script are rejected. A genuinely leaked Firebase credential looks different: a service account JSON with a private key, which is a server-side file that must never reach the app at all."
+/>
+
+## Environments
+
+One Firebase project for development and production is the most common setup mistake, because test
+data and real user data end up in the same database. Use two projects and two config files:
+
+```kotlin title="Flavours" numbered
+android {
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev")  { applicationIdSuffix = ".dev" }
+        create("prod") { }
+    }
+}
+```
+
+```text title="Layout" numbered
+app/src/dev/google-services.json     <- the dev Firebase project
+app/src/prod/google-services.json    <- the production one
+```
+
+The plugin picks the file matching the flavour. The `applicationIdSuffix` matters as much: it lets both
+builds sit on one device, and it means a dev build cannot accidentally register for production push
+notifications.
+
+<Detail summary="What to add now, and what to wait on">
+Two SDKs are worth adding on day one, before you need them.
+
+**Crashlytics**, because it only reports crashes that happen after it is installed. Adding it when you
+first see a crash report you cannot reproduce is a month too late.
+
+**Remote Config**, because it is the mechanism for turning a feature off without a release. It costs
+nothing until you use it, and the day you need it is the day you cannot ship fast enough.
+
+What to be careful with is **Analytics**, which is added by default with several other SDKs and starts
+collecting immediately. That has consequences you should decide deliberately rather than inherit: a
+privacy policy obligation, a Play Data Safety declaration that must match what you actually collect,
+and GDPR consent where it applies. `setAnalyticsCollectionEnabled(false)` until the user agrees is the
+honest default, and misdeclaring data collection on Play is a real rejection reason.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first breaks at run time rather than build time">
+**Pinning one Firebase library's version.** The BoM exists to prevent exactly that mismatch.
+
+**Treating `google-services.json` as a secret.** It ships in the APK; secure the rules and the key
+instead.
+
+**One project for dev and prod.** Test data lands in the real database.
+
+**Adding Crashlytics after the first mystery crash.** It only sees crashes after it is installed.
+
+**Inheriting Analytics collection.** Declare it on Play, and get consent where it is required.
+</Pitfall>
+
+## Practice
+
+1. Pin one Firebase library to an old version alongside the BoM and find the run-time failure.
+2. Set up dev and prod flavours with separate config files and confirm both install together.
+3. Extract `google-services.json` values from your own release APK.
+4. Open Firestore rules and check whether they are still in test mode.
+5. Restrict your API key to the package and signing certificate, then try it from `curl`.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| BoM | One version; every Firebase library follows it |
+| `platform(...)` | Declares versions, does not add a library |
+| Pinning one library | Recreates the mismatch the BoM prevents |
+| `google-services.json` | A build input, and not a secret |
+| Real protection | Security rules, key restrictions, App Check |
+| Service account JSON | The actual secret; server-side only |
+| Two projects | Dev and prod, with per-flavour config files |
+| `applicationIdSuffix` | Both builds on one device; no crossed push tokens |
+| Crashlytics | Add it before you need it |
+| Analytics | Declare it, and get consent where required |
+
+<Interview title="A question that separates the artefact from the risk">
+"Should `google-services.json` be committed to version control?"
+
+Yes, in almost every case. It is a build input that the `google-services` plugin turns into resources,
+and its contents ship inside every APK — so anyone can extract them from a published build in a
+minute. Gitignoring it makes onboarding and CI harder and protects nothing.
+
+The risk it is often confused with is real, though, and lives elsewhere: whether Firestore security
+rules actually restrict reads and writes, because rules left in test mode make the project id in that
+file enough to read everything; whether the API key is restricted to the package name and signing
+certificate; and whether App Check is on so requests that did not come from the real app are rejected.
+The file that genuinely must never be committed is a service account JSON — that has a private key and
+belongs on a server, never in the app.
+</Interview>
