@@ -1,0 +1,199 @@
+---
+title: Adaptive layouts aur View interop
+description: Do dikkatein, ek hi shakal — Compose ko un window naapon ke saath screen baantni padti hai jo uske haath mein nahi, aur us view system ke saath bhi jise wo ek raat mein nahi badal sakta.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Layout ke faisle us **window ke hain jo abhi aapki app ke paas hai**, us device ke nahi jis par wo
+chal rahi hai. Aur jahan Compose view system se milta hai, wahan jis taraf wo cheez bani hai usi ki
+uski umar bhi hai — interop ke saare bugs isi ek baat ke galat hone se bante hain.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Wrong.kt"
+val isTablet = LocalConfiguration.current.screenWidthDp > 600      // galat sawal
+```
+
+Ye line split screen mein chal rahe tablet par galat hai, sapaat khule kisi mudne wale phone par
+galat hai, kisi ke naap badle hue desktop window par galat hai, aur free-form window mein galat hai.
+Ye sab aapke paas kitni jagah hai ye badalte hain, device badle bina.
+
+```kotlin title="Right.kt" numbered
+val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+
+when (windowSizeClass.windowWidthSizeClass) {
+    WindowWidthSizeClass.COMPACT -> OrderList(onOpen = ::openDetail)
+    else -> Row {
+        OrderList(Modifier.weight(1f), onOpen = ::select)
+        OrderDetail(Modifier.weight(2f), selected)
+    }
+}
+```
+
+## Log iski jagah jo sawal puchte hain
+
+<Quiz
+  question="Aapki app do hisson wala layout dikhane ke liye `screenWidthDp > 600` dekhti hai. Kisi tablet par user batata hai ki use ek hi hissa dikh raha hai. Ho kya raha hai?"
+  options={[
+    "`screenWidthDp` pixels mein hai, dp mein nahi, to had galat baithi hai",
+    "App split screen mein hai ya naap badle hue kisi window mein, to device chauda hone par bhi uski window sankri hai",
+    "Tablets landscape mein height ko hi width batate hain",
+  ]}
+  answer={1}
+  explanation="Configuration us window ke baare mein batata hai jo aapki app ko mili hai, aur aaj ke device par wo aksar poori screen hoti hi nahi — split screen, naap badla ja sakne wala koi window, aadha khula koi mudne wala phone, ya desktop par chalti app. To aankda jhooth nahi bol raha; sawal galat tha. Window size classes isiliye hain ki aap device ka andaza lagane ke bajaye upalabdh jagah ke baare mein teen mote khanon mein puchein, aur mota hona hi maksad hai: jin teen hadon ko aap theek se sambhalte hain wo un barah pakki chaudaiyon se behtar hain jinhe aap alag-alag tarah se sambhalte hain."
+/>
+
+| Width class | Mote taur par | Aam layout |
+| --- | --- | --- |
+| Compact | 600dp se kam | Ek hissa, neeche navigation |
+| Medium | 600–840dp | List aur detail, ya navigation rail |
+| Expanded | 840dp se upar | Agal-bagal do hisse, hamesha khula drawer |
+
+<Tip>
+Foldable aur naap badle ja sakne wale emulator profiles par parkhiye, aur split screen chalu karke
+bhi. Jo layout sirf ek phone par poori screen mein chala hai wo un haalaton mein se kisi mein nahi
+parkha gaya jinke liye size classes hain hi.
+</Tip>
+
+## Compose ke andar koi `View` rakhna
+
+```kotlin title="Interop.kt" numbered
+AndroidView(
+    factory = { context ->
+        MapView(context).apply { onCreate(null) }    // ek baar bulaya jata hai
+    },
+    update = { mapView ->
+        mapView.setMarker(location)                  // har recomposition par
+    },
+    onRelease = { mapView ->
+        mapView.onDestroy()                          // composition se nikalte waqt
+    },
+    modifier = Modifier.fillMaxSize(),
+)
+```
+
+Teen khane, aur har ek ka theek ek kaam. `factory` view ko ek baar banata hai. `update` tab chalta
+hai jab uski padhi hui state badle. `onRelease` safai karta hai.
+
+<Warning>
+View ko `factory` ke alawa kahin aur banana — jaise composable ki body mein — har recomposition par
+ek nai bana deta hai, aur purani leak hoti jati hain. Jis view ka apna lifecycle hai, jaise
+`MapView` ya `WebView`, use aas-paas ke lifecycle ki khabar bhi deni padti hai, warna wo peeche
+chalta hi rahega.
+</Warning>
+
+```kotlin title="Binding.kt"
+AndroidViewBinding(LegacyOrderCardBinding::inflate) {
+    title.text = order.title
+}
+```
+
+Jab jo cheez andar rakhni hai wo pehle se maujood koi XML layout ho, to chhota raasta
+`AndroidViewBinding` hai — generated binding hi receiver ban jata hai, to body theek usi fragment
+wale code jaisi padhi jati hai jisse aap nikal rahe hain.
+
+## View system ke andar Compose rakhna
+
+```xml title="fragment_orders.xml"
+<androidx.compose.ui.platform.ComposeView
+    android:id="@+id/compose_view"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content" />
+```
+
+```kotlin title="Fragment.kt" numbered
+binding.composeView.apply {
+    setViewCompositionStrategy(
+        ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
+    )
+    setContent {
+        AppTheme { OrderList(orders) }
+    }
+}
+```
+
+<Detail summary="Wo composition strategy wali line optional kyun nahi hai">
+Default se `ComposeView` apni composition tab khatam karta hai jab *window* alag hoti hai. Kisi
+fragment ki view window ke rehte hue bhi khatam ho sakti hai, to composition apni hi view se zyada
+ji jati hai, state dekhti rehti hai, aur khatam ho chuke fragment ko pakde rehti hai — bilkul wahi
+leak jo view system ka jana-pehchana fragment view leak hai.
+
+`DisposeOnViewTreeLifecycleDestroyed` composition ko iske bajaye view tree ke lifecycle owner se
+baandh deta hai, jo fragments ke liye aur `RecyclerView` ki row ke andar wale `ComposeView` ke liye
+sahi hai. Window wala default sirf us `ComposeView` ke liye theek hai jo apni activity jitna jeeta
+hai.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Dono taraf asli cheezein hain" meta="koi nakal nahi">
+    `AndroidView` layout wale ped mein ek asli `View` rakhta hai, aur `ComposeView` ek asli `View`
+    hai jismein composition rehti hai. Koi bhi taraf bahana nahi kar rahi.
+  </TimelineItem>
+  <TimelineItem title="Measurement sarhad paar karti hai" meta="keemat ke saath">
+    Compose ke andar ki `View` view system ke niyamon se measure hoti hai, to ek-baar-measure wali
+    guarantee uske andar tak nahi jati. Andar rakhi views uthli rakhiye.
+  </TimelineItem>
+  <TimelineItem title="Theme aur locals apne aap paar nahi jate" meta="aap dete hain">
+    `ComposeView` ek nai composition shuru karta hai, to `MaterialTheme` aur koi bhi
+    `CompositionLocal` uske `setContent` ke andar dena padta hai.
+  </TimelineItem>
+  <TimelineItem title="Window ka naap window se aata hai" meta="display se nahi">
+    `currentWindowAdaptiveInfo` window ki naap-jokh batata hai, isiliye split screen mein wo sahi
+    rehta hai jahan display ki naap-jokh nahi.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo production tak bachi reh jati hain">
+**Device ke prakar par faisla.** Window ke baare mein puchiye, size classes mein, tablets ke baare
+mein nahi.
+
+**`factory` ke bahar `View` banana.** Har recomposition par ek nai, aur purani leak.
+
+**Fragment mein `ViewCompositionStrategy` na dena.** Composition fragment ki view se zyada ji jati
+hai.
+
+**`setContent` ke andar theme bhool jana.** Andar rakha Compose Material ke defaults se banta hai
+aur aapki apni screen ke andar kisi aur app jaisa dikhta hai.
+</Pitfall>
+
+## Practice
+
+1. Kisi `screenWidthDp` wale check ki jagah `currentWindowAdaptiveInfo()` rakhiye aur split screen
+   mein aazmaiye.
+2. Aisi list-detail screen banaiye jo Medium par do hisson mein bant jaye, aur tablet emulator
+   ghumaiye.
+3. `AndroidView` se koi `WebView` andar rakhiye, aage navigate kijiye, aur dekhiye ki uska load hona
+   rukta hai.
+4. View banana `factory` se hatakar body mein le jaiye aur profiler mein leak dekhiye.
+5. Fragment mein bina composition strategy ke `ComposeView` rakhiye, bees baar aage-peeche navigate
+   kijiye, aur heap dekhiye. Phir strategy jodiye.
+6. Us `setContent` ko apni `AppTheme` mein lapetiye aur bina lapete roop se milaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Window size class | Compact, Medium, Expanded — window ki baat, device ki nahi |
+| `currentWindowAdaptiveInfo` | Window ki naap-jokh batata hai, split screen mein sahi |
+| Device ke prakar wala check | Split screen, foldables aur desktop par galat |
+| `AndroidView` | `factory` ek baar, badalne par `update`, safai ke liye `onRelease` |
+| `AndroidViewBinding` | Pehle se maujood XML layout ke liye wahi |
+| `ComposeView` | View system ke andar Compose |
+| `ViewCompositionStrategy` | Fragment ya `RecyclerView` ki row mein zaruri |
+| Sarhad paar theme | `setContent` ke andar use dobara dijiye |
+
+<Interview title="Wo sawal jo devices ke ek naap ke na rehne ke baad aam ho gaya">
+"Do hisson wala layout kab dikhana hai, ye kaise tay karenge?"
+
+Window size class se, device se nahi — Compact, Medium ya Expanded us jagah ke baare mein batata hai
+jo app ke paas asal mein hai, aur split screen mein, mudne wale phone par, aur naap badle ja sakne
+wale desktop window mein yahi badalti hai. Ye jodna ki mote khane hi maksad hain, dikhata hai ki
+aapne ise ship kiya hai: theek se sambhali gayi teen hadein un barah pakki chaudaiyon se
+bharosemand hain jinhe aap sach mein parakh hi nahi sakte.
+</Interview>

@@ -1,0 +1,193 @@
+---
+title: Adaptive layouts and View interop
+description: Two problems with one shape — Compose has to share the screen with window sizes it does not control, and with a view system it cannot replace overnight.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Layout decisions belong to the **window your app has right now**, not to the device it is running
+on. And where Compose meets the view system, whichever side owns the object also owns its lifetime
+— getting that wrong is the whole category of interop bugs.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Wrong.kt"
+val isTablet = LocalConfiguration.current.screenWidthDp > 600      // wrong question
+```
+
+That line is wrong on a tablet in split screen, on a folding phone opened flat, on a desktop
+window somebody resized, and in a free-form window. All of those change how much room you have
+without changing the device.
+
+```kotlin title="Right.kt" numbered
+val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+
+when (windowSizeClass.windowWidthSizeClass) {
+    WindowWidthSizeClass.COMPACT -> OrderList(onOpen = ::openDetail)
+    else -> Row {
+        OrderList(Modifier.weight(1f), onOpen = ::select)
+        OrderDetail(Modifier.weight(2f), selected)
+    }
+}
+```
+
+## The question people ask instead
+
+<Quiz
+  question="Your app checks `screenWidthDp > 600` to show a two-pane layout. A user on a tablet reports it shows one pane. What is happening?"
+  options={[
+    "`screenWidthDp` is in pixels, not dp, so the threshold is wrong",
+    "The app is in split-screen or a resized window, so its window is narrow even though the device is wide",
+    "Tablets report the height as the width in landscape",
+  ]}
+  answer={1}
+  explanation="The configuration describes the window your app was given, and on a modern device that is frequently not the whole screen — split screen, a resizable window, a folding phone half-opened, or an app running on a desktop. So the number is not lying; the question was wrong. Window size classes exist to make you ask about available space in three coarse buckets rather than guessing at a device, and coarse is the point: three breakpoints you handle properly beat a dozen exact widths you handle inconsistently."
+/>
+
+| Width class | Roughly | Typical layout |
+| --- | --- | --- |
+| Compact | Under 600dp | One pane, bottom navigation |
+| Medium | 600–840dp | List and detail, or a navigation rail |
+| Expanded | Over 840dp | Two panes side by side, permanent drawer |
+
+<Tip>
+Test with the foldable and resizable emulator profiles, and with split screen turned on. A layout
+that only ever ran full-screen on one phone has not been tested against any of the cases the size
+classes exist for.
+</Tip>
+
+## Putting a `View` inside Compose
+
+```kotlin title="Interop.kt" numbered
+AndroidView(
+    factory = { context ->
+        MapView(context).apply { onCreate(null) }    // called once
+    },
+    update = { mapView ->
+        mapView.setMarker(location)                  // called on every recomposition
+    },
+    onRelease = { mapView ->
+        mapView.onDestroy()                          // called when it leaves the composition
+    },
+    modifier = Modifier.fillMaxSize(),
+)
+```
+
+Three slots, and each has exactly one job. `factory` constructs the view once. `update` runs
+whenever the state it reads changes. `onRelease` cleans up.
+
+<Warning>
+Constructing the view anywhere other than `factory` — for example in the composable body — creates
+a new one on every recomposition, and the old ones leak. If the view has its own lifecycle, such as
+`MapView` or `WebView`, it must also be told about the surrounding lifecycle or it will keep
+working in the background.
+</Warning>
+
+```kotlin title="Binding.kt"
+AndroidViewBinding(LegacyOrderCardBinding::inflate) {
+    title.text = order.title
+}
+```
+
+`AndroidViewBinding` is the shortcut when the thing you are embedding is an existing XML layout —
+the generated binding is the receiver, so the body reads like the fragment code you are migrating
+from.
+
+## Putting Compose inside a `View`
+
+```xml title="fragment_orders.xml"
+<androidx.compose.ui.platform.ComposeView
+    android:id="@+id/compose_view"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content" />
+```
+
+```kotlin title="Fragment.kt" numbered
+binding.composeView.apply {
+    setViewCompositionStrategy(
+        ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
+    )
+    setContent {
+        AppTheme { OrderList(orders) }
+    }
+}
+```
+
+<Detail summary="Why the composition strategy line is not optional">
+By default a `ComposeView` disposes its composition when the *window* detaches. A fragment's view
+can be destroyed while the window stays, so the composition survives its own view, keeps observing
+state, and holds on to a destroyed fragment — a leak that looks exactly like the classic fragment
+view leak from the view system.
+
+`DisposeOnViewTreeLifecycleDestroyed` ties the composition to the view tree's lifecycle owner
+instead, which is correct for fragments and for a `ComposeView` inside a `RecyclerView` row. The
+window-based default is only right for a `ComposeView` that lives as long as its activity.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Both directions are real objects" meta="no emulation">
+    `AndroidView` puts an actual `View` into the layout node tree, and `ComposeView` is an actual
+    `View` hosting a composition. Neither side is pretending.
+  </TimelineItem>
+  <TimelineItem title="Measurement crosses the boundary" meta="with a cost">
+    A `View` inside Compose measures with the view system's rules, so the single-measurement
+    guarantee does not extend into it. Keep embedded views shallow.
+  </TimelineItem>
+  <TimelineItem title="Theme and locals do not cross by default" meta="you provide them">
+    A `ComposeView` starts a new composition, so `MaterialTheme` and any `CompositionLocal` must be
+    provided inside its `setContent`.
+  </TimelineItem>
+  <TimelineItem title="Window size comes from the window" meta="not the display">
+    `currentWindowAdaptiveInfo` reports the window's metrics, which is why it is correct in split
+    screen where the display metrics are not.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four that survive into production">
+**Branching on device type.** Ask about the window, in size classes, not about tablets.
+
+**Building the `View` outside `factory`.** A new one per recomposition, and the old ones leak.
+
+**No `ViewCompositionStrategy` in a fragment.** The composition outlives the fragment's view.
+
+**Forgetting the theme inside `setContent`.** The embedded Compose renders with Material defaults
+and looks like a different app inside your own screen.
+</Pitfall>
+
+## Practice
+
+1. Replace a `screenWidthDp` check with `currentWindowAdaptiveInfo()` and test it in split screen.
+2. Build a list-detail screen that becomes two panes at Medium, and rotate a tablet emulator.
+3. Embed a `WebView` with `AndroidView`, navigate away, and confirm it stops loading.
+4. Move the view construction out of `factory` into the body and watch the leak in the profiler.
+5. Put a `ComposeView` in a fragment without a composition strategy, navigate back and forth
+   twenty times, and look at the heap. Then add the strategy.
+6. Wrap that `setContent` in your `AppTheme` and compare it with the unwrapped version.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Window size class | Compact, Medium, Expanded — about the window, not the device |
+| `currentWindowAdaptiveInfo` | Reports the window's metrics, correct in split screen |
+| Device-type checks | Wrong in split screen, on foldables and on desktop |
+| `AndroidView` | `factory` once, `update` on change, `onRelease` to clean up |
+| `AndroidViewBinding` | The same for an existing XML layout |
+| `ComposeView` | Compose inside the view system |
+| `ViewCompositionStrategy` | Required in a fragment or a `RecyclerView` row |
+| Theme across the boundary | Provide it again inside `setContent` |
+
+<Interview title="A question that has become standard as devices stopped being one size">
+"How do you decide when to show a two-pane layout?"
+
+From the window size class, not the device — Compact, Medium or Expanded describes the space the
+app actually has, which is what changes in split screen, on a foldable, and in a resizable desktop
+window. The addition that shows you have shipped this is that coarse buckets are the point: three
+breakpoints handled properly are more reliable than a dozen exact widths, because you can actually
+test all three.
+</Interview>
