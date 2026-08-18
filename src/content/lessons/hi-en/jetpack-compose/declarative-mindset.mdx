@@ -1,0 +1,195 @@
+---
+title: Declarative soch
+description: View system mein aap screen ko batate hain ki badalna kaise hai. Compose mein aap batate hain ki kisi ek state par screen hai kya, aur badlaav runtime khud nikal leta hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Composable koi aisi cheez nahi jise aap banakar phir badalte rahein. Wo **is baat ka bayan hai ki
+kisi ek khaas state par screen kaisi dikhti hai** — ek function, jise wo state badalte hi runtime
+dobara bula leta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Ye raha ek badge, jo sirf bina padhe orders par dikhna chahiye, imperative tarike se likha hua:
+
+```kotlin title="Imperative.kt" numbered
+fun bind(order: Order) {
+    binding.title.text = order.title
+    if (order.isUnread) {
+        binding.badge.isVisible = true
+    }
+}
+```
+
+Ye code galat hai, aur wajah wahi hai jo `RecyclerView` mein mili thi: ismein likha hai ki badge
+kab dikhana hai, aur ye kahin nahi likha ki wo kab jana chahiye. Us row mein agli baar jo order
+aayega use ek badge virasat mein mil jayega jo usne maanga hi nahi tha.
+
+Imperative UI ke har bug ki shakal yahi hai. Aapne ek haalat ke liye screen badli aur doosri
+bhool gaye.
+
+## Wahi cheez, hukm dekar nahi, bayan karke
+
+```kotlin title="Declarative.kt" numbered
+@Composable
+fun OrderRow(order: Order) {
+    Row {
+        Text(order.title)
+        if (order.isUnread) {
+            Badge()
+        }
+    }
+}
+```
+
+Badge band karne wali koi shakha hai hi nahi, kyunki band karne ke liye koi badge hai hi nahi.
+Ye function batata hai ki is order ke liye row *hai* kya. `order` badlega to runtime ise dobara
+bulayega aur naya jawab pa lega.
+
+<Note>
+`@Composable` koi aam annotation nahi hai. Ye badal deta hai ki function kya kar sakta hai aur
+use bula kaun sakta hai: sirf koi doosra `@Composable`. Agla poora paath isi par hai ki compiler
+iska karta kya hai.
+</Note>
+
+## Runtime asal mein karta kya hai
+
+<Figure caption="State andar jata hai, ek bayan bahar aata hai, aur runtime use pixel mein badalta hai. Is poori kadi mein kahin koi badli ja sakne wali View cheez nahi hai jise aap pakde rakhein.">
+  <PipelineDiagram
+    title="Compose state ko pixel mein kaise badalta hai"
+    description="State se composition banta hai, jo layout nodes ka ped deta hai; wo layout wale charan mein measure hokar apni jagah paate hain, phir draw wale charan mein bante hain."
+    stages={[
+      { label: "State", sub: "aapka data", accent: "violet" },
+      { label: "Composition", sub: "kya dikhana hai", accent: "sky" },
+      { label: "Layout", sub: "measure, jagah", accent: "amber" },
+      { label: "Drawing", sub: "pixel", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Composition screen batane wale nodes ka ek ped banata hai. State badalne par sirf wahi
+composables dobara chalte hain jo us state ko padhte hain — yahi **recomposition** hai, aur poora
+toolkit isi ko sasta rakhne ke liye bana hai.
+
+## Wo niyam jo sabko pakadta hai
+
+<Quiz
+  question="Aap composable ke bahar `var runs = 0` rakhte hain aur andar `runs++` karte hain, ye dekhne ke liye ki wo kitni baar chalta hai. Aankda bematlab nikalta hai. Kyun?"
+  options={[
+    "Compose function ko cache kar leta hai, to wo sirf ek baar hi chalta hai",
+    "Composables kai baar, kisi bhi kram mein, kisi bhi thread par chal sakte hain, ya bilkul chhode ja sakte hain",
+    "Aankda sahi aane ke liye variable ko `@Volatile` hona chahiye",
+  ]}
+  answer={1}
+  explanation="Runtime composables ko jis order mein chahe bula sakta hai, saath-saath chala sakta hai, jinka input nahi badla unhe chhod sakta hai, aur kisi ek ko ek hi frame mein kai baar chala sakta hai. In niyamon ke beech saade variable mein rakhi ginti bematlab hai. Gehri baat ye hai ki wo likhna hi bug hai: composable apne inputs ka saaf-suthra bayan hona chahiye, apne bahar kisi cheez par asar dale bina. Jo cheez result ke taur par honi hai — logging, network call, koi snackbar dikhana — wo LaunchedEffect jaise side-effect API mein jati hai."
+/>
+
+## Do soch, aamne-saamne
+
+<Compare
+  left={{
+    title: "View system",
+    subtitle: "Aap cheezein pakadte hain aur badalte hain",
+    accent: "amber",
+    points: [
+      "+ Har widget ek cheez hai jis tak pahunchkar use badla ja sakta hai",
+      "- Screen ka apna state hai, aapke data ka apna, aur dono alag ho jate hain",
+      "- Har nai haalat ke saath pichhli ko mitane wali ek shakha aur chahiye",
+      "- Inflation mehnga hai, isliye views recycle karke dobara istemal hoti hain",
+    ],
+  }}
+  right={{
+    title: "Compose",
+    subtitle: "Aap bayan karte hain, runtime farak nikalta hai",
+    accent: "violet",
+    points: [
+      "+ Sach ka ek hi thikana — state — aur uska ek bayan",
+      "+ Else wali shakha bhoolna namumkin hai; shakha hai hi nahi",
+      "+ Recomposition sasta aur bareek rehne ke liye hi bana hai",
+      "- Widget cheezon tak seedhi pahunch chhodni padti hai, jaanbujhkar",
+    ],
+  }}
+/>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Composable kuch lautata nahi" meta="wo chhodta hai">
+    `OrderRow` ka koi return type nahi hai. Composition ke andar use bulane se bante hue ped mein
+    nodes *chhootte* hain, isiliye use sirf koi doosra composable hi bula sakta hai.
+  </TimelineItem>
+  <TimelineItem title="Jagah hi pehchan hai" meta="positional memoization">
+    Runtime values ko is hisab se yaad rakhta hai ki call source mein kahan baithi hai, aapke
+    diye kisi naam se nahi. Isiliye `remember` bina kisi key ke bhi recompositions ke aar-paar
+    value rakh pata hai.
+  </TimelineItem>
+  <TimelineItem title="Ped nodes ka hai, Views ka nahi" meta="koi inflation nahi">
+    Composition halke layout nodes banata hai, `View` cheezein nahi, to na koi XML inflate hota
+    hai aur na recycle karne ko kuch bachta hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="To state ka kya hua">
+State gaya nahi — jagah badal gayi. Jis composable ko recompositions ke aar-paar kuch yaad rakhna
+hai wo runtime se use rakhwata hai:
+
+```kotlin title="Preview.kt"
+var expanded by remember { mutableStateOf(false) }
+```
+
+`mutableStateOf` aisi value banata hai jis par runtime nazar rakhta hai, aur `remember` use
+recompositions ke beech zinda rakhta hai. Composable ke andar use padhna us composable ko usse
+jod deta hai, to use badalne par theek utni hi recomposition tay hoti hai jitni chahiye. Do paath
+baad yahi poora topic hai; abhi itna jaan lijiye ki state ka ek maalik hai aur wo koi widget nahi
+hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo seedhe view system se chali aati hain">
+**Composable ko ek cheez samajhna.** Na koi `OrderRow` instance hai jise rakha jaye, na koi
+reference pakadne ko, na baad mein us par bulane ko koi method. Bas function hai aur wo state jo
+wo padhta hai.
+
+**Function ke andar kaam kar dena.** Network call, logging, database mein likhna — composable ek
+hi frame mein kai baar chal sakta hai, isliye jis cheez ka asar hota hai wo side-effect API se
+hokar jayegi, seedhe body mein kabhi nahi.
+
+**Kram ki ummid rakhna.** Aas-paas ke composables ke chalne ka koi tay kram nahi hai aur wo
+saath-saath bhi chal sakte hain. Jo code is par tika hai ki ek doosre se pehle chalega, wo pehle
+se hi toota hua hai.
+</Pitfall>
+
+## Practice
+
+1. Upar wali imperative `bind` lijiye aur wo saari haalatein likh daliye jo wo bhoolti hai. Phir
+   Compose wala roop likhiye aur shakhayein giniye.
+2. Aisa composable likhiye jo koi label tabhi dikhaye jab koi boolean sahi ho, aur wo boolean kisi
+   button se chalaiye. Gaur kijiye ki label chhupane wala code aapne likha hi nahi.
+3. Composable ke andar ek `println` rakhiye aur dekhiye ki aapke chhedne par wo kitni baar aata
+   hai.
+4. Upar wale quiz ki ginti kyun nahi chal sakti, ye kisi aur ko samjhaiye. Wahi samjhana poori
+   soch ka badalna hai.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Composable | Kisi ek state par UI ka bayan, koi cheez nahi |
+| Chhodta hai | Kuch lautata nahi; composition mein nodes jodta hai |
+| Recomposition | Badle hue state ko padhne wale composables dobara chalana |
+| Safai | Body mein koi side effect nahi — kabhi nahi |
+| Kram | Tay nahi; aas-paas wale saath-saath chal sakte hain |
+| Chhod dena | Input na badla ho to function shayad chale hi nahi |
+| Pehchan | Source mein jagah, aapka chuna koi naam nahi |
+
+<Interview title="Wo sawal jisse har Compose interview shuru hota hai">
+"Declarative UI ka yahan matlab asal mein hai kya?"
+
+Ye ki aap state se screen ke bayan tak ka ek function likhte hain, aur do screens ke beech ka
+badlaav kabhi nahi likhte. Jodne layak line wo nakami hai jo isse hat jati hai: imperative ka
+jana-pehchana bug hai ek shakha jo kuch lagati hai aur uske jod ki koi shakha nahi jo use hataye
+— aur declarative bayan mein wo bug likha hi nahi ja sakta.
+</Interview>

@@ -1,0 +1,189 @@
+---
+title: The declarative mindset
+description: In the view system you tell the screen how to change. In Compose you describe what the screen is for a given state, and the runtime works out the change for you.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A composable is not a thing you build and then mutate. It is a **description of what the screen
+looks like for one particular state** — a function the runtime calls again whenever that state
+changes.
+</KeyIdea>
+
+## Why this matters
+
+Here is a badge that should be visible only for unread orders, written the imperative way:
+
+```kotlin title="Imperative.kt" numbered
+fun bind(order: Order) {
+    binding.title.text = order.title
+    if (order.isUnread) {
+        binding.badge.isVisible = true
+    }
+}
+```
+
+That code is wrong, and the reason is the same one you met in `RecyclerView`: it says what to do
+when the badge should appear and says nothing about when it should go away. The next order to
+land in that row inherits a badge it never asked for.
+
+Every imperative UI bug has this shape. You changed the screen for one case and forgot the other.
+
+## The same thing, described rather than commanded
+
+```kotlin title="Declarative.kt" numbered
+@Composable
+fun OrderRow(order: Order) {
+    Row {
+        Text(order.title)
+        if (order.isUnread) {
+            Badge()
+        }
+    }
+}
+```
+
+There is no branch that turns the badge off, because there is no badge to turn off. The function
+says what a row *is* for this order. When `order` changes, the runtime calls it again and reaches
+the new answer.
+
+<Note>
+`@Composable` is not a normal annotation. It changes what the function can do and who is allowed
+to call it: only another `@Composable`. The next lesson is entirely about what the compiler does
+with it.
+</Note>
+
+## What the runtime actually does
+
+<Figure caption="State goes in, a description comes out, and the runtime turns that into pixels. Nothing in the chain is a mutable View object you hold on to.">
+  <PipelineDiagram
+    title="How Compose turns state into pixels"
+    description="State feeds composition, which produces a tree of layout nodes; those are measured and placed in the layout phase, then drawn in the draw phase."
+    stages={[
+      { label: "State", sub: "your data", accent: "violet" },
+      { label: "Composition", sub: "what to show", accent: "sky" },
+      { label: "Layout", sub: "measure, place", accent: "amber" },
+      { label: "Drawing", sub: "pixels", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Composition builds a tree of nodes describing the screen. When state changes, only the
+composables that read that state run again — this is **recomposition**, and it is the thing the
+whole toolkit is built to make cheap.
+
+## The rule that catches everyone
+
+<Quiz
+  question="You add `var runs = 0` outside a composable and do `runs++` inside it, to see how often it runs. The number is nonsense. Why?"
+  options={[
+    "Compose caches the function, so it only ever runs once",
+    "Composables may run many times, in any order, on any thread, or be skipped entirely",
+    "The variable needs to be `@Volatile` for the count to be accurate",
+  ]}
+  answer={1}
+  explanation="The runtime is free to call composables in whatever order it likes, to run them in parallel, to skip ones whose inputs did not change, and to run one many times per frame. A count kept in a plain variable is meaningless under those rules. The deeper point is that the write itself is the bug: a composable must be a pure description of its inputs, with no effect on anything outside it. Anything that must happen as a consequence — logging, network calls, showing a snackbar — belongs in a side-effect API such as LaunchedEffect."
+/>
+
+## Two mental models, side by side
+
+<Compare
+  left={{
+    title: "View system",
+    subtitle: "You hold objects and change them",
+    accent: "amber",
+    points: [
+      "+ Every widget is an object you can reach and mutate",
+      "- The screen has state, and your data has state, and they drift apart",
+      "- Every new case needs a matching branch to undo the last one",
+      "- Inflation is expensive, so views are recycled and reused",
+    ],
+  }}
+  right={{
+    title: "Compose",
+    subtitle: "You describe, the runtime diffs",
+    accent: "violet",
+    points: [
+      "+ One source of truth — the state — and one description of it",
+      "+ Impossible to forget the else branch; there is no branch",
+      "+ Recomposition is designed to be cheap and fine-grained",
+      "- You give up direct access to widget objects, on purpose",
+    ],
+  }}
+/>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="A composable returns nothing" meta="it emits">
+    `OrderRow` has no return type. Calling it inside a composition *emits* nodes into the tree
+    being built, which is why it can only be called from another composable.
+  </TimelineItem>
+  <TimelineItem title="Position is identity" meta="positional memoization">
+    The runtime remembers values by where the call sits in the source, not by any name you give
+    it. That is how `remember` can hold a value across recompositions without a key.
+  </TimelineItem>
+  <TimelineItem title="The tree is nodes, not Views" meta="no inflation">
+    Composition produces lightweight layout nodes, not `View` objects, so there is no XML to
+    inflate and nothing to recycle.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="So what happened to state?">
+State is not gone — it moved. A composable that needs to remember something across recompositions
+asks the runtime to hold it:
+
+```kotlin title="Preview.kt"
+var expanded by remember { mutableStateOf(false) }
+```
+
+`mutableStateOf` creates a value the runtime watches, and `remember` keeps it alive across
+recompositions. Reading it inside a composable subscribes that composable to it, so changing it
+schedules exactly the recomposition needed. Two lessons from now this is the whole topic; for
+now, know that the state has an owner and it is not a widget.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three that come straight from the view system">
+**Thinking of a composable as an object.** There is no `OrderRow` instance to keep, no reference
+to hold and no method to call on it later. There is only the function and the state it reads.
+
+**Doing work in the function body.** Network calls, logging, database writes — a composable can
+run many times a frame, so anything with an effect must go through a side-effect API, never in
+the body.
+
+**Expecting an order.** Sibling composables have no guaranteed execution order and may run in
+parallel. Code that depends on one running before another is already broken.
+</Pitfall>
+
+## Practice
+
+1. Take the imperative `bind` above and write down every case it forgets. Then write the Compose
+   version and count the branches.
+2. Write a composable that shows a label only when a boolean is true, and drive that boolean from
+   a button. Notice that you never wrote code to hide the label.
+3. Add a `println` inside a composable and watch how often it appears while you interact.
+4. Explain to somebody else why the count in the quiz above cannot work. That explanation is the
+   whole mental shift.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Composable | A description of the UI for one state, not an object |
+| Emits | It returns nothing; it adds nodes to the composition |
+| Recomposition | Re-running the composables that read changed state |
+| Purity | No side effects in the body — ever |
+| Order | Not guaranteed; siblings may run in parallel |
+| Skipping | Unchanged inputs mean the function may not run at all |
+| Identity | Position in the source, not a name you chose |
+
+<Interview title="The question that opens every Compose interview">
+"What does declarative UI actually mean here?"
+
+That you write a function from state to a description of the screen, and never write the
+transition between two screens. The line worth adding is the failure it removes: the classic
+imperative bug is a branch that sets something and no matching branch that unsets it, and in a
+declarative description that bug cannot be expressed.
+</Interview>

@@ -1,0 +1,189 @@
+---
+title: Declarative सोच
+description: View system में आप screen को बताते हैं कि बदलना कैसे है। Compose में आप बताते हैं कि किसी एक state पर screen है क्या, और बदलाव runtime खुद निकाल लेता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Composable कोई ऐसी चीज नहीं जिसे आप बनाकर फिर बदलते रहें। वह **इस बात का बयान है कि किसी एक
+खास state पर screen कैसी दिखती है** — एक function, जिसे वह state बदलते ही runtime दोबारा बुला
+लेता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+यह रहा एक badge, जो सिर्फ बिना पढ़े orders पर दिखना चाहिए, imperative तरीके से लिखा हुआ:
+
+```kotlin title="Imperative.kt" numbered
+fun bind(order: Order) {
+    binding.title.text = order.title
+    if (order.isUnread) {
+        binding.badge.isVisible = true
+    }
+}
+```
+
+यह code गलत है, और वजह वही है जो `RecyclerView` में मिली थी: इसमें लिखा है कि badge कब दिखाना
+है, और यह कहीं नहीं लिखा कि वह कब जाना चाहिए। उस row में अगली बार जो order आएगा उसे एक badge
+विरासत में मिल जाएगा जो उसने माँगा ही नहीं था।
+
+Imperative UI के हर bug की शक्ल यही है। आपने एक हालत के लिए screen बदली और दूसरी भूल गए।
+
+## वही चीज, हुक्म देकर नहीं, बयान करके
+
+```kotlin title="Declarative.kt" numbered
+@Composable
+fun OrderRow(order: Order) {
+    Row {
+        Text(order.title)
+        if (order.isUnread) {
+            Badge()
+        }
+    }
+}
+```
+
+Badge बंद करने वाली कोई शाखा है ही नहीं, क्योंकि बंद करने के लिए कोई badge है ही नहीं। यह
+function बताता है कि इस order के लिए row *है* क्या। `order` बदलेगा तो runtime इसे दोबारा बुलाएगा
+और नया जवाब पा लेगा।
+
+<Note>
+`@Composable` कोई आम annotation नहीं है। यह बदल देता है कि function क्या कर सकता है और उसे बुला
+कौन सकता है: सिर्फ कोई दूसरा `@Composable`। अगला पूरा पाठ इसी पर है कि compiler इसका करता क्या
+है।
+</Note>
+
+## Runtime असल में करता क्या है
+
+<Figure caption="State अंदर जाता है, एक बयान बाहर आता है, और runtime उसे pixel में बदलता है। इस पूरी कड़ी में कहीं कोई बदली जा सकने वाली View चीज नहीं है जिसे आप पकड़े रखें।">
+  <PipelineDiagram
+    title="Compose state को pixel में कैसे बदलता है"
+    description="State से composition बनता है, जो layout nodes का पेड़ देता है; वे layout वाले चरण में measure होकर अपनी जगह पाते हैं, फिर draw वाले चरण में बनते हैं।"
+    stages={[
+      { label: "State", sub: "आपका data", accent: "violet" },
+      { label: "Composition", sub: "क्या दिखाना है", accent: "sky" },
+      { label: "Layout", sub: "measure, जगह", accent: "amber" },
+      { label: "Drawing", sub: "pixel", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Composition screen बताने वाले nodes का एक पेड़ बनाता है। State बदलने पर सिर्फ वही composables
+दोबारा चलते हैं जो उस state को पढ़ते हैं — यही **recomposition** है, और पूरा toolkit इसी को
+सस्ता रखने के लिए बना है।
+
+## वह नियम जो सबको पकड़ता है
+
+<Quiz
+  question="आप composable के बाहर `var runs = 0` रखते हैं और अंदर `runs++` करते हैं, यह देखने के लिए कि वह कितनी बार चलता है। आँकड़ा बेमतलब निकलता है। क्यों?"
+  options={[
+    "Compose function को cache कर लेता है, तो वह सिर्फ एक बार ही चलता है",
+    "Composables कई बार, किसी भी क्रम में, किसी भी thread पर चल सकते हैं, या बिलकुल छोड़े जा सकते हैं",
+    "आँकड़ा सही आने के लिए variable को `@Volatile` होना चाहिए",
+  ]}
+  answer={1}
+  explanation="Runtime composables को जिस क्रम में चाहे बुला सकता है, साथ-साथ चला सकता है, जिनका input नहीं बदला उन्हें छोड़ सकता है, और किसी एक को एक ही frame में कई बार चला सकता है। इन नियमों के बीच सादे variable में रखी गिनती बेमतलब है। गहरी बात यह है कि वह लिखना ही bug है: composable अपने inputs का साफ-सुथरा बयान होना चाहिए, अपने बाहर किसी चीज पर असर डाले बिना। जो चीज नतीजे के तौर पर होनी है — logging, network call, कोई snackbar दिखाना — वह LaunchedEffect जैसे side-effect API में जाती है।"
+/>
+
+## दो सोच, आमने-सामने
+
+<Compare
+  left={{
+    title: "View system",
+    subtitle: "आप चीजें पकड़ते हैं और बदलते हैं",
+    accent: "amber",
+    points: [
+      "+ हर widget एक चीज है जिस तक पहुँचकर उसे बदला जा सकता है",
+      "- Screen का अपना state है, आपके data का अपना, और दोनों अलग हो जाते हैं",
+      "- हर नई हालत के साथ पिछली को मिटाने वाली एक शाखा और चाहिए",
+      "- Inflation महँगा है, इसलिए views recycle करके दोबारा इस्तेमाल होती हैं",
+    ],
+  }}
+  right={{
+    title: "Compose",
+    subtitle: "आप बयान करते हैं, runtime फर्क निकालता है",
+    accent: "violet",
+    points: [
+      "+ सच का एक ही ठिकाना — state — और उसका एक बयान",
+      "+ Else वाली शाखा भूलना नामुमकिन है; शाखा है ही नहीं",
+      "+ Recomposition सस्ता और बारीक रहने के लिए ही बना है",
+      "- Widget चीजों तक सीधी पहुँच छोड़नी पड़ती है, जानबूझकर",
+    ],
+  }}
+/>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="Composable कुछ लौटाता नहीं" meta="वह छोड़ता है">
+    `OrderRow` का कोई return type नहीं है। Composition के अंदर उसे बुलाने से बनते हुए पेड़ में
+    nodes *छूटते* हैं, इसीलिए उसे सिर्फ कोई दूसरा composable ही बुला सकता है।
+  </TimelineItem>
+  <TimelineItem title="जगह ही पहचान है" meta="positional memoization">
+    Runtime values को इस हिसाब से याद रखता है कि call source में कहाँ बैठी है, आपके दिए किसी नाम
+    से नहीं। इसीलिए `remember` बिना किसी key के भी recompositions के आर-पार value रख पाता है।
+  </TimelineItem>
+  <TimelineItem title="पेड़ nodes का है, Views का नहीं" meta="कोई inflation नहीं">
+    Composition हल्के layout nodes बनाता है, `View` चीजें नहीं, तो न कोई XML inflate होता है और
+    न recycle करने को कुछ बचता है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="तो state का क्या हुआ">
+State गया नहीं — जगह बदल गई। जिस composable को recompositions के आर-पार कुछ याद रखना है वह
+runtime से उसे रखवाता है:
+
+```kotlin title="Preview.kt"
+var expanded by remember { mutableStateOf(false) }
+```
+
+`mutableStateOf` ऐसी value बनाता है जिस पर runtime नजर रखता है, और `remember` उसे recompositions
+के बीच जिंदा रखता है। Composable के अंदर उसे पढ़ना उस composable को उससे जोड़ देता है, तो उसे
+बदलने पर ठीक उतनी ही recomposition तय होती है जितनी चाहिए। दो पाठ बाद यही पूरा विषय है; अभी
+इतना जान लीजिए कि state का एक मालिक है और वह कोई widget नहीं है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो सीधे view system से चली आती हैं">
+**Composable को एक चीज समझना।** न कोई `OrderRow` instance है जिसे रखा जाए, न कोई reference
+पकड़ने को, न बाद में उस पर बुलाने को कोई method। बस function है और वह state जो वह पढ़ता है।
+
+**Function के अंदर काम कर देना।** Network call, logging, database में लिखना — composable एक ही
+frame में कई बार चल सकता है, इसलिए जिस चीज का असर होता है वह side-effect API से होकर जाएगी,
+सीधे body में कभी नहीं।
+
+**क्रम की उम्मीद रखना।** आस-पास के composables के चलने का कोई तय क्रम नहीं है और वे साथ-साथ भी
+चल सकते हैं। जो code इस पर टिका है कि एक दूसरे से पहले चलेगा, वह पहले से ही टूटा हुआ है।
+</Pitfall>
+
+## अभ्यास
+
+1. ऊपर वाली imperative `bind` लीजिए और वे सारी हालतें लिख डालिए जो वह भूलती है। फिर Compose
+   वाला रूप लिखिए और शाखाएँ गिनिए।
+2. ऐसा composable लिखिए जो कोई label तभी दिखाए जब कोई boolean सही हो, और वह boolean किसी button
+   से चलाइए। गौर कीजिए कि label छुपाने वाला code आपने लिखा ही नहीं।
+3. Composable के अंदर एक `println` रखिए और देखिए कि आपके छेड़ने पर वह कितनी बार आता है।
+4. ऊपर वाले quiz की गिनती क्यों नहीं चल सकती, यह किसी और को समझाइए। वही समझाना पूरी सोच का
+   बदलना है।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Composable | किसी एक state पर UI का बयान, कोई चीज नहीं |
+| छोड़ता है | कुछ लौटाता नहीं; composition में nodes जोड़ता है |
+| Recomposition | बदले हुए state को पढ़ने वाले composables दोबारा चलाना |
+| सफाई | Body में कोई side effect नहीं — कभी नहीं |
+| क्रम | तय नहीं; आस-पास वाले साथ-साथ चल सकते हैं |
+| छोड़ देना | Input न बदला हो तो function शायद चले ही नहीं |
+| पहचान | Source में जगह, आपका चुना कोई नाम नहीं |
+
+<Interview title="वह सवाल जिससे हर Compose interview शुरू होता है">
+"Declarative UI का यहाँ मतलब असल में है क्या?"
+
+यह कि आप state से screen के बयान तक का एक function लिखते हैं, और दो screens के बीच का बदलाव
+कभी नहीं लिखते। जोड़ने लायक line वह नाकामी है जो इससे हट जाती है: imperative का जाना-पहचाना bug
+है एक शाखा जो कुछ लगाती है और उसके जोड़ की कोई शाखा नहीं जो उसे हटाए — और declarative बयान में
+वह bug लिखा ही नहीं जा सकता।
+</Interview>
