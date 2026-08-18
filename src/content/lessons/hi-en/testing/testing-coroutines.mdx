@@ -1,0 +1,192 @@
+---
+title: Turbine ke saath coroutines aur Flow ki padtal
+description: Jo test kisi coroutine ke intezar mein sota hai wo dheemi machine par gair-bharosemand hoga. `runTest` intezar ki jagah aapke akhtiyaar wali ek aabhasi ghadi rakh deta hai, aur wahi ek badlaav async code ko jaanchne layak banata hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`runTest` aapko ek **aabhasi ghadi** deta hai. Uske andar `delay(5_000)` turant poora ho jata hai,
+kyunki test ka scheduler wo samay kharch karne ke bajaye laangh jata hai. Yahan ki har tarkeeb isi se
+nikalti hai: aap intezar kabhi nahi karte, aap ghadi aage badhate ho.
+</KeyIdea>
+
+## Sona nakaam kyun hota hai
+
+```kotlin title="Flaky.kt" numbered
+@Test
+fun `loads orders`() {
+    viewModel.load()
+    Thread.sleep(500)                        // ummid hai poora ho gaya
+    assertEquals(3, viewModel.state.value.orders.size)
+}
+```
+
+Ye aapki machine par pass hota hai aur bojh mein dabe CI par nakaam, phir koi dobara chalaye to pass.
+Usse bura, wo banawat se hi dheema hai — har test par paanch sau milliseconds yani sau tests par ek
+minute, kuch na karte hue.
+
+```kotlin title="Deterministic.kt" numbered
+@Test
+fun `loads orders`() = runTest {
+    viewModel.load()
+    advanceUntilIdle()                       // scheduler ke paas jo hai sab chalaiye
+    assertEquals(3, viewModel.state.value.orders.size)
+}
+```
+
+`advanceUntilIdle` har baaki pade coroutine ko tab tak chalata hai jab tak kuch bache nahi, turant aur
+har baar ek jaisa. Wahi dawa, koi ghadi ka samay nahi, aur wo gair-bharosemand ho hi nahi sakta.
+
+| Aapko chahiye | Lijiye |
+| --- | --- |
+| Sab kuch poora ho | `advanceUntilIdle()` |
+| Tay aabhasi samay jitna | `advanceTimeBy(1_000)` |
+| Sirf jo pehle se line mein hai | `runCurrent()` |
+| Aabhasi samay janna | `currentTime` |
+
+## Dispatcher wala niyam
+
+`runTest` sirf un coroutines par akhtiyaar rakhta hai jo **uska** dispatcher lete hain. Jo `ViewModel`
+`Dispatchers.IO` jad deta hai wo asli thread pool par chal padta hai, aur test ki ghadi ki wahan koi
+nahi sunta — to dawa kaam hone se pehle chal jata hai.
+
+```kotlin title="MainDispatcherRule.kt" numbered
+class MainDispatcherRule(
+    private val dispatcher: TestDispatcher = UnconfinedTestDispatcher(),
+) : TestWatcher() {
+    override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
+    override fun finished(description: Description) = Dispatchers.resetMain()
+}
+```
+
+JVM par `Dispatchers.Main` hota hi nahi, to iske bina koi bhi `viewModelScope.launch`
+`Module with the Main dispatcher had failed to initialize` phenkta hai. Yahi wajah hai ki lagbhag har
+`ViewModel` wali test file `@get:Rule val rule = MainDispatcherRule()` se shuru hoti hai.
+
+Jo kuch bhi `Main` nahi hai uske liye dispatcher inject kijiye — Hilt wale lesson ka qualifier — aur
+test ko apna wala dijiye:
+
+```kotlin title="Injected.kt" numbered
+val repository = OrderRepository(api, dao, io = StandardTestDispatcher(testScheduler))
+```
+
+`testScheduler` bhejna hi asli baat hai: usse ghadi share ho jati hai, to `advanceUntilIdle` us kaam
+tak bhi pahunchta hai.
+
+<Quiz
+  question="Koi test kisi `ViewModel` ka function bulakar turant state par dawa karta hai. `UnconfinedTestDispatcher` ke saath wo pass hota hai; `StandardTestDispatcher` ke saath tab tak nakaam rehta hai jab tak `advanceUntilIdle()` na jodein. Behtar default kaunsa hai, aur kyun?"
+  options={[
+    "`UnconfinedTestDispatcher`, kyunki us atirikt call ke bina tests chhote rehte hain",
+    "`StandardTestDispatcher`, kyunki wo coroutines ko turant chalane ke bajaye line mein lagata hai — to test saaf-saaf batata hai ki kaam kab hota hai, aur `advanceUntilIdle` ka chhootna dikhti hui nakami hai, ittefaqan mili pass nahi",
+    "Dono barabar hain; farak sirf errors batane ke tarike mein hai"
+  ]}
+  answer={1}
+  explanation="UnconfinedTestDispatcher kisi coroutine ko turant shuru karke pehli asli rukavat tak chala deta hai, to aasan maamle saath-saath chalte hue dikhte hain aur test ko koi scheduling wali call chahiye hi nahi. Wahi suvidha mushkil hai: test aisi wajah se pass hota hai jo usne kabhi batai hi nahi, aur production wala code jaise hi koi delay, koi withContext, ya doosra coroutine jodta hai wo pass hona band kar deta hai — aisi nakami ke saath jo us badlaav se bematlab lagti hai. StandardTestDispatcher har cheez line mein lagata hai, to aapke aage badhane tak kuch chalta nahi, aur test ko batana padta hai ki kab. Isse order saaf aur dohraya ja sakne wala rehta hai, aur saath-saath chalte code ko jaanchte waqt aapko yahi chahiye. Aam apwad kisi rule mein Dispatchers.setMain hai, jahan ViewModel wale tests chhote rakhne ke liye Unconfined jaanbujhkar chuna jata hai — jayaz sauda, basharte aapko pata ho ki aap khareed kya rahe ho."
+/>
+
+## Turbine, Flows ke liye
+
+Test mein kisi `Flow` ko haath se collect karne ka matlab hai coroutine chalana, emissions kisi list
+mein rakhna, aur baad mein use rokna — itna dhancha ki log dawe hi chhod dete hain. Turbine use ek
+patkatha bana deta hai:
+
+```kotlin title="Turbine.kt" numbered
+@Test
+fun `emits loading then content`() = runTest {
+    viewModel.state.test {
+        assertEquals(UiState.Loading, awaitItem())
+
+        viewModel.load()
+        advanceUntilIdle()
+
+        assertEquals(3, awaitItem().orders.size)
+        cancelAndIgnoreRemainingEvents()
+    }
+}
+```
+
+`awaitItem()` agli emission tak rukta hai, to test usi order mein padha jata hai jismein cheezein hoti
+hain. `awaitComplete()`, `awaitError()` aur `expectNoEvents()` baaki natije dhakte hain.
+
+Agar flow kuch aisa bheje jise aapne liya nahi, to Turbine test nakaam kar deta hai, aur yahi behaviour
+chahiye: anchahi atirikt emission aam taur par asli bug hai — koi `StateFlow` sirf isliye dobara bhej
+raha hai ki aapne barabar par `==` na hone wali cheez dobara bana di.
+
+<Detail summary="StateFlow, aur wo pehli emission jo logon ko chaunkati hai">
+`StateFlow` ke paas hamesha ek maujooda value hoti hai, to `awaitItem()` use turant lauta deta hai —
+test mein aapke kuch bhi karne se pehle. Jo test `load()` bulakar phir `awaitItem()` karta hai use
+*shuruati* state milti hai, aur dawa aise nakaam hota hai mano wo code chala hi na ho.
+
+```kotlin title="Initial.kt" numbered
+viewModel.state.test {
+    assertEquals(UiState.Loading, awaitItem())        // wo value jo pehle se thi
+    viewModel.load()
+    advanceUntilIdle()
+    assertEquals(3, awaitItem().orders.size)          // wo jo aapke kaam se bani
+}
+```
+
+Saath ka jaal `StateFlow` ka simatna hai: wo tabhi bhejta hai jab nai value purani se `!=` ho. Agar
+aapki state koi `data class` hai to baat ban jati hai, kyunki barabari banawat se tay hoti hai. Agar
+usmein pehchan se milai jane wali koi cheez hai — unhin items se dobara bani `List` to theek hai, par
+bina `equals` wali class nahi — to aapko ya to dohri emission milti hai ya ek bhi nahi, aur Turbine
+bata dega ki kaunsi.
+
+`stateIn(scope, SharingStarted.WhileSubscribed(5_000), initial)` bhi yahan janne layak hai: `runTest`
+ke neeche wo paanch second wala rukne ka samay aabhasi hai, to `advanceTimeBy(5_001)` se aap dekh sakte
+ho ki aakhri sunne wale ke jate hi upar wala sach mein rukta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli hi wajah hai ki suites dheemi ho jati hain">
+**Test mein `Thread.sleep`.** Dheemi machine par gair-bharosemand, aur har machine par dheema.
+
+**Jada hua `Dispatchers.IO`.** Test ki ghadi wahan pahunchti nahi, to dawe jaldi chal jate hain.
+
+**`MainDispatcherRule` na hona.** JVM par `viewModelScope.launch` phenkta hai.
+
+**`advanceUntilIdle` bhoolna.** `StandardTestDispatcher` ke saath abhi kuch chala hi nahi.
+
+**`StateFlow` ki pehli emission chookna.** `awaitItem()` wahi value deta hai jo pehle se thi.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi `Thread.sleep` ki jagah `advanceUntilIdle` rakhiye aur pehle-baad mein suite ka samay naapiye.
+2. Production wale code mein `delay(10_000)` daaliye aur pakka kijiye ki test phir bhi turant chalta
+   hai.
+3. `UnconfinedTestDispatcher` ki jagah `StandardTestDispatcher` rakhiye aur jo toote use theek kijiye.
+4. Aisa Turbine wala test likhiye jo `StateFlow` ki pehli emission bhool jaye, aur nakami padhiye.
+5. `advanceTimeBy` se sabit kijiye ki `WhileSubscribed` wala flow apne samay ke baad ruk jata hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `runTest` | Aabhasi ghadi — `delay` ki koi keemat nahi |
+| `advanceUntilIdle` | Baaki sab kuch turant chalaiye |
+| `advanceTimeBy` | Aabhasi ghadi tay jitni aage badhaiye |
+| `StandardTestDispatcher` | Kaam line mein; test batata hai ki kab chale |
+| `UnconfinedTestDispatcher` | Turant chalata hai; suvidhajanak, aur order chhupata hai |
+| `MainDispatcherRule` | JVM par `Dispatchers.Main` hota hi nahi |
+| Inject kiye dispatchers | `testScheduler` bhejiye taki ghadi share ho |
+| Turbine ka `awaitItem` | Usi order mein padha jata hai jismein cheezein hoti hain |
+| Na li gayi emissions | Turbine nakaam karta hai — aam taur par asli bug |
+| `StateFlow` | Pehla `awaitItem()` wahi value hai jo pehle se thi |
+
+<Interview title="Ek sawal, aise test ka jo galat wajah se sahi hai">
+"`StandardTestDispatcher` aur `UnconfinedTestDispatcher` mein farak kya hai?"
+
+`Standard` coroutines ko line mein lagata hai aur test ke ghadi aage badhane tak kuch nahi chalata, to
+test ko batana padta hai ki kaam kab hota hai. `Unconfined` unhe turant shuru karke pehli asli rukavat
+tak chala deta hai, jisse aasan tests saath-saath chalte hue dikhte hain aur unhe koi scheduling wali
+call chahiye hi nahi.
+
+Isi wajah se mera default `Standard` hai. `Unconfined` wala test aisi wajah se pass hota hai jo usne
+kabhi batai nahi, aur production wala code jaise hi koi `delay` ya doosra coroutine jodta hai wo toot
+jata hai — aisi nakami ke saath jo us badlaav se bematlab lagti hai jisne use paida kiya. `Standard`
+order ko saaf aur dohraya ja sakne wala banata hai, aur saath-saath chalte code ko jaanchte waqt poori
+baat yahi hai. Jo apwad main manunga wo kisi rule mein `Dispatchers.setMain` hai, jahan `Unconfined`
+`ViewModel` wale tests chhote rakhta hai — basharte sabko pata ho ki khareeda kya ja raha hai.
+</Interview>

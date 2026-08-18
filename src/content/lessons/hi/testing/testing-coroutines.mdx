@@ -1,0 +1,188 @@
+---
+title: Turbine के साथ coroutines और Flow की जाँच
+description: जो test किसी coroutine के इंतजार में सोता है वह धीमी मशीन पर गैर-भरोसेमंद होगा। `runTest` इंतजार की जगह आपके अख्तियार वाली एक आभासी घड़ी रख देता है, और वही एक बदलाव async code को जाँचने लायक बनाता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`runTest` आपको एक **आभासी घड़ी** देता है। उसके अंदर `delay(5_000)` तुरंत पूरा हो जाता है, क्योंकि test
+का scheduler वह समय खर्च करने के बजाय लाँघ जाता है। यहाँ की हर तरकीब इसी से निकलती है: आप इंतजार कभी
+नहीं करते, आप घड़ी आगे बढ़ाते हैं।
+</KeyIdea>
+
+## सोना नाकाम क्यों होता है
+
+```kotlin title="Flaky.kt" numbered
+@Test
+fun `loads orders`() {
+    viewModel.load()
+    Thread.sleep(500)                        // उम्मीद है पूरा हो गया
+    assertEquals(3, viewModel.state.value.orders.size)
+}
+```
+
+यह आपकी मशीन पर पास होता है और बोझ में दबे CI पर नाकाम, फिर कोई दोबारा चलाए तो पास। उससे बुरा, वह
+बनावट से ही धीमा है — हर test पर पाँच सौ milliseconds यानी सौ tests पर एक मिनट, कुछ न करते हुए।
+
+```kotlin title="Deterministic.kt" numbered
+@Test
+fun `loads orders`() = runTest {
+    viewModel.load()
+    advanceUntilIdle()                       // scheduler के पास जो है सब चलाइए
+    assertEquals(3, viewModel.state.value.orders.size)
+}
+```
+
+`advanceUntilIdle` हर बाकी पड़े coroutine को तब तक चलाता है जब तक कुछ बचे नहीं, तुरंत और हर बार एक
+जैसा। वही दावा, कोई घड़ी का समय नहीं, और वह गैर-भरोसेमंद हो ही नहीं सकता।
+
+| आपको चाहिए | लीजिए |
+| --- | --- |
+| सब कुछ पूरा हो | `advanceUntilIdle()` |
+| तय आभासी समय जितना | `advanceTimeBy(1_000)` |
+| सिर्फ जो पहले से कतार में है | `runCurrent()` |
+| आभासी समय जानना | `currentTime` |
+
+## Dispatcher वाला नियम
+
+`runTest` सिर्फ उन coroutines पर अख्तियार रखता है जो **उसका** dispatcher लेते हैं। जो `ViewModel`
+`Dispatchers.IO` जड़ देता है वह असली thread pool पर चल पड़ता है, और test की घड़ी की वहाँ कोई नहीं
+सुनता — तो दावा काम होने से पहले चल जाता है।
+
+```kotlin title="MainDispatcherRule.kt" numbered
+class MainDispatcherRule(
+    private val dispatcher: TestDispatcher = UnconfinedTestDispatcher(),
+) : TestWatcher() {
+    override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
+    override fun finished(description: Description) = Dispatchers.resetMain()
+}
+```
+
+JVM पर `Dispatchers.Main` होता ही नहीं, तो इसके बिना कोई भी `viewModelScope.launch`
+`Module with the Main dispatcher had failed to initialize` फेंकता है। यही वजह है कि लगभग हर
+`ViewModel` वाली test file `@get:Rule val rule = MainDispatcherRule()` से शुरू होती है।
+
+जो कुछ भी `Main` नहीं है उसके लिए dispatcher inject कीजिए — Hilt वाले पाठ का qualifier — और test को
+अपना वाला दीजिए:
+
+```kotlin title="Injected.kt" numbered
+val repository = OrderRepository(api, dao, io = StandardTestDispatcher(testScheduler))
+```
+
+`testScheduler` भेजना ही असली बात है: उससे घड़ी साझा हो जाती है, तो `advanceUntilIdle` उस काम तक भी
+पहुँचता है।
+
+<Quiz
+  question="कोई test किसी `ViewModel` का function बुलाकर तुरंत state पर दावा करता है। `UnconfinedTestDispatcher` के साथ वह पास होता है; `StandardTestDispatcher` के साथ तब तक नाकाम रहता है जब तक `advanceUntilIdle()` न जोड़ें। बेहतर डिफॉल्ट कौन सा है, और क्यों?"
+  options={[
+    "`UnconfinedTestDispatcher`, क्योंकि उस अतिरिक्त call के बिना tests छोटे रहते हैं",
+    "`StandardTestDispatcher`, क्योंकि वह coroutines को तुरंत चलाने के बजाय कतार में लगाता है — तो test साफ-साफ बताता है कि काम कब होता है, और `advanceUntilIdle` का छूटना दिखती हुई नाकामी है, इत्तेफाकन मिली पास नहीं",
+    "दोनों बराबर हैं; फर्क सिर्फ errors बताने के तरीके में है"
+  ]}
+  answer={1}
+  explanation="UnconfinedTestDispatcher किसी coroutine को तुरंत शुरू करके पहली असली रुकावट तक चला देता है, तो आसान मामले साथ-साथ चलते हुए दिखते हैं और test को कोई scheduling वाली call चाहिए ही नहीं। वही सुविधा दिक्कत है: test ऐसी वजह से पास होता है जो उसने कभी बताई ही नहीं, और production वाला code जैसे ही कोई delay, कोई withContext, या दूसरा coroutine जोड़ता है वह पास होना बंद कर देता है — ऐसी नाकामी के साथ जो उस बदलाव से बेमतलब लगती है। StandardTestDispatcher हर चीज कतार में लगाता है, तो आपके आगे बढ़ाने तक कुछ चलता नहीं, और test को बताना पड़ता है कि कब। इससे क्रम साफ और दोहराया जा सकने वाला रहता है, और साथ-साथ चलते code को जाँचते वक्त आपको यही चाहिए। आम अपवाद किसी rule में Dispatchers.setMain है, जहाँ ViewModel वाले tests छोटे रखने के लिए Unconfined जानबूझकर चुना जाता है — जायज सौदा, बशर्ते आपको पता हो कि आप खरीद क्या रहे हैं।"
+/>
+
+## Turbine, Flows के लिए
+
+Test में किसी `Flow` को हाथ से collect करने का मतलब है coroutine चलाना, emissions किसी list में
+रखना, और बाद में उसे रोकना — इतना ढाँचा कि लोग दावे ही छोड़ देते हैं। Turbine उसे एक पटकथा बना देता
+है:
+
+```kotlin title="Turbine.kt" numbered
+@Test
+fun `emits loading then content`() = runTest {
+    viewModel.state.test {
+        assertEquals(UiState.Loading, awaitItem())
+
+        viewModel.load()
+        advanceUntilIdle()
+
+        assertEquals(3, awaitItem().orders.size)
+        cancelAndIgnoreRemainingEvents()
+    }
+}
+```
+
+`awaitItem()` अगली emission तक रुकता है, तो test उसी क्रम में पढ़ा जाता है जिसमें चीजें होती हैं।
+`awaitComplete()`, `awaitError()` और `expectNoEvents()` बाकी नतीजे ढकते हैं।
+
+अगर flow कुछ ऐसा भेजे जिसे आपने लिया नहीं, तो Turbine test नाकाम कर देता है, और यही बर्ताव चाहिए:
+अनचाही अतिरिक्त emission आमतौर पर असली bug है — कोई `StateFlow` सिर्फ इसलिए दोबारा भेज रहा है कि आपने
+बराबर पर `==` न होने वाली चीज दोबारा बना दी।
+
+<Detail summary="StateFlow, और वह पहली emission जो लोगों को चौंकाती है">
+`StateFlow` के पास हमेशा एक मौजूदा value होती है, तो `awaitItem()` उसे तुरंत लौटा देता है — test में
+आपके कुछ भी करने से पहले। जो test `load()` बुलाकर फिर `awaitItem()` करता है उसे *शुरुआती* state मिलती
+है, और दावा ऐसे नाकाम होता है मानो वह code चला ही न हो।
+
+```kotlin title="Initial.kt" numbered
+viewModel.state.test {
+    assertEquals(UiState.Loading, awaitItem())        // वह value जो पहले से थी
+    viewModel.load()
+    advanceUntilIdle()
+    assertEquals(3, awaitItem().orders.size)          // वह जो आपके काम से बनी
+}
+```
+
+साथ का जाल `StateFlow` का समेटना है: वह तभी भेजता है जब नई value पुरानी से `!=` हो। अगर आपकी state
+कोई `data class` है तो बात बन जाती है, क्योंकि बराबरी बनावट से तय होती है। अगर उसमें पहचान से मिलाई
+जाने वाली कोई चीज है — उन्हीं items से दोबारा बनी `List` तो ठीक है, पर बिना `equals` वाली class नहीं
+— तो आपको या तो दोहरी emission मिलती है या एक भी नहीं, और Turbine बता देगा कि कौन सी।
+
+`stateIn(scope, SharingStarted.WhileSubscribed(5_000), initial)` भी यहाँ जानने लायक है: `runTest`
+के नीचे वह पाँच सेकंड वाला रुकने का समय आभासी है, तो `advanceTimeBy(5_001)` से आप जाँच सकते हैं कि
+आखिरी सुनने वाले के जाते ही ऊपर वाला सच में रुकता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली ही वजह है कि suites धीमी हो जाती हैं">
+**Test में `Thread.sleep`।** धीमी मशीन पर गैर-भरोसेमंद, और हर मशीन पर धीमा।
+
+**जड़ा हुआ `Dispatchers.IO`।** Test की घड़ी वहाँ पहुँचती नहीं, तो दावे जल्दी चल जाते हैं।
+
+**`MainDispatcherRule` न होना।** JVM पर `viewModelScope.launch` फेंकता है।
+
+**`advanceUntilIdle` भूलना।** `StandardTestDispatcher` के साथ अभी कुछ चला ही नहीं।
+
+**`StateFlow` की पहली emission चूकना।** `awaitItem()` वही value देता है जो पहले से थी।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी `Thread.sleep` की जगह `advanceUntilIdle` रखिए और पहले-बाद में suite का समय नापिए।
+2. Production वाले code में `delay(10_000)` डालिए और पक्का कीजिए कि test फिर भी तुरंत चलता है।
+3. `UnconfinedTestDispatcher` की जगह `StandardTestDispatcher` रखिए और जो टूटे उसे ठीक कीजिए।
+4. ऐसा Turbine वाला test लिखिए जो `StateFlow` की पहली emission भूल जाए, और नाकामी पढ़िए।
+5. `advanceTimeBy` से साबित कीजिए कि `WhileSubscribed` वाला flow अपने समय के बाद रुक जाता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `runTest` | आभासी घड़ी — `delay` की कोई कीमत नहीं |
+| `advanceUntilIdle` | बाकी सब कुछ तुरंत चलाइए |
+| `advanceTimeBy` | आभासी घड़ी तय जितनी आगे बढ़ाइए |
+| `StandardTestDispatcher` | काम कतार में; test बताता है कि कब चले |
+| `UnconfinedTestDispatcher` | तुरंत चलाता है; सुविधाजनक, और क्रम छिपाता है |
+| `MainDispatcherRule` | JVM पर `Dispatchers.Main` होता ही नहीं |
+| Inject किए dispatchers | `testScheduler` भेजिए ताकि घड़ी साझा हो |
+| Turbine का `awaitItem` | उसी क्रम में पढ़ा जाता है जिसमें चीजें होती हैं |
+| न ली गई emissions | Turbine नाकाम करता है — आमतौर पर असली bug |
+| `StateFlow` | पहला `awaitItem()` वही value है जो पहले से थी |
+
+<Interview title="एक सवाल, ऐसे test का जो गलत वजह से सही है">
+"`StandardTestDispatcher` और `UnconfinedTestDispatcher` में फर्क क्या है?"
+
+`Standard` coroutines को कतार में लगाता है और test के घड़ी आगे बढ़ाने तक कुछ नहीं चलाता, तो test को
+बताना पड़ता है कि काम कब होता है। `Unconfined` उन्हें तुरंत शुरू करके पहली असली रुकावट तक चला देता
+है, जिससे आसान tests साथ-साथ चलते हुए दिखते हैं और उन्हें कोई scheduling वाली call चाहिए ही नहीं।
+
+इसी वजह से मेरा डिफॉल्ट `Standard` है। `Unconfined` वाला test ऐसी वजह से पास होता है जो उसने कभी
+बताई नहीं, और production वाला code जैसे ही कोई `delay` या दूसरा coroutine जोड़ता है वह टूट जाता है —
+ऐसी नाकामी के साथ जो उस बदलाव से बेमतलब लगती है जिसने उसे पैदा किया। `Standard` क्रम को साफ और
+दोहराया जा सकने वाला बनाता है, और साथ-साथ चलते code को जाँचते वक्त पूरी बात यही है। जो अपवाद मैं
+मानूँगा वह किसी rule में `Dispatchers.setMain` है, जहाँ `Unconfined` `ViewModel` वाले tests छोटे रखता
+है — बशर्ते सबको पता हो कि खरीदा क्या जा रहा है।
+</Interview>

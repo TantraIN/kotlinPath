@@ -1,0 +1,189 @@
+---
+title: Testing coroutines and Flow with Turbine
+description: A test that sleeps to wait for a coroutine is a test that will be flaky on a slow machine. `runTest` replaces waiting with a virtual clock you control, and that single change is what makes async code testable.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`runTest` gives you a **virtual clock**. A `delay(5_000)` inside it completes instantly, because the
+test scheduler skips the time rather than spending it. Every technique here follows from that: you
+never wait, you advance.
+</KeyIdea>
+
+## Why sleeping fails
+
+```kotlin title="Flaky.kt" numbered
+@Test
+fun `loads orders`() {
+    viewModel.load()
+    Thread.sleep(500)                        // hope it finished
+    assertEquals(3, viewModel.state.value.orders.size)
+}
+```
+
+This passes on your machine and fails on a loaded CI runner, then passes again when someone reruns
+it. Worse, it is slow by construction — five hundred milliseconds per test is a minute across a
+hundred tests, spent doing nothing.
+
+```kotlin title="Deterministic.kt" numbered
+@Test
+fun `loads orders`() = runTest {
+    viewModel.load()
+    advanceUntilIdle()                       // run everything the scheduler has
+    assertEquals(3, viewModel.state.value.orders.size)
+}
+```
+
+`advanceUntilIdle` runs every pending coroutine until nothing is left to do, instantly and
+deterministically. Same assertion, no clock time, and it cannot be flaky.
+
+| You want | Use |
+| --- | --- |
+| Everything to finish | `advanceUntilIdle()` |
+| A specific amount of virtual time | `advanceTimeBy(1_000)` |
+| Only what is already queued | `runCurrent()` |
+| To know the virtual time | `currentTime` |
+
+## The dispatcher rule
+
+`runTest` only controls coroutines that use **its** dispatcher. A `ViewModel` that hardcodes
+`Dispatchers.IO` launches onto a real thread pool, and the test's clock has no say — so the assertion
+runs before the work does.
+
+```kotlin title="MainDispatcherRule.kt" numbered
+class MainDispatcherRule(
+    private val dispatcher: TestDispatcher = UnconfinedTestDispatcher(),
+) : TestWatcher() {
+    override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
+    override fun finished(description: Description) = Dispatchers.resetMain()
+}
+```
+
+`Dispatchers.Main` does not exist on the JVM, so without this any `viewModelScope.launch` throws
+`Module with the Main dispatcher had failed to initialize`. This rule is why nearly every
+`ViewModel` test file starts with `@get:Rule val rule = MainDispatcherRule()`.
+
+For everything that is not `Main`, inject the dispatcher — the qualifier from the Hilt lesson — and
+pass the test one:
+
+```kotlin title="Injected.kt" numbered
+val repository = OrderRepository(api, dao, io = StandardTestDispatcher(testScheduler))
+```
+
+Passing `testScheduler` is the part that matters: it shares the clock, so `advanceUntilIdle` reaches
+that work too.
+
+<Quiz
+  question="A test calls a `ViewModel` function and asserts on state immediately. With `UnconfinedTestDispatcher` it passes; with `StandardTestDispatcher` it fails until `advanceUntilIdle()` is added. Which is the better default, and why?"
+  options={[
+    "`UnconfinedTestDispatcher`, since tests are shorter without the extra call",
+    "`StandardTestDispatcher`, because it queues coroutines instead of running them eagerly — so the test states explicitly when work happens, and a missing `advanceUntilIdle` is a visible failure rather than an accidental pass",
+    "They are equivalent; the difference is only in how errors are reported"
+  ]}
+  answer={1}
+  explanation="UnconfinedTestDispatcher starts a coroutine eagerly and runs it until its first real suspension, so simple cases appear to work synchronously and the test needs no scheduling calls. That convenience is exactly the problem: the test passes for a reason it never states, and it stops passing the moment the production code adds a delay, a withContext, or a second coroutine — a failure that looks unrelated to the change. StandardTestDispatcher queues everything, so nothing runs until you advance, and the test has to say when. That makes the ordering explicit and reproducible, which is what you want from a test of concurrent code. The usual exception is Dispatchers.setMain in a rule, where Unconfined is often chosen deliberately to keep ViewModel tests terse — a reasonable trade as long as you know that is what you are buying."
+/>
+
+## Turbine, for Flows
+
+Collecting a `Flow` in a test by hand means launching a coroutine, storing emissions in a list, and
+cancelling it afterwards — which is enough boilerplate that people skip assertions. Turbine makes it
+a script:
+
+```kotlin title="Turbine.kt" numbered
+@Test
+fun `emits loading then content`() = runTest {
+    viewModel.state.test {
+        assertEquals(UiState.Loading, awaitItem())
+
+        viewModel.load()
+        advanceUntilIdle()
+
+        assertEquals(3, awaitItem().orders.size)
+        cancelAndIgnoreRemainingEvents()
+    }
+}
+```
+
+`awaitItem()` suspends until the next emission, so the test reads in the order things happen.
+`awaitComplete()`, `awaitError()` and `expectNoEvents()` cover the other outcomes.
+
+Turbine fails the test if the flow emits something you did not consume, which is the behaviour you
+want: an unexpected extra emission is usually a real bug — a `StateFlow` re-emitting because you
+rebuilt an equal-but-not-`==` object.
+
+<Detail summary="StateFlow, and the first emission that surprises people">
+A `StateFlow` always has a current value, so `awaitItem()` returns that immediately — before anything
+you did in the test. A test that calls `load()` and then `awaitItem()` gets the *initial* state, and
+the assertion fails in a way that reads like the code never ran.
+
+```kotlin title="Initial.kt" numbered
+viewModel.state.test {
+    assertEquals(UiState.Loading, awaitItem())        // the value that already existed
+    viewModel.load()
+    advanceUntilIdle()
+    assertEquals(3, awaitItem().orders.size)          // the one your action caused
+}
+```
+
+The related trap is `StateFlow`'s conflation: it only emits when the new value is `!=` the old one.
+If your state is a `data class` this works out, because equality is structural. If it holds something
+compared by identity — a `List` you rebuilt from the same items is fine, but a class without
+`equals` is not — you either get a duplicate emission or none at all, and Turbine will tell you which.
+
+`stateIn(scope, SharingStarted.WhileSubscribed(5_000), initial)` is worth knowing about here too:
+under `runTest` the five-second stop timeout is virtual, so `advanceTimeBy(5_001)` lets you test that
+the upstream actually stops when the last subscriber leaves.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is the reason suites become slow">
+**`Thread.sleep` in a test.** Flaky on a slow machine, and slow on every machine.
+
+**Hardcoded `Dispatchers.IO`.** The test's clock does not reach it, so assertions run too early.
+
+**No `MainDispatcherRule`.** `viewModelScope.launch` throws on the JVM.
+
+**Forgetting `advanceUntilIdle`.** With `StandardTestDispatcher` nothing has run yet.
+
+**Missing the initial `StateFlow` emission.** `awaitItem()` hands you the value that already existed.
+</Pitfall>
+
+## Practice
+
+1. Replace a `Thread.sleep` with `advanceUntilIdle` and time the suite before and after.
+2. Put a `delay(10_000)` in production code and confirm the test still runs instantly.
+3. Swap `UnconfinedTestDispatcher` for `StandardTestDispatcher` and fix what breaks.
+4. Write a Turbine test that forgets the initial `StateFlow` emission, and read the failure.
+5. Use `advanceTimeBy` to prove a `WhileSubscribed` flow stops after its timeout.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `runTest` | A virtual clock — `delay` costs nothing |
+| `advanceUntilIdle` | Run everything pending, instantly |
+| `advanceTimeBy` | Move the virtual clock a known amount |
+| `StandardTestDispatcher` | Queues work; the test says when it runs |
+| `UnconfinedTestDispatcher` | Runs eagerly; convenient, and hides ordering |
+| `MainDispatcherRule` | `Dispatchers.Main` does not exist on the JVM |
+| Injected dispatchers | Pass `testScheduler` so it shares the clock |
+| Turbine `awaitItem` | Reads in the order things happen |
+| Unconsumed emissions | Turbine fails — usually a real bug |
+| `StateFlow` | The first `awaitItem()` is the value that already existed |
+
+<Interview title="A question about a test that is right for the wrong reason">
+"What is the difference between `StandardTestDispatcher` and `UnconfinedTestDispatcher`?"
+
+`Standard` queues coroutines and runs nothing until the test advances the clock, so the test has to
+state when work happens. `Unconfined` starts them eagerly and runs until the first real suspension,
+which makes simple tests look synchronous and need no scheduling calls at all.
+
+I default to `Standard` for that reason. The `Unconfined` test passes for a reason it never states,
+and it breaks the moment production code adds a `delay` or a second coroutine — a failure that looks
+unrelated to the change that caused it. `Standard` makes ordering explicit and reproducible, which is
+the whole point when testing concurrent code. The exception I would accept is `Dispatchers.setMain` in
+a rule, where `Unconfined` keeps `ViewModel` tests terse — as long as everyone knows that terseness is
+what is being bought.
+</Interview>
