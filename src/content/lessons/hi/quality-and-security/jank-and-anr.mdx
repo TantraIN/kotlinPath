@@ -1,0 +1,191 @@
+---
+title: Jank, ANRs और StrictMode
+description: Jank और ANR एक ही bug हैं, दो नापों पर। दोनों में main thread तब व्यस्त है जब उसे बनाना चाहिए था, और StrictMode आपको इनके बारे में तब बता देता है जब emulator अभी खुला ही है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Main thread का हर frame पर एक ही काम है: आपके callbacks चलाना, layout करना, बनाना। 60Hz पर उसके पास
+**16.7ms** हैं। ज्यादा लगाइए और एक frame गिर जाता है; पाँच सेकंड लगाइए और system ऐप मार देता है। कोई
+तीसरी व्यवस्था है ही नहीं — सिर्फ नाप का फर्क है।
+</KeyIdea>
+
+## बजट
+
+| Refresh rate | Frame का बजट |
+| --- | --- |
+| 60Hz | 16.7ms |
+| 90Hz | 11.1ms |
+| 120Hz | 8.3ms |
+
+और वह पूरा बजट आपका नहीं है — layout, draw और मिलाने के लिए system को उसका हिस्सा चाहिए। व्यवहार में
+आपका अपना काम कुछ ही milliseconds में खत्म होना चाहिए, इसीलिए "बस 20ms तो लगते हैं" 120Hz वाले device
+पर पहले ही एक गिरा हुआ frame है।
+
+अंदाजे के बजाय नापिए:
+
+```bash title="adb" numbered
+adb shell dumpsys gfxinfo com.example framestats
+# Janky frames: 12 (4.2%)
+# 90th percentile: 14ms
+# 95th percentile: 31ms      <- users को पूँछ ही महसूस होती है
+```
+
+यहाँ औसत लगभग बेकार है। Users को 95वाँ percentile दिखता है, क्योंकि चिकनी scroll में एक झटका उस list
+से ज्यादा याद रहता है जो हर जगह थोड़ी-थोड़ी धीमी हो।
+
+## ANRs
+
+**Application Not Responding** वाला dialog तब आता है जब main thread किसी हद से ज्यादा रुका रहे:
+
+| हालत | हद |
+| --- | --- |
+| छुए जाने पर कोई जवाब नहीं | 5 सेकंड |
+| `BroadcastReceiver.onReceive` | 10 सेकंड (पीछे रहते 20) |
+| `Service` का lifecycle callback | 20 सेकंड |
+
+Play Console आपकी ANR दर को **0.47% की बुरे बर्ताव वाली हद** के सामने दर्ज करता है, और उससे ऊपर जाना
+आपके store में दिखने पर असर डालता है — तो यह नापा जाता है, चाहे आप नापें या न नापें।
+
+वजहें उबाऊ हैं और दोहराती हैं: क्रम से चलती network की कोई call, main thread पर database की कोई query,
+कोई `SharedPreferences.commit()`, ऐसा ताला जो कोई background वाला thread पकड़े है और main thread उसका
+इंतजार करे, या किसी system की service को की गई `Binder` वाली call जो खुद व्यस्त है।
+
+<Quiz
+  question="किसी ऐप की ANR दर ऊँची है, पर traces main thread को `SharedPreferences.getString` के अंदर दिखाते हैं — वह पढ़ना जिसे team memory का और तुरंत मानती है। हो क्या रहा है?"
+  options={[
+    "`getString` हर frame में बहुत ज्यादा बार बुलाया जा रहा है; उस value को रख लीजिए",
+    "किसी `SharedPreferences` file का पहला पढ़ना पूरी XML को disk से लादता और पढ़ता है, और वह पूरा होने तक कोई भी पढ़ना रुका रहता है — तो बड़ी preferences वाली file cold start के बाद पहली पहुँच पर main thread रोक देती है",
+    "वह trace भरमाता है; असली रुकावट कहीं और है और sampler ने उसे गलत खाते में डाल दिया"
+  ]}
+  answer={1}
+  explanation="SharedPreferences memory में तभी है जब वह लद चुकी हो, और लदना पहली पहुँच पर disk से क्रम से पढ़ना और पूरी file की XML पढ़ना है। getSharedPreferences तुरंत लौट आता है पर कोई भी get उस लदने पर रुका रहता है, तो cold start पर, जब preferences की file बढ़कर सैकड़ों keys की हो चुकी हो, main thread disk का इंतजार करता है — और सस्ते device पर, जहाँ storage धीमा और दबा हुआ है, वह ANR की हद तक पहुँच जाता है। DataStore ठीक इसी को हटाने के लिए बना था, तेज होकर नहीं बल्कि उस काम को Flow बनाकर, ताकि वह रोक ही न सके। StrictMode का detectDiskReads इसे बनाते वक्त पकड़ लेता है, और इसीलिए वह debug वाले build की चीज है। अलग-अलग values रख लेने से बाद की calls में मदद मिलती, पहली में नहीं, और रोकती वही पहली है।"
+/>
+
+## StrictMode, debug वाले build में
+
+```kotlin title="MyApp.kt" numbered
+if (BuildConfig.DEBUG) {
+    StrictMode.setThreadPolicy(
+        StrictMode.ThreadPolicy.Builder()
+            .detectDiskReads()
+            .detectDiskWrites()
+            .detectNetwork()
+            .penaltyLog()
+            .build(),
+    )
+    StrictMode.setVmPolicy(
+        StrictMode.VmPolicy.Builder()
+            .detectLeakedClosableObjects()      // बिना बंद किया Cursor या stream
+            .detectActivityLeaks()
+            .penaltyLog()
+            .build(),
+    )
+}
+```
+
+StrictMode main thread पर नजर रखता है और उस पर हो रहे disk तथा network के काम बताता है। यह मौजूद सबसे
+सस्ता गुणवत्ता वाला औजार है: कुछ लाइनें, सिर्फ debug वाले build में, और यह ठीक उसी किस्म का bug ढूँढ़
+लेता है जो production में ANR बनता है।
+
+`penaltyDeath()` हर उल्लंघन को crash बना देता है, जो सुनने में सख्त लगता है और उस team के लिए सही
+setting है जो इसे सच में मानती है — जिस उल्लंघन को आप log में अनदेखा कर सकते हैं वह उल्लंघन भेजा जाता
+है।
+
+## Compose वाला रूप
+
+```kotlin title="Recomposition.kt" numbered
+// हर recomposition पर चलता है, main thread पर
+@Composable
+fun OrderList(orders: List<Order>) {
+    val sorted = orders.sortedBy { it.createdAt }        // गलत: composition में काम
+    LazyColumn { items(sorted) { OrderRow(it) } }
+}
+
+// सिर्फ तब, जब input बदले
+@Composable
+fun OrderList(orders: List<Order>) {
+    val sorted = remember(orders) { orders.sortedBy { it.createdAt } }
+    LazyColumn { items(sorted, key = { it.id }) { OrderRow(it) } }
+}
+```
+
+Compose धीमे होने का एक ऐसा तरीका जोड़ देता है जिसका View वाली व्यवस्था में कोई जोड़ीदार नहीं: ऐसा काम
+जो अकेले में तेज है पर हर recomposition पर चलता है। Composition की performance वाले पाठ ने तरीका बताया
+था; यह वह जगह है जहाँ वह गिरे हुए frames बनकर दिखता है, और composition वाली tracing ही बताती है कि काम
+धीमा नहीं है, वह बहुत ज्यादा बार हो रहा है।
+
+<Detail summary="ANR का trace पढ़ना">
+ANR होने पर Android `/data/anr/traces.txt` लिखता है, और Play Console वही चीज दिखाता है। मायने रखता है
+सबसे ऊपर **main thread का stack**:
+
+```text title="ANR trace" numbered
+"main" prio=5 tid=1 Blocked
+  at com.example.OrderRepository.sync(OrderRepository.kt:42)
+  - waiting to lock <0x0f3a> held by thread 14
+```
+
+तीन हालतें तीन अलग कहानियाँ बताती हैं:
+
+- **`Runnable`** — main thread सच में गिनती कर रहा था। Stack उस काम का नाम लेता है; उसे हटाइए।
+- **`Blocked`** — वह ऐसे ताले का इंतजार कर रहा था जो कोई दूसरा thread पकड़े है। *उस* thread को देखिए,
+  जो आमतौर पर ऐसा कुछ पकड़े हुए I/O कर रहा है जो UI को चाहिए।
+- **`Binder` वाली call में `Native`** — किसी system की service का इंतजार। अक्सर व्यस्त आप नहीं बल्कि
+  system था, पर main thread से किसी धीमी system API को बुलाना फिर भी आपका चुनाव है।
+
+`Blocked` वाला मामला ही लोग गलत पढ़ते हैं: stack आपका code दिखाता है, पर इलाज उस thread में है जो ताला
+पकड़े है, उसमें नहीं जो इंतजार कर रहा है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली दो एक ही bug हैं दो नापों पर">
+**Main thread पर disk या network।** बेहतर से बेहतर एक गिरा frame, बदतर में ANR।
+
+**औसत frame time से राय बनाना।** Users को औसत नहीं, 95वाँ percentile महसूस होता है।
+
+**StrictMode न होना।** कुछ लाइनें, जो ठीक वही bug ढूँढ़ती हैं जो production में ANR बनता है।
+
+**किसी composable की body में काम।** अकेले में तेज, हर recomposition पर चलता हुआ।
+
+**`Blocked` वाले ANR को अपने code की गलती पढ़ना।** ताला पकड़े thread को देखिए।
+</Pitfall>
+
+## अभ्यास
+
+1. `penaltyDeath()` के साथ StrictMode जोड़िए और देखिए कि कितनी जल्दी कुछ नाकाम होता है।
+2. `detectDiskReads()` चालू रखते हुए cold start पर कोई `SharedPreferences` पढ़िए।
+3. `dumpsys gfxinfo framestats` चलाइए और औसत को 95वें percentile से मिलाइए।
+4. किसी composable की body में `sortedBy` रखिए और recomposition की गिनती तथा frame के समय देखिए।
+5. किसी click वाले handler में `Thread.sleep(6000)` से ANR कराइए और trace में thread की हालत पढ़िए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Frame का बजट | 60Hz पर 16.7ms, 120Hz पर 8.3ms — और पूरा आपका नहीं |
+| Jank और ANR | एक ही bug, दो नापों पर |
+| ANR की हदें | 5s छूना, 10s receiver, 20s service |
+| Play की हद | 0.47% ANR दर store में दिखने पर असर डालती है |
+| नापिए | 95वाँ percentile, औसत नहीं |
+| StrictMode | सिर्फ debug; मौजूद सबसे सस्ता गुणवत्ता वाला औजार |
+| `penaltyDeath` | जिस उल्लंघन को अनदेखा कर सकें वह भेजा जाता है |
+| `SharedPreferences` | पहला पढ़ना पूरी file को, क्रम से, पढ़ता है |
+| Compose | Composable में रखा काम हर recomposition पर चलता है |
+| `Blocked` वाले traces | ताला पकड़े thread को ठीक कीजिए, इंतजार करते को नहीं |
+
+<Interview title="एक सवाल, ऐसे trace का जो गलत जगह इशारा करता है">
+"किसी ANR का trace main thread को आपके repository के अंदर रुका दिखाता है। Bug कहाँ है?"
+
+शायद उस लाइन पर नहीं। अगर thread की हालत `Blocked` है, तो main thread ऐसे ताले का इंतजार कर रहा है जो
+कोई दूसरा thread पकड़े है, तो वह stack दिखाता है कि वह रुका कहाँ, न कि रोका किसने — इलाज उस thread में
+है जो ताला पकड़े है, और वह आमतौर पर ऐसा कुछ पकड़े हुए I/O कर रहा होता है जो UI को चाहिए। हालत
+`Runnable` होती तो मैं उसे अलग पढ़ता: main thread सच में गिनती कर रहा था, और stack उस काम का नाम लेता
+है जिसे हटाना है।
+
+आम तौर पर मैं jank और ANRs को एक ही bug के दो नाप मानता हूँ, क्योंकि दोनों में main thread तब व्यस्त है
+जब उसे बनाना चाहिए था। सस्ता बचाव है debug वाले build में StrictMode, `detectDiskReads`,
+`detectDiskWrites` और `detectNetwork` के साथ — वह ठीक इसी किस्म की दिक्कत तब ढूँढ़ लेता है जब emulator
+अभी खुला है, और `penaltyDeath()` इसके लायक है क्योंकि जिस उल्लंघन को आप log में अनदेखा कर सकते हैं वह
+उल्लंघन भेजा जाता है।
+</Interview>

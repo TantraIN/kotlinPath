@@ -1,0 +1,195 @@
+---
+title: Jank, ANRs aur StrictMode
+description: Jank aur ANR ek hi bug hain, do naapon par. Dono mein main thread tab vyast hai jab use banana chahiye tha, aur StrictMode aapko inke baare mein tab bata deta hai jab emulator abhi khula hi hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Main thread ka har frame par ek hi kaam hai: aapke callbacks chalana, layout karna, banana. 60Hz par
+uske paas **16.7ms** hain. Zyada lagaiye aur ek frame gir jata hai; paanch second lagaiye aur system app
+maar deta hai. Koi teesri vyavastha hai hi nahi — sirf naap ka farak hai.
+</KeyIdea>
+
+## Budget
+
+| Refresh rate | Frame ka budget |
+| --- | --- |
+| 60Hz | 16.7ms |
+| 90Hz | 11.1ms |
+| 120Hz | 8.3ms |
+
+Aur wo poora budget aapka nahi hai — layout, draw aur milane ke liye system ko uska hissa chahiye.
+Vyavhar mein aapka apna kaam kuch hi milliseconds mein khatam hona chahiye, isiliye "bas 20ms to lagte
+hain" 120Hz wale device par pehle hi ek gira hua frame hai.
+
+Andaze ke bajaye naapiye:
+
+```bash title="adb" numbered
+adb shell dumpsys gfxinfo com.example framestats
+# Janky frames: 12 (4.2%)
+# 90th percentile: 14ms
+# 95th percentile: 31ms      <- users ko poonch hi mehsoos hoti hai
+```
+
+Yahan ausat lagbhag bekaar hai. Users ko 95wan percentile dikhta hai, kyunki chikni scroll mein ek
+jhatka us list se zyada yaad rehta hai jo har jagah thodi-thodi dheemi ho.
+
+## ANRs
+
+**Application Not Responding** wala dialog tab aata hai jab main thread kisi had se zyada ruka rahe:
+
+| Haalat | Had |
+| --- | --- |
+| Chhue jane par koi jawab nahi | 5 second |
+| `BroadcastReceiver.onReceive` | 10 second (peeche rehte 20) |
+| `Service` ka lifecycle callback | 20 second |
+
+Play Console aapki ANR dar ko **0.47% ki bure behaviour wali had** ke saamne darj karta hai, aur usse
+upar jana aapke store mein dikhne par asar daalta hai — to ye naapa jata hai, chahe aap naapo ya na
+naapo.
+
+Wajahein ubau hain aur dohrati hain: order se chalti network ki koi call, main thread par database ki
+koi query, koi `SharedPreferences.commit()`, aisa taala jo koi background wala thread pakde hai aur main
+thread uska intezar kare, ya kisi system ki service ko ki gayi `Binder` wali call jo khud vyast hai.
+
+<Quiz
+  question="Kisi app ki ANR dar unchi hai, par traces main thread ko `SharedPreferences.getString` ke andar dikhate hain — wo padhna jise team memory ka aur turant manti hai. Ho kya raha hai?"
+  options={[
+    "`getString` har frame mein bahut zyada baar bulaya ja raha hai; us value ko rakh lijiye",
+    "Kisi `SharedPreferences` file ka pehla padhna poori XML ko disk se ladta aur padhta hai, aur wo poora hone tak koi bhi padhna ruka rehta hai — to badi preferences wali file cold start ke baad pehli pahunch par main thread rok deti hai",
+    "Wo trace bharmata hai; asli rukavat kahin aur hai aur sampler ne use galat khate mein daal diya"
+  ]}
+  answer={1}
+  explanation="SharedPreferences memory mein tabhi hai jab wo lad chuki ho, aur ladna pehli pahunch par disk se order se padhna aur poori file ki XML padhna hai. getSharedPreferences turant laut aata hai par koi bhi get us ladne par ruka rehta hai, to cold start par, jab preferences ki file badhkar saikdon keys ki ho chuki ho, main thread disk ka intezar karta hai — aur saste device par, jahan storage dheema aur daba hua hai, wo ANR ki had tak pahunch jata hai. DataStore theek isi ko hatane ke liye bana tha, tez hokar nahi balki us kaam ko Flow banakar, taki wo rok hi na sake. StrictMode ka detectDiskReads ise banate waqt pakad leta hai, aur isiliye wo debug wale build ki cheez hai. Alag-alag values rakh lene se baad ki calls mein madad milti, pehli mein nahi, aur rokti wahi pehli hai."
+/>
+
+## StrictMode, debug wale build mein
+
+```kotlin title="MyApp.kt" numbered
+if (BuildConfig.DEBUG) {
+    StrictMode.setThreadPolicy(
+        StrictMode.ThreadPolicy.Builder()
+            .detectDiskReads()
+            .detectDiskWrites()
+            .detectNetwork()
+            .penaltyLog()
+            .build(),
+    )
+    StrictMode.setVmPolicy(
+        StrictMode.VmPolicy.Builder()
+            .detectLeakedClosableObjects()      // bina band kiya Cursor ya stream
+            .detectActivityLeaks()
+            .penaltyLog()
+            .build(),
+    )
+}
+```
+
+StrictMode main thread par nazar rakhta hai aur us par ho rahe disk tatha network ke kaam batata hai. Ye
+maujood sabse sasta quality wala auzar hai: kuch linein, sirf debug wale build mein, aur ye theek usi
+kism ka bug dhoondh leta hai jo production mein ANR banta hai.
+
+`penaltyDeath()` har ullanghan ko crash bana deta hai, jo sunne mein sakht lagta hai aur us team ke liye
+sahi setting hai jo ise sach mein manti hai — jis ullanghan ko aap log mein andekha kar sakte ho wo
+ullanghan bheja jata hai.
+
+## Compose wala roop
+
+```kotlin title="Recomposition.kt" numbered
+// har recomposition par chalta hai, main thread par
+@Composable
+fun OrderList(orders: List<Order>) {
+    val sorted = orders.sortedBy { it.createdAt }        // galat: composition mein kaam
+    LazyColumn { items(sorted) { OrderRow(it) } }
+}
+
+// sirf tab, jab input badle
+@Composable
+fun OrderList(orders: List<Order>) {
+    val sorted = remember(orders) { orders.sortedBy { it.createdAt } }
+    LazyColumn { items(sorted, key = { it.id }) { OrderRow(it) } }
+}
+```
+
+Compose dheeme hone ka ek aisa tarika jod deta hai jiska View wali vyavastha mein koi jodidar nahi: aisa
+kaam jo akele mein tez hai par har recomposition par chalta hai. Composition ki performance wale lesson
+ne tarika bataya tha; ye wo jagah hai jahan wo gire hue frames bankar dikhta hai, aur composition wali
+tracing hi batati hai ki kaam dheema nahi hai, wo bahut zyada baar ho raha hai.
+
+<Detail summary="ANR ka trace padhna">
+ANR hone par Android `/data/anr/traces.txt` likhta hai, aur Play Console wahi cheez dikhata hai. Maayne
+rakhta hai sabse upar **main thread ka stack**:
+
+```text title="ANR trace" numbered
+"main" prio=5 tid=1 Blocked
+  at com.example.OrderRepository.sync(OrderRepository.kt:42)
+  - waiting to lock <0x0f3a> held by thread 14
+```
+
+Teen haalatein teen alag kahaniyan batati hain:
+
+- **`Runnable`** — main thread sach mein ginti kar raha tha. Stack us kaam ka naam leta hai; use
+  hataiye.
+- **`Blocked`** — wo aise taale ka intezar kar raha tha jo koi doosra thread pakde hai. *Us* thread ko
+  dekhiye, jo aam taur par aisa kuch pakde hue I/O kar raha hai jo UI ko chahiye.
+- **`Binder` wali call mein `Native`** — kisi system ki service ka intezar. Aksar vyast aap nahi balki
+  system tha, par main thread se kisi dheemi system API ko bulana phir bhi aapka chunaav hai.
+
+`Blocked` wala maamla hi log galat padhte hain: stack aapka code dikhata hai, par ilaaj us thread mein
+hai jo taala pakde hai, usmein nahi jo intezar kar raha hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli do ek hi bug hain do naapon par">
+**Main thread par disk ya network.** Behtar se behtar ek gira frame, badtar mein ANR.
+
+**Ausat frame time se raay banana.** Users ko ausat nahi, 95wan percentile mehsoos hota hai.
+
+**StrictMode na hona.** Kuch linein, jo theek wahi bug dhoondhti hain jo production mein ANR banta hai.
+
+**Kisi composable ki body mein kaam.** Akele mein tez, har recomposition par chalta hua.
+
+**`Blocked` wale ANR ko apne code ki galti padhna.** Taala pakde thread ko dekhiye.
+</Pitfall>
+
+## Abhyaas
+
+1. `penaltyDeath()` ke saath StrictMode jodiye aur dekhiye ki kitni jaldi kuch nakaam hota hai.
+2. `detectDiskReads()` chalu rakhte hue cold start par koi `SharedPreferences` padhiye.
+3. `dumpsys gfxinfo framestats` chalaiye aur ausat ko 95wein percentile se milaiye.
+4. Kisi composable ki body mein `sortedBy` rakhiye aur recomposition ki ginti tatha frame ke samay
+   dekhiye.
+5. Kisi click wale handler mein `Thread.sleep(6000)` se ANR karaiye aur trace mein thread ki haalat
+   padhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Frame ka budget | 60Hz par 16.7ms, 120Hz par 8.3ms — aur poora aapka nahi |
+| Jank aur ANR | Ek hi bug, do naapon par |
+| ANR ki hadein | 5s chhoona, 10s receiver, 20s service |
+| Play ki had | 0.47% ANR dar store mein dikhne par asar daalti hai |
+| Naapiye | 95wan percentile, ausat nahi |
+| StrictMode | Sirf debug; maujood sabse sasta quality wala auzar |
+| `penaltyDeath` | Jis ullanghan ko andekha kar sako wo bheja jata hai |
+| `SharedPreferences` | Pehla padhna poori file ko, order se, padhta hai |
+| Compose | Composable mein rakha kaam har recomposition par chalta hai |
+| `Blocked` wale traces | Taala pakde thread ko theek kijiye, intezar karte ko nahi |
+
+<Interview title="Ek sawal, aise trace ka jo galat jagah ishara karta hai">
+"Kisi ANR ka trace main thread ko aapke repository ke andar ruka dikhata hai. Bug kahan hai?"
+
+Shayad us line par nahi. Agar thread ki haalat `Blocked` hai, to main thread aise taale ka intezar kar
+raha hai jo koi doosra thread pakde hai, to wo stack dikhata hai ki wo ruka kahan, na ki roka kisne —
+ilaaj us thread mein hai jo taala pakde hai, aur wo aam taur par aisa kuch pakde hue I/O kar raha hota
+hai jo UI ko chahiye. Haalat `Runnable` hoti to main use alag padhta: main thread sach mein ginti kar
+raha tha, aur stack us kaam ka naam leta hai jise hatana hai.
+
+Aam taur par main jank aur ANRs ko ek hi bug ke do naap manta hoon, kyunki dono mein main thread tab
+vyast hai jab use banana chahiye tha. Sasta bachav hai debug wale build mein StrictMode,
+`detectDiskReads`, `detectDiskWrites` aur `detectNetwork` ke saath — wo theek isi kism ki mushkil tab
+dhoondh leta hai jab emulator abhi khula hai, aur `penaltyDeath()` iske layak hai kyunki jis ullanghan
+ko aap log mein andekha kar sakte ho wo ullanghan bheja jata hai.
+</Interview>

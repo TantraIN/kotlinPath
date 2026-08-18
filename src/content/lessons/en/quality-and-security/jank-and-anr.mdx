@@ -1,0 +1,190 @@
+---
+title: Jank, ANRs and StrictMode
+description: Jank and an ANR are the same bug at two magnitudes. Both are the main thread being busy when it should have been drawing, and StrictMode tells you about them while you still have the emulator open.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+The main thread has one job every frame: run your callbacks, lay out, draw. At 60Hz it has
+**16.7ms**. Take longer and a frame is dropped; take five seconds and the system kills the app. There
+is no third mechanism — only a difference in scale.
+</KeyIdea>
+
+## The budget
+
+| Refresh rate | Frame budget |
+| --- | --- |
+| 60Hz | 16.7ms |
+| 90Hz | 11.1ms |
+| 120Hz | 8.3ms |
+
+And that budget is not all yours — the system needs part of it for layout, draw and compositing. In
+practice your own work should finish in a few milliseconds, which is why "it only takes 20ms" is
+already a dropped frame on a 120Hz device.
+
+Measure rather than guess:
+
+```bash title="adb" numbered
+adb shell dumpsys gfxinfo com.example framestats
+# Janky frames: 12 (4.2%)
+# 90th percentile: 14ms
+# 95th percentile: 31ms      <- the tail is what users feel
+```
+
+The mean is nearly useless here. Users notice the 95th percentile, because one stutter in a smooth
+scroll is more memorable than a uniformly slightly-slow list.
+
+## ANRs
+
+An **Application Not Responding** dialog appears when the main thread is blocked past a threshold:
+
+| Situation | Threshold |
+| --- | --- |
+| Input event unhandled | 5 seconds |
+| `BroadcastReceiver.onReceive` | 10 seconds (20 in the background) |
+| `Service` lifecycle callback | 20 seconds |
+
+Play Console reports your ANR rate against a **0.47% bad-behaviour threshold**, and exceeding it
+affects your store visibility — so this is measured whether or not you measure it.
+
+The causes are boring and repeat: a synchronous network call, a database query on the main thread, a
+`SharedPreferences.commit()`, a lock held by a background thread that the main thread then waits on,
+or a `Binder` call to a system service that is itself busy.
+
+<Quiz
+  question="An app's ANR rate is high, but the traces show the main thread inside `SharedPreferences.getString` — a read the team believes is in memory and instant. What is happening?"
+  options={[
+    "`getString` is being called too many times per frame; cache the value",
+    "The first read of a `SharedPreferences` file loads and parses the whole XML from disk, and any read blocks until that finishes — so a large preferences file blocks the main thread on the first access after a cold start",
+    "The trace is misleading; the real block is elsewhere and the sampler attributed it wrongly"
+  ]}
+  answer={1}
+  explanation="SharedPreferences is in memory only after it has been loaded, and loading is a synchronous disk read plus an XML parse of the entire file on first access. getSharedPreferences returns immediately but any get call blocks on that load, so on a cold start with a preferences file that has grown to hundreds of keys the main thread waits on disk — and on a cheap device with slow storage under load, that reaches ANR territory. This is exactly what DataStore was built to remove, not by being faster but by making the operation a Flow so it cannot block. StrictMode's detectDiskReads catches it in development, which is why it belongs in the debug build. Caching individual values would help the repeat calls and not the first one, which is the one that blocks."
+/>
+
+## StrictMode, in the debug build
+
+```kotlin title="MyApp.kt" numbered
+if (BuildConfig.DEBUG) {
+    StrictMode.setThreadPolicy(
+        StrictMode.ThreadPolicy.Builder()
+            .detectDiskReads()
+            .detectDiskWrites()
+            .detectNetwork()
+            .penaltyLog()
+            .build(),
+    )
+    StrictMode.setVmPolicy(
+        StrictMode.VmPolicy.Builder()
+            .detectLeakedClosableObjects()      // an unclosed Cursor or stream
+            .detectActivityLeaks()
+            .penaltyLog()
+            .build(),
+    )
+}
+```
+
+StrictMode watches the main thread and reports disk and network work on it. It is the cheapest quality
+tool available: a few lines, in the debug build only, and it finds the exact class of bug that becomes
+an ANR in production.
+
+`penaltyDeath()` turns each violation into a crash, which sounds aggressive and is the right setting
+for a team that means it — a violation you can ignore in a log is a violation that ships.
+
+## The Compose flavour
+
+```kotlin title="Recomposition.kt" numbered
+// Runs on every recomposition, on the main thread
+@Composable
+fun OrderList(orders: List<Order>) {
+    val sorted = orders.sortedBy { it.createdAt }        // wrong: work in composition
+    LazyColumn { items(sorted) { OrderRow(it) } }
+}
+
+// Only when the input changes
+@Composable
+fun OrderList(orders: List<Order>) {
+    val sorted = remember(orders) { orders.sortedBy { it.createdAt } }
+    LazyColumn { items(sorted, key = { it.id }) { OrderRow(it) } }
+}
+```
+
+Compose adds a way to be slow that has no View-system equivalent: work that is individually fast but
+runs on every recomposition. The composition performance lesson covered the mechanics; this is where
+it shows up as dropped frames, and composition tracing is what tells you the work is not slow, it is
+happening too often.
+
+<Detail summary="Reading an ANR trace">
+When an ANR happens, Android writes `/data/anr/traces.txt` and Play Console shows the same thing. What
+matters is the **main thread's stack** at the top:
+
+```text title="ANR trace" numbered
+"main" prio=5 tid=1 Blocked
+  at com.example.OrderRepository.sync(OrderRepository.kt:42)
+  - waiting to lock <0x0f3a> held by thread 14
+```
+
+Three states tell you three different stories:
+
+- **`Runnable`** — the main thread was actually computing. The stack names the work; move it off.
+- **`Blocked`** — it was waiting for a lock another thread holds. Look at *that* thread, which is
+  usually doing I/O while holding something the UI needs.
+- **`Native` in a `Binder` call** — waiting on a system service. Often the system was busy rather
+  than you, but calling a slow system API from the main thread is still your choice.
+
+The `Blocked` case is the one people misread: the stack shows your code, but the fix is in the thread
+holding the lock, not the one waiting.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first two are the same bug at two sizes">
+**Disk or network on the main thread.** A dropped frame at best, an ANR at worst.
+
+**Judging by the mean frame time.** Users feel the 95th percentile, not the average.
+
+**No StrictMode.** A few lines that find exactly the bug that becomes a production ANR.
+
+**Work in a composable body.** Fast individually, run on every recomposition.
+
+**Reading a `Blocked` ANR as your code's fault.** Look at the thread holding the lock.
+</Pitfall>
+
+## Practice
+
+1. Add StrictMode with `penaltyDeath()` and see how quickly something fails.
+2. Read a `SharedPreferences` on a cold start with `detectDiskReads()` on.
+3. Run `dumpsys gfxinfo framestats` and compare the mean with the 95th percentile.
+4. Put a `sortedBy` in a composable body and watch recomposition counts and frame times.
+5. Trigger an ANR with `Thread.sleep(6000)` in a click handler and read the trace's thread state.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Frame budget | 16.7ms at 60Hz, 8.3ms at 120Hz — and not all yours |
+| Jank and ANR | The same bug at two magnitudes |
+| ANR thresholds | 5s input, 10s receiver, 20s service |
+| Play's limit | 0.47% ANR rate affects store visibility |
+| Measure | The 95th percentile, not the mean |
+| StrictMode | Debug only; the cheapest quality tool there is |
+| `penaltyDeath` | A violation you can ignore is one that ships |
+| `SharedPreferences` | The first read parses the whole file, synchronously |
+| Compose | Work in a composable runs on every recomposition |
+| `Blocked` traces | Fix the thread holding the lock, not the one waiting |
+
+<Interview title="A question about a trace that points at the wrong place">
+"An ANR trace shows the main thread blocked inside your repository. Where is the bug?"
+
+Probably not on that line. If the thread state is `Blocked`, the main thread is waiting for a lock
+another thread holds, so the stack shows where it stopped rather than what caused it — the fix is in
+the thread holding the lock, which is usually doing I/O while holding something the UI needs. If the
+state were `Runnable` I would read it differently: the main thread was genuinely computing, and the
+stack names the work to move off.
+
+More generally I treat jank and ANRs as the same bug at two magnitudes, since both are the main thread
+being busy when it should have been drawing. The cheap prevention is StrictMode in the debug build
+with `detectDiskReads`, `detectDiskWrites` and `detectNetwork` — it finds exactly this class of
+problem while the emulator is still open, and `penaltyDeath()` is worth it because a violation you can
+ignore in a log is a violation that ships.
+</Interview>
