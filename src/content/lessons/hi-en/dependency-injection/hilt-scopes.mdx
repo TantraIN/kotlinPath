@@ -1,0 +1,214 @@
+---
+title: Scopes, qualifiers aur component ka ped
+description: Scope tay karta hai ki koi cheez kitni jiyegi aur use share kaun karega. Ek taraf galat hue to Activity leak hoti hai; doosri taraf galat hue to aapka cache har baar khaali milta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Bina scope wali binding **har maang par nai cheez** banati hai. Scope kehta hai "har component par
+ek", aur component batata hai ki wo kitna hai. Scope ki har galti ek hi sawal ka galat jawab hai: kya
+is cheez ko us screen se zyada jeena chahiye jisne use maanga tha?
+</KeyIdea>
+
+## Ped
+
+Components ek ke andar ek hain, aur har ek utna jeeta hai jitni wo Android wali cheez jiska wo hai:
+
+<Figure caption="Har component apne upar wala sab kuch dekh sakta hai, aur neeche wala kuch nahi. Jaise-jaise neeche jaiye, umar ghatti jati hai.">
+  <LayerStack
+    title="Hilt ke components"
+    description="Koi binding lambi umar wale kisi component ki cheez par tik sakti hai, chhoti umar wale ki kisi cheez par nahi."
+    topLabel="sabse lamba jeeta hai"
+    bottomLabel="sabse kam jeeta hai"
+    layers={[
+      { label: "SingletonComponent", sub: "@Singleton", accent: "violet", detail: "Application ke saath banta hai aur process ke saath khatam hota hai. Database, OkHttpClient, Retrofit aur repositories yahin ke hain." },
+      { label: "ActivityRetainedComponent", sub: "@ActivityRetainedScoped", accent: "sky", detail: "Configuration badalne par bacha rehta hai, theek kisi ViewModel ki tarah. Us state ke liye jise ek hi screen ke kai ViewModels share karte hain." },
+      { label: "ViewModelComponent", sub: "@ViewModelScoped", accent: "emerald", detail: "Har ViewModel par ek, usi ke saath khatam. Us use case ke liye jo kisi ek screen ki state rakhta hai." },
+      { label: "ActivityComponent", sub: "@ActivityScoped", accent: "amber", detail: "Ek Activity se bandha, to rotation par khatam hokar dobara banta hai. Un cheezon ke liye jinhe sach mein Activity ka context chahiye." },
+      { label: "FragmentComponent", sub: "@FragmentScoped", accent: "rose", detail: "Har fragment par ek. Shayad hi kabhi sahi jawab — iski zarurat padna aam taur par batata hai ki state jitni neeche hai utni neeche nahi honi chahiye." },
+    ]}
+  />
+</Figure>
+
+Usse jo niyam nikalta hai wahi yaad rakhne layak hai: **koi binding apne upar wali kisi bhi cheez par
+tik sakti hai, neeche wali par kabhi nahi**. Koi `@Singleton` repository `@ActivityScoped` dependency
+nahi le sakta, kyunki singleton har activity se zyada jeeta hai aur khatam ho chuki activity ko hamesha
+pakde rehta. Hilt ise compile waqt hi mana kar deta hai, yani wo leak jise build pakad leta hai, koi
+user nahi.
+
+| Scope | Ek cheez, har | Aam taur par kiske liye |
+| --- | --- | --- |
+| `@Singleton` | Application | Database, `OkHttpClient`, Retrofit, repositories |
+| `@ActivityRetainedScoped` | Activity, rotation ke aar-paar | Ek screen ke kai `ViewModel` jo state share karte hain |
+| `@ViewModelScoped` | `ViewModel` | Aisa use case jo screen bhar ki state rakhta hai |
+| `@ActivityScoped` | Activity instance | Jinhe `Activity` ka context chahiye |
+| `@FragmentScoped` | Fragment | Kam; aam taur par nishani ki state galat jagah hai |
+| *(koi nahi)* | Har injection ki jagah | Bina state wali cheezein — mappers, bina state wale use cases |
+
+`@ActivityRetainedScoped` aur `@ActivityScoped` ka farak gaur kijiye, jo sunne mein ek jaise hain aur
+hain nahi. Retained wala configuration badalne par bacha rehta hai, theek `ViewModel` ki tarah; saada
+wala har rotation par khatam hokar dobara banta hai.
+
+## Bina scope wala hi default hai, aur aam taur par sahi
+
+```kotlin title="Unscoped.kt" numbered
+// koi scope nahi: har injection ki jagah par nai, jiski koi keemat nahi aur jo kuch pakde nahi rehti
+class OrderDtoMapper @Inject constructor()
+
+// scope wali: theek ek, app ki poori umar ke liye
+@Singleton
+class TokenStore @Inject constructor(private val dataStore: DataStore<Preferences>)
+```
+
+Scope sirf use dijiye jiske paas share karne layak state ho ya jise banana mehnga ho. Bina state wala
+mapper `@Singleton` karne se kuch nahi milta aur ek hamesha ki pakad ban jati hai; bina scope wala
+`TokenStore` yani do bulane walon ke paas ek hi token ke do alag roop, jo asli bug hai.
+
+<Quiz
+  question="Koi repository `@Singleton` hai aur result memory mein rakhta hai. Koi tester batata hai ki screen kholne par har baar cache khaali milta hai. Wajah kya ho sakti hai?"
+  options={[
+    "@Singleton sirf har Activity par ek ki guarantee deta hai, to rotation use dobara bana deta hai",
+    "Interface `@Binds` se bandha hai par scope wala annotation `@Binds` function ke bajaye implementation class par laga hai, to graph jo binding sach mein leta hai wo bina scope ki hai",
+    "Memory wale caches `@Singleton` mein bach hi nahi sakte, unhe Room chahiye",
+  ]}
+  answer={1}
+  explanation="Scope ki ye sabse aam galti hai aur ye chupchap hoti hai — kuch nakaam nahi hota, app bas aise chalta hai mano cache hai hi nahi. Jab koi interface @Binds se bandhta hai, to graph ki binding wo @Binds wala function hai, aur scope wahi dhota hai. Implementation class par laga @Singleton un maangon ke liye dekha hi nahi jata jo interface se hokar aati hain, to OrderRepository ka har injection nai cheez aur naya khaali cache banata hai. @Singleton ko @Binds wale function par le jane se ye theek ho jata hai. Ise pakadna isliye mushkil hai ki dono tarah likhne par compile hota hai aur review mein dono sahi dikhte hain; lakshan behaviour mein hai, isiliye wo likhne wale ke bajaye aam taur par kisi tester tak pahunchta hai."
+/>
+
+## Qualifiers: ek hi type ki do cheezein
+
+Graph ki chabi type hai, to do `OkHttpClient` ya do `String` duvidha hain. Qualifier us chabi mein kuch
+jod deta hai:
+
+```kotlin title="Qualifiers.kt" numbered
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class AuthedClient
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class PlainClient
+
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+
+    @Provides @Singleton @AuthedClient
+    fun authedClient(auth: AuthInterceptor): OkHttpClient =
+        plainClient().newBuilder().addInterceptor(auth).build()   // pool share rehta hai
+
+    @Provides @Singleton @PlainClient
+    fun plainClient(): OkHttpClient = OkHttpClient.Builder().build()
+}
+
+class LoginRepository @Inject constructor(
+    @PlainClient private val client: OkHttpClient,     // login ko purana token nahi bhejna chahiye
+)
+```
+
+Qualifiers ke bina ye compile hi nahi hota — Hilt dohri binding batata hai, aur yahi sahi anjaam hai,
+kyunki do hone ke baad "mujhe ek `OkHttpClient` dijiye" sach mein duvidha hai.
+
+Yahan `newBuilder()` usi wajah se maayne rakhta hai jo OkHttp wale lesson ne batai thi: dono clients
+do alag dheron ke bajaye ek hi connection pool aur ek hi cache share karte hain.
+
+<Note>
+Hilt kuch qualifiers pehle se deta hai jinki aapko lagatar zarurat padegi: `@ApplicationContext` aur
+`@ActivityContext`. Saada `Context` maangna theek isi wajah se duvidha hai, aur galat wala chunna hi
+wo raasta hai jisse koi `@Singleton` kisi `Activity` ko pakde baith jata hai.
+</Note>
+
+## Dispatchers, wo qualifier jo sabko lena chahiye
+
+```kotlin title="DispatcherModule.kt" numbered
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class IoDispatcher
+
+@Module
+@InstallIn(SingletonComponent::class)
+object DispatcherModule {
+    @Provides @IoDispatcher fun io(): CoroutineDispatcher = Dispatchers.IO
+}
+
+class OrderRepository @Inject constructor(
+    @IoDispatcher private val io: CoroutineDispatcher,
+) {
+    suspend fun refresh() = withContext(io) { /* ... */ }
+}
+```
+
+Kisi class ke andar `Dispatchers.IO` jad dena use ek khaas tarike se jaanchne layak nahi rehne deta:
+test ye tay nahi kar sakta ki wo kaam kab chale, to use sokar ummid karni padti hai. Dispatcher ko
+inject karne se test `StandardTestDispatcher` de sakta hai aur ghadi khud chala sakta hai. Poore phase
+ka ye sabse chhota badlaav hai aur test ki quality par iska asar sabse bada.
+
+<Detail summary="Leak hota kya hai, aur compiler use rok kyun pata hai">
+`Activity` pakde hue koi `@Singleton` Android ka jana-pehchana leak hai: activity khatam ho jati hai,
+singleton uska pata pakde rehta hai, aur poora view ka ped process ki umar bhar memory mein bana rehta
+hai.
+
+Hilt aam wale roop ko namumkin bana deta hai. `@ActivityContext` sirf `ActivityComponent` aur uske
+neeche milta hai, to use maangti koi `@Singleton` binding compile hi nahi hoti — umar ka bemel
+dheere-dheere hote leak ke bajaye build ki error hai, jise profiler mein dhoondhna nahi padta.
+
+Jo wo nahi pakad sakta wo hai chalte waqt kisi lambi umar wali cheez ko chhoti umar wali thama dena:
+kisi screen se `@Singleton` par lagaya gaya listener, application jitni umar wali class mein rakha gaya
+callback. Wo wahi `DisposableEffect` aur `onDestroyView` wala anushasan hain — scope wali vyavastha
+constructor ki shakal wale leaks hatati hai, registration ki shakal wale nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur unmein se do chupchap hoti hain">
+**`@Binds` function ke bajaye implementation par scope.** Binding bina scope ki hai, cache kabhi bachta
+nahi, aur kuch nakaam bhi nahi hota. Upar wala quiz dekhiye.
+
+**Har cheez ko `@Singleton` kar dena.** Jin cheezon ko screen ke saath marna tha wo process bhar jeeti
+hain, aur wo leak hi hai, bas doosre naam se.
+
+**Jahan `@ActivityRetainedScoped` chahiye tha wahan `@ActivityScoped`.** Har rotation par dobara banta
+hai, to uski rakhi har state chali jati hai.
+
+**Saada `Context` inject karna.** Duvidha hai, aur lambi umar wali cheez ke liye `@ActivityContext`
+chunna wahi leak hai jise Hilt warna rok deta.
+
+**Jade hue dispatchers.** Tests samay par akhtiyaar nahi rakh paate, to wo sote hain aur
+gair-bharosemand ho jate hain.
+</Pitfall>
+
+## Abhyaas
+
+1. `@Binds` se bandhe kisi `@Singleton` repository mein memory wala cache jodiye, scope class par
+   lagaiye, aur cache ko kabhi na bachte dekhiye. Phir use `@Binds` wale function par le jaiye.
+2. Kisi `@Singleton` binding se `@ActivityContext` maangiye aur compile ki error padhiye.
+3. Bina scope wali kisi dependency ka identity hash do injection ki jagahon par log kijiye aur pakka
+   kijiye ki wo alag hain.
+4. Bina qualifier ke doosra `OkHttpClient` jodiye aur dohri binding wali error padhiye.
+5. Ek dispatcher inject kijiye, phir `StandardTestDispatcher` wala aisa test likhiye jisme koi der na
+   lage.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Bina scope | Har injection ki jagah par nai cheez — yahi default hai |
+| Scope | Har component par ek cheez |
+| Niyam | Upar par tikiye, neeche par kabhi nahi |
+| `@Singleton` | Poora application |
+| `@ActivityRetainedScoped` | Rotation par bachta hai, `ViewModel` ki tarah |
+| `@ActivityScoped` | Rotation par nahi bachta |
+| `@Binds` par scope | Use function dhota hai, implementation class nahi |
+| `@Qualifier` | Ek hi type ki do bindings alag karta hai |
+| `@ApplicationContext` | Wo `Context` jise pakde rehna safe hai |
+| Inject kiye dispatchers | Jinse coroutine wala code bina soye jaancha ja sakta hai |
+
+<Interview title="Ek sawal, jo asal mein umron ka hai">
+"Hilt ke scopes kaise chalte hain?"
+
+Bina scope wali binding har injection ki jagah par nai cheez banati hai, jo default hai aur aam taur
+par sahi. Scope ka matlab hai har component par ek cheez, aur umar component tay karta hai —
+application ke liye `@Singleton`, rotation ke aar-paar screen ke liye `@ActivityRetainedScoped`, ek
+`ViewModel` ke liye `@ViewModelScoped`. Niyam ye hai ki koi binding lambi umar wale component ki kisi
+bhi cheez par tik sakti hai aur chhoti umar wale ki kisi par nahi, to `@ActivityContext` maangti koi
+`@Singleton` compile ki error hai — yani wo leak jise build pakad leta hai.
+
+Jis galti par main ungli rakhunga wo hai scope wala annotation aisi implementation class par lagana jo
+`@Binds` se bahar di ja rahi hai. Graph binding ke taur par `@Binds` wala function leta hai, to scope
+wahin hona chahiye; class par wo interface se aati maangon ke liye andekha reh jata hai, aur aapko har
+baar nai cheez milti hai, bina kisi error ke. Wo chupchap hota hai, isiliye aam taur par "cache kaam
+nahi kar raha" bankar saamne aata hai.
+</Interview>

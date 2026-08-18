@@ -1,0 +1,211 @@
+---
+title: Scopes, qualifiers और component का पेड़
+description: Scope तय करता है कि कोई चीज कितनी जीएगी और उसे साझा कौन करेगा। एक तरफ गलत हुए तो Activity leak होती है; दूसरी तरफ गलत हुए तो आपका cache हर बार खाली मिलता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+बिना scope वाली binding **हर माँग पर नई चीज** बनाती है। Scope कहता है "हर component पर एक", और
+component बताता है कि वह कितना है। Scope की हर गलती एक ही सवाल का गलत जवाब है: क्या इस चीज को उस
+screen से ज्यादा जीना चाहिए जिसने उसे माँगा था?
+</KeyIdea>
+
+## पेड़
+
+Components एक के अंदर एक हैं, और हर एक उतना जीता है जितनी वह Android वाली चीज जिसका वह है:
+
+<Figure caption="हर component अपने ऊपर वाला सब कुछ देख सकता है, और नीचे वाला कुछ नहीं। जैसे-जैसे नीचे जाइए, उम्र घटती जाती है।">
+  <LayerStack
+    title="Hilt के components"
+    description="कोई binding लंबी उम्र वाले किसी component की चीज पर टिक सकती है, छोटी उम्र वाले की किसी चीज पर नहीं।"
+    topLabel="सबसे लंबा जीता है"
+    bottomLabel="सबसे कम जीता है"
+    layers={[
+      { label: "SingletonComponent", sub: "@Singleton", accent: "violet", detail: "Application के साथ बनता है और process के साथ खत्म होता है। Database, OkHttpClient, Retrofit और repositories यहीं के हैं।" },
+      { label: "ActivityRetainedComponent", sub: "@ActivityRetainedScoped", accent: "sky", detail: "Configuration बदलने पर बचा रहता है, ठीक किसी ViewModel की तरह। उस state के लिए जिसे एक ही screen के कई ViewModels साझा करते हैं।" },
+      { label: "ViewModelComponent", sub: "@ViewModelScoped", accent: "emerald", detail: "हर ViewModel पर एक, उसी के साथ खत्म। उस use case के लिए जो किसी एक screen की state रखता है।" },
+      { label: "ActivityComponent", sub: "@ActivityScoped", accent: "amber", detail: "एक Activity से बँधा, तो rotation पर खत्म होकर दोबारा बनता है। उन चीजों के लिए जिन्हें सच में Activity का context चाहिए।" },
+      { label: "FragmentComponent", sub: "@FragmentScoped", accent: "rose", detail: "हर fragment पर एक। शायद ही कभी सही जवाब — इसकी जरूरत पड़ना आमतौर पर बताता है कि state जितनी नीचे है उतनी नीचे नहीं होनी चाहिए।" },
+    ]}
+  />
+</Figure>
+
+उससे जो नियम निकलता है वही याद रखने लायक है: **कोई binding अपने ऊपर वाली किसी भी चीज पर टिक सकती
+है, नीचे वाली पर कभी नहीं**। कोई `@Singleton` repository `@ActivityScoped` dependency नहीं ले सकता,
+क्योंकि singleton हर activity से ज्यादा जीता है और खत्म हो चुकी activity को हमेशा पकड़े रहता। Hilt
+इसे compile वक्त ही मना कर देता है, यानी वह leak जिसे build पकड़ लेता है, कोई user नहीं।
+
+| Scope | एक चीज, हर | आमतौर पर किसके लिए |
+| --- | --- | --- |
+| `@Singleton` | Application | Database, `OkHttpClient`, Retrofit, repositories |
+| `@ActivityRetainedScoped` | Activity, rotation के आर-पार | एक screen के कई `ViewModel` जो state साझा करते हैं |
+| `@ViewModelScoped` | `ViewModel` | ऐसा use case जो screen भर की state रखता है |
+| `@ActivityScoped` | Activity instance | जिन्हें `Activity` का context चाहिए |
+| `@FragmentScoped` | Fragment | कम; आमतौर पर निशानी कि state गलत जगह है |
+| *(कोई नहीं)* | हर injection की जगह | बिना state वाली चीजें — mappers, बिना state वाले use cases |
+
+`@ActivityRetainedScoped` और `@ActivityScoped` का फर्क गौर कीजिए, जो सुनने में एक जैसे हैं और हैं
+नहीं। Retained वाला configuration बदलने पर बचा रहता है, ठीक `ViewModel` की तरह; सादा वाला हर rotation
+पर खत्म होकर दोबारा बनता है।
+
+## बिना scope वाला ही डिफॉल्ट है, और आमतौर पर सही
+
+```kotlin title="Unscoped.kt" numbered
+// कोई scope नहीं: हर injection की जगह पर नई, जिसकी कोई कीमत नहीं और जो कुछ पकड़े नहीं रहती
+class OrderDtoMapper @Inject constructor()
+
+// scope वाली: ठीक एक, ऐप की पूरी उम्र के लिए
+@Singleton
+class TokenStore @Inject constructor(private val dataStore: DataStore<Preferences>)
+```
+
+Scope सिर्फ उसे दीजिए जिसके पास साझा करने लायक state हो या जिसे बनाना महँगा हो। बिना state वाला
+mapper `@Singleton` करने से कुछ नहीं मिलता और एक हमेशा की पकड़ बन जाती है; बिना scope वाला
+`TokenStore` यानी दो बुलाने वालों के पास एक ही token के दो अलग रूप, जो असली bug है।
+
+<Quiz
+  question="कोई repository `@Singleton` है और नतीजे memory में रखता है। कोई tester बताता है कि screen खोलने पर हर बार cache खाली मिलता है। वजह क्या हो सकती है?"
+  options={[
+    "@Singleton सिर्फ हर Activity पर एक की गारंटी देता है, तो rotation उसे दोबारा बना देता है",
+    "Interface `@Binds` से बँधा है पर scope वाला annotation `@Binds` function के बजाय implementation class पर लगा है, तो graph जो binding सच में लेता है वह बिना scope की है",
+    "Memory वाले caches `@Singleton` में बच ही नहीं सकते, उन्हें Room चाहिए",
+  ]}
+  answer={1}
+  explanation="Scope की यह सबसे आम गलती है और यह चुपचाप होती है — कुछ नाकाम नहीं होता, ऐप बस ऐसे चलता है मानो cache है ही नहीं। जब कोई interface @Binds से बँधता है, तो graph की binding वह @Binds वाला function है, और scope वही ढोता है। Implementation class पर लगा @Singleton उन माँगों के लिए देखा ही नहीं जाता जो interface से होकर आती हैं, तो OrderRepository का हर injection नई चीज और नया खाली cache बनाता है। @Singleton को @Binds वाले function पर ले जाने से यह ठीक हो जाता है। इसे पकड़ना इसलिए मुश्किल है कि दोनों तरह लिखने पर compile होता है और review में दोनों सही दिखते हैं; लक्षण बर्ताव में है, इसीलिए वह लिखने वाले के बजाय आमतौर पर किसी tester तक पहुँचता है।"
+/>
+
+## Qualifiers: एक ही type की दो चीजें
+
+Graph की चाबी type है, तो दो `OkHttpClient` या दो `String` दुविधा हैं। Qualifier उस चाबी में कुछ जोड़
+देता है:
+
+```kotlin title="Qualifiers.kt" numbered
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class AuthedClient
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class PlainClient
+
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+
+    @Provides @Singleton @AuthedClient
+    fun authedClient(auth: AuthInterceptor): OkHttpClient =
+        plainClient().newBuilder().addInterceptor(auth).build()   // pool साझा रहता है
+
+    @Provides @Singleton @PlainClient
+    fun plainClient(): OkHttpClient = OkHttpClient.Builder().build()
+}
+
+class LoginRepository @Inject constructor(
+    @PlainClient private val client: OkHttpClient,     // login को पुराना token नहीं भेजना चाहिए
+)
+```
+
+Qualifiers के बिना यह compile ही नहीं होता — Hilt दोहरी binding बताता है, और यही सही नतीजा है,
+क्योंकि दो होने के बाद "मुझे एक `OkHttpClient` दीजिए" सच में दुविधा है।
+
+यहाँ `newBuilder()` उसी वजह से मायने रखता है जो OkHttp वाले पाठ ने बताई थी: दोनों clients दो अलग
+ढेरों के बजाय एक ही connection pool और एक ही cache साझा करते हैं।
+
+<Note>
+Hilt कुछ qualifiers पहले से देता है जिनकी आपको लगातार जरूरत पड़ेगी: `@ApplicationContext` और
+`@ActivityContext`। सादा `Context` माँगना ठीक इसी वजह से दुविधा है, और गलत वाला चुनना ही वह रास्ता
+है जिससे कोई `@Singleton` किसी `Activity` को पकड़े बैठ जाता है।
+</Note>
+
+## Dispatchers, वह qualifier जो सबको लेना चाहिए
+
+```kotlin title="DispatcherModule.kt" numbered
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class IoDispatcher
+
+@Module
+@InstallIn(SingletonComponent::class)
+object DispatcherModule {
+    @Provides @IoDispatcher fun io(): CoroutineDispatcher = Dispatchers.IO
+}
+
+class OrderRepository @Inject constructor(
+    @IoDispatcher private val io: CoroutineDispatcher,
+) {
+    suspend fun refresh() = withContext(io) { /* ... */ }
+}
+```
+
+किसी class के अंदर `Dispatchers.IO` जड़ देना उसे एक खास तरीके से जाँचने लायक नहीं रहने देता: test यह
+तय नहीं कर सकता कि वह काम कब चले, तो उसे सोकर उम्मीद करनी पड़ती है। Dispatcher को inject करने से test
+`StandardTestDispatcher` दे सकता है और घड़ी खुद चला सकता है। पूरे phase का यह सबसे छोटा बदलाव है और
+test की गुणवत्ता पर इसका असर सबसे बड़ा।
+
+<Detail summary="Leak होता क्या है, और compiler उसे रोक क्यों पाता है">
+`Activity` पकड़े हुए कोई `@Singleton` Android का जाना-पहचाना leak है: activity खत्म हो जाती है,
+singleton उसका पता पकड़े रहता है, और पूरा view का पेड़ process की उम्र भर memory में बना रहता है।
+
+Hilt आम वाले रूप को नामुमकिन बना देता है। `@ActivityContext` सिर्फ `ActivityComponent` और उसके
+नीचे मिलता है, तो उसे माँगती कोई `@Singleton` binding compile ही नहीं होती — उम्र का बेमेल धीरे-धीरे
+होते leak के बजाय build की error है, जिसे profiler में ढूँढ़ना नहीं पड़ता।
+
+जो वह नहीं पकड़ सकता वह है चलते वक्त किसी लंबी उम्र वाली चीज को छोटी उम्र वाली थमा देना: किसी screen
+से `@Singleton` पर लगाया गया listener, application जितनी उम्र वाली class में रखा गया callback। वे
+वही `DisposableEffect` और `onDestroyView` वाला अनुशासन हैं — scope वाली व्यवस्था constructor की शक्ल
+वाले leaks हटाती है, registration की शक्ल वाले नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और उनमें से दो चुपचाप होती हैं">
+**`@Binds` function के बजाय implementation पर scope।** Binding बिना scope की है, cache कभी बचता नहीं,
+और कुछ नाकाम भी नहीं होता। ऊपर वाला quiz देखिए।
+
+**हर चीज को `@Singleton` कर देना।** जिन चीजों को screen के साथ मरना था वे process भर जीती हैं, और वह
+leak ही है, बस दूसरे नाम से।
+
+**जहाँ `@ActivityRetainedScoped` चाहिए था वहाँ `@ActivityScoped`।** हर rotation पर दोबारा बनता है, तो
+उसकी रखी हर state चली जाती है।
+
+**सादा `Context` inject करना।** दुविधा है, और लंबी उम्र वाली चीज के लिए `@ActivityContext` चुनना वही
+leak है जिसे Hilt वरना रोक देता।
+
+**जड़े हुए dispatchers।** Tests समय पर अख्तियार नहीं रख पाते, तो वे सोते हैं और गैर-भरोसेमंद हो जाते
+हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. `@Binds` से बँधे किसी `@Singleton` repository में memory वाला cache जोड़िए, scope class पर लगाइए,
+   और cache को कभी न बचते देखिए। फिर उसे `@Binds` वाले function पर ले जाइए।
+2. किसी `@Singleton` binding से `@ActivityContext` माँगिए और compile की error पढ़िए।
+3. बिना scope वाली किसी dependency का identity hash दो injection की जगहों पर log कीजिए और पक्का कीजिए
+   कि वे अलग हैं।
+4. बिना qualifier के दूसरा `OkHttpClient` जोड़िए और दोहरी binding वाली error पढ़िए।
+5. एक dispatcher inject कीजिए, फिर `StandardTestDispatcher` वाला ऐसा test लिखिए जिसमें कोई देर न लगे।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| बिना scope | हर injection की जगह पर नई चीज — यही डिफॉल्ट है |
+| Scope | हर component पर एक चीज |
+| नियम | ऊपर पर टिकिए, नीचे पर कभी नहीं |
+| `@Singleton` | पूरा application |
+| `@ActivityRetainedScoped` | Rotation पर बचता है, `ViewModel` की तरह |
+| `@ActivityScoped` | Rotation पर नहीं बचता |
+| `@Binds` पर scope | उसे function ढोता है, implementation class नहीं |
+| `@Qualifier` | एक ही type की दो bindings अलग करता है |
+| `@ApplicationContext` | वह `Context` जिसे पकड़े रहना सुरक्षित है |
+| Inject किए dispatchers | जिनसे coroutine वाला code बिना सोए जाँचा जा सकता है |
+
+<Interview title="एक सवाल, जो असल में उम्रों का है">
+"Hilt के scopes कैसे चलते हैं?"
+
+बिना scope वाली binding हर injection की जगह पर नई चीज बनाती है, जो डिफॉल्ट है और आमतौर पर सही। Scope
+का मतलब है हर component पर एक चीज, और उम्र component तय करता है — application के लिए `@Singleton`,
+rotation के आर-पार screen के लिए `@ActivityRetainedScoped`, एक `ViewModel` के लिए
+`@ViewModelScoped`। नियम यह है कि कोई binding लंबी उम्र वाले component की किसी भी चीज पर टिक सकती है
+और छोटी उम्र वाले की किसी पर नहीं, तो `@ActivityContext` माँगती कोई `@Singleton` compile की error है
+— यानी वह leak जिसे build पकड़ लेता है।
+
+जिस गलती पर मैं उँगली रखूँगा वह है scope वाला annotation ऐसी implementation class पर लगाना जो
+`@Binds` से बाहर दी जा रही है। Graph binding के तौर पर `@Binds` वाला function लेता है, तो scope वहीं
+होना चाहिए; class पर वह interface से आती माँगों के लिए अनदेखा रह जाता है, और आपको हर बार नई चीज
+मिलती है, बिना किसी error के। वह चुपचाप होता है, इसीलिए आमतौर पर "cache काम नहीं कर रहा" बनकर सामने
+आता है।
+</Interview>
