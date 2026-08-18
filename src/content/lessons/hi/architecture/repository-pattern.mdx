@@ -1,0 +1,185 @@
+---
+title: Repository pattern और सच का इकलौता ठिकाना
+description: एक class यह जवाब रखती है कि कोई value आती कहाँ से है, ताकि उसके ऊपर किसी को यह न सोचना पड़े। Pattern आसान है; उसे चलाने वाला अनुशासन यह है कि पढ़ना ठीक एक ही जगह से हो।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Repository के पास यह जवाब होता है कि **यह data आता कहाँ से है** — network, cache, database — ताकि
+उसके ऊपर हर कोई बस orders माँग सके। उसका असली काम सच का इकलौता ठिकाना बनाए रखना है: एक ही जगह तय
+करती है कि मौजूदा value क्या है, और बाकी सब उसे देखते हैं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+उसके बिना वह फैसला बिखर जाता है:
+
+```kotlin title="Spread.kt" numbered
+class OrderViewModel(private val api: OrderApi, private val dao: OrderDao) : ViewModel() {
+    fun load() = viewModelScope.launch {
+        val cached = dao.getAll()
+        _state.value = OrderUiState(cached)
+
+        if (System.currentTimeMillis() - lastSync > 5.minutes) {   // ViewModel में?
+            val fresh = api.orders()
+            dao.insertAll(fresh)
+            _state.value = OrderUiState(fresh)
+        }
+    }
+}
+```
+
+अब data कब बासी है, यह नियम एक `ViewModel` में रहता है। जिस अगली screen को orders चाहिए वह या तो इसे
+copy करेगी या कोई दूसरा नियम गढ़ लेगी, और दोनों screens आपस में उलटेंगी।
+
+<Note>
+यहाँ `OrderApi` network का client है और `OrderDao` database का interface — Retrofit और Room, जिन पर
+data layer वाले phase में ठीक से बात है। इस पाठ के लिए बस इतना मायने रखता है कि एक internet से होकर
+जाता है और दूसरा disk पर है।
+</Note>
+
+## Interface implementation से ऊपर रहता है
+
+```kotlin title="OrderRepository.kt" numbered
+// domain परत — सादा Kotlin, न Android, न Retrofit, न Room
+interface OrderRepository {
+    fun observeOrders(): Flow<List<Order>>
+    suspend fun refresh(): Result<Unit>
+}
+```
+
+```kotlin title="OfflineFirstOrderRepository.kt" numbered
+// data परत — इकलौती जगह जिसे पता है कि यह सब चलता कैसे है
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository {
+
+    override fun observeOrders(): Flow<List<Order>> =
+        dao.observeAll().map { entities -> entities.map(OrderEntity::toDomain) }
+
+    override suspend fun refresh(): Result<Unit> = runCatching {
+        val fresh = api.orders().map(OrderDto::toEntity)
+        dao.replaceAll(fresh)
+    }
+}
+```
+
+Interface domain परत में बैठता है और implementation data में, तो तीर अंदर की तरफ जाता है:
+`ViewModel` एक सोच पर टिका है, Retrofit पर नहीं। Network की जगह कोई file रखनी हो, या test में कोई
+नकली चीज, तो एक ही file बदलती है।
+
+## वह तरीका जिससे सच का ठिकाना एक ही रहता है
+
+<Quiz
+  question="`refresh()` ताजा list लौटाता है और screen वही दिखाती है, जबकि दूसरी screen database देख रही है। दोनों अलग orders दिखाती हैं। गलत क्या है?"
+  options={[
+    "Database में लिखना अलग वक्त पर होता है, तो दूसरी screen को थोड़ा रुकना चाहिए",
+    "UI दो जगहों से पढ़ रहा है — इलाज यह है कि पढ़ना हमेशा database से हो और network सिर्फ उसमें लिखे",
+    "दोनों screens को एक ही वक्त पर `refresh()` बुलाना चाहिए",
+  ]}
+  answer={1}
+  explanation="दो पढ़ने के रास्ते होने पर सच का कोई एक ठिकाना बचता ही नहीं, तो मेल बैठना वक्त के भरोसे रह जाता है और screens आखिरकार उलटती ही हैं। Offline-first वाली शक्ल इस संभावना को ही मिटा देती है: पढ़ना हमेशा database से एक Flow की तरह होता है, और network का इकलौता काम उस database में लिखना है। फिर refresh() सफलता या नाकामी के अलावा कुछ नहीं लौटाता, और नया data हर screen तक उसी धारा से पहुँचता है जिससे वह हमेशा पहुँचता था। इसका सुखद असर यह है कि app बिना किसी अतिरिक्त code के offline चलती है, क्योंकि पढ़ने का रास्ता network पर कभी टिका ही नहीं था।"
+/>
+
+<Figure caption="पढ़ना एक ही तरफ बहता है, database से बाहर की ओर। Network लिखने वाला है, कभी किसी के पढ़ने का स्रोत नहीं।">
+  <PipelineDiagram
+    title="Offline-first में पढ़ने और लिखने के रास्ते"
+    description="Network database में लिखता है; database एक flow देता है; repository उसे domain के models में बदलता है; ViewModel उसे screen की state बनाता है।"
+    stages={[
+      { label: "Network", sub: "सिर्फ लिखता है", accent: "amber" },
+      { label: "Database", sub: "सच का ठिकाना", accent: "emerald" },
+      { label: "Repository", sub: "domain में बदलता है", accent: "sky" },
+      { label: "ViewModel", sub: "screen की state", accent: "violet" },
+    ]}
+  />
+</Figure>
+
+## तीन models, जानबूझकर
+
+| Model | कहाँ रहता है | किससे बनता है |
+| --- | --- | --- |
+| `OrderDto` | Data | Server जो भेजता है, उसके अजीब field नामों समेत |
+| `OrderEntity` | Data | Database का schema और उसके indices |
+| `Order` | Domain | आपकी app के नियम |
+
+तीनों के लिए एक ही class रखना कम code जैसा लगता है और जाल है: फिर JSON के किसी field का नाम बदलना
+एक साथ आपके database के schema और आपके UI तक पहुँच जाता है, और server जिस चीज को null होने देता है
+वह उस logic में घुस आती है जिसे उसे देखना ही नहीं चाहिए था। खराब server contract जहाँ रुकता है, वे
+mapping वाले functions हैं।
+
+<Detail summary="सरहद पर errors">
+Repository को `retrofit2.HttpException` किसी `ViewModel` तक नहीं पहुँचने देना चाहिए — इससे ऊपर वाली
+परत उसी network library पर टिक जाती जिससे उसे बचाना था।
+
+```kotlin title="Errors.kt" numbered
+sealed interface DataError {
+    data object Offline : DataError
+    data object Unauthorised : DataError
+    data class Unexpected(val cause: Throwable) : DataError
+}
+
+override suspend fun refresh(): Result<Unit> = try {
+    Result.success(dao.replaceAll(api.orders().map(OrderDto::toEntity)))
+} catch (e: IOException) {
+    Result.failure(DataErrorException(DataError.Offline))
+} catch (e: HttpException) {
+    Result.failure(DataErrorException(map(e.code())))
+}
+```
+
+अब `ViewModel` तय करता है कि screen पर "offline" कैसा दिखेगा, बिना यह जाने कि HTTP है भी, और network
+library बदलने की खबर उस तक पहुँचती ही नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो repository को सिर्फ एक पड़ाव बना देती हैं">
+**Library वाले types लौटाना।** जो repository `Response<OrderDto>` लौटाता है उसने कुछ छिपाया ही नहीं;
+अब हर बुलाने वाला Retrofit पर टिका है।
+
+**हर screen के लिए एक repository।** Repositories का नाम data पर होता है, screen पर नहीं —
+`OrderRepository`, `OrderListRepository` नहीं। Orders दिखाने वाली दोनों screens एक ही लेती हैं।
+
+**बिना किसी फैसले वाला repository।** अगर हर method एक ही DAO call ज्यों की त्यों आगे बढ़ा देता है,
+तो वह घुमाव की एक परत है जिसमें कुछ है ही नहीं। या तो caching, mapping और errors का अनुवाद उसके पास
+हो, या अभी उसका होना जरूरी नहीं।
+
+**Database की entities ऊपर पहुँचाना।** `ViewModel` में कोई Room entity होने का मतलब है कि schema
+बदलना UI बदलना है — यही वह चीज है जिसे रोकने के लिए वह परत थी।
+</Pitfall>
+
+## अभ्यास
+
+1. बासी data वाला नियम `ViewModel` से हटाकर किसी repository में ले जाइए। गौर कीजिए कि जिस दूसरी
+   screen को वह चाहिए उसे अब मुफ्त में मिल जाता है।
+2. पढ़ना सिर्फ database से कीजिए, फिर network बंद करके app चलाइए।
+3. एक नकली `OrderRepository` लिखिए जो तय list लौटाए, और उससे किसी `ViewModel` का test कीजिए — न
+   emulator, न server।
+4. एक साझा model को `Dto`, `Entity` और domain में बाँटिए, फिर JSON के किसी field का नाम बदलिए और
+   देखिए कि वह बदलाव कितनी दूर तक जाता है।
+5. Repository से `IOException` का domain वाली error में अनुवाद कराइए और जाँचिए कि उसके ऊपर network
+   का कोई type नहीं दिखता।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Repository | Data कहाँ से आता है, यह उसके पास है |
+| सच का इकलौता ठिकाना | एक जगह मौजूदा value तय करती है; बाकी सब देखते हैं |
+| Offline-first | पढ़ना database से; network सिर्फ लिखता है |
+| Interface | Domain में; implementation data में, तो तीर अंदर की तरफ |
+| तीन models | `Dto`, `Entity`, domain — खराब contract mapping पर रुकता है |
+| Errors | सरहद पर अनुवाद, उसके पार कभी फेंके नहीं जाते |
+| नाम किस पर | Data पर, screen पर नहीं |
+| अभी जरूरी नहीं | जब हर method सिर्फ आगे बढ़ा देता हो |
+
+<Interview title="वह सवाल जिसका अच्छा जवाब पढ़ने के बारे में एक वाक्य है">
+"सच का इकलौता ठिकाना असल में मतलब क्या है?"
+
+यह कि हर screen कोई value ठीक एक ही जगह से पढ़ती है, तो वे आपस में उलट ही नहीं सकतीं।
+Offline-first repository में इसका मतलब है कि पढ़ना हमेशा database से एक flow की तरह होता है और
+network का इकलौता काम उसमें लिखना है — इसी से offline चलना भी मुफ्त में मिल जाता है, क्योंकि पढ़ने
+का रास्ता network पर कभी टिका ही नहीं था। नाम लेने लायक नाकामी दूसरा रास्ता है: जैसे ही कोई एक
+screen network का जवाब सीधे पढ़ती है, मेल बैठना वक्त का सवाल बन जाता है।
+</Interview>

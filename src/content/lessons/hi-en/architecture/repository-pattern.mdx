@@ -1,0 +1,186 @@
+---
+title: Repository pattern aur sach ka iklauta thikana
+description: Ek class ye jawab rakhti hai ki koi value aati kahan se hai, taki uske upar kisi ko ye na sochna pade. Pattern aasan hai; use chalane wala anushasan ye hai ki padhna theek ek hi jagah se ho.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Repository ke paas ye jawab hota hai ki **ye data aata kahan se hai** — network, cache, database —
+taki uske upar har koi bas orders maang sake. Uska asli kaam sach ka iklauta thikana banaye rakhna
+hai: ek hi jagah tay karti hai ki maujooda value kya hai, aur baaki sab use dekhte hain.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Uske bina wo faisla bikhar jata hai:
+
+```kotlin title="Spread.kt" numbered
+class OrderViewModel(private val api: OrderApi, private val dao: OrderDao) : ViewModel() {
+    fun load() = viewModelScope.launch {
+        val cached = dao.getAll()
+        _state.value = OrderUiState(cached)
+
+        if (System.currentTimeMillis() - lastSync > 5.minutes) {   // ViewModel mein?
+            val fresh = api.orders()
+            dao.insertAll(fresh)
+            _state.value = OrderUiState(fresh)
+        }
+    }
+}
+```
+
+Ab data kab baasi hai, ye niyam ek `ViewModel` mein rehta hai. Jis agli screen ko orders chahiye wo
+ya to ise copy karegi ya koi doosra niyam gadh legi, aur dono screens aapas mein ultengi.
+
+<Note>
+Yahan `OrderApi` network ka client hai aur `OrderDao` database ka interface — Retrofit aur Room, jin
+par data layer wale phase mein theek se baat hai. Is paath ke liye bas itna maayne rakhta hai ki ek
+internet se hokar jata hai aur doosra disk par hai.
+</Note>
+
+## Interface implementation se upar rehta hai
+
+```kotlin title="OrderRepository.kt" numbered
+// domain parat — saada Kotlin, na Android, na Retrofit, na Room
+interface OrderRepository {
+    fun observeOrders(): Flow<List<Order>>
+    suspend fun refresh(): Result<Unit>
+}
+```
+
+```kotlin title="OfflineFirstOrderRepository.kt" numbered
+// data parat — iklauti jagah jise pata hai ki ye sab chalta kaise hai
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository {
+
+    override fun observeOrders(): Flow<List<Order>> =
+        dao.observeAll().map { entities -> entities.map(OrderEntity::toDomain) }
+
+    override suspend fun refresh(): Result<Unit> = runCatching {
+        val fresh = api.orders().map(OrderDto::toEntity)
+        dao.replaceAll(fresh)
+    }
+}
+```
+
+Interface domain parat mein baithta hai aur implementation data mein, to teer andar ki taraf jata
+hai: `ViewModel` ek soch par tika hai, Retrofit par nahi. Network ki jagah koi file rakhni ho, ya
+test mein koi nakli cheez, to ek hi file badalti hai.
+
+## Wo tarika jisse sach ka thikana ek hi rehta hai
+
+<Quiz
+  question="`refresh()` taza list lautata hai aur screen wahi dikhati hai, jabki doosri screen database dekh rahi hai. Dono alag orders dikhati hain. Galat kya hai?"
+  options={[
+    "Database mein likhna alag waqt par hota hai, to doosri screen ko thoda rukna chahiye",
+    "UI do jagahon se padh raha hai — ilaaj ye hai ki padhna hamesha database se ho aur network sirf usmein likhe",
+    "Dono screens ko ek hi waqt par `refresh()` bulana chahiye",
+  ]}
+  answer={1}
+  explanation="Do padhne ke raaste hone par sach ka koi ek thikana bachta hi nahi, to mel baithna waqt ke bharose reh jata hai aur screens aakhirkar ulti hi hain. Offline-first wali shakal is sambhavna ko hi mita deti hai: padhna hamesha database se ek Flow ki tarah hota hai, aur network ka iklauta kaam us database mein likhna hai. Phir refresh() safalta ya nakami ke alawa kuch nahi lautata, aur naya data har screen tak usi dhara se pahunchta hai jisse wo hamesha pahunchta tha. Iska sukhad asar ye hai ki app bina kisi extra code ke offline chalti hai, kyunki padhne ka raasta network par kabhi tika hi nahi tha."
+/>
+
+<Figure caption="Padhna ek hi taraf behta hai, database se bahar ki or. Network likhne wala hai, kabhi kisi ke padhne ka srot nahi.">
+  <PipelineDiagram
+    title="Offline-first mein padhne aur likhne ke raaste"
+    description="Network database mein likhta hai; database ek flow deta hai; repository use domain ke models mein badalta hai; ViewModel use screen ki state banata hai."
+    stages={[
+      { label: "Network", sub: "sirf likhta hai", accent: "amber" },
+      { label: "Database", sub: "sach ka thikana", accent: "emerald" },
+      { label: "Repository", sub: "domain mein badalta hai", accent: "sky" },
+      { label: "ViewModel", sub: "screen ki state", accent: "violet" },
+    ]}
+  />
+</Figure>
+
+## Teen models, jaanbujhkar
+
+| Model | Kahan rehta hai | Kisse banta hai |
+| --- | --- | --- |
+| `OrderDto` | Data | Server jo bhejta hai, uske ajeeb field naamon samet |
+| `OrderEntity` | Data | Database ka schema aur uske indices |
+| `Order` | Domain | Aapki app ke niyam |
+
+Teenon ke liye ek hi class rakhna kam code jaisa lagta hai aur jaal hai: phir JSON ke kisi field ka
+naam badalna ek saath aapke database ke schema aur aapke UI tak pahunch jata hai, aur server jis
+cheez ko null hone deta hai wo us logic mein ghus aati hai jise use dekhna hi nahi chahiye tha.
+Kharab server contract jahan rukta hai, wo mapping wale functions hain.
+
+<Detail summary="Sarhad par errors">
+Repository ko `retrofit2.HttpException` kisi `ViewModel` tak nahi pahunchne dena chahiye — isse upar
+wali parat usi network library par tik jati jisse use bachana tha.
+
+```kotlin title="Errors.kt" numbered
+sealed interface DataError {
+    data object Offline : DataError
+    data object Unauthorised : DataError
+    data class Unexpected(val cause: Throwable) : DataError
+}
+
+override suspend fun refresh(): Result<Unit> = try {
+    Result.success(dao.replaceAll(api.orders().map(OrderDto::toEntity)))
+} catch (e: IOException) {
+    Result.failure(DataErrorException(DataError.Offline))
+} catch (e: HttpException) {
+    Result.failure(DataErrorException(map(e.code())))
+}
+```
+
+Ab `ViewModel` tay karta hai ki screen par "offline" kaisa dikhega, bina ye jane ki HTTP hai bhi,
+aur network library badalne ki khabar us tak pahunchti hi nahi.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo repository ko sirf ek padav bana deti hain">
+**Library wale types lautana.** Jo repository `Response<OrderDto>` lautata hai usne kuch chhipaya hi
+nahi; ab har bulane wala Retrofit par tika hai.
+
+**Har screen ke liye ek repository.** Repositories ka naam data par hota hai, screen par nahi —
+`OrderRepository`, `OrderListRepository` nahi. Orders dikhane wali dono screens ek hi leti hain.
+
+**Bina kisi faisle wala repository.** Agar har method ek hi DAO call jyon ki tyon aage badha deta
+hai, to wo ghumav ki ek parat hai jismein kuch hai hi nahi. Ya to caching, mapping aur errors ka
+anuvad uske paas ho, ya abhi uska hona zaruri nahi.
+
+**Database ki entities upar pahunchana.** `ViewModel` mein koi Room entity hone ka matlab hai ki
+schema badalna UI badalna hai — yahi wo cheez hai jise rokne ke liye wo parat thi.
+</Pitfall>
+
+## Practice
+
+1. Baasi data wala niyam `ViewModel` se hatakar kisi repository mein le jaiye. Gaur kijiye ki jis
+   doosri screen ko wo chahiye use ab muft mein mil jata hai.
+2. Padhna sirf database se kijiye, phir network band karke app chalaiye.
+3. Ek nakli `OrderRepository` likhiye jo tay list lautaye, aur usse kisi `ViewModel` ka test kijiye —
+   na emulator, na server.
+4. Ek shared model ko `Dto`, `Entity` aur domain mein baantiye, phir JSON ke kisi field ka naam
+   badliye aur dekhiye ki wo badlaav kitni door tak jata hai.
+5. Repository se `IOException` ka domain wali error mein anuvad karaiye aur parkhiye ki uske upar
+   network ka koi type nahi dikhta.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Repository | Data kahan se aata hai, ye uske paas hai |
+| Sach ka iklauta thikana | Ek jagah maujooda value tay karti hai; baaki sab dekhte hain |
+| Offline-first | Padhna database se; network sirf likhta hai |
+| Interface | Domain mein; implementation data mein, to teer andar ki taraf |
+| Teen models | `Dto`, `Entity`, domain — kharab contract mapping par rukta hai |
+| Errors | Sarhad par anuvad, uske paar kabhi phenke nahi jate |
+| Naam kis par | Data par, screen par nahi |
+| Abhi zaruri nahi | Jab har method sirf aage badha deta ho |
+
+<Interview title="Wo sawal jiska achha jawab padhne ke baare mein ek vakya hai">
+"Sach ka iklauta thikana asal mein matlab kya hai?"
+
+Ye ki har screen koi value theek ek hi jagah se padhti hai, to wo aapas mein ulat hi nahi saktin.
+Offline-first repository mein iska matlab hai ki padhna hamesha database se ek flow ki tarah hota
+hai aur network ka iklauta kaam usmein likhna hai — isi se offline chalna bhi muft mein mil jata
+hai, kyunki padhne ka raasta network par kabhi tika hi nahi tha. Naam lene layak nakami doosra
+raasta hai: jaise hi koi ek screen network ka jawab seedhe padhti hai, mel baithna waqt ka sawal ban
+jata hai.
+</Interview>

@@ -1,0 +1,184 @@
+---
+title: The repository pattern and single source of truth
+description: One class answers where a value comes from, so nothing above it has to. The pattern is easy; the discipline that makes it work is reading from exactly one place.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A repository owns the answer to **where does this data come from** — network, cache, database — so
+that everything above it can simply ask for orders. Its real job is enforcing a single source of
+truth: one place decides the current value, and everyone else observes it.
+</KeyIdea>
+
+## Why this matters
+
+Without one, that decision spreads:
+
+```kotlin title="Spread.kt" numbered
+class OrderViewModel(private val api: OrderApi, private val dao: OrderDao) : ViewModel() {
+    fun load() = viewModelScope.launch {
+        val cached = dao.getAll()
+        _state.value = OrderUiState(cached)
+
+        if (System.currentTimeMillis() - lastSync > 5.minutes) {   // in the ViewModel?
+            val fresh = api.orders()
+            dao.insertAll(fresh)
+            _state.value = OrderUiState(fresh)
+        }
+    }
+}
+```
+
+Now the staleness rule lives in a `ViewModel`. The next screen that needs orders will either copy
+it or invent a different one, and the two screens will disagree.
+
+<Note>
+`OrderApi` here is a network client and `OrderDao` a database interface — Retrofit and Room, both
+covered properly in the data layer phase. For this lesson all that matters is that one goes over
+the internet and one is on disk.
+</Note>
+
+## The interface belongs above the implementation
+
+```kotlin title="OrderRepository.kt" numbered
+// domain layer — plain Kotlin, no Android, no Retrofit, no Room
+interface OrderRepository {
+    fun observeOrders(): Flow<List<Order>>
+    suspend fun refresh(): Result<Unit>
+}
+```
+
+```kotlin title="OfflineFirstOrderRepository.kt" numbered
+// data layer — the only place that knows how any of it works
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository {
+
+    override fun observeOrders(): Flow<List<Order>> =
+        dao.observeAll().map { entities -> entities.map(OrderEntity::toDomain) }
+
+    override suspend fun refresh(): Result<Unit> = runCatching {
+        val fresh = api.orders().map(OrderDto::toEntity)
+        dao.replaceAll(fresh)
+    }
+}
+```
+
+The interface sits in the domain layer and the implementation in data, so the arrow points inward:
+the `ViewModel` depends on an idea, not on Retrofit. Swapping the network for a file, or for a fake
+in a test, changes one file.
+
+## The pattern that makes it a single source of truth
+
+<Quiz
+  question="`refresh()` returns the fresh list and the screen shows it, while a second screen observes the database. The two show different orders. What is wrong?"
+  options={[
+    "The database write is asynchronous, so the second screen needs a delay",
+    "The UI is reading from two sources — the fix is that reads always come from the database and the network only writes to it",
+    "Both screens should call `refresh()` at the same time",
+  ]}
+  answer={1}
+  explanation="With two read paths there is no single source of truth, so consistency becomes a matter of timing and the screens will eventually disagree. The offline-first shape removes the possibility: reads always come from the database as a Flow, and the network's only job is to write into that database. refresh() then returns nothing but success or failure, and the new data reaches every screen through the same stream it always used. The pleasant side effect is that the app works offline without any extra code, because the read path never depended on the network in the first place."
+/>
+
+<Figure caption="Reads flow one way, out of the database. The network is a writer, never a reader's source.">
+  <PipelineDiagram
+    title="Offline-first read and write paths"
+    description="The network writes into the database; the database emits a flow; the repository maps it to domain models; the ViewModel turns it into screen state."
+    stages={[
+      { label: "Network", sub: "writes only", accent: "amber" },
+      { label: "Database", sub: "the source of truth", accent: "emerald" },
+      { label: "Repository", sub: "maps to domain", accent: "sky" },
+      { label: "ViewModel", sub: "screen state", accent: "violet" },
+    ]}
+  />
+</Figure>
+
+## Three models, on purpose
+
+| Model | Lives in | Shaped by |
+| --- | --- | --- |
+| `OrderDto` | Data | Whatever the server sends, including its odd field names |
+| `OrderEntity` | Data | The database schema and its indices |
+| `Order` | Domain | The rules of your app |
+
+Using one class for all three feels like less code and is a trap: a renamed JSON field then reaches
+your database schema and your UI at once, and a nullable the server allows leaks into logic that
+should never see it. The mapping functions are where a bad server contract stops.
+
+<Detail summary="Errors at the boundary">
+A repository should not let a `retrofit2.HttpException` reach a `ViewModel` — that would make the
+layer above depend on the network library it was meant to be insulated from.
+
+```kotlin title="Errors.kt" numbered
+sealed interface DataError {
+    data object Offline : DataError
+    data object Unauthorised : DataError
+    data class Unexpected(val cause: Throwable) : DataError
+}
+
+override suspend fun refresh(): Result<Unit> = try {
+    Result.success(dao.replaceAll(api.orders().map(OrderDto::toEntity)))
+} catch (e: IOException) {
+    Result.failure(DataErrorException(DataError.Offline))
+} catch (e: HttpException) {
+    Result.failure(DataErrorException(map(e.code())))
+}
+```
+
+Now the `ViewModel` decides what "offline" looks like on screen without knowing HTTP exists, and a
+change of network library does not reach it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that turn a repository into a pass-through">
+**Returning library types.** A repository that returns `Response<OrderDto>` has not hidden anything;
+every caller now depends on Retrofit.
+
+**One repository per screen.** Repositories are named after data, not screens — `OrderRepository`,
+not `OrderListRepository`. Two screens showing orders share one.
+
+**A repository with no decision.** If every method forwards a single DAO call unchanged, it is a
+layer of indirection with nothing in it. Either it owns caching, mapping and error translation, or
+it should not exist yet.
+
+**Leaking database entities upward.** A Room entity in a `ViewModel` means a schema change is a UI
+change, which is exactly what the layer existed to prevent.
+</Pitfall>
+
+## Practice
+
+1. Move a staleness rule out of a `ViewModel` and into a repository. Notice how the second screen
+   that needs it now gets it for free.
+2. Make reads come only from the database, then turn off the network and use the app.
+3. Write a fake `OrderRepository` that returns a fixed list, and test a `ViewModel` with it — no
+   emulator, no server.
+4. Split a shared model into `Dto`, `Entity` and domain, then rename a JSON field and see how far
+   the change travels.
+5. Make the repository translate `IOException` into a domain error and check that no network type
+   appears above it.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Repository | Owns where data comes from |
+| Single source of truth | One place decides the current value; everyone observes it |
+| Offline-first | Reads from the database; the network only writes |
+| Interface | In domain; implementation in data, so the arrow points inward |
+| Three models | `Dto`, `Entity`, domain — mapping is where bad contracts stop |
+| Errors | Translated at the boundary, never thrown across it |
+| Named after | The data, not the screen |
+| Not worth it yet | When every method is a bare forward |
+
+<Interview title="A question where the good answer is one sentence about reads">
+"What does single source of truth mean in practice?"
+
+That every screen reads a value from exactly one place, so they cannot disagree. In an offline-first
+repository that means reads always come from the database as a flow and the network's only job is to
+write into it — which also makes offline support fall out for free, because the read path never
+depended on the network. The failure mode worth naming is the alternative: as soon as one screen
+reads the network response directly, consistency becomes a timing question.
+</Interview>
