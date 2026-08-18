@@ -1,0 +1,217 @@
+---
+title: MVI and unidirectional state machines
+description: One entry point, one exit, and a pure function in between. What you buy is that every change to the screen has a name and a cause you can replay.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+MVI makes the **transition** explicit: `reduce(state, intent) -> state` is a pure function, so every
+change the screen can undergo has a name, a cause, and a test that needs nothing but two values.
+</KeyIdea>
+
+## Why this matters
+
+A normal `ViewModel` exposes a method per action, and each one mutates state in its own way:
+
+```kotlin title="Mvvm.kt"
+fun refresh() { _state.update { it.copy(isLoading = true) }; }
+fun dismissError() { _state.update { it.copy(error = null) } }
+fun select(id: String) { _state.update { it.copy(selected = id, error = null) } }
+```
+
+That works, and it scales badly. Six months later there are eleven of these, three of them clear
+`error`, one forgets to, and reconstructing how the screen reached a broken state means reading all
+eleven.
+
+## One entry, one exit
+
+```kotlin title="Contract.kt" numbered
+data class OrderState(
+    val orders: List<Order> = emptyList(),
+    val isLoading: Boolean = false,
+    val message: UiText? = null,
+)
+
+sealed interface OrderIntent {
+    data object Refresh : OrderIntent
+    data class Select(val id: String) : OrderIntent
+    data object DismissMessage : OrderIntent
+
+    // results come back in through the same door
+    data class Loaded(val orders: List<Order>) : OrderIntent
+    data class Failed(val message: UiText) : OrderIntent
+}
+
+sealed interface OrderEffect {
+    data class OpenDetail(val id: String) : OrderEffect
+}
+```
+
+```kotlin title="Reducer.kt" numbered
+fun reduce(state: OrderState, intent: OrderIntent): OrderState = when (intent) {
+    OrderIntent.Refresh -> state.copy(isLoading = true, message = null)
+    OrderIntent.DismissMessage -> state.copy(message = null)
+    is OrderIntent.Loaded -> state.copy(orders = intent.orders, isLoading = false)
+    is OrderIntent.Failed -> state.copy(isLoading = false, message = intent.message)
+    is OrderIntent.Select -> state          // selection is an effect, not a state change
+}
+```
+
+A pure function, testable in one line: `assertEquals(expected, reduce(given, intent))`. No coroutine,
+no mock, no emulator.
+
+## Where the work goes
+
+<Quiz
+  question="`Refresh` needs a network call. Where does that call belong?"
+  options={[
+    "Inside the reducer, right after it sets `isLoading`",
+    "Outside the reducer — the reducer only returns the new state, and the `ViewModel` launches the work",
+    "In the UI, which then sends the result back as another intent",
+  ]}
+  answer={1}
+  explanation="The reducer must stay pure, because purity is the entire benefit: it is what makes the transition testable with two values, replayable, and safe to run twice. A network call inside it would make the same input produce different results and would drag a coroutine into a function that should be arithmetic. So the reducer maps Refresh to a loading state, and the ViewModel — seeing that intent — launches the work and later sends a Loaded or Failed intent back through the same door. The third option is not wrong about the loop, but it puts the decision to fetch in the UI, which is the layer that should know least."
+/>
+
+```kotlin title="ViewModel.kt" numbered
+class OrderViewModel(private val repository: OrderRepository) : ViewModel() {
+
+    private val _state = MutableStateFlow(OrderState())
+    val state: StateFlow<OrderState> = _state.asStateFlow()
+
+    private val _effects = Channel<OrderEffect>(Channel.BUFFERED)
+    val effects: Flow<OrderEffect> = _effects.receiveAsFlow()
+
+    fun onIntent(intent: OrderIntent) {
+        _state.update { reduce(it, intent) }        // pure, synchronous
+
+        when (intent) {                              // impure, asynchronous
+            OrderIntent.Refresh -> viewModelScope.launch {
+                repository.refresh()
+                    .onSuccess { onIntent(OrderIntent.Loaded(it)) }
+                    .onFailure { onIntent(OrderIntent.Failed(it.toUiText())) }
+            }
+            is OrderIntent.Select -> _effects.trySend(OrderEffect.OpenDetail(intent.id))
+            else -> Unit
+        }
+    }
+}
+```
+
+Two blocks, and the split is the whole pattern: reduce first, then decide what work the intent
+implies.
+
+<Figure caption="The loop only turns one way. The UI sends intents, the reducer produces state, the state renders — and effects leave through a separate door because they happen once.">
+  <PipelineDiagram
+    title="The MVI loop"
+    description="The UI emits an intent; the reducer turns state plus intent into new state; the state renders; side effects are emitted separately for one-off actions such as navigation."
+    stages={[
+      { label: "Intent", sub: "what the user did", accent: "violet" },
+      { label: "Reducer", sub: "pure function", accent: "sky" },
+      { label: "State", sub: "what to show", accent: "emerald" },
+      { label: "Effect", sub: "navigate, toast", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+## State and effects are different kinds
+
+| | State | Effect |
+| --- | --- | --- |
+| Question it answers | What does the screen look like now | What should happen once |
+| Replayed after rotation | Yes, that is the point | No — it already happened |
+| Carrier | `StateFlow` | `Channel` or `SharedFlow` |
+| Examples | List, loading, empty, error banner | Navigate, share sheet, vibrate |
+
+Putting navigation in state gives you a screen that navigates again on every rotation. Putting the
+order list in an effect gives you a blank screen after rotation. Neither survives contact with a
+device.
+
+## Is it worth it?
+
+<Compare
+  left={{
+    title: "MVVM",
+    subtitle: "A method per action",
+    accent: "emerald",
+    points: [
+      "+ Much less code for a simple screen",
+      "+ Obvious to anyone reading it for the first time",
+      "- Every method mutates state its own way",
+      "- Reconstructing how state went wrong means reading them all",
+    ],
+  }}
+  right={{
+    title: "MVI",
+    subtitle: "One reducer",
+    accent: "violet",
+    points: [
+      "+ Every transition has a name and one definition",
+      "+ The reducer tests as a pure function, with no mocks",
+      "+ Intents can be logged and replayed to reproduce a bug exactly",
+      "- Three types and a dispatch loop for a screen with one button",
+    ],
+  }}
+/>
+
+<Detail summary="The property that pays for the ceremony">
+Because intents are values and the reducer is pure, a recorded list of intents *is* a reproduction
+of a bug:
+
+```kotlin title="Replay.kt"
+val finalState = intents.fold(OrderState()) { state, intent -> reduce(state, intent) }
+```
+
+A crash report that includes the last twenty intents lets you replay a user's session on your
+machine in a unit test, with no device and no guessing. That is the argument for MVI on a complex
+screen, and it is genuinely not available in the method-per-action shape.
+
+On a screen with two buttons it buys you nothing, and the honest answer is to use it where the state
+is complicated enough to be worth a state machine.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that quietly remove the benefit">
+**IO in the reducer.** It stops being pure, and everything MVI was for goes with it.
+
+**Intents that carry the new state.** `data class SetState(val state: OrderState)` is a setter with
+extra steps — the transition has no name again.
+
+**Effects modelled as state.** A `navigateTo` field replays on rotation and navigates twice.
+
+**One sealed `Intent` for the whole app.** Intents belong to a screen. A shared hierarchy means
+every screen's reducer has branches it can never reach.
+</Pitfall>
+
+## Practice
+
+1. Convert a three-method `ViewModel` to intents and a reducer. Count the lines you added, and the
+   branches you found.
+2. Write a test for the reducer with no coroutine and no mock.
+3. Try putting a network call in the reducer and write the test again. Notice what you now need.
+4. Model navigation as state, rotate the device, and watch it navigate twice. Move it to an effect.
+5. Log every intent, reproduce a bug from the log with `fold`, and fix it without touching a device.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| MVI | One entry (intent), one exit (state), a pure function between |
+| Reducer | `(state, intent) -> state`; no IO, no coroutines |
+| Where work goes | The `ViewModel`, after reducing; results come back as intents |
+| Effects | One-off actions on a `Channel`, never in state |
+| State | Replayed after rotation — that is what it is for |
+| Testing | Two values and an assertion |
+| Replay | `fold` over recorded intents reproduces a session |
+| The cost | Three types and a dispatch loop; not worth it on a simple screen |
+
+<Interview title="A question where the wrong answer puts a network call in a pure function">
+"Where do side effects live in MVI?"
+
+Outside the reducer. The reducer maps state and intent to new state and must stay pure — that purity
+is what makes it testable with two values and replayable from a log. The `ViewModel` sees the intent,
+launches the work, and feeds the result back in as another intent; one-off actions such as
+navigation leave through a separate effect channel, because putting them in state means they replay
+on every rotation.
+</Interview>

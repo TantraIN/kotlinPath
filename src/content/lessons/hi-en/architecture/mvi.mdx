@@ -1,0 +1,223 @@
+---
+title: MVI aur ek tarfa state machines
+description: Ek raasta andar, ek bahar, aur beech mein ek saaf-suthra function. Badle mein milta ye hai ki screen ke har badlaav ka ek naam aur ek wajah hoti hai, jise dobara chalaya ja sakta hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+MVI **badlaav ko** saaf-saaf saamne rakhta hai: `reduce(state, intent) -> state` ek saaf-suthra
+function hai, to screen mein ho sakne wale har badlaav ka ek naam hai, ek wajah hai, aur ek test hai
+jise do values ke alawa kuch nahi chahiye.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Aam `ViewModel` har kaam ke liye ek method deta hai, aur har ek state ko apne tarike se badalta hai:
+
+```kotlin title="Mvvm.kt"
+fun refresh() { _state.update { it.copy(isLoading = true) }; }
+fun dismissError() { _state.update { it.copy(error = null) } }
+fun select(id: String) { _state.update { it.copy(selected = id, error = null) } }
+```
+
+Ye chalta hai, aur badhne par buri tarah bikharta hai. Chhah mahine baad inmein se gyarah hain, teen
+`error` saaf karte hain, ek bhool jata hai, aur ye samajhna ki screen bigdi hui haalat tak pahunchi
+kaise, yani gyarahon padhna.
+
+## Ek raasta andar, ek bahar
+
+```kotlin title="Contract.kt" numbered
+data class OrderState(
+    val orders: List<Order> = emptyList(),
+    val isLoading: Boolean = false,
+    val message: UiText? = null,
+)
+
+sealed interface OrderIntent {
+    data object Refresh : OrderIntent
+    data class Select(val id: String) : OrderIntent
+    data object DismissMessage : OrderIntent
+
+    // natije bhi usi darwaze se wapas aate hain
+    data class Loaded(val orders: List<Order>) : OrderIntent
+    data class Failed(val message: UiText) : OrderIntent
+}
+
+sealed interface OrderEffect {
+    data class OpenDetail(val id: String) : OrderEffect
+}
+```
+
+```kotlin title="Reducer.kt" numbered
+fun reduce(state: OrderState, intent: OrderIntent): OrderState = when (intent) {
+    OrderIntent.Refresh -> state.copy(isLoading = true, message = null)
+    OrderIntent.DismissMessage -> state.copy(message = null)
+    is OrderIntent.Loaded -> state.copy(orders = intent.orders, isLoading = false)
+    is OrderIntent.Failed -> state.copy(isLoading = false, message = intent.message)
+    is OrderIntent.Select -> state          // chunna ek effect hai, state ka badlaav nahi
+}
+```
+
+Ek saaf-suthra function, jiska test ek line mein ho jata hai:
+`assertEquals(expected, reduce(given, intent))`. Na coroutine, na koi nakli cheez, na emulator.
+
+## Kaam jata kahan hai
+
+<Quiz
+  question="`Refresh` ke liye network call chahiye. Wo call kahan ki hai?"
+  options={[
+    "Reducer ke andar, theek `isLoading` tay karne ke baad",
+    "Reducer ke bahar — reducer sirf nai state lautata hai, aur kaam `ViewModel` shuru karta hai",
+    "UI mein, jo phir result doosri intent banakar wapas bhejta hai",
+  ]}
+  answer={1}
+  explanation="Reducer ko saaf-suthra rehna hi hai, kyunki yahi poora faayda hai: isi se badlaav do values se jaancha ja sakta hai, dobara chalaya ja sakta hai, aur do baar chalne par bhi surakshit rehta hai. Uske andar network call hone se wahi input alag-alag natije dene lagta aur ek aise function mein coroutine ghaseet lata jo asal mein ganit bhar hona chahiye. To reducer Refresh ko loading wali state mein badalta hai, aur ViewModel — wahi intent dekhkar — kaam shuru karta hai aur baad mein Loaded ya Failed intent usi darwaze se wapas bhejta hai. Teesra vikalp chakkar ke baare mein galat nahi hai, par wo lane ka faisla UI mein rakh deta hai, jis parat ko sabse kam pata hona chahiye."
+/>
+
+```kotlin title="ViewModel.kt" numbered
+class OrderViewModel(private val repository: OrderRepository) : ViewModel() {
+
+    private val _state = MutableStateFlow(OrderState())
+    val state: StateFlow<OrderState> = _state.asStateFlow()
+
+    private val _effects = Channel<OrderEffect>(Channel.BUFFERED)
+    val effects: Flow<OrderEffect> = _effects.receiveAsFlow()
+
+    fun onIntent(intent: OrderIntent) {
+        _state.update { reduce(it, intent) }        // saaf-suthra, usi waqt
+
+        when (intent) {                              // ganda, alag waqt par
+            OrderIntent.Refresh -> viewModelScope.launch {
+                repository.refresh()
+                    .onSuccess { onIntent(OrderIntent.Loaded(it)) }
+                    .onFailure { onIntent(OrderIntent.Failed(it.toUiText())) }
+            }
+            is OrderIntent.Select -> _effects.trySend(OrderEffect.OpenDetail(intent.id))
+            else -> Unit
+        }
+    }
+}
+```
+
+Do hisse, aur yahi bantwara poora tarika hai: pehle reduce, phir tay kijiye ki us intent ka matlab
+kaun sa kaam hai.
+
+<Figure caption="Chakkar sirf ek taraf ghoomta hai. UI intents bhejta hai, reducer state banata hai, state dikhti hai — aur effects alag darwaze se nikalte hain kyunki wo ek baar hote hain.">
+  <PipelineDiagram
+    title="MVI ka chakkar"
+    description="UI ek intent bhejta hai; reducer state aur intent se nai state banata hai; state dikhti hai; navigation jaisi ek baar hone wali cheezein alag se effects bankar nikalti hain."
+    stages={[
+      { label: "Intent", sub: "user ne kya kiya", accent: "violet" },
+      { label: "Reducer", sub: "saaf-suthra function", accent: "sky" },
+      { label: "State", sub: "kya dikhana hai", accent: "emerald" },
+      { label: "Effect", sub: "navigate, toast", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+## State aur effects alag kism ki cheezein hain
+
+| | State | Effect |
+| --- | --- | --- |
+| Kis sawal ka jawab | Abhi screen kaisi dikhti hai | Ek baar kya hona chahiye |
+| Rotation ke baad dobara | Haan, wahi to maksad hai | Nahi — wo ho chuka |
+| Kisse jata hai | `StateFlow` | `Channel` ya `SharedFlow` |
+| Misalein | List, loading, khaali, error ka banner | Navigate, share sheet, kampan |
+
+Navigation ko state mein rakhne se wo screen har rotation par dobara navigate karti hai. Orders ki
+list ko effect mein rakhne se rotation ke baad khaali screen milti hai. Inmein se koi bhi asli device
+par nahi tikta.
+
+## Kya ye chukane layak hai?
+
+<Compare
+  left={{
+    title: "MVVM",
+    subtitle: "Har kaam ke liye ek method",
+    accent: "emerald",
+    points: [
+      "+ Seedhi screen ke liye bahut kam code",
+      "+ Pehli baar padhne wale ko bhi saaf dikhta hai",
+      "- Har method state ko apne tarike se badalta hai",
+      "- State kaise bigdi ye samajhne ke liye sab padhne padte hain",
+    ],
+  }}
+  right={{
+    title: "MVI",
+    subtitle: "Ek reducer",
+    accent: "violet",
+    points: [
+      "+ Har badlaav ka ek naam aur ek hi paribhasha",
+      "+ Reducer saaf-suthre function ki tarah jaancha jata hai, bina nakli cheezon ke",
+      "+ Intents darj karke dobara chalaye ja sakte hain, to bug hubahu lautaya ja sakta hai",
+      "- Ek button wali screen ke liye teen types aur ek chakkar",
+    ],
+  }}
+/>
+
+<Detail summary="Wo gun jo is rasm ki keemat chuka deta hai">
+Intents values hain aur reducer saaf-suthra hai, isliye darj ki gayi intents ki list apne aap mein
+bug ki nakal *hai*:
+
+```kotlin title="Replay.kt"
+val finalState = intents.fold(OrderState()) { state, intent -> reduce(state, intent) }
+```
+
+Jis crash report mein aakhri bees intents hon, wo aapko kisi user ka poora silsila apni machine par
+ek unit test mein dobara chalane deti hai, bina kisi device ke aur bina andaze ke. Jatil screen par
+MVI ki daleel yahi hai, aur method-per-action wali shakal mein ye sach mein milti hi nahi.
+
+Do button wali screen par isse kuch nahi milta, aur imandar jawab yahi hai ki ise wahin lijiye jahan
+state itni uljhi ho ki ek state machine ke layak ho.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo chupchap faayda chheen leti hain">
+**Reducer mein IO.** Wo saaf-suthra rehna band kar deta hai, aur MVI jiske liye tha wo sab usi ke
+saath chala jata hai.
+
+**Nai state hi dhone wali intents.** `data class SetState(val state: OrderState)` ghuma-phirakar ek
+setter hai — badlaav ka phir se koi naam nahi raha.
+
+**Effects ko state bana dena.** `navigateTo` wala field rotation par dobara chalta hai aur do baar
+navigate kar deta hai.
+
+**Poori app ke liye ek sealed `Intent`.** Intents kisi ek screen ke hote hain. Shared padanukram ka
+matlab hai ki har screen ke reducer mein aisi shakhayein hain jahan wo kabhi pahunch hi nahi sakta.
+</Pitfall>
+
+## Practice
+
+1. Teen methods wale kisi `ViewModel` ko intents aur reducer mein badliye. Jodi hui lines giniye, aur
+   wo shakhayein bhi jo aapko milin.
+2. Reducer ka test likhiye, bina kisi coroutine aur bina kisi nakli cheez ke.
+3. Reducer mein network call rakhkar dekhiye aur test dobara likhiye. Gaur kijiye ki ab kya-kya
+   chahiye.
+4. Navigation ko state banaiye, device ghumaiye, aur use do baar navigate karte dekhiye. Phir use
+   effect mein le jaiye.
+5. Har intent darj kijiye, us log se `fold` lagakar koi bug dobara paida kijiye, aur bina device
+   chhue theek kijiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| MVI | Ek raasta andar (intent), ek bahar (state), beech mein saaf-suthra function |
+| Reducer | `(state, intent) -> state`; na IO, na coroutines |
+| Kaam kahan | `ViewModel` mein, reduce ke baad; natije intents bankar lautte hain |
+| Effects | Ek baar hone wali cheezein `Channel` par, state mein kabhi nahi |
+| State | Rotation ke baad dobara bheji jati hai — wahi to uska kaam hai |
+| Test | Do values aur ek dawa |
+| Dobara chalana | Darj intents par `fold` poora silsila lauta deta hai |
+| Keemat | Teen types aur ek chakkar; seedhi screen par chukane layak nahi |
+
+<Interview title="Wo sawal jiska galat jawab saaf-suthre function mein network call rakh deta hai">
+"MVI mein side effects kahan rehte hain?"
+
+Reducer ke bahar. Reducer state aur intent se nai state banata hai aur use saaf-suthra rehna hai —
+wahi safai use do values se jaanchne layak aur kisi log se dobara chalane layak banati hai.
+`ViewModel` us intent ko dekhta hai, kaam shuru karta hai, aur result doosri intent banakar wapas
+dalta hai; navigation jaisi ek baar hone wali cheezein alag effect wale raaste se nikalti hain,
+kyunki unhe state mein rakhne ka matlab hai ki wo har rotation par dobara chalengi.
+</Interview>

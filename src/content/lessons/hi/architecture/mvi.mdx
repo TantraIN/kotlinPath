@@ -1,0 +1,220 @@
+---
+title: MVI और एक तरफा state machines
+description: एक रास्ता अंदर, एक बाहर, और बीच में एक साफ-सुथरा function। बदले में मिलता यह है कि screen के हर बदलाव का एक नाम और एक वजह होती है, जिसे दोबारा चलाया जा सकता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+MVI **बदलाव को** साफ-साफ सामने रखता है: `reduce(state, intent) -> state` एक साफ-सुथरा function है,
+तो screen में हो सकने वाले हर बदलाव का एक नाम है, एक वजह है, और एक test है जिसे दो values के अलावा
+कुछ नहीं चाहिए।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+आम `ViewModel` हर काम के लिए एक method देता है, और हर एक state को अपने तरीके से बदलता है:
+
+```kotlin title="Mvvm.kt"
+fun refresh() { _state.update { it.copy(isLoading = true) }; }
+fun dismissError() { _state.update { it.copy(error = null) } }
+fun select(id: String) { _state.update { it.copy(selected = id, error = null) } }
+```
+
+यह चलता है, और बढ़ने पर बुरी तरह बिखरता है। छह महीने बाद इनमें से ग्यारह हैं, तीन `error` साफ करते
+हैं, एक भूल जाता है, और यह समझना कि screen बिगड़ी हुई हालत तक पहुँची कैसे, यानी ग्यारहों पढ़ना।
+
+## एक रास्ता अंदर, एक बाहर
+
+```kotlin title="Contract.kt" numbered
+data class OrderState(
+    val orders: List<Order> = emptyList(),
+    val isLoading: Boolean = false,
+    val message: UiText? = null,
+)
+
+sealed interface OrderIntent {
+    data object Refresh : OrderIntent
+    data class Select(val id: String) : OrderIntent
+    data object DismissMessage : OrderIntent
+
+    // नतीजे भी उसी दरवाजे से वापस आते हैं
+    data class Loaded(val orders: List<Order>) : OrderIntent
+    data class Failed(val message: UiText) : OrderIntent
+}
+
+sealed interface OrderEffect {
+    data class OpenDetail(val id: String) : OrderEffect
+}
+```
+
+```kotlin title="Reducer.kt" numbered
+fun reduce(state: OrderState, intent: OrderIntent): OrderState = when (intent) {
+    OrderIntent.Refresh -> state.copy(isLoading = true, message = null)
+    OrderIntent.DismissMessage -> state.copy(message = null)
+    is OrderIntent.Loaded -> state.copy(orders = intent.orders, isLoading = false)
+    is OrderIntent.Failed -> state.copy(isLoading = false, message = intent.message)
+    is OrderIntent.Select -> state          // चुनना एक effect है, state का बदलाव नहीं
+}
+```
+
+एक साफ-सुथरा function, जिसका test एक line में हो जाता है:
+`assertEquals(expected, reduce(given, intent))`। न coroutine, न कोई नकली चीज, न emulator।
+
+## काम जाता कहाँ है
+
+<Quiz
+  question="`Refresh` के लिए network call चाहिए। वह call कहाँ की है?"
+  options={[
+    "Reducer के अंदर, ठीक `isLoading` तय करने के बाद",
+    "Reducer के बाहर — reducer सिर्फ नई state लौटाता है, और काम `ViewModel` शुरू करता है",
+    "UI में, जो फिर नतीजा दूसरी intent बनाकर वापस भेजता है",
+  ]}
+  answer={1}
+  explanation="Reducer को साफ-सुथरा रहना ही है, क्योंकि यही पूरा फायदा है: इसी से बदलाव दो values से जाँचा जा सकता है, दोबारा चलाया जा सकता है, और दो बार चलने पर भी सुरक्षित रहता है। उसके अंदर network call होने से वही input अलग-अलग नतीजे देने लगता और एक ऐसे function में coroutine घसीट लाता जो असल में गणित भर होना चाहिए। तो reducer Refresh को loading वाली state में बदलता है, और ViewModel — वही intent देखकर — काम शुरू करता है और बाद में Loaded या Failed intent उसी दरवाजे से वापस भेजता है। तीसरा विकल्प चक्कर के बारे में गलत नहीं है, पर वह लाने का फैसला UI में रख देता है, जिस परत को सबसे कम पता होना चाहिए।"
+/>
+
+```kotlin title="ViewModel.kt" numbered
+class OrderViewModel(private val repository: OrderRepository) : ViewModel() {
+
+    private val _state = MutableStateFlow(OrderState())
+    val state: StateFlow<OrderState> = _state.asStateFlow()
+
+    private val _effects = Channel<OrderEffect>(Channel.BUFFERED)
+    val effects: Flow<OrderEffect> = _effects.receiveAsFlow()
+
+    fun onIntent(intent: OrderIntent) {
+        _state.update { reduce(it, intent) }        // साफ-सुथरा, उसी वक्त
+
+        when (intent) {                              // गंदा, अलग वक्त पर
+            OrderIntent.Refresh -> viewModelScope.launch {
+                repository.refresh()
+                    .onSuccess { onIntent(OrderIntent.Loaded(it)) }
+                    .onFailure { onIntent(OrderIntent.Failed(it.toUiText())) }
+            }
+            is OrderIntent.Select -> _effects.trySend(OrderEffect.OpenDetail(intent.id))
+            else -> Unit
+        }
+    }
+}
+```
+
+दो हिस्से, और यही बँटवारा पूरा तरीका है: पहले reduce, फिर तय कीजिए कि उस intent का मतलब कौन सा काम
+है।
+
+<Figure caption="चक्कर सिर्फ एक तरफ घूमता है। UI intents भेजता है, reducer state बनाता है, state दिखती है — और effects अलग दरवाजे से निकलते हैं क्योंकि वे एक बार होते हैं।">
+  <PipelineDiagram
+    title="MVI का चक्कर"
+    description="UI एक intent भेजता है; reducer state और intent से नई state बनाता है; state दिखती है; navigation जैसी एक बार होने वाली चीजें अलग से effects बनकर निकलती हैं।"
+    stages={[
+      { label: "Intent", sub: "user ने क्या किया", accent: "violet" },
+      { label: "Reducer", sub: "साफ-सुथरा function", accent: "sky" },
+      { label: "State", sub: "क्या दिखाना है", accent: "emerald" },
+      { label: "Effect", sub: "navigate, toast", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+## State और effects अलग किस्म की चीजें हैं
+
+| | State | Effect |
+| --- | --- | --- |
+| किस सवाल का जवाब | अभी screen कैसी दिखती है | एक बार क्या होना चाहिए |
+| Rotation के बाद दोबारा | हाँ, वही तो मकसद है | नहीं — वह हो चुका |
+| किससे जाता है | `StateFlow` | `Channel` या `SharedFlow` |
+| मिसालें | List, loading, खाली, error का banner | Navigate, share sheet, कंपन |
+
+Navigation को state में रखने से वह screen हर rotation पर दोबारा navigate करती है। Orders की list को
+effect में रखने से rotation के बाद खाली screen मिलती है। इनमें से कोई भी असली device पर नहीं टिकता।
+
+## क्या यह चुकाने लायक है?
+
+<Compare
+  left={{
+    title: "MVVM",
+    subtitle: "हर काम के लिए एक method",
+    accent: "emerald",
+    points: [
+      "+ सीधी screen के लिए बहुत कम code",
+      "+ पहली बार पढ़ने वाले को भी साफ दिखता है",
+      "- हर method state को अपने तरीके से बदलता है",
+      "- State कैसे बिगड़ी यह समझने के लिए सब पढ़ने पड़ते हैं",
+    ],
+  }}
+  right={{
+    title: "MVI",
+    subtitle: "एक reducer",
+    accent: "violet",
+    points: [
+      "+ हर बदलाव का एक नाम और एक ही परिभाषा",
+      "+ Reducer साफ-सुथरे function की तरह जाँचा जाता है, बिना नकली चीजों के",
+      "+ Intents दर्ज करके दोबारा चलाए जा सकते हैं, तो bug हूबहू लौटाया जा सकता है",
+      "- एक button वाली screen के लिए तीन types और एक चक्कर",
+    ],
+  }}
+/>
+
+<Detail summary="वह गुण जो इस रस्म की कीमत चुका देता है">
+Intents values हैं और reducer साफ-सुथरा है, इसलिए दर्ज की गई intents की सूची अपने आप में bug की नकल
+*है*:
+
+```kotlin title="Replay.kt"
+val finalState = intents.fold(OrderState()) { state, intent -> reduce(state, intent) }
+```
+
+जिस crash report में आखिरी बीस intents हों, वह आपको किसी user का पूरा सिलसिला अपनी मशीन पर एक unit
+test में दोबारा चलाने देती है, बिना किसी device के और बिना अंदाजे के। जटिल screen पर MVI की दलील यही
+है, और method-per-action वाली शक्ल में यह सच में मिलती ही नहीं।
+
+दो button वाली screen पर इससे कुछ नहीं मिलता, और ईमानदार जवाब यही है कि इसे वहीं लीजिए जहाँ state
+इतनी उलझी हो कि एक state machine के लायक हो।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो चुपचाप फायदा छीन लेती हैं">
+**Reducer में IO।** वह साफ-सुथरा रहना बंद कर देता है, और MVI जिसके लिए था वह सब उसी के साथ चला जाता
+है।
+
+**नई state ही ढोने वाली intents।** `data class SetState(val state: OrderState)` घुमा-फिराकर एक
+setter है — बदलाव का फिर से कोई नाम नहीं रहा।
+
+**Effects को state बना देना।** `navigateTo` वाला field rotation पर दोबारा चलता है और दो बार navigate
+कर देता है।
+
+**पूरी app के लिए एक sealed `Intent`।** Intents किसी एक screen के होते हैं। साझा पदानुक्रम का मतलब
+है कि हर screen के reducer में ऐसी शाखाएँ हैं जहाँ वह कभी पहुँच ही नहीं सकता।
+</Pitfall>
+
+## अभ्यास
+
+1. तीन methods वाले किसी `ViewModel` को intents और reducer में बदलिए। जोड़ी हुई lines गिनिए, और वे
+   शाखाएँ भी जो आपको मिलीं।
+2. Reducer का test लिखिए, बिना किसी coroutine और बिना किसी नकली चीज के।
+3. Reducer में network call रखकर देखिए और test दोबारा लिखिए। गौर कीजिए कि अब क्या-क्या चाहिए।
+4. Navigation को state बनाइए, device घुमाइए, और उसे दो बार navigate करते देखिए। फिर उसे effect में
+   ले जाइए।
+5. हर intent दर्ज कीजिए, उस log से `fold` लगाकर कोई bug दोबारा पैदा कीजिए, और बिना device छुए ठीक
+   कीजिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| MVI | एक रास्ता अंदर (intent), एक बाहर (state), बीच में साफ-सुथरा function |
+| Reducer | `(state, intent) -> state`; न IO, न coroutines |
+| काम कहाँ | `ViewModel` में, reduce के बाद; नतीजे intents बनकर लौटते हैं |
+| Effects | एक बार होने वाली चीजें `Channel` पर, state में कभी नहीं |
+| State | Rotation के बाद दोबारा भेजी जाती है — वही तो उसका काम है |
+| Test | दो values और एक दावा |
+| दोबारा चलाना | दर्ज intents पर `fold` पूरा सिलसिला लौटा देता है |
+| कीमत | तीन types और एक चक्कर; सीधी screen पर चुकाने लायक नहीं |
+
+<Interview title="वह सवाल जिसका गलत जवाब साफ-सुथरे function में network call रख देता है">
+"MVI में side effects कहाँ रहते हैं?"
+
+Reducer के बाहर। Reducer state और intent से नई state बनाता है और उसे साफ-सुथरा रहना है — वही सफाई
+उसे दो values से जाँचने लायक और किसी log से दोबारा चलाने लायक बनाती है। `ViewModel` उस intent को
+देखता है, काम शुरू करता है, और नतीजा दूसरी intent बनाकर वापस डालता है; navigation जैसी एक बार होने
+वाली चीजें अलग effect वाले रास्ते से निकलती हैं, क्योंकि उन्हें state में रखने का मतलब है कि वे हर
+rotation पर दोबारा चलेंगी।
+</Interview>
