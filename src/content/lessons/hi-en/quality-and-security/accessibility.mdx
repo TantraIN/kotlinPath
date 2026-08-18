@@ -1,0 +1,173 @@
+---
+title: "Sulabhta: TalkBack, contrast aur chhoone ki jagah"
+description: Sulabhta aakhir mein jodi jane wali suvidha nahi hai. Wo wahi semantics ka ped hai jisse aapke tests pehle se puchte hain, aur uska zyadatar hissa un chunavon se tay hota hai jo aap kar chuke ho.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Screen reader jo kuch janta hai wo sab **semantics ke ped** se aata hai — wahi jisse Compose ke tests
+puchte hain. Ye ittefaq nahi hai: jo hissa kisi test ko nahi milta wo aam taur par wahi hai jise
+TalkBack bata nahi pata, to dono kaam lagbhag poori tarah ek hi hain.
+</KeyIdea>
+
+## Wo chaar cheezein jo zyadatar dhak leti hain
+
+| Hissa | Niyam |
+| --- | --- |
+| Labels | Har chhoone layak cheez ke paas uske *maksad* ka byora ho |
+| Contrast | Aam text ke liye 4.5:1, bade text aur UI ke hisson ke liye 3:1 |
+| Chhoone ki jagah | Kam se kam 48dp × 48dp, icon chahe jitna dikhe |
+| Order aur samooh | Padhne ka order dikhne ke order se mel khaye; judi cheezein ek node hon |
+
+Saath-saath karte chalein to inmein se koi mehngi nahi hai. Baad mein jodein to sab mehngi hain, aur
+sulabhta chhoot jane ki asli wajah yahi hai.
+
+## Labels
+
+```kotlin title="Labels.kt" numbered
+// galat: bina label wala icon "button" bola jata hai
+IconButton(onClick = ::refresh) { Icon(Icons.Default.Refresh, contentDescription = null) }
+
+// sahi: tasveer nahi, kaam bataiye
+IconButton(onClick = ::refresh) {
+    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh_orders))
+}
+
+// aise text ke bagal mein sajawati tasveer jo baat pehle hi keh raha hai — yahan null sahi hai
+Row {
+    Icon(Icons.Default.Warning, contentDescription = null)
+    Text(stringResource(R.string.payment_failed))
+}
+```
+
+`contentDescription = null` apne aap mein galti nahi hai — yahi "ye sajawat hai" kehne ka tarika hai,
+aur aise text ke bagal wale icon ke liye jo matlab pehle hi dho raha hai, wo bilkul sahi hai. Wo tabhi
+bug banta hai jab wo cheez chhoone layak ho ya jankari sirf usi se mil rahi ho.
+
+**Maksad** bataiye: "Orders dobara laiye", na ki "gol teer wala icon". TalkBack bhumika pehle hi bol deta
+hai, to byore mein "button" rakhne par aapko "Refresh button button" milta hai.
+
+## Samooh aur order
+
+```kotlin title="Grouping.kt" numbered
+Row(
+    modifier = Modifier
+        .clickable(onClick = { open(order) })
+        .semantics(mergeDescendants = true) {
+            stateDescription = if (order.isPaid) paidLabel else pendingLabel
+        },
+) {
+    Icon(statusIcon, contentDescription = null)
+    Column { Text(order.title); Text(order.subtitle) }
+}
+```
+
+`mergeDescendants` ke bina screen reader teen composables wali row ko teen alag padavon ki tarah padhta
+hai, to user ko ek hi list ki cheez paar karne ke liye teen baar swipe karna padta hai. Uske saath wo row
+jude label wali ek node hai — aur yahi us row ko ek hi test wale dawe mein dhoondhne layak bhi banata
+hai.
+
+<Quiz
+  question="Kisi app ka Google ke Accessibility Scanner par achha result hai, par koi netraheen user batata hai ki wo checkout poora nahi kar paate. Chhed kahan hai?"
+  options={[
+    "Scanner se kuch labels chhoot gaye; har screen par chalane se wo mil jate",
+    "Scanner thehri hui khoobiyan dekhta hai — labels, contrast, chhoone ki jagah ka naap — aur ye parakh hi nahi sakta ki koi *bahav* chalta hai ya nahi: dhyan ka order, dialog band hone ke baad dhyan kahan jata hai, koi error boli jati hai ya nahi, koi apna banaya control chalaya bhi ja sakta hai ya nahi",
+    "Us user ke paas TalkBack ka purana roop hai aur use update chahiye"
+  ]}
+  answer={1}
+  explanation="Apne aap chalne wali jaanchein yantrik mushkilein pakadti hain aur uske aage kuch nahi, isiliye koi app unhe pass karke bhi bekaar ho sakta hai. Checkout todne wali cheezein order wali hoti hain: dialog hatne ke baad dhyan ka galat cheez par kood jana, aisi validation ki error jo dikhti to hai par kabhi boli nahi jati, apna banaya koi slider ya stepper jiske paas sulabhta wale kaam hi nahi isliye uski value badalne ka koi raasta nahi, ya aisa padhne ka order jo dikhne ke order ke bajaye layout ke ped ke peeche chalta hai isliye kul jod cheezon se pehle padha jata hai. Inmein se koi bhi kisi ek node ki khoobi nahi hai, to koi scanner unhe dekh hi nahi sakta. Iklauti bharosemand parakh hai TalkBack chalu karke, screen band rakhkar wo safar poora karna — jismein das minute lagte hain aur jo wo cheezein dhoondh leta hai jo koi auzar nahi dhoondhega."
+/>
+
+## Contrast aur chhoone ki jagah
+
+```kotlin title="Targets.kt" numbered
+// 24dp ke dibbe mein 24dp ka icon yani 24dp ki jagah — bahut chhoti
+Icon(Icons.Default.Close, contentDescription = close, modifier = Modifier.size(24.dp))
+
+// icon 24dp hi rehta hai; chhoone ki jagah 48dp ho jati hai
+IconButton(onClick = ::dismiss, modifier = Modifier.size(48.dp)) {
+    Icon(Icons.Default.Close, contentDescription = close, modifier = Modifier.size(24.dp))
+}
+```
+
+Dikhne wala naap aur chhue ja sakne wala naap do alag cheezein hain, aur maayne doosra rakhta hai.
+Material ke hisse 48dp pehle se poora karte hain; haath se banaye hue aam taur par nahi.
+
+Contrast mein jaal ye hai ki theme ke rang pass ho jate hain aur koi khaas jodi nahi — rangeen chip par
+text, band haalat, brand ke us rang par safed jo logo ke liye chuna gaya tha. Jo jodiyan aap sach mein
+bhejte ho unhe dekhiye, palette ko nahi.
+
+<Detail summary="Font ka naap, jo kisi bhi cheez se zyada layouts todta hai">
+Jo user system ka font naap 200% kar deta hai wo koi kinare ka maamla nahi hai — wo sabse zyada istemal
+hoti sulabhta wali settings mein se ek hai, aur wo TalkBack ke pakde mushkilon se zyada layouts todta
+hai.
+
+```kotlin title="Scaling.kt" numbered
+Text(style = MaterialTheme.typography.bodyLarge)      // andar sp: naap ke saath badhta hai
+
+Box(modifier = Modifier.height(48.dp)) { ... }        // dp: nahi badhta — text bahar behta hai
+```
+
+Text ke liye `sp` aur baaki har cheez ke liye `dp`, jo density wale lesson ka niyam hai — par yahan
+baat ye hai ki badhte hue text ko pakde tay unchai wala dibba beh jata hai. Ilaaj hai dibbe ko tay
+unchai ke bajaye `wrapContentHeight` aur ek kam se kam naap ke saath khud apna naap tay karne dena.
+
+Apni mukhya screens par `@Preview(fontScale = 2f)` ise secondon mein pakad leta hai aur ek line mein aata
+hai. Maujood sabse zyada keemat wali sulabhta ki parakh yahi hai, kyunki ye chupchap nahi, dikhte hue aur
+saaf-saaf nakaam hoti hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur aakhri hi tay karti hai ki ye chalta hai ya nahi">
+**Bina label wala icon ka button.** "Button" bola jata hai, aur wo karta kya hai iska koi ishara nahi.
+
+**Byore mein "button".** TalkBack bhumika pehle hi bolta hai, to aapko do baar milti hai.
+
+**24dp ki chhoone ki jagah.** Dikhne wala naap aur chhue jane wala naap alag hain.
+
+**Kisi judi hui cheez par `mergeDescendants` na hona.** Ek list ki cheez ke liye teen padav.
+
+**Scanner par bharosa.** Wo thehri hui khoobiyan dekhta hai aur kisi bahav ko parakh nahi sakta.
+</Pitfall>
+
+## Abhyaas
+
+1. TalkBack chalu kijiye aur screen band rakhkar apna mukhya safar poora kijiye.
+2. Font ka naap 200% kijiye aur pehli aisi screen dhoondhiye jo beh jati hai.
+3. Kisi list ki row mein `mergeDescendants` jodiye aur pehle-baad ke swipes giniye.
+4. Apne band haalat wale text ka contrast uski asli prishthbhumi ke saamne dekhiye.
+5. Kisi ek screen ke har icon wale button ki chhoone ki jagah naapiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Wo ped | Semantics — wahi jisse tests puchte hain |
+| Labels | Tasveer nahi, maksad bataiye |
+| `contentDescription = null` | Sajawat ke liye sahi; chhoone layak cheez par bug |
+| Contrast | Aam text 4.5:1, bada text aur UI 3:1 |
+| Chhoone ki jagah | 48dp, icon ka naap chahe jo ho |
+| `mergeDescendants` | List ki har cheez par teen ke bajaye ek padav |
+| Font ka naap | Text ko `sp`, aur aise dibbe jo badh sakein |
+| `@Preview(fontScale = 2f)` | Ek line; maujood sabse keemti parakh |
+| Scanner | Sirf thehri hui khoobiyan |
+| Asli parakh | TalkBack, screen band, safar poora kijiye |
+
+<Interview title="Ek sawal, auzaron ki had ke baare mein">
+"Sulabhta ki padtal aap kaise karoge?"
+
+Pehle apne aap chalne wala hissa, kyunki wo sasta hai: Google ka Accessibility Scanner aur Espresso tatha
+Compose wali testing ki sulabhta wali jaanchein gayab labels, contrast ki nakamiyan aur chhoti chhoone ki
+jagahein pakad leti hain. Wo alag-alag nodes ki thehri hui khoobiyan hain, aur unhe dhoondhna yantrik
+hai.
+
+Jo wo nahi bata sakta wo ye hai ki koi *bahav* chalta hai ya nahi, aur asli nakamiyan wahin rehti hain —
+dialog band hone ke baad dhyan ka kisi samajhdar jagah utarna, validation ki kisi error ka sach mein bola
+jana, apne banaye control ke paas sulabhta wale kaam hona taki uski value badli bhi ja sake. Inmein se
+koi bhi kisi ek node ki khoobi nahi hai, to koi scanner unhe dekhta hi nahi. To jis parakh par main adunga
+wo hai TalkBack chalu karke, screen band rakhkar mukhya safar poora karna. Usmein das minute lagte hain
+aur wo wo cheezein dhoondh leta hai jo koi auzar nahi dhoondhega. Aur main mukhya screens par
+`@Preview(fontScale = 2f)` jodunga, kyunki bada font kisi bhi cheez se zyada layouts todta hai aur wo
+dikhte hue nakaam hota hai.
+</Interview>

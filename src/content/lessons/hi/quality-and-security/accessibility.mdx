@@ -1,0 +1,169 @@
+---
+title: "सुलभता: TalkBack, contrast और छूने की जगह"
+description: सुलभता आखिर में जोड़ी जाने वाली सुविधा नहीं है। वह वही semantics का पेड़ है जिससे आपके tests पहले से पूछते हैं, और उसका ज्यादातर हिस्सा उन चुनावों से तय होता है जो आप कर चुके हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Screen reader जो कुछ जानता है वह सब **semantics के पेड़** से आता है — वही जिससे Compose के tests पूछते
+हैं। यह इत्तेफाक नहीं है: जो हिस्सा किसी test को नहीं मिलता वह आमतौर पर वही है जिसे TalkBack बता नहीं
+पाता, तो दोनों काम लगभग पूरी तरह एक ही हैं।
+</KeyIdea>
+
+## वे चार चीजें जो ज्यादातर ढक लेती हैं
+
+| हिस्सा | नियम |
+| --- | --- |
+| Labels | हर छूने लायक चीज के पास उसके *मकसद* का ब्योरा हो |
+| Contrast | आम text के लिए 4.5:1, बड़े text और UI के हिस्सों के लिए 3:1 |
+| छूने की जगह | कम से कम 48dp × 48dp, icon चाहे जितना दिखे |
+| क्रम और समूह | पढ़ने का क्रम दिखने के क्रम से मेल खाए; जुड़ी चीजें एक node हों |
+
+साथ-साथ करते चलें तो इनमें से कोई महँगी नहीं है। बाद में जोड़ें तो सब महँगी हैं, और सुलभता छूट जाने की
+असली वजह यही है।
+
+## Labels
+
+```kotlin title="Labels.kt" numbered
+// गलत: बिना label वाला icon "button" बोला जाता है
+IconButton(onClick = ::refresh) { Icon(Icons.Default.Refresh, contentDescription = null) }
+
+// सही: तस्वीर नहीं, काम बताइए
+IconButton(onClick = ::refresh) {
+    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh_orders))
+}
+
+// ऐसे text के बगल में सजावटी तस्वीर जो बात पहले ही कह रहा है — यहाँ null सही है
+Row {
+    Icon(Icons.Default.Warning, contentDescription = null)
+    Text(stringResource(R.string.payment_failed))
+}
+```
+
+`contentDescription = null` अपने आप में गलती नहीं है — यही "यह सजावट है" कहने का तरीका है, और ऐसे text
+के बगल वाले icon के लिए जो मतलब पहले ही ढो रहा है, वह बिलकुल सही है। वह तभी bug बनता है जब वह चीज
+छूने लायक हो या जानकारी सिर्फ उसी से मिल रही हो।
+
+**मकसद** बताइए: "Orders दोबारा लाइए", न कि "गोल तीर वाला icon"। TalkBack भूमिका पहले ही बोल देता है, तो
+ब्योरे में "button" रखने पर आपको "Refresh button button" मिलता है।
+
+## समूह और क्रम
+
+```kotlin title="Grouping.kt" numbered
+Row(
+    modifier = Modifier
+        .clickable(onClick = { open(order) })
+        .semantics(mergeDescendants = true) {
+            stateDescription = if (order.isPaid) paidLabel else pendingLabel
+        },
+) {
+    Icon(statusIcon, contentDescription = null)
+    Column { Text(order.title); Text(order.subtitle) }
+}
+```
+
+`mergeDescendants` के बिना screen reader तीन composables वाली row को तीन अलग पड़ावों की तरह पढ़ता है,
+तो user को एक ही list की चीज पार करने के लिए तीन बार swipe करना पड़ता है। उसके साथ वह row जुड़े label
+वाली एक node है — और यही उस row को एक ही test वाले दावे में ढूँढ़ने लायक भी बनाता है।
+
+<Quiz
+  question="किसी ऐप का Google के Accessibility Scanner पर अच्छा नतीजा है, पर कोई नेत्रहीन user बताता है कि वे checkout पूरा नहीं कर पाते। छेद कहाँ है?"
+  options={[
+    "Scanner से कुछ labels छूट गए; हर screen पर चलाने से वे मिल जाते",
+    "Scanner ठहरी हुई खूबियाँ जाँचता है — labels, contrast, छूने की जगह का नाप — और यह परख ही नहीं सकता कि कोई *बहाव* चलता है या नहीं: ध्यान का क्रम, dialog बंद होने के बाद ध्यान कहाँ जाता है, कोई error बोली जाती है या नहीं, कोई अपना बनाया control चलाया भी जा सकता है या नहीं",
+    "उस user के पास TalkBack का पुराना रूप है और उसे update चाहिए"
+  ]}
+  answer={1}
+  explanation="अपने आप चलने वाली जाँचें यांत्रिक दिक्कतें पकड़ती हैं और उसके आगे कुछ नहीं, इसीलिए कोई ऐप उन्हें पास करके भी बेकार हो सकता है। Checkout तोड़ने वाली चीजें क्रम वाली होती हैं: dialog हटने के बाद ध्यान का गलत चीज पर कूद जाना, ऐसी validation की error जो दिखती तो है पर कभी बोली नहीं जाती, अपना बनाया कोई slider या stepper जिसके पास सुलभता वाले काम ही नहीं इसलिए उसकी value बदलने का कोई रास्ता नहीं, या ऐसा पढ़ने का क्रम जो दिखने के क्रम के बजाय layout के पेड़ के पीछे चलता है इसलिए कुल जोड़ चीजों से पहले पढ़ा जाता है। इनमें से कोई भी किसी एक node की खूबी नहीं है, तो कोई scanner उन्हें देख ही नहीं सकता। इकलौती भरोसेमंद जाँच है TalkBack चालू करके, screen बंद रखकर वह सफर पूरा करना — जिसमें दस मिनट लगते हैं और जो वे चीजें ढूँढ़ लेता है जो कोई औजार नहीं ढूँढ़ेगा।"
+/>
+
+## Contrast और छूने की जगह
+
+```kotlin title="Targets.kt" numbered
+// 24dp के डिब्बे में 24dp का icon यानी 24dp की जगह — बहुत छोटी
+Icon(Icons.Default.Close, contentDescription = close, modifier = Modifier.size(24.dp))
+
+// icon 24dp ही रहता है; छूने की जगह 48dp हो जाती है
+IconButton(onClick = ::dismiss, modifier = Modifier.size(48.dp)) {
+    Icon(Icons.Default.Close, contentDescription = close, modifier = Modifier.size(24.dp))
+}
+```
+
+दिखने वाला नाप और छुए जा सकने वाला नाप दो अलग चीजें हैं, और मायने दूसरा रखता है। Material के हिस्से
+48dp पहले से पूरा करते हैं; हाथ से बनाए हुए आमतौर पर नहीं।
+
+Contrast में जाल यह है कि theme के रंग पास हो जाते हैं और कोई खास जोड़ी नहीं — रंगीन chip पर text, बंद
+हालत, brand के उस रंग पर सफेद जो logo के लिए चुना गया था। जो जोड़ियाँ आप सच में भेजते हैं उन्हें
+जाँचिए, palette को नहीं।
+
+<Detail summary="Font का नाप, जो किसी भी चीज से ज्यादा layouts तोड़ता है">
+जो user system का font नाप 200% कर देता है वह कोई किनारे का मामला नहीं है — वह सबसे ज्यादा इस्तेमाल
+होती सुलभता वाली settings में से एक है, और वह TalkBack के पकड़े दिक्कतों से ज्यादा layouts तोड़ता है।
+
+```kotlin title="Scaling.kt" numbered
+Text(style = MaterialTheme.typography.bodyLarge)      // अंदर sp: नाप के साथ बढ़ता है
+
+Box(modifier = Modifier.height(48.dp)) { ... }        // dp: नहीं बढ़ता — text बाहर बहता है
+```
+
+Text के लिए `sp` और बाकी हर चीज के लिए `dp`, जो density वाले पाठ का नियम है — पर यहाँ नतीजा यह है कि
+बढ़ते हुए text को पकड़े तय ऊँचाई वाला डिब्बा बह जाता है। इलाज है डिब्बे को तय ऊँचाई के बजाय
+`wrapContentHeight` और एक कम से कम नाप के साथ खुद अपना नाप तय करने देना।
+
+अपनी मुख्य screens पर `@Preview(fontScale = 2f)` इसे सेकंडों में पकड़ लेता है और एक लाइन में आता है।
+मौजूद सबसे ज्यादा कीमत वाली सुलभता की जाँच यही है, क्योंकि यह चुपचाप नहीं, दिखते हुए और साफ-साफ नाकाम
+होती है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और आखिरी ही तय करती है कि यह चलता है या नहीं">
+**बिना label वाला icon का button।** "Button" बोला जाता है, और वह करता क्या है इसका कोई इशारा नहीं।
+
+**ब्योरे में "button"।** TalkBack भूमिका पहले ही बोलता है, तो आपको दो बार मिलती है।
+
+**24dp की छूने की जगह।** दिखने वाला नाप और छुए जाने वाला नाप अलग हैं।
+
+**किसी जुड़ी हुई चीज पर `mergeDescendants` न होना।** एक list की चीज के लिए तीन पड़ाव।
+
+**Scanner पर भरोसा।** वह ठहरी हुई खूबियाँ जाँचता है और किसी बहाव को परख नहीं सकता।
+</Pitfall>
+
+## अभ्यास
+
+1. TalkBack चालू कीजिए और screen बंद रखकर अपना मुख्य सफर पूरा कीजिए।
+2. Font का नाप 200% कीजिए और पहली ऐसी screen ढूँढ़िए जो बह जाती है।
+3. किसी list की row में `mergeDescendants` जोड़िए और पहले-बाद के swipes गिनिए।
+4. अपने बंद हालत वाले text का contrast उसकी असली पृष्ठभूमि के सामने जाँचिए।
+5. किसी एक screen के हर icon वाले button की छूने की जगह नापिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| वह पेड़ | Semantics — वही जिससे tests पूछते हैं |
+| Labels | तस्वीर नहीं, मकसद बताइए |
+| `contentDescription = null` | सजावट के लिए सही; छूने लायक चीज पर bug |
+| Contrast | आम text 4.5:1, बड़ा text और UI 3:1 |
+| छूने की जगह | 48dp, icon का नाप चाहे जो हो |
+| `mergeDescendants` | List की हर चीज पर तीन के बजाय एक पड़ाव |
+| Font का नाप | Text को `sp`, और ऐसे डिब्बे जो बढ़ सकें |
+| `@Preview(fontScale = 2f)` | एक लाइन; मौजूद सबसे कीमती जाँच |
+| Scanner | सिर्फ ठहरी हुई खूबियाँ |
+| असली जाँच | TalkBack, screen बंद, सफर पूरा कीजिए |
+
+<Interview title="एक सवाल, औजारों की हद के बारे में">
+"सुलभता की जाँच आप कैसे करेंगे?"
+
+पहले अपने आप चलने वाला हिस्सा, क्योंकि वह सस्ता है: Google का Accessibility Scanner और Espresso तथा
+Compose वाली testing की सुलभता वाली जाँचें गायब labels, contrast की नाकामियाँ और छोटी छूने की जगहें
+पकड़ लेती हैं। वे अलग-अलग nodes की ठहरी हुई खूबियाँ हैं, और उन्हें ढूँढ़ना यांत्रिक है।
+
+जो वह नहीं बता सकता वह यह है कि कोई *बहाव* चलता है या नहीं, और असली नाकामियाँ वहीं रहती हैं — dialog बंद
+होने के बाद ध्यान का किसी समझदार जगह उतरना, validation की किसी error का सच में बोला जाना, अपने बनाए
+control के पास सुलभता वाले काम होना ताकि उसकी value बदली भी जा सके। इनमें से कोई भी किसी एक node की
+खूबी नहीं है, तो कोई scanner उन्हें देखता ही नहीं। तो जिस जाँच पर मैं अड़ूँगा वह है TalkBack चालू करके,
+screen बंद रखकर मुख्य सफर पूरा करना। उसमें दस मिनट लगते हैं और वह वे चीजें ढूँढ़ लेता है जो कोई औजार
+नहीं ढूँढ़ेगा। और मैं मुख्य screens पर `@Preview(fontScale = 2f)` जोड़ूँगा, क्योंकि बड़ा font किसी भी
+चीज से ज्यादा layouts तोड़ता है और वह दिखते हुए नाकाम होता है।
+</Interview>

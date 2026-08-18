@@ -1,0 +1,169 @@
+---
+title: "Accessibility: TalkBack, contrast and touch targets"
+description: Accessibility is not a feature you add at the end. It is the same semantics tree your tests already query, and most of it is decided by choices you have already made.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Everything a screen reader knows comes from the **semantics tree** — the same one Compose tests query.
+That is not a coincidence: a component a test cannot find is usually one TalkBack cannot describe, so
+the work overlaps almost completely.
+</KeyIdea>
+
+## The four things that cover most of it
+
+| Area | The rule |
+| --- | --- |
+| Labels | Every interactive element has a description of its *purpose* |
+| Contrast | 4.5:1 for body text, 3:1 for large text and UI components |
+| Touch targets | At least 48dp × 48dp, whatever the icon looks like |
+| Order and grouping | Reading order matches visual order; related things are one node |
+
+None of these is expensive if you do them as you go. All of them are expensive as a retrofit, which is
+the actual reason accessibility gets skipped.
+
+## Labels
+
+```kotlin title="Labels.kt" numbered
+// wrong: an unlabelled icon is announced as "button"
+IconButton(onClick = ::refresh) { Icon(Icons.Default.Refresh, contentDescription = null) }
+
+// right: describe the action, not the picture
+IconButton(onClick = ::refresh) {
+    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh_orders))
+}
+
+// decorative image next to text that already says it — correctly null
+Row {
+    Icon(Icons.Default.Warning, contentDescription = null)
+    Text(stringResource(R.string.payment_failed))
+}
+```
+
+`contentDescription = null` is not a mistake in itself — it is how you say "this is decorative", and
+for an icon sitting beside text that already carries the meaning it is exactly right. It becomes a bug
+only when the element is interactive or is the only thing conveying the information.
+
+Describe the **purpose**: "Refresh orders", not "circular arrow icon". TalkBack already announces the
+role, so including "button" in the description gets you "Refresh button button".
+
+## Grouping and order
+
+```kotlin title="Grouping.kt" numbered
+Row(
+    modifier = Modifier
+        .clickable(onClick = { open(order) })
+        .semantics(mergeDescendants = true) {
+            stateDescription = if (order.isPaid) paidLabel else pendingLabel
+        },
+) {
+    Icon(statusIcon, contentDescription = null)
+    Column { Text(order.title); Text(order.subtitle) }
+}
+```
+
+Without `mergeDescendants`, a screen reader reads a row of three composables as three separate stops,
+so a user swipes three times to get past one list item. With it, the row is one node with a combined
+label — which is also what makes the row findable in a single test assertion.
+
+<Quiz
+  question="An app scores well on Google's Accessibility Scanner, but a blind user reports that they cannot complete checkout. What is the likely gap?"
+  options={[
+    "The scanner missed some labels; running it on every screen would have caught it",
+    "The scanner checks static properties — labels, contrast, target size — and cannot evaluate whether a *flow* works: focus order, focus after a dialog closes, whether an error is announced, whether a custom control can be operated at all",
+    "The user has an old TalkBack version and needs to update"
+  ]}
+  answer={1}
+  explanation="Automated checks catch the mechanical problems and nothing else, which is why an app can pass them and still be unusable. The things that break a checkout are sequential: focus jumping to the wrong element after a dialog dismisses, an inline validation error that appears visually but is never announced, a custom slider or stepper that has no accessibility actions so there is no way to change its value, or a reading order that follows the layout tree rather than the visual order so the total is read before the items. None of those are properties of a single node, so no scanner can see them. The only reliable check is turning TalkBack on and completing the journey with the screen off — which takes ten minutes and finds things no tooling will."
+/>
+
+## Contrast and touch targets
+
+```kotlin title="Targets.kt" numbered
+// a 24dp icon in a 24dp box is a 24dp target — too small
+Icon(Icons.Default.Close, contentDescription = close, modifier = Modifier.size(24.dp))
+
+// the icon stays 24dp; the target becomes 48dp
+IconButton(onClick = ::dismiss, modifier = Modifier.size(48.dp)) {
+    Icon(Icons.Default.Close, contentDescription = close, modifier = Modifier.size(24.dp))
+}
+```
+
+The visible size and the touchable size are different things, and the second is what matters. Material
+components already meet 48dp; hand-built ones usually do not.
+
+For contrast, the trap is that the theme's colours pass and a specific pairing does not — text on a
+coloured chip, a disabled state, white on a brand colour that was chosen for a logo. Check the pairings
+you actually ship rather than the palette.
+
+<Detail summary="Font scale, which breaks more layouts than anything else">
+A user who sets the system font scale to 200% is not an edge case — it is one of the most-used
+accessibility settings, and it breaks more layouts than TalkBack finds problems.
+
+```kotlin title="Scaling.kt" numbered
+Text(style = MaterialTheme.typography.bodyLarge)      // sp under the hood: scales
+
+Box(modifier = Modifier.height(48.dp)) { ... }        // dp: does not scale — text overflows
+```
+
+Use `sp` for text and `dp` for everything else, which is the density lesson's rule — but the
+consequence here is that a fixed-height container holding scaled text overflows. The fix is letting
+the container size itself with `wrapContentHeight` and a minimum, rather than a fixed height.
+
+A `@Preview(fontScale = 2f)` on your main screens catches this in seconds and costs one line. It is
+the single highest-value accessibility check available, because it fails visually and obviously rather
+than silently.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the last is the one that decides whether it works">
+**An unlabelled icon button.** Announced as "button", with no indication of what it does.
+
+**"Button" in the description.** TalkBack announces the role already, so you get it twice.
+
+**A 24dp touch target.** The visible size and the touchable size are separate.
+
+**No `mergeDescendants` on a composite.** Three stops for one list item.
+
+**Trusting the scanner.** It checks static properties and cannot evaluate a flow.
+</Pitfall>
+
+## Practice
+
+1. Turn on TalkBack and complete your main journey with the screen off.
+2. Set the font scale to 200% and find the first screen that overflows.
+3. Add `mergeDescendants` to a list row and count the swipes before and after.
+4. Check the contrast of your disabled text against its actual background.
+5. Measure the touch target of every icon button on one screen.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The tree | Semantics — the same one tests query |
+| Labels | Describe the purpose, not the picture |
+| `contentDescription = null` | Correct for decorative; a bug for interactive |
+| Contrast | 4.5:1 body text, 3:1 large text and UI |
+| Touch targets | 48dp, regardless of the icon's size |
+| `mergeDescendants` | One stop per list item instead of three |
+| Font scale | `sp` for text, and containers that can grow |
+| `@Preview(fontScale = 2f)` | One line; the highest-value check available |
+| Scanner | Static properties only |
+| The real test | TalkBack, screen off, complete the journey |
+
+<Interview title="A question about the limits of tooling">
+"How do you test accessibility?"
+
+The automated part first, because it is cheap: Google's Accessibility Scanner and the accessibility
+checks in Espresso and Compose testing catch missing labels, contrast failures and undersized touch
+targets. Those are static properties of individual nodes, and finding them is mechanical.
+
+What that cannot tell you is whether a *flow* works, which is where real failures live — focus landing
+somewhere sensible after a dialog closes, a validation error actually being announced, a custom control
+having accessibility actions so its value can be changed at all. None of those are properties of one
+node, so no scanner sees them. So the check I insist on is turning TalkBack on and completing the main
+journey with the screen off. It takes ten minutes and it finds things no tooling will. And I would add a
+`@Preview(fontScale = 2f)` on the main screens, because large font breaks more layouts than anything
+else and it fails visibly.
+</Interview>
