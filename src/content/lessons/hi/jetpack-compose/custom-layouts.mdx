@@ -1,0 +1,207 @@
+---
+title: Compose में custom layouts और Canvas
+description: बच्चों को measure करके जगह देना एक function है, और बनाना दूसरा। दोनों में view system से कहीं कम code लगता है, और उनके नीचे एक सख्त नियम है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Custom layout एक ही `Layout` call है: **बच्चों को measure कीजिए, अपना नाप तय कीजिए, उन्हें जगह
+दीजिए**। सब कुछ जिस नियम से बनता है वह यह है कि हर बच्चा ठीक एक बार measure हो सकता है — गहरी
+nesting सस्ती इसी से रहती है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+View system में custom `ViewGroup` का मतलब था एक subclass, `onMeasure`, `onLayout`, अपने
+`LayoutParams` और बहुत सावधानी। यहाँ वह एक function है।
+
+```kotlin title="Stack.kt" numbered
+@Composable
+fun VerticalStack(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Layout(modifier = modifier, content = content) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints) }
+
+        val width = placeables.maxOfOrNull { it.width } ?: 0
+        val height = placeables.sumOf { it.height }
+
+        layout(width, height) {
+            var y = 0
+            placeables.forEach { placeable ->
+                placeable.placeRelative(x = 0, y = y)
+                y += placeable.height
+            }
+        }
+    }
+}
+```
+
+तीन कदम, उसी क्रम में जिसमें वे हमेशा आते हैं: measure, अपना नाप बताना, जगह देना। `place` की जगह
+`placeRelative`, ताकि दाएँ-से-बाएँ लिखी जाने वाली भाषाओं में layout ठीक से पलट जाए।
+
+## वह नियम जिससे टकराना ही है
+
+<Quiz
+  question="आप किसी बच्चे को measure करते हैं, देखते हैं कि वह आपकी चाहत से ज्यादा चौड़ा है, और कसी हुई constraints के साथ दोबारा `measure` बुलाते हैं। वह फेंक देता है। क्यों?"
+  options={[
+    "Constraints `Constraints.fixed` से बनानी चाहिए",
+    "एक layout pass में बच्चा सिर्फ एक बार measure हो सकता है — nesting सस्ती इसी एक-बार वाले नियम से रहती है",
+    "दोनों measurements के बीच `layout()` बुलाना जरूरी है",
+  ]}
+  answer={1}
+  explanation="Compose एक ही pass में किसी बच्चे को दो बार measure करने से मना करता है, और चुपचाप जाने देने के बजाय फेंक देता है। यही पूरी वजह है कि Compose में nesting पर वह गुणा-भाग वाली कीमत नहीं पड़ती जो view system में एक के अंदर एक LinearLayout weights पर पड़ती थी — N nodes का पेड़ हमेशा N कदमों में measure होता है। जब सच में किसी बच्चे की constraints तय करने से पहले उसका नाप चाहिए, तो बचाव का दरवाजा intrinsics हैं: measurable.minIntrinsicWidth(height) बिना measure किए एक अलग सवाल पूछता है। वह एक और सवाल है और उसकी असली कीमत है, इसलिए जहाँ हो सके constraint पहले ही निकाल लीजिए।"
+/>
+
+## पूरी बातचीत constraints की है
+
+```kotlin title="Constraints.kt" numbered
+// बच्चों को जितना छोटा होना है होने दीजिए, पर हमसे चौड़ा नहीं
+val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+
+// किसी बच्चे को ठीक यही नाप दीजिए
+val exact = Constraints.fixed(width = 120, height = 48)
+
+// ऊँचाई की हद हटाइए, scroll होती किसी चीज के अंदर के लिए
+val unbounded = constraints.copy(maxHeight = Constraints.Infinity)
+```
+
+Parent दोनों दिशाओं के लिए कम से कम और ज्यादा से ज्यादा नीचे भेजता है; बच्चा उन्हीं के अंदर से एक
+नाप बताता है। इस स्तर का लगभग हर bug यही है कि आपने अपनी constraints सीधे आगे बढ़ा दीं, जबकि मतलब
+कम से कम वाली हद ढीली करने का था।
+
+## पूरा layout बनाए बिना एक बच्चे को हिलाना
+
+```kotlin title="ModifierLayout.kt" numbered
+fun Modifier.offsetFirstBaseline(to: Dp) = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val baseline = placeable[FirstBaseline]
+    val shift = to.roundToPx() - baseline
+
+    layout(placeable.width, placeable.height + shift) {
+        placeable.placeRelative(0, shift)
+    }
+}
+```
+
+`Modifier.layout` `Layout` का एक-बच्चे वाला रूप है। जब दूरी डिब्बे के किनारे से नहीं बल्कि text की
+baseline से नापनी हो, तो सही औजार यही है — और इसे कितना भी padding नहीं कह सकता।
+
+## बनाना
+
+```kotlin title="Draw.kt" numbered
+Canvas(Modifier.size(120.dp)) {
+    drawCircle(
+        color = Color.Red,
+        radius = size.minDimension / 2f,
+        center = center,
+    )
+    drawArc(
+        color = Color.White,
+        startAngle = -90f,
+        sweepAngle = 360f * progress,
+        useCenter = false,
+        style = Stroke(width = 12f, cap = StrokeCap.Round),
+    )
+}
+```
+
+`DrawScope` के अंदर आपको `size`, `center` और बनाने की पूरी शब्दावली मिलती है, pixels में, और कोई
+`Paint` बनाने की जरूरत नहीं — style और रंग parameters हैं।
+
+| कहाँ बनाना है | क्या लें |
+| --- | --- |
+| अपने आप में एक drawing | `Canvas` |
+| किसी मौजूदा composable के पीछे | `Modifier.drawBehind` |
+| पीछे भी, आगे भी | `Modifier.drawWithContent`, और अंदर `drawContent()` |
+| जब बनाने की तैयारी महँगी हो | `Modifier.drawWithCache` |
+
+<Detail summary="drawWithCache, और draw में Path बनाना धीमा क्यों है">
+`Path` बनाना महँगा है और बनाकर draw करना सस्ता। `drawBehind` अपना पूरा block हर draw पर चलाता है,
+तो उसके अंदर बना path animation के हर frame पर दोबारा बनता है।
+
+```kotlin title="Cache.kt" numbered
+Modifier.drawWithCache {
+    val path = Path().apply {
+        moveTo(0f, size.height)
+        lineTo(size.width / 2f, 0f)
+        lineTo(size.width, size.height)
+        close()
+    }
+    onDrawBehind {
+        drawPath(path, color)          // हर frame पर सिर्फ यही चलता है
+    }
+}
+```
+
+बाहर वाला block तभी दोबारा चलता है जब नाप या पकड़ी हुई कोई state बदले; `onDrawBehind` हर frame पर
+चलता है। यह वही अनुशासन है जो custom view में `Paint` को `onDraw` के बजाय constructor में बनाने का
+था।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="एक बार measure, एक बार जगह" meta="एक ही pass">
+    Constraints नीचे जाती हैं, नाप वापस आते हैं, फिर जगह मिलती है। कुछ भी सुलझाने के लिए दूसरा pass
+    होता ही नहीं।
+  </TimelineItem>
+  <TimelineItem title="जगह देना सस्ता है" meta="measure करने से सस्ता">
+    Placement वाले block में कुछ हिलाने से कुछ दोबारा measure नहीं होता, इसीलिए lambda वाले modifier
+    में offset animate करना इतना सस्ता पड़ता है।
+  </TimelineItem>
+  <TimelineItem title="Intrinsics एक अलग सवाल हैं" meta="और एक अतिरिक्त कीमत">
+    `minIntrinsicWidth` वगैरह बच्चे से पूछते हैं कि वह क्या चाहेगा, उसे measure किए बिना। काम के
+    हैं, मुफ्त नहीं।
+  </TimelineItem>
+  <TimelineItem title="`Canvas` draw वाले modifier के साथ एक `Spacer` है" meta="कुछ खास नहीं">
+    उसके न बच्चे हैं न अपनी कोई measurement; वह अपने modifier से मिला नाप लेता है और बनाता है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, और पहली दो फेंक देती हैं">
+**किसी बच्चे को दो बार measure करना।** पहले constraint निकालिए, या intrinsics लीजिए।
+
+**`layout()` बुलाना भूल जाना।** उस lambda को एक `MeasureResult` लौटाना है, और वह बनाने का यही
+इकलौता तरीका है।
+
+**अपनी constraints सीधे नीचे भेज देना।** विरासत में मिली कोई `minWidth` हर बच्चे को कम से कम उतना
+चौड़ा होने पर मजबूर कर देती है, जो शायद ही कभी मतलब होता है।
+
+**`drawBehind` के अंदर `Path` या `Brush` बनाना।** हर frame पर दोबारा बनता है। `drawWithCache` ठीक
+इसी के लिए है।
+</Pitfall>
+
+## अभ्यास
+
+1. ऊपर वाला `VerticalStack` लिखिए, फिर उसे ऐसा बनाइए कि हर बच्चा आड़े में बीच में आए।
+2. किसी बच्चे को दो बार measure करके देखिए और exception पढ़िए।
+3. ऐसा layout बनाइए जो बच्चों को एक गोले पर रखे, `constraints.copy(minWidth = 0)` इस्तेमाल करके।
+4. `Modifier.offsetFirstBaseline` लिखिए और किसी title पर उसका नतीजा सादे `padding` से मिलाइए।
+5. `Canvas` से progress का छल्ला बनाइए, फिर उसे किसी मौजूदा `Box` पर `drawBehind` में ले जाइए।
+6. `drawBehind` के अंदर `Path` बनाइए, उसे animate कीजिए, फिर `drawWithCache` पर जाइए और frame का
+   समय मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `Layout` | बच्चों को measure कीजिए, नाप बताइए, जगह दीजिए |
+| एक बार measure | हर बच्चा, हर pass में एक बार — nesting सस्ती इसी नियम से है |
+| `Constraints` | दोनों दिशाओं की कम से कम और ज्यादा से ज्यादा हद, नीचे भेजी हुई |
+| `placeRelative` | ऐसी placement जो दाएँ-से-बाएँ layouts में पलट जाती है |
+| Intrinsics | बच्चे का पसंदीदा नाप पूछिए, बिना उसे measure किए |
+| `Modifier.layout` | `Layout` का एक-बच्चे वाला रूप |
+| `Canvas` | `DrawScope` में अपने आप में एक drawing |
+| `drawBehind` / `drawWithContent` | किसी मौजूदा composable के इर्द-गिर्द बनाना |
+| `drawWithCache` | तैयारी एक बार, बनाना हर frame |
+
+<Interview title="वह सवाल जो मामूली जानकारी लगता है और है architecture का">
+"Compose के layout में बच्चा सिर्फ एक बार measure क्यों हो सकता है?"
+
+क्योंकि इससे एक ही measurement pass की गारंटी मिलती है, तो N nodes का पेड़ चाहे कितना भी गहरा हो, N
+measurements में निपटता है — एक के अंदर एक weight वाले `LinearLayout` जैसा फैलाव यहाँ हो ही नहीं
+सकता। जो अगला सवाल पहले ही सँभाल लेना चाहिए वह बचाव का दरवाजा है: intrinsics से parent बिना measure
+किए पूछ सकता है कि बच्चा क्या चाहेगा, एक अतिरिक्त सवाल की कीमत पर — इसीलिए वे रोज का औजार नहीं,
+अपवाद हैं।
+</Interview>

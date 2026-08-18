@@ -1,0 +1,209 @@
+---
+title: Custom layouts and Canvas in Compose
+description: Measuring children and placing them is one function, and drawing is another. Both are a fraction of the code the view system needed, with one hard rule underneath them.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A custom layout is one `Layout` call: **measure the children, decide your own size, place them**.
+The rule that shapes everything is that each child may be measured exactly once — that is what
+keeps deep nesting cheap.
+</KeyIdea>
+
+## Why this matters
+
+In the view system a custom `ViewGroup` meant a subclass, `onMeasure`, `onLayout`, custom
+`LayoutParams` and a lot of care. Here it is a function.
+
+```kotlin title="Stack.kt" numbered
+@Composable
+fun VerticalStack(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Layout(modifier = modifier, content = content) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints) }
+
+        val width = placeables.maxOfOrNull { it.width } ?: 0
+        val height = placeables.sumOf { it.height }
+
+        layout(width, height) {
+            var y = 0
+            placeables.forEach { placeable ->
+                placeable.placeRelative(x = 0, y = y)
+                y += placeable.height
+            }
+        }
+    }
+}
+```
+
+Three steps, in the order they always come: measure, declare your size, place. `placeRelative`
+rather than `place` so the layout mirrors correctly in a right-to-left locale.
+
+## The rule you will hit
+
+<Quiz
+  question="You measure a child, find it is wider than you want, and call `measure` again with tighter constraints. It throws. Why?"
+  options={[
+    "The constraints must be created with `Constraints.fixed`",
+    "A child may be measured only once per layout pass — that single-measurement rule is what makes nesting cheap",
+    "You must call `layout()` between the two measurements",
+  ]}
+  answer={1}
+  explanation="Compose forbids measuring the same child twice in one pass, and it throws rather than letting it slide. That rule is the whole reason nesting in Compose does not carry the exponential cost that nested LinearLayout weights did in the view system — a tree of N nodes is measured in N steps, always. When you genuinely need a child's size before deciding its constraints, the escape hatch is intrinsics: measurable.minIntrinsicWidth(height) asks a separate question without measuring. It is an extra query with a real cost, so work out the constraint first whenever you can."
+/>
+
+## Constraints are the whole conversation
+
+```kotlin title="Constraints.kt" numbered
+// Let children be as small as they like, but no wider than us
+val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+
+// Give a child exactly this size
+val exact = Constraints.fixed(width = 120, height = 48)
+
+// Remove the height limit, for something inside a scroller
+val unbounded = constraints.copy(maxHeight = Constraints.Infinity)
+```
+
+A parent hands down min and max for both axes; the child answers with a size inside them. Almost
+every layout bug at this level is passing your own constraints straight through when you meant to
+relax the minimum.
+
+## Adjusting one child, without a whole layout
+
+```kotlin title="ModifierLayout.kt" numbered
+fun Modifier.offsetFirstBaseline(to: Dp) = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val baseline = placeable[FirstBaseline]
+    val shift = to.roundToPx() - baseline
+
+    layout(placeable.width, placeable.height + shift) {
+        placeable.placeRelative(0, shift)
+    }
+}
+```
+
+`Modifier.layout` is the single-child version of `Layout`. It is the right tool for spacing that
+must be measured from a text baseline rather than from a box edge — something no amount of padding
+can express.
+
+## Drawing
+
+```kotlin title="Draw.kt" numbered
+Canvas(Modifier.size(120.dp)) {
+    drawCircle(
+        color = Color.Red,
+        radius = size.minDimension / 2f,
+        center = center,
+    )
+    drawArc(
+        color = Color.White,
+        startAngle = -90f,
+        sweepAngle = 360f * progress,
+        useCenter = false,
+        style = Stroke(width = 12f, cap = StrokeCap.Round),
+    )
+}
+```
+
+Inside a `DrawScope` you get `size`, `center` and the whole drawing vocabulary, in pixels, with no
+`Paint` object to allocate — style and colour are parameters.
+
+| Where to draw | Use |
+| --- | --- |
+| A standalone drawing | `Canvas` |
+| Behind an existing composable | `Modifier.drawBehind` |
+| Behind and in front | `Modifier.drawWithContent`, calling `drawContent()` |
+| When the drawing is expensive to prepare | `Modifier.drawWithCache` |
+
+<Detail summary="drawWithCache, and why building a Path in draw is slow">
+A `Path` is expensive to build and cheap to draw. `drawBehind` runs its whole block on every draw,
+so a path built inside it is rebuilt on every frame of an animation.
+
+```kotlin title="Cache.kt" numbered
+Modifier.drawWithCache {
+    val path = Path().apply {
+        moveTo(0f, size.height)
+        lineTo(size.width / 2f, 0f)
+        lineTo(size.width, size.height)
+        close()
+    }
+    onDrawBehind {
+        drawPath(path, color)          // only this runs per frame
+    }
+}
+```
+
+The outer block re-runs only when the size or a captured state changes; `onDrawBehind` runs every
+frame. It is the same discipline as allocating a `Paint` in a custom view's constructor rather than
+in `onDraw`.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Measure once, place once" meta="a single pass">
+    Constraints travel down, sizes come back, then placement happens. There is no second pass to
+    resolve anything.
+  </TimelineItem>
+  <TimelineItem title="Placement is cheap" meta="cheaper than measurement">
+    Moving something in the placement block does not re-measure anything, which is why animating an
+    offset in a lambda modifier costs so little.
+  </TimelineItem>
+  <TimelineItem title="Intrinsics are a separate question" meta="and an extra cost">
+    `minIntrinsicWidth` and friends ask a child what it would want, without measuring it. Useful,
+    and not free.
+  </TimelineItem>
+  <TimelineItem title="`Canvas` is a `Spacer` with a draw modifier" meta="nothing special">
+    It has no children and no measurement of its own; it takes the size its modifier gives it and
+    draws.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four, and the first two throw">
+**Measuring a child twice.** Work out the constraint first, or use intrinsics.
+
+**Forgetting to call `layout()`.** The lambda must return a `MeasureResult`, and that is the only
+way to make one.
+
+**Passing your constraints straight down.** A `minWidth` you inherited forces every child to be at
+least that wide, which is rarely what you meant.
+
+**Building a `Path` or a `Brush` inside `drawBehind`.** Rebuilt on every frame. `drawWithCache`
+exists for exactly this.
+</Pitfall>
+
+## Practice
+
+1. Write the `VerticalStack` above, then change it to centre each child horizontally.
+2. Try measuring a child twice and read the exception.
+3. Build a layout that places children on a circle, using `constraints.copy(minWidth = 0)`.
+4. Write `Modifier.offsetFirstBaseline` and compare the result with plain `padding` on a title.
+5. Draw a progress ring with `Canvas`, then move it to `drawBehind` on an existing `Box`.
+6. Build a `Path` inside `drawBehind`, animate it, then switch to `drawWithCache` and compare frame
+   times.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `Layout` | Measure children, declare a size, place them |
+| Single measurement | Each child, once per pass — the rule that keeps nesting cheap |
+| `Constraints` | Min and max on both axes, passed down |
+| `placeRelative` | Placement that mirrors in right-to-left layouts |
+| Intrinsics | Ask a child's preferred size without measuring it |
+| `Modifier.layout` | The single-child version of `Layout` |
+| `Canvas` | Standalone drawing in a `DrawScope` |
+| `drawBehind` / `drawWithContent` | Draw around an existing composable |
+| `drawWithCache` | Prepare once, draw every frame |
+
+<Interview title="A question that sounds like trivia and is about architecture">
+"Why can a child be measured only once in a Compose layout?"
+
+Because it guarantees a single measurement pass, so a tree of N nodes costs N measurements no matter
+how deep it is — the exponential blow-up of nested weighted `LinearLayout`s cannot happen. The
+follow-up worth pre-empting is the escape hatch: intrinsics let a parent ask what a child would
+want without measuring it, at the cost of an extra query, which is why they are the exception
+rather than the tool.
+</Interview>

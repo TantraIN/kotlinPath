@@ -1,0 +1,211 @@
+---
+title: Compose mein custom layouts aur Canvas
+description: Bachchon ko measure karke jagah dena ek function hai, aur banana doosra. Dono mein view system se kahin kam code lagta hai, aur unke neeche ek sakht niyam hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Custom layout ek hi `Layout` call hai: **bachchon ko measure kijiye, apna naap tay kijiye, unhe
+jagah dijiye**. Sab kuch jis niyam se banta hai wo ye hai ki har bachcha theek ek baar measure ho
+sakta hai — gehri nesting sasti isi se rehti hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+View system mein custom `ViewGroup` ka matlab tha ek subclass, `onMeasure`, `onLayout`, apne
+`LayoutParams` aur bahut savdhani. Yahan wo ek function hai.
+
+```kotlin title="Stack.kt" numbered
+@Composable
+fun VerticalStack(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Layout(modifier = modifier, content = content) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints) }
+
+        val width = placeables.maxOfOrNull { it.width } ?: 0
+        val height = placeables.sumOf { it.height }
+
+        layout(width, height) {
+            var y = 0
+            placeables.forEach { placeable ->
+                placeable.placeRelative(x = 0, y = y)
+                y += placeable.height
+            }
+        }
+    }
+}
+```
+
+Teen kadam, usi kram mein jismein wo hamesha aate hain: measure, apna naap batana, jagah dena.
+`place` ki jagah `placeRelative`, taki daayein-se-baayein likhi jane wali bhashaon mein layout theek
+se palat jaye.
+
+## Wo niyam jisse takrana hi hai
+
+<Quiz
+  question="Aap kisi bachche ko measure karte hain, dekhte hain ki wo aapki chahat se zyada chauda hai, aur kasi hui constraints ke saath dobara `measure` bulate hain. Wo phenk deta hai. Kyun?"
+  options={[
+    "Constraints `Constraints.fixed` se banani chahiye",
+    "Ek layout pass mein bachcha sirf ek baar measure ho sakta hai — nesting sasti isi ek-baar wale niyam se rehti hai",
+    "Dono measurements ke beech `layout()` bulana zaruri hai",
+  ]}
+  answer={1}
+  explanation="Compose ek hi pass mein kisi bachche ko do baar measure karne se mana karta hai, aur chupchap jane dene ke bajaye phenk deta hai. Yahi poori wajah hai ki Compose mein nesting par wo guna-bhaag wali keemat nahi padti jo view system mein ek ke andar ek LinearLayout weights par padti thi — N nodes ka ped hamesha N kadmon mein measure hota hai. Jab sach mein kisi bachche ki constraints tay karne se pehle uska naap chahiye, to bachaav ka darwaza intrinsics hain: measurable.minIntrinsicWidth(height) bina measure kiye ek alag sawal puchta hai. Wo ek aur sawal hai aur uski asli keemat hai, isliye jahan ho sake constraint pehle hi nikal lijiye."
+/>
+
+## Poori baatcheet constraints ki hai
+
+```kotlin title="Constraints.kt" numbered
+// Bachchon ko jitna chhota hona hai hone dijiye, par humse chauda nahi
+val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+
+// Kisi bachche ko theek yahi naap dijiye
+val exact = Constraints.fixed(width = 120, height = 48)
+
+// Height ki had hataiye, scroll hoti kisi cheez ke andar ke liye
+val unbounded = constraints.copy(maxHeight = Constraints.Infinity)
+```
+
+Parent dono dishaon ke liye kam se kam aur zyada se zyada neeche bhejta hai; bachcha unhin ke andar
+se ek naap batata hai. Is level ka lagbhag har bug yahi hai ki aapne apni constraints seedhe aage
+badha din, jabki matlab kam se kam wali had dheeli karne ka tha.
+
+## Poora layout banaye bina ek bachche ko hilana
+
+```kotlin title="ModifierLayout.kt" numbered
+fun Modifier.offsetFirstBaseline(to: Dp) = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val baseline = placeable[FirstBaseline]
+    val shift = to.roundToPx() - baseline
+
+    layout(placeable.width, placeable.height + shift) {
+        placeable.placeRelative(0, shift)
+    }
+}
+```
+
+`Modifier.layout` `Layout` ka ek-bachche wala roop hai. Jab doori dibbe ke kinare se nahi balki text
+ki baseline se napni ho, to sahi auzar yahi hai — aur ise kitna bhi padding nahi keh sakta.
+
+## Banana
+
+```kotlin title="Draw.kt" numbered
+Canvas(Modifier.size(120.dp)) {
+    drawCircle(
+        color = Color.Red,
+        radius = size.minDimension / 2f,
+        center = center,
+    )
+    drawArc(
+        color = Color.White,
+        startAngle = -90f,
+        sweepAngle = 360f * progress,
+        useCenter = false,
+        style = Stroke(width = 12f, cap = StrokeCap.Round),
+    )
+}
+```
+
+`DrawScope` ke andar aapko `size`, `center` aur banane ki poori shabdawali milti hai, pixels mein,
+aur koi `Paint` banane ki zarurat nahi — style aur rang parameters hain.
+
+| Kahan banana hai | Kya lein |
+| --- | --- |
+| Apne aap mein ek drawing | `Canvas` |
+| Kisi maujooda composable ke peeche | `Modifier.drawBehind` |
+| Peeche bhi, aage bhi | `Modifier.drawWithContent`, aur andar `drawContent()` |
+| Jab banane ki taiyari mehngi ho | `Modifier.drawWithCache` |
+
+<Detail summary="drawWithCache, aur draw mein Path banana dheema kyun hai">
+`Path` banana mehnga hai aur banakar draw karna sasta. `drawBehind` apna poora block har draw par
+chalata hai, to uske andar bana path animation ke har frame par dobara banta hai.
+
+```kotlin title="Cache.kt" numbered
+Modifier.drawWithCache {
+    val path = Path().apply {
+        moveTo(0f, size.height)
+        lineTo(size.width / 2f, 0f)
+        lineTo(size.width, size.height)
+        close()
+    }
+    onDrawBehind {
+        drawPath(path, color)          // har frame par sirf yahi chalta hai
+    }
+}
+```
+
+Bahar wala block tabhi dobara chalta hai jab naap ya pakdi hui koi state badle; `onDrawBehind` har
+frame par chalta hai. Ye wahi anushasan hai jo custom view mein `Paint` ko `onDraw` ke bajaye
+constructor mein banane ka tha.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Ek baar measure, ek baar jagah" meta="ek hi pass">
+    Constraints neeche jati hain, naap wapas aate hain, phir jagah milti hai. Kuch bhi suljhane ke
+    liye doosra pass hota hi nahi.
+  </TimelineItem>
+  <TimelineItem title="Jagah dena sasta hai" meta="measure karne se sasta">
+    Placement wale block mein kuch hilane se kuch dobara measure nahi hota, isiliye lambda wale
+    modifier mein offset animate karna itna sasta padta hai.
+  </TimelineItem>
+  <TimelineItem title="Intrinsics ek alag sawal hain" meta="aur ek extra keemat">
+    `minIntrinsicWidth` waghairah bachche se puchte hain ki wo kya chahega, use measure kiye bina.
+    Kaam ke hain, muft nahi.
+  </TimelineItem>
+  <TimelineItem title="`Canvas` draw wale modifier ke saath ek `Spacer` hai" meta="kuch khaas nahi">
+    Uske na bachche hain na apni koi measurement; wo apne modifier se mila naap leta hai aur banata
+    hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, aur pehli do phenk deti hain">
+**Kisi bachche ko do baar measure karna.** Pehle constraint nikaliye, ya intrinsics lijiye.
+
+**`layout()` bulana bhool jana.** Us lambda ko ek `MeasureResult` lautana hai, aur wo banane ka
+yahi iklauta tarika hai.
+
+**Apni constraints seedhe neeche bhej dena.** Virasat mein mili koi `minWidth` har bachche ko kam se
+kam utna chauda hone par majboor kar deti hai, jo shayad hi kabhi matlab hota hai.
+
+**`drawBehind` ke andar `Path` ya `Brush` banana.** Har frame par dobara banta hai. `drawWithCache`
+theek isi ke liye hai.
+</Pitfall>
+
+## Practice
+
+1. Upar wala `VerticalStack` likhiye, phir use aisa banaiye ki har bachcha aade mein beech mein aaye.
+2. Kisi bachche ko do baar measure karke dekhiye aur exception padhiye.
+3. Aisa layout banaiye jo bachchon ko ek gole par rakhe, `constraints.copy(minWidth = 0)` istemal
+   karke.
+4. `Modifier.offsetFirstBaseline` likhiye aur kisi title par uska result saade `padding` se milaiye.
+5. `Canvas` se progress ka chhalla banaiye, phir use kisi maujooda `Box` par `drawBehind` mein le
+   jaiye.
+6. `drawBehind` ke andar `Path` banaiye, use animate kijiye, phir `drawWithCache` par jaiye aur
+   frame ka samay milaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `Layout` | Bachchon ko measure kijiye, naap bataiye, jagah dijiye |
+| Ek baar measure | Har bachcha, har pass mein ek baar — nesting sasti isi niyam se hai |
+| `Constraints` | Dono dishaon ki kam se kam aur zyada se zyada had, neeche bheji hui |
+| `placeRelative` | Aisi placement jo daayein-se-baayein layouts mein palat jati hai |
+| Intrinsics | Bachche ka pasandida naap puchiye, bina use measure kiye |
+| `Modifier.layout` | `Layout` ka ek-bachche wala roop |
+| `Canvas` | `DrawScope` mein apne aap mein ek drawing |
+| `drawBehind` / `drawWithContent` | Kisi maujooda composable ke ird-gird banana |
+| `drawWithCache` | Taiyari ek baar, banana har frame |
+
+<Interview title="Wo sawal jo mamuli jankari lagta hai aur hai architecture ka">
+"Compose ke layout mein bachcha sirf ek baar measure kyun ho sakta hai?"
+
+Kyunki isse ek hi measurement pass ki guarantee milti hai, to N nodes ka ped chahe kitna bhi gehra
+ho, N measurements mein niptata hai — ek ke andar ek weight wale `LinearLayout` jaisa phailav yahan
+ho hi nahi sakta. Jo agla sawal pehle hi sambhal lena chahiye wo bachaav ka darwaza hai: intrinsics
+se parent bina measure kiye puch sakta hai ki bachcha kya chahega, ek extra sawal ki keemat par —
+isiliye wo roz ka auzar nahi, apwad hain.
+</Interview>
