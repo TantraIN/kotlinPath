@@ -1,0 +1,171 @@
+---
+title: Lint, Detekt and ktlint in the build
+description: A rule that only prints a warning is a rule nobody follows. The value of static analysis is not the rules — it is that the build fails, and that new code is held to a standard the old code is not.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Three tools, three jobs: **ktlint** formats, **Detekt** finds Kotlin smells, **Lint** finds Android
+mistakes. What makes any of them work is the same thing — running in CI and failing the build, because
+a warning in a log is a warning that ships.
+</KeyIdea>
+
+## Who does what
+
+| Tool | Catches | Example |
+| --- | --- | --- |
+| ktlint | Formatting | Import order, indentation, trailing commas |
+| Detekt | Kotlin code smells | Long methods, complex conditions, `!!`, unused code |
+| Lint | Android correctness | Missing permission, wrong API level, leaked `Context` |
+
+Lint is the one that finds real bugs, because it knows Android: it will tell you that you called an
+API above `minSdk`, that a `Handler` in an inner class leaks, that a manifest permission is missing for
+a call you made, or that a string is missing a translation. The other two are about consistency and
+complexity, which matter for different reasons.
+
+## Making it matter
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    lint {
+        warningsAsErrors = true
+        abortOnError = true
+        disable += setOf("GradleDependency")       // deliberate, with a reason
+        baseline = file("lint-baseline.xml")
+    }
+}
+
+detekt {
+    config.setFrom("$rootDir/config/detekt.yml")
+    baseline = file("detekt-baseline.xml")
+    buildUponDefaultConfig = true
+}
+```
+
+`warningsAsErrors` is the line that changes behaviour. Before it, a warning is a line in a log nobody
+reads; after it, the build fails and the code does not merge. Every argument about which rules to
+enable is secondary to that.
+
+`disable` is fine when it is a decision. What is not fine is a suppression added because a rule was
+inconvenient, with no comment saying why — those accumulate until the config no longer describes
+anything.
+
+<Quiz
+  question="A team enables Detekt on a large existing codebase and gets 4,000 violations. What is the right move?"
+  options={[
+    "Fix them all before merging anything else, so the codebase is consistent",
+    "Generate a baseline that records the existing 4,000 as accepted, so only new code is held to the rules — then reduce the baseline over time rather than blocking all work on a cleanup",
+    "Enable only the rules that currently produce zero violations"
+  ]}
+  answer={1}
+  explanation="Fixing four thousand violations before any feature work is a proposal no team accepts, so what actually happens is that the tool gets removed and nothing improves. A baseline records the current violations as known and exempt, so the build passes today and fails the moment new code adds a violation — which is the outcome that matters, because the code being written now is the code that will be maintained longest. The third option sounds pragmatic and quietly guarantees the opposite: enabling only the rules already satisfied means the rules that would have caught something are exactly the ones left off. The discipline a baseline needs is that it only ever shrinks — regenerate it when you fix things, never to absorb a new violation, or it becomes a permanent record of everything the team decided to stop caring about."
+/>
+
+## Suppressing honestly
+
+```kotlin title="Suppress.kt" numbered
+// with a reason, scoped as narrowly as possible
+@Suppress("TooGenericExceptionCaught")   // the SDK throws raw Exception here
+try { sdk.connect() } catch (e: Exception) { report(e) }
+
+// Android Lint, in the same shape
+@SuppressLint("MissingPermission")       // checked by the caller, see PermissionGate
+fun lastLocation(): Location? = client.lastLocation
+```
+
+Scope every suppression to the smallest thing that needs it — a statement, not a file — and say why.
+A file-level `@Suppress` outlives the reason for it, and nobody who reads it later can tell whether it
+is still needed.
+
+## In CI
+
+```yaml title=".github/workflows/check.yml" numbered
+- run: ./gradlew ktlintCheck detekt lintDebug testDebugUnitTest
+```
+
+Order matters a little: formatting first, because it is fastest and fails most obviously, then the
+slower checks. A pre-commit hook running ktlint is worth adding too — not as the enforcement, which
+belongs in CI where it cannot be skipped, but so nobody gets a CI failure for an import order.
+
+<Detail summary="Writing a Lint rule for your own conventions">
+The rules worth the most are usually project-specific, because they encode a decision your team keeps
+having to re-explain in review:
+
+```kotlin title="Detekt rule" numbered
+class NoHardcodedUiText(config: Config) : Rule(config) {
+    override val issue = Issue(
+        "NoHardcodedUiText", Severity.Defect,
+        "UI text must come from a string resource, so it can be translated.",
+        Debt.FIVE_MINS,
+    )
+
+    override fun visitStringTemplateExpression(expression: KtStringTemplateExpression) {
+        if (expression.isInComposable() && expression.text.length > 3) {
+            report(CodeSmell(issue, Entity.from(expression), issue.description))
+        }
+    }
+}
+```
+
+That is the pattern: take a rule that currently lives in a reviewer's head, and move it into the
+build. The benefit is not only consistency — it is that reviews stop spending attention on things a
+machine can check, and start spending it on whether the code is right.
+
+Android Lint supports custom checks the same way, with the advantage that they can inspect resources
+and the manifest as well as code. Both are more work than a config change and worth it for the two or
+three conventions your team actually argues about.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first makes the rest pointless">
+**Warnings that do not fail the build.** A warning in a log is a warning that ships.
+
+**Blocking on a full cleanup.** Four thousand violations is how a tool gets removed instead of adopted.
+
+**A baseline that grows.** It should only ever shrink; a growing one records what you stopped caring
+about.
+
+**File-level suppressions with no reason.** They outlive the reason and nobody can tell.
+
+**Enabling only the rules that already pass.** The useful rules are exactly the ones left off.
+</Pitfall>
+
+## Practice
+
+1. Turn on `warningsAsErrors` and count how long the build stays broken.
+2. Generate a Detekt baseline, then fix ten violations and regenerate it smaller.
+3. Find a `@Suppress` in your codebase with no comment and work out whether it is still needed.
+4. Run `lintDebug` and read every Android-specific warning; note which are real bugs.
+5. Write one custom rule for a convention your team has explained in review more than twice.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| ktlint | Formatting |
+| Detekt | Kotlin smells and complexity |
+| Lint | Android correctness — the one that finds real bugs |
+| `warningsAsErrors` | The line that changes behaviour |
+| Baseline | Accept the past, hold new code to the rules |
+| Baseline discipline | It only ever shrinks |
+| Suppressions | Narrow, and with a reason |
+| CI | Where enforcement belongs; hooks are convenience |
+| Custom rules | Move a reviewer's rule into the build |
+| The point | Reviews spend attention on whether the code is right |
+
+<Interview title="A question about adopting a tool without it being removed">
+"How would you introduce static analysis to a large existing codebase?"
+
+With a baseline, on day one. Turning Detekt or Lint on a mature codebase produces thousands of
+violations, and proposing to fix them all before any feature work is how the tool gets removed
+instead of adopted. A baseline records what exists as known and exempt, so the build passes today and
+fails the moment new code adds a violation — and the code being written now is the code that will be
+maintained longest.
+
+The two things I would insist on are that violations fail the build rather than log a warning, since a
+warning nobody is blocked by is a warning that ships, and that the baseline only ever shrinks —
+regenerated when things are fixed, never to absorb something new. What I would avoid is the tempting
+middle path of enabling only the rules that currently pass, because that leaves off exactly the rules
+that would have caught something.
+</Interview>

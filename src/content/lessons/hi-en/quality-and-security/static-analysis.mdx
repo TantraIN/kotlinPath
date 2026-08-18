@@ -1,0 +1,176 @@
+---
+title: Build mein Lint, Detekt aur ktlint
+description: Jo niyam sirf chetavani chhapta hai use koi nahi manta. Sthir padtal ki keemat niyamon mein nahi hai — keemat ismein hai ki build nakaam hota hai, aur naya code us maanak par rakha jata hai jis par purana nahi hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Teen auzar, teen kaam: **ktlint** sajata hai, **Detekt** Kotlin ki badbu dhoondhta hai, **Lint** Android
+ki galtiyan. Inmein se kisi ko chalane wali cheez ek hi hai — CI mein chalna aur build nakaam karna,
+kyunki log mein padi chetavani wo chetavani hai jo bhej di jati hai.
+</KeyIdea>
+
+## Kaun kya karta hai
+
+| Auzar | Kya pakadta hai | Udaharan |
+| --- | --- | --- |
+| ktlint | Sajawat | Imports ka order, hashiya, aakhri comma |
+| Detekt | Kotlin ki badbu | Lambe methods, uljhi sharten, `!!`, bina istemal ka code |
+| Lint | Android ka sahi hona | Gayab permission, galat API level, leak hota `Context` |
+
+Lint wahi hai jo asli bugs dhoondhta hai, kyunki wo Android janta hai: wo bataega ki aapne `minSdk` se
+upar ki koi API bulai, ki andaruni class wala koi `Handler` leak karta hai, ki aapki ki gayi kisi call ke
+liye manifest mein permission nahi hai, ya ki kisi string ka anuvad gayab hai. Baaki do ekroopta aur
+uljhan ke baare mein hain, jo alag wajahon se maayne rakhte hain.
+
+## Ise maayne rakhne layak banana
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    lint {
+        warningsAsErrors = true
+        abortOnError = true
+        disable += setOf("GradleDependency")       // soch-samajhkar, wajah ke saath
+        baseline = file("lint-baseline.xml")
+    }
+}
+
+detekt {
+    config.setFrom("$rootDir/config/detekt.yml")
+    baseline = file("detekt-baseline.xml")
+    buildUponDefaultConfig = true
+}
+```
+
+`warningsAsErrors` wo line hai jo behaviour badalti hai. Usse pehle chetavani log mein padi wo line hai
+jise koi nahi padhta; uske baad build nakaam hota hai aur wo code merge nahi hota. Kaun se niyam chalu
+karein, is par har behas uske baad ki baat hai.
+
+`disable` tab theek hai jab wo ek faisla ho. Jo theek nahi wo hai aisi chhoot jo kisi niyam ke asahaj
+lagne par jod di gayi, bina ye likhe ki kyun — wo jama hoti jati hain aur aakhir mein wo config kisi
+cheez ka byora reh hi nahi jati.
+
+<Quiz
+  question="Koi team bade maujooda codebase par Detekt chalu karti hai aur 4,000 ullanghan milte hain. Sahi chaal kya hai?"
+  options={[
+    "Kuch aur merge karne se pehle sab theek kijiye, taki codebase ekroop ho",
+    "Ek baseline banaiye jo maujooda 4,000 ko manzoor maan le, taki sirf naya code un niyamon par rakha jaye — phir saara kaam safai par rokne ke bajaye us baseline ko samay ke saath ghataiye",
+    "Sirf wo niyam chalu kijiye jin par abhi shoonya ullanghan hain"
+  ]}
+  answer={1}
+  explanation="Kisi bhi suvidha wale kaam se pehle chaar hazar ullanghan theek karna aisa prastav hai jise koi team manti nahi, to asal mein hota ye hai ki wo auzar hata diya jata hai aur kuch behtar nahi hota. Baseline maujooda ullanghanon ko jana-mana aur chhoot wala darj kar leti hai, to build aaj pass hota hai aur us pal nakaam hota hai jab naya code koi ullanghan jode — aur yahi maayne rakhta hai, kyunki jo code abhi likha ja raha hai wahi sabse lambe samay tak sambhala jayega. Teesra vikalp vyavharik lagta hai aur chupchap ulta pakka karta hai: sirf wo niyam chalu karna jo pehle se poore ho rahe hain yani theek wo niyam chhod dena jo kuch pakadte. Baseline ko jo anushasan chahiye wo ye hai ki wo sirf ghate — cheezein theek karne par use dobara banaiye, kisi naye ullanghan ko sokhne ke liye kabhi nahi, warna wo us har cheez ka sthayi dastavez ban jati hai jiski parwah team ne karna chhod diya."
+/>
+
+## Imandari se chhoot dena
+
+```kotlin title="Suppress.kt" numbered
+// wajah ke saath, jitna sankra ho sake utna
+@Suppress("TooGenericExceptionCaught")   // yahan SDK saada Exception phenkta hai
+try { sdk.connect() } catch (e: Exception) { report(e) }
+
+// Android Lint, usi shakal mein
+@SuppressLint("MissingPermission")       // bulane wala dekh chuka hai, PermissionGate dekhiye
+fun lastLocation(): Location? = client.lastLocation
+```
+
+Har chhoot ko utni chhoti cheez tak seemit kijiye jitni ko uski zarurat hai — kisi ek statement tak,
+poori file tak nahi — aur wajah likhiye. File ke level wali `@Suppress` apni wajah se zyada jeeti hai,
+aur baad mein padhne wala koi nahi bata sakta ki wo ab bhi chahiye ya nahi.
+
+## CI mein
+
+```yaml title=".github/workflows/check.yml" numbered
+- run: ./gradlew ktlintCheck detekt lintDebug testDebugUnitTest
+```
+
+Order thoda maayne rakhta hai: pehle sajawat, kyunki wo sabse tez hai aur sabse saaf nakaam hoti hai,
+phir dheemi jaanchein. ktlint chalata koi pre-commit hook bhi jodne layak hai — manwane ke liye nahi, wo
+CI ki jagah hai jahan use chhoda nahi ja sakta, balki isliye ki imports ke order par kisi ko CI ki nakami
+na mile.
+
+<Detail summary="Apni paramparaon ke liye Lint ka niyam likhna">
+Sabse keemti niyam aam taur par project ke apne hote hain, kyunki wo us faisle ko likh dete hain jise
+aapki team ko review mein baar-baar dohrana padta hai:
+
+```kotlin title="Detekt rule" numbered
+class NoHardcodedUiText(config: Config) : Rule(config) {
+    override val issue = Issue(
+        "NoHardcodedUiText", Severity.Defect,
+        "UI text must come from a string resource, so it can be translated.",
+        Debt.FIVE_MINS,
+    )
+
+    override fun visitStringTemplateExpression(expression: KtStringTemplateExpression) {
+        if (expression.isInComposable() && expression.text.length > 3) {
+            report(CodeSmell(issue, Entity.from(expression), issue.description))
+        }
+    }
+}
+```
+
+Tarika yahi hai: wo niyam lijiye jo abhi kisi sameekshak ke sir mein rehta hai, aur use build mein le
+jaiye. Faayda sirf ekroopta nahi hai — faayda ye hai ki reviews un cheezon par dhyan kharch karna band
+kar dete hain jinhe koi machine dekh sakti hai, aur us par kharch karne lagte hain ki code sahi hai ya
+nahi.
+
+Android Lint bhi isi tarah apne checks lene deta hai, aur uska faayda ye hai ki wo code ke saath-saath
+resources aur manifest bhi dekh sakte hain. Dono kisi config badalne se zyada kaam hain aur un do-teen
+paramparaon ke liye iske layak hain jin par aapki team sach mein behas karti hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli baaki sabko bematlab kar deti hai">
+**Aisi chetavaniyan jo build nakaam nahi kartin.** Log mein padi chetavani bhej di jati hai.
+
+**Poori safai par kaam rok dena.** Chaar hazar ullanghan wo tarika hai jisse auzar apnaya nahi, hataya
+jata hai.
+
+**Badhti hui baseline.** Use sirf ghatna chahiye; badhti hui wo darj karti hai jiski aapne parwah karna
+chhod diya.
+
+**Bina wajah wali, poori file ki chhootein.** Wo apni wajah se zyada jeeti hain aur koi bata nahi sakta.
+
+**Sirf wo niyam chalu karna jo pehle se pass hain.** Kaam ke niyam theek wahi hain jo chhoot jate hain.
+</Pitfall>
+
+## Abhyaas
+
+1. `warningsAsErrors` chalu kijiye aur giniye ki build kitni der toota rehta hai.
+2. Detekt ki baseline banaiye, phir das ullanghan theek karke use chhota dobara banaiye.
+3. Apne codebase mein bina comment wali koi `@Suppress` dhoondhiye aur tay kijiye ki wo ab bhi chahiye ya
+   nahi.
+4. `lintDebug` chalaiye aur Android wali har chetavani padhiye; likhiye ki kaun si asli bugs hain.
+5. Aisi ek parampara ke liye apna niyam likhiye jise aapki team review mein do baar se zyada samjha chuki
+   hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| ktlint | Sajawat |
+| Detekt | Kotlin ki badbu aur uljhan |
+| Lint | Android ka sahi hona — jo asli bugs dhoondhta hai |
+| `warningsAsErrors` | Wo line jo behaviour badalti hai |
+| Baseline | Beete ko manzoor kijiye, naye code ko niyamon par rakhiye |
+| Baseline ka anushasan | Wo sirf ghatti hai |
+| Chhootein | Sankri, aur wajah ke saath |
+| CI | Manwane ki jagah; hooks sirf suvidha hain |
+| Apne niyam | Sameekshak ke sir wale niyam ko build mein le jaiye |
+| Asli baat | Reviews is par dhyan kharch karein ki code sahi hai ya nahi |
+
+<Interview title="Ek sawal, kisi auzar ko bina hatwaye apnane ka">
+"Bade maujooda codebase mein sthir padtal aap kaise laoge?"
+
+Baseline ke saath, pehle hi din. Kisi pake hue codebase par Detekt ya Lint chalu karne se hazaron
+ullanghan nikalte hain, aur kisi bhi suvidha wale kaam se pehle un sabko theek karne ka prastav wo tarika
+hai jisse auzar apnaya nahi, hataya jata hai. Baseline jo maujood hai use jana-mana aur chhoot wala darj
+kar leti hai, to build aaj pass hota hai aur us pal nakaam hota hai jab naya code koi ullanghan jode —
+aur jo code abhi likha ja raha hai wahi sabse lambe samay tak sambhala jayega.
+
+Jin do cheezon par main adunga wo hain ki ullanghan chetavani chhapne ke bajaye build nakaam karein,
+kyunki jis chetavani se koi rukta nahi wo bhej di jati hai, aur ye ki baseline sirf ghate — cheezein
+theek hone par dobara bani, kisi nai cheez ko sokhne ke liye kabhi nahi. Jisse main bachunga wo hai wo
+lubhavna beech ka raasta ki sirf wo niyam chalu karein jo abhi pass ho rahe hain, kyunki usse theek wo
+niyam chhoot jate hain jo kuch pakadte.
+</Interview>
