@@ -1,0 +1,224 @@
+---
+title: Relations, type converters और migrations
+description: Schema बदलना वह इकलौता काम है जो ऐसा data मिटा सकता है जो user को दोबारा नहीं मिलेगा। Room इसे सुरक्षित करने में मदद करता है, और साथ में एक ऐसी लाइन भी देता है जो सब कुछ मिटा देती है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+तीन चीजें खिलौना database और उस database में फर्क करती हैं जिस पर आप update भेज सकें: ऐसी
+**relations** जो एक screen को सौ queries में न बदल दें, ऐसे **converters** जो वे types रखें जिनका
+नाम SQLite ने कभी सुना नहीं, और **migrations** — आपके ऐप का इकलौता code जहाँ गलती ऐसा data मिटा देती
+है जो user को वापस नहीं मिलेगा।
+</KeyIdea>
+
+## Relations, बिना सौ queries के
+
+एक order की कई lines होती हैं। सीधा तरीका order माँगता है, फिर loop करता है:
+
+```kotlin title="NPlusOne.kt" numbered
+val orders = dao.allOrders()                       // 1 query
+orders.map { order ->
+    order to dao.linesFor(order.id)                // + हर order पर 1 query
+}
+```
+
+पचास orders यानी इक्यावन queries। Room पूरी चीज को एक ही शक्ल में कह सकता है:
+
+```kotlin title="OrderWithLines.kt" numbered
+data class OrderWithLines(
+    @Embedded val order: OrderEntity,
+    @Relation(parentColumn = "id", entityColumn = "order_id")
+    val lines: List<LineEntity>,
+)
+
+@Dao
+interface OrderDao {
+    @Transaction                                    // वैकल्पिक नहीं — नीचे देखिए
+    @Query("SELECT * FROM orders")
+    fun observeWithLines(): Flow<List<OrderWithLines>>
+}
+```
+
+Room **दो** queries चलाता है — सारे orders, फिर वे सारी lines जिनका `order_id` उस समूह में है — और
+objects को memory में जोड़ देता है। N+1 का इलाज यही है, और यह बड़े पैमाने पर भी चलता है।
+
+<Note>
+`@Relation` वाली query पर लगा `@Transaction` एक खास काम कर रहा है। Room दो queries चलाता है; बिना
+transaction के कोई दूसरा thread उनके बीच में कुछ डाल सकता है, और आपको एक पल की order वाली list तथा
+दूसरे पल की line वाली list मिलती है। नतीजा ऐसा order है जिसकी lines किसी ऐसी हालत की हैं जो कभी थी
+ही नहीं। Room इसकी चेतावनी देता है, और वह चेतावनी मानने लायक है।
+</Note>
+
+`@Embedded` दूसरा आधा हिस्सा है: वह किसी अंदरूनी class को उसी table में चपटा कर देता है, तो चार
+fields वाला कोई `Address` join के बजाय `users` पर चार columns बन जाता है। उसे उस value के लिए लीजिए
+जिसकी अपनी कोई पहचान नहीं — कोई पता ठीक एक ही user का होता है और अकेले उसकी query कभी नहीं होती।
+
+## Type converters, और उनकी चुपचाप लगने वाली कीमत
+
+SQLite पाँच चीजें रखता है: `NULL`, `INTEGER`, `REAL`, `TEXT`, `BLOB`। बाकी हर चीज को अनुवाद चाहिए:
+
+```kotlin title="Converters.kt" numbered
+class Converters {
+    @TypeConverter fun instantToLong(value: Instant?): Long? = value?.toEpochMilli()
+    @TypeConverter fun longToInstant(value: Long?): Instant? = value?.let(Instant::ofEpochMilli)
+
+    @TypeConverter fun statusToString(value: OrderStatus): String = value.name
+    @TypeConverter fun stringToStatus(value: String): OrderStatus = OrderStatus.valueOf(value)
+}
+
+@Database(entities = [OrderEntity::class], version = 2)
+@TypeConverters(Converters::class)
+abstract class AppDatabase : RoomDatabase()
+```
+
+ये दोनों अच्छे converters हैं: एक value अंदर, एक column बाहर, और दोनों पर query अब भी हो सकती है —
+आप `WHERE status = 'OPEN'` और `ORDER BY created_at` लिख सकते हैं।
+
+लुभावना बुरा वाला कोई list है:
+
+```kotlin title="Smell.kt" numbered
+@TypeConverter fun tagsToJson(tags: List<String>): String = Json.encodeToString(tags)
+```
+
+यह compile होता है और चलता भी है, और इसने चुपचाप उन tags को database की नजर से गायब कर दिया है। न
+आप उन पर index बना सकते हैं, न किसी एक पर `WHERE` लगा सकते हैं, और `urgent` लगे हर order को ढूँढ़ने
+का मतलब है हर row पढ़ना और हर string parse करना। चीजों की list एक table है — relational model इसी
+के लिए है। JSON की तरह तभी रखिए जब वह सच में आपकी queries के लिए बेमतलब हो।
+
+<Quiz
+  question="कोई ऐप `fallbackToDestructiveMigration()` के साथ भेजा गया क्योंकि migrations झंझट लग रहे थे। Update वाले दिन users के साथ सच में क्या होता है?"
+  options={[
+    "Room अपने आप migrate कर देता है और वह flag सिर्फ एक जाल है",
+    "जिस user की local version अलग है उसका database गिराकर खाली दोबारा बना दिया जाता है — हर बिना sync हुआ note, draft या setting बिना किसी error के चली जाती है",
+    "Update के बाद पहली बार खोलने पर ऐप crash करता है",
+  ]}
+  answer={1}
+  explanation="नाम ईमानदार है और फिर भी लोग इसे मिटाने के बजाय बचाव समझ लेते हैं। जब Room ऐसा database खोलता है जिसकी version मेल नहीं खाती और कोई migration का रास्ता नहीं है, तो यह flag हर table गिराकर schema दोबारा बना देता है — चुपचाप, बिना किसी exception के, और logs में ऐसा कुछ नहीं जो इसे नए install से अलग बता सके। अगर वह database server के data का cache भर था, तो अगली sync उसे भर देती है और लगभग किसी को पता नहीं चलता। पर अगर उसमें user का बनाया कुछ था जो sync नहीं हुआ था, तो वह data वापस नहीं आता, और support तक यह इस तरह पहुँचता है कि 'update ने मेरे notes मिटा दिए'। बनाते वक्त, जब तक असली users नहीं हैं, यह जायज औजार है, और उसे वहीं रखने का तरीका है fallbackToDestructiveMigrationOnDowngrade, या पहली release से पहले उस लाइन को हटा देना।"
+/>
+
+## Migrations
+
+हर schema बदलाव `version` बढ़ाता है और उसे पुरानी से एक रास्ता चाहिए:
+
+```kotlin title="Migrations.kt" numbered
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE orders ADD COLUMN note TEXT")           // nullable: default की जरूरत नहीं
+        db.execSQL("ALTER TABLE orders ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE INDEX index_orders_status ON orders(status)")
+    }
+}
+
+Room.databaseBuilder(context, AppDatabase::class.java, "app.db")
+    .addMigrations(MIGRATION_1_2)
+    .build()
+```
+
+जिस table में पहले से rows हैं उसमें जोड़े गए `NOT NULL` column को default **चाहिए ही** — वरना उन
+पुरानी rows के लिए कोई value ही नहीं है, और SQLite मना कर देता है। Migration की सबसे आम नाकामी यही
+है।
+
+जिन बदलावों को Room खुद निकाल सकता है, उनके लिए SQL लिखने के बजाय उन्हें घोषित कीजिए:
+
+```kotlin title="AutoMigration.kt" numbered
+@Database(
+    entities = [OrderEntity::class],
+    version = 3,
+    autoMigrations = [AutoMigration(from = 2, to = 3)],
+    exportSchema = true,
+)
+abstract class AppDatabase : RoomDatabase()
+```
+
+Auto migrations दोनों versions की exported schema JSON मिलाकर जोड़े और हटाए गए columns तथा tables
+सँभाल लेती हैं। **नाम बदलना** दुविधा है — `title` हटाकर `name` जोड़ना ठीक नाम बदलने जैसा दिखता है —
+तो उनके लिए `@RenameColumn` चाहिए, और जिसमें सच में कोई तर्क है उसे अब भी हाथ से लिखा `Migration`
+चाहिए।
+
+<Detail summary="`app/schemas/` को version control में क्यों होना चाहिए">
+`exportSchema = true` हर version का पूरा schema JSON बनाकर लिखता है। वह directory build का बचा-खुचा
+नहीं है; वह इस बात का record है कि भेजा क्या गया था।
+
+Room उसे दो तरह से लेता है। Auto migrations दो versions का फर्क निकालकर SQL बनाती हैं, तो version 3
+लिखते वक्त version 2 की JSON मौजूद होनी चाहिए। और `MigrationTestHelper` उसी JSON से पुरानी version
+वाला database बनाता है, आपका migration चलाता है, और जाँचता है कि नतीजा नई से मेल खाता है — यानी असली
+migration का असली test, बिना किसी पुराने build के।
+
+```kotlin title="MigrationTest.kt" numbered
+@Test fun migrate1To2() {
+    helper.createDatabase(TEST_DB, 1).apply {
+        execSQL("INSERT INTO orders (id, total, status) VALUES ('o1', 499, 'OPEN')")
+        close()
+    }
+    val db = helper.runMigrationsAndValidate(TEST_DB, 2, true, MIGRATION_1_2)
+    db.query("SELECT note, synced FROM orders WHERE id = 'o1'").use {
+        assertTrue(it.moveToFirst())
+        assertEquals(0, it.getInt(1))          // पुरानी row पर DEFAULT लगा
+    }
+}
+```
+
+Schemas वाली directory मिटाइए, या उसे Git से बाहर रखिए, और दोनों चले जाते हैं — auto migration चलना
+बंद हो जाती है और migrations का test हो ही नहीं सकता। यह नाकामी महीनों बाद, किसी और की machine पर
+दिखती है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली वाली से वापसी नहीं है">
+**`fallbackToDestructiveMigration()` भेज देना।** Update पर user का data मिट जाता है, चुपचाप। ऊपर
+वाला quiz देखिए।
+
+**बिना default वाला `NOT NULL` column।** जिस भी device पर rows थीं वहाँ migration नाकाम होता है,
+यानी हर असली user पर और आपके किसी test device पर नहीं।
+
+**बिना `@Transaction` के `@Relation`।** दो पलों की दो queries, जोड़कर ऐसी हालत बना दी गई जो कभी थी
+ही नहीं।
+
+**JSON type converter के पीछे कोई list।** न index बन सकता है न query — `String` के भेस में एक table।
+
+**`app/schemas/` commit न करना।** Auto migrations टूट जाती हैं और `MigrationTestHelper` के पास पुराना
+database बनाने को कुछ नहीं बचता।
+</Pitfall>
+
+## अभ्यास
+
+1. `@Relation` से एक-से-कई वाला रिश्ता लिखिए, फिर SQL log कीजिए और पक्का कीजिए कि वे दो queries हैं,
+   N+1 नहीं।
+2. बिना default वाला `NOT NULL` column जोड़िए, उसे rows वाले database पर चलाइए, और नाकामी पढ़िए।
+3. ऐसा `MigrationTestHelper` वाला test लिखिए जो version 1 पर एक row डालता है और उसके बचे रहने की
+   पुष्टि करता है।
+4. किसी list को JSON converter से रखिए, फिर ऐसी query लिखने की कोशिश कीजिए जो उसके एक हिस्से पर
+   छाने।
+5. Version बढ़ाइए, न migration दीजिए न destructive fallback, और exception पढ़िए — वही संदेश आपके
+   users को बचाता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `@Relation` | एक-से-कई, N+1 के बजाय दो queries में |
+| `@Embedded` | अंदरूनी class को उसी table में चपटा कर देता है |
+| `@Transaction` | Relation वाली queries पर जरूरी, ताकि दोनों आधे एक ही पल के हों |
+| `@TypeConverter` | एक value अंदर, एक column बाहर |
+| JSON में list | न index, न query — आमतौर पर वहाँ table चाहिए |
+| `version` | हर schema बदलाव पर बढ़ती है |
+| `Migration` | एक version से अगली तक का रास्ता |
+| `NOT NULL` | जब पहले से rows हों तो `DEFAULT` चाहिए |
+| `autoMigrations` | जोड़े और हटाए columns; नाम बदलने को `@RenameColumn` |
+| `fallbackToDestructiveMigration` | सब कुछ मिटा देता है। इसे कभी मत भेजिए |
+
+<Interview title="एक सवाल, जो असल में user के data की इज्जत का है">
+"जो ऐप release हो चुका है उसमें database का schema बदलना आप कैसे सँभालेंगे?"
+
+Version बढ़ाकर और उस रास्ते के लिए एक `Migration` लिखकर, फिर उसे `MigrationTestHelper` से जाँचकर —
+जो exported schema JSON से पुरानी version वाला database बनाता है, migration चलाता है और नतीजा
+परखता है, तो किसी के update करने से पहले ही मुझे पता होता है कि वह चलता है। इसका मतलब है कि
+`app/schemas/` version control में है, सिर्फ build वाली directory में नहीं।
+
+जो चीज मैं कभी नहीं करूँगा वह है `fallbackToDestructiveMigration()` भेजना। वह बचाव जैसा पढ़ा जाता है
+और हर table गिरा देता है — चुपचाप, तो जिस user का data sync नहीं हुआ था वह बस चला जाता है और logs
+में कुछ नहीं होता। बनाते वक्त वह ठीक है और पहली release से पहले हट जाना चाहिए। सिर्फ जोड़ने वाले
+बदलावों के लिए मैं `autoMigrations` लूँगा, जो दोनों schema JSON का फर्क निकालती हैं, पर नाम बदलना
+किसी फर्क के लिए दुविधा है और उसे अब भी `@RenameColumn` चाहिए।
+</Interview>
