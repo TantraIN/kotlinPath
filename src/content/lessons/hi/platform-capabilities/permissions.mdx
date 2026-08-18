@@ -66,7 +66,7 @@ fun state(permission: String, activity: Activity): PermissionState = when {
 कर सकता।
 
 <Quiz
-  question="कोई ऐप camera की permission माँगता है। Callback मना बताता है, तो ऐप अपना dialog दिखाता है: \"कृपया camera की इजाजत दीजिए\", साथ में Retry का button। कुछ devices पर Retry से कुछ होता ही नहीं। क्यों?"
+  question="कोई ऐप camera की permission माँगता है। Callback मना बताता है, तो ऐप अपना dialog दिखाता है: “कृपया camera की इजाजत दीजिए”, साथ में Retry का button। कुछ devices पर Retry से कुछ होता ही नहीं। क्यों?"
   options={[
     "Permission की माँग Fragment नहीं, किसी Activity से होनी चाहिए",
     "User पहले ही दो बार मना कर चुका था, तो system का dialog अब आता ही नहीं — `launch()` तुरंत मना लौटाता है, और बचा हुआ इकलौता रास्ता ऐप का Settings वाला पन्ना है",
