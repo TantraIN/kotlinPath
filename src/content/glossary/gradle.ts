@@ -23,36 +23,14 @@ export const GRADLE_GLOSSARY: Glossary = {
       "hi-en": "Is module mein ek library jodta hai, aur use sirf isi module tak seemit rakhta hai.",
     },
     affects: {
-      en: "Modules that depend on yours cannot see it. Changing that library therefore recompiles only this module — the single biggest lever on build times in a multi-module project.",
-      hi: "आप पर निर्भर modules उसे नहीं देख पाते। इसलिए उस library को बदलने पर सिर्फ यही module दोबारा compile होता है — multi-module project में build time घटाने का सबसे बड़ा तरीका यही है।",
-      "hi-en": "Aap par nirbhar modules use nahi dekh pate. Isliye us library ko badalne par sirf yahi module dobara compile hota hai — multi-module project mein build time ghatane ka sabse bada tarika yahi hai.",
+      en: "Modules that depend on yours cannot see it. Changing that library therefore recompiles only this module — the single biggest lever on build times in a multi-module project. Its counterpart is `api(...)`, which does expose the library to every dependent module and so widens the recompile; reach for it only when your module's public API genuinely returns that library's types.",
+      hi: "आप पर निर्भर modules उसे नहीं देख पाते। इसलिए उस library को बदलने पर सिर्फ यही module दोबारा compile होता है — multi-module project में build time घटाने का सबसे बड़ा तरीका यही है। इसका जोड़ीदार `api(...)` है, जो उस library को हर निर्भर module को दिखा देता है और इसलिए दोबारा compile होने का दायरा चौड़ा कर देता है; उसे तभी उठाइए जब आपके module का public API सच में उसी library के types लौटाता हो।",
+      "hi-en": "Aap par nirbhar modules use nahi dekh pate. Isliye us library ko badalne par sirf yahi module dobara compile hota hai — multi-module project mein build time ghatane ka sabse bada tarika yahi hai. Iska jodidar `api(...)` hai, jo us library ko har nirbhar module ko dikha deta hai aur isliye dobara compile hone ka daayra chauda kar deta hai; use tabhi uthaiye jab aapke module ka public API sach mein usi library ke types lautata ho.",
     },
     docs: "https://docs.gradle.org/current/userguide/java_library_plugin.html",
-    related: ["api", "dependencies"],
+    related: ["dependencies"],
   },
 
-  api: {
-    term: "api",
-    kind: {
-      en: "Gradle dependency configuration",
-      hi: "Gradle dependency configuration",
-      "hi-en": "Gradle dependency configuration",
-    },
-    source: "library",
-    importLine: null,
-    does: {
-      en: "Adds a library and exposes it to every module that depends on this one.",
-      hi: "एक library जोड़ता है और उसे हर उस module को दिखा देता है जो इस पर निर्भर है।",
-      "hi-en": "Ek library jodta hai aur use har us module ko dikha deta hai jo is par nirbhar hai.",
-    },
-    affects: {
-      en: "It puts the library on the compile classpath of every dependent module, so changing its version triggers a far wider recompile. Use it only when your module's public API genuinely returns that library's types.",
-      hi: "यह library को हर निर्भर module के compile classpath पर डाल देता है, इसलिए उसका version बदलने पर कहीं ज्यादा दोबारा compile होता है। इसे तभी इस्तेमाल कीजिए जब आपके module का public API सच में उसी library के types लौटाता हो।",
-      "hi-en": "Ye library ko har nirbhar module ke compile classpath par daal deta hai, isliye uska version badalne par kahin zyada dobara compile hota hai. Ise tabhi use karo jab aapke module ka public API sach mein usi library ke types lautata ho.",
-    },
-    docs: "https://docs.gradle.org/current/userguide/java_library_plugin.html",
-    related: ["implementation"],
-  },
 
   dependencies: {
     term: "dependencies",
@@ -75,7 +53,7 @@ export const GRADLE_GLOSSARY: Glossary = {
       "hi-en": "Ye block **module** ki build file mein hota hai, project ki root wali mein nahi. Ise root file mein daalna Gradle ki sabse common galti hai, aur error message ye kabhi nahi batata.",
     },
     docs: "https://developer.android.com/build/dependencies",
-    related: ["implementation", "api", "plugins"],
+    related: ["implementation", "plugins"],
   },
 
   plugins: {

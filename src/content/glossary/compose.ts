@@ -238,9 +238,9 @@ export const COMPOSE_GLOSSARY: Glossary = {
     source: "compose",
     importLine: "import androidx.compose.ui.tooling.preview.Preview",
     does: {
-      en: "Renders a composable in the IDE without running the app.",
-      hi: "App चलाए बिना किसी composable को IDE में दिखाता है।",
-      "hi-en": "App chalaye bina kisi composable ko IDE mein dikhata hai.",
+      en: "Renders a composable in the IDE without running the app. Note that CameraX has an unrelated `Preview` class — a use case representing the camera's viewfinder stream — which is a different type with the same name.",
+      hi: "App चलाए बिना किसी composable को IDE में दिखाता है। गौर कीजिए कि CameraX की अपनी अलग `Preview` class है — एक use case जो camera के दिखने वाले stream को बताता है — जो उसी नाम का अलग type है।",
+      "hi-en": "App chalaye bina kisi composable ko IDE mein dikhata hai. Gaur kijiye ki CameraX ki apni alag `Preview` class hai — ek use case jo camera ke dikhne wale stream ko batata hai — jo usi naam ka alag type hai.",
     },
     values: {
       en: "`showBackground`, `widthDp`, `heightDp`, `uiMode` for dark mode, `fontScale`, `device`, and `group` to organise many previews.",
@@ -743,9 +743,9 @@ export const COMPOSE_GLOSSARY: Glossary = {
     source: "compose",
     importLine: "import androidx.compose.ui.unit.Constraints",
     does: {
-      en: "Carries the minimum and maximum width and height a parent will allow a child.",
-      hi: "Parent किसी बच्चे को कम से कम और ज्यादा से ज्यादा कितनी चौड़ाई-ऊँचाई देगा, यह लेकर चलता है।",
-      "hi-en": "Parent kisi bachche ko kam se kam aur zyada se zyada kitni width-height dega, ye lekar chalta hai.",
+      en: "Two unrelated classes share this name. Compose's carries the minimum and maximum width and height a parent will allow a child; WorkManager's declares the conditions under which a worker may run.",
+      hi: "इस नाम की दो अलग-अलग classes हैं। Compose वाली बताती है कि parent किसी बच्चे को कम से कम और ज्यादा से ज्यादा कितनी चौड़ाई-ऊँचाई देगा; WorkManager वाली बताती है कि कोई worker किन हालात में चल सकता है।",
+      "hi-en": "Is naam ki do alag-alag classes hain. Compose wali batati hai ki parent kisi bachche ko kam se kam aur zyada se zyada kitni width-height dega; WorkManager wali batati hai ki koi worker kin haalaton mein chal sakta hai.",
     },
     values: {
       en: "`copy(minWidth = 0)` relaxes a minimum, `Constraints.fixed(w, h)` forces a size, and `Constraints.Infinity` removes a limit — which is what a scrolling parent passes.",
@@ -753,9 +753,9 @@ export const COMPOSE_GLOSSARY: Glossary = {
       "hi-en": "`copy(minWidth = 0)` kam se kam wali had dheeli karta hai, `Constraints.fixed(w, h)` naap jabran tay karta hai, aur `Constraints.Infinity` had hata deta hai — scroll karne wala parent yahi bhejta hai.",
     },
     affects: {
-      en: "Passing your own constraints straight down forces every child to be at least as big as your minimum, which is rarely what was meant and is most bugs at this level.",
-      hi: "अपनी constraints सीधे नीचे भेज देना हर बच्चे को कम से कम अपने जितना बड़ा होने पर मजबूर कर देता है, जो शायद ही कभी मतलब होता है और इस स्तर के ज्यादातर bugs यही हैं।",
-      "hi-en": "Apni constraints seedhe neeche bhej dena har bachche ko kam se kam apne jitna bada hone par majboor kar deta hai, jo shayad hi kabhi matlab hota hai aur is level ke zyadatar bugs yahi hain.",
+      en: "**In Compose**, passing your own constraints straight down forces every child to be at least as big as your minimum, which is rarely what was meant and is most bugs at this level. **In WorkManager** (`androidx.work.Constraints`), it is what replaces writing a connectivity listener yourself — declare `NetworkType.UNMETERED` or `requiresBatteryNotLow` and the system simply does not run the worker until the conditions hold, across a reboot.",
+      hi: "**Compose में**, अपनी constraints सीधे नीचे भेज देना हर बच्चे को कम से कम अपने जितना बड़ा होने पर मजबूर कर देता है, जो शायद ही कभी मतलब होता है और इस स्तर के ज्यादातर bugs यही हैं। **WorkManager में** (`androidx.work.Constraints`), यही वह चीज है जो connectivity सुनने वाला खुद लिखने की जगह लेती है — `NetworkType.UNMETERED` या `requiresBatteryNotLow` लिख दीजिए और जब तक हालात पूरे न हों system उस worker को चलाता ही नहीं, reboot के आर-पार भी।",
+      "hi-en": "**Compose mein**, apni constraints seedhe neeche bhej dena har bachche ko kam se kam apne jitna bada hone par majboor kar deta hai, jo shayad hi kabhi matlab hota hai aur is level ke zyadatar bugs yahi hain. **WorkManager mein** (`androidx.work.Constraints`), yahi wo cheez hai jo connectivity sunne wala khud likhne ki jagah leti hai — `NetworkType.UNMETERED` ya `requiresBatteryNotLow` likh dijiye aur jab tak haalat poore na hon system us worker ko chalata hi nahi, reboot ke aar-paar bhi.",
     },
     related: ["Layout", "MeasureSpec"],
   },
