@@ -1,0 +1,175 @@
+---
+title: Location और FusedLocationProvider
+description: Location वह permission है जिससे users सबसे ज्यादा मना करते हैं, और API उसी को दिखाती है — coarse और fine अलग इजाजतें हैं, background पूरा अलग रास्ता है, और जरूरत से ज्यादा माँगना ही वह तरीका है जिससे कुछ भी नहीं मिलता।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Location की कोई एक permission है ही नहीं। **Coarse** और **fine** अलग-अलग मिलती हैं और dialog में
+चुनाव user करता है; **background** बाद की किसी screen पर दूसरी माँग है। हर एक में सबसे तगड़ा माँगना ही
+वह पक्का रास्ता है जिससे तीनों में से कोई नहीं मिलता।
+</KeyIdea>
+
+## Permissions, उसी क्रम में जिसमें वे होती हैं
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<!-- सिर्फ तब, जब ऐप बंद रहते हुए सच में location चाहिए -->
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+```
+
+```kotlin title="Request.kt" numbered
+val request = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions(),
+) { results ->
+    when {
+        results[ACCESS_FINE_LOCATION] == true -> startPreciseTracking()
+        results[ACCESS_COARSE_LOCATION] == true -> startApproximateTracking()   // यह भी काम का है
+        else -> showWhyWeNeedIt()
+    }
+}
+
+request.launch(arrayOf(ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION))
+```
+
+Android 12 से वह dialog **Precise** और **Approximate** देता है, और Approximate चुनने वाला user सिर्फ
+coarse देता है। जो ऐप उसे मना मान लेता है वह उस इंसान के लिए टूट जाता है जिसने हाँ कही *थी* — इसीलिए
+ऊपर वाले `when` में दो नहीं, तीन शाखाएँ हैं।
+
+Coarse कुछ सौ मीटर से एक किलोमीटर तक है। मौसम, शहर, दुकानों की सूची या मुद्रा के लिए वह काफी ठीक है,
+और सिर्फ coarse माँगना छोटी माँग है जिसे ज्यादा लोग मानते हैं।
+
+**Background वाली location उसी dialog में नहीं माँगी जा सकती।** वह दूसरी माँग होनी चाहिए, foreground
+मिलने के बाद, और Android उसे prompt के बजाय Settings में "हमेशा इजाजत दें" की तरह दिखाता है। Play भी
+उसे सही ठहराने वाला एक form माँगता है। जिन ज्यादातर ऐप्स को लगता है कि उन्हें वह चाहिए, उन्हें असल में
+user के देखते हुए एक foreground service चाहिए।
+
+<Quiz
+  question="दौड़ नापने वाला कोई ऐप पहली बार खुलते ही fine और background दोनों माँगता है। ज्यादातर users के पास आखिर में कोई location नहीं बचती। गलत क्या है, और सही क्रम क्या है?"
+  options={[
+    "Manifest में `ACCESS_COARSE_LOCATION` नहीं है, जिस पर fine टिका है",
+    "Background को foreground वाली उसी माँग में नहीं दिया जा सकता — system उसे छोड़ देता है — और user के वह सुविधा देखने से पहले सब कुछ माँगना आदतन मना दिलाता है। Foreground तब माँगिए जब tracking शुरू हो, और background सिर्फ तब जब वे बाद में ऐप बंद रखकर tracking चाहें",
+    "Location की permissions Fragment नहीं, सिर्फ Activity से माँगी जा सकती हैं"
+  ]}
+  answer={1}
+  explanation="यहाँ दो नियम मिलकर काटते हैं। Android 11 से background वाली location को foreground वाली उसी माँग में नहीं रखा जा सकता — system उसे गिरा देता है, तो code माँगता हुआ दिखता है और चुपचाप माँगता नहीं — और वह बाद में अलग माँग बनकर आनी चाहिए, जिसे Android dialog के बजाय Settings की screen की तरह दिखा सकता है। अलग से, पहली बार खुलते ही माँगना permissions वाले पाठ की आदतन-मना वाली दिक्कत है, और दो बार मना के बाद वह dialog आना ही बंद हो जाता है। सही क्रम यह है: user के Start दबाते ही coarse और fine साथ माँगिए, Approximate वाली हालत को नाकामी नहीं बल्कि चलती हुई हालत मानिए, tracking को foreground service में चलाइए ताकि user के दूसरे ऐप में जाने पर भी वह चलती रहे — और background सिर्फ तब माँगिए जब वे साफ-साफ ऐसी कोई चीज चालू करें जिसे ऐप बंद रहते चाहिए।"
+/>
+
+## Location लेना
+
+```kotlin title="Location.kt" numbered
+private val client = LocationServices.getFusedLocationProviderClient(context)
+
+// एक बार, ताजा निकाली हुई
+suspend fun current(): Location? = client.getCurrentLocation(
+    CurrentLocationRequest.Builder()
+        .setPriority(Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+        .build(),
+    null,
+).await()
+
+// एक धारा
+fun updates(): Flow<Location> = callbackFlow {
+    val callback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.lastLocation?.let(::trySend)
+        }
+    }
+    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+        .setMinUpdateDistanceMeters(10f)
+        .build()
+
+    client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    awaitClose { client.removeLocationUpdates(callback) }      // वरना battery हमेशा घुलती रहती है
+}
+```
+
+`getLastLocation` से सावधान रहिए: वह रखी हुई ऐसी जगह लौटाता है जो घंटों पुरानी हो सकती है, या ऐसे
+device पर `null` जिसने हाल में अपनी जगह निकाली ही नहीं। वह "आप मोटे तौर पर कहाँ थे" के लिए सही है, और
+जिस चीज को user देख रहा है उसके लिए गलत। `getCurrentLocation` ताजा निकालता है।
+
+Flow में असली काम `awaitClose` कर रहा है। उसके बिना collect करने वाले के रुकने के बाद भी updates चलते
+रहते हैं — ऐसी GPS की माँग जिसे कोई पढ़ ही नहीं रहा, process मरने तक चलती हुई।
+
+| Priority | क्या लेता है | सटीकता |
+| --- | --- | --- |
+| `HIGH_ACCURACY` | GPS | मीटरों में; महँगा वाला |
+| `BALANCED_POWER_ACCURACY` | Wi-Fi और cell | करीब 100m |
+| `LOW_POWER` | Cell के मीनार | शहर भर |
+| `PASSIVE` | जो दूसरे ऐप्स ने माँगा | मुफ्त, और शायद कभी न आए |
+
+<Detail summary="Geofences, और वे कोई loop क्यों नहीं हैं">
+Geofence system से कहता है कि device किसी इलाके में आए या निकले तो आपको खबर दे, बजाय इसके कि आप देखते
+रहें:
+
+```kotlin title="Geofence.kt" numbered
+val fence = Geofence.Builder()
+    .setRequestId("shop-18")
+    .setCircularRegion(lat, lng, 150f)                       // त्रिज्या, मीटरों में
+    .setExpirationDuration(Geofence.NEVER_EXPIRE)
+    .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT)
+    .setLoiteringDelay(60_000)
+    .build()
+```
+
+System इसे हर ऐप के आर-पार इकट्ठा करता है, तो हर ऐप के अपने-अपने पूछते रहने की जगह एक ही साझा हिसाब
+आ जाता है — और इसे location वाले loop के बजाय लेने की पूरी वजह यही है।
+
+तीन व्यावहारिक हदें। ऐप बंद रहते चलने के लिए geofences को background वाली location चाहिए। वे reboot
+पर मिट जाते हैं और दोबारा दर्ज करने पड़ते हैं, ठीक alarms की तरह। और करीब 100 मीटर से छोटी त्रिज्या
+घर के अंदर भरोसे से नहीं चलती, तो छोटी त्रिज्या सटीकता नहीं, छूटी हुई घटनाएँ देती है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और उनमें से दो battery घोल देती हैं">
+**Approximate को मना मानना।** User ने हाँ कही; ज्यादातर सुविधाओं के लिए coarse काफी है।
+
+**Foreground के साथ background माँगना।** System उसे गिरा देता है — वह अलग, बाद की माँग होनी चाहिए।
+
+**जिंदा tracking के लिए `getLastLocation`।** वह घंटों पुरानी या `null` हो सकती है।
+
+**`awaitClose` या `removeLocationUpdates` न होना।** कोई सुन नहीं रहा और GPS चलता रहता है।
+
+**शहर के लिए `HIGH_ACCURACY`।** जिस चीज का जवाब Wi-Fi दे देता उसके लिए GPS, कई गुना बिजली खर्च करके।
+</Pitfall>
+
+## अभ्यास
+
+1. Dialog में Approximate चुनिए और पक्का कीजिए कि आपका ऐप फिर भी चलता है।
+2. Foreground वाली उसी call में background माँगिए और log कीजिए कि सच में क्या मिलता है।
+3. किसी उड़ान के बाद या देर तक घर के अंदर रहने के बाद `getLastLocation` और `getCurrentLocation`
+   मिलाइए।
+4. Location का flow collect कीजिए, scope रोकिए, और `dumpsys` से देखिए कि GPS रुका या नहीं।
+5. कोई geofence दर्ज कीजिए, reboot कीजिए, और पक्का कीजिए कि वह चला गया।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Coarse बनाम fine | अलग इजाजतें; चुनाव dialog में user करता है |
+| Approximate | हाँ है, ना नहीं — उसे चलती हुई हालत मानिए |
+| Background | बाद की अलग माँग, और Play का review form |
+| `getLastLocation` | रखी हुई, शायद घंटों पुरानी या `null` |
+| `getCurrentLocation` | माँगने पर ताजा |
+| `callbackFlow` + `awaitClose` | Collector के जाते ही GPS यही रोकता है |
+| `Priority` | GPS, Wi-Fi, cell या passive — सबसे सस्ता जो जवाब दे |
+| लगातार tracking | `location` वाली foreground service चाहिए |
+| Geofence | System देखता है, हर ऐप के आर-पार इकट्ठा करके |
+| Reboot | Geofences मिटा देता है, alarms की तरह |
+
+<Interview title="एक सवाल, जिसका अच्छा जवाब कम माँगने से शुरू होता है">
+"किसी ऐप में location कैसे जोड़ेंगे?"
+
+पहले यह निकालकर कि उसे सच में कितना सटीक होना चाहिए, क्योंकि coarse और fine अलग इजाजतें हैं और चुनाव
+user करता है — तो अगर शहर भर काफी है, मैं सिर्फ coarse माँगता हूँ, जो छोटी माँग है और ज्यादा लोग उसे
+मानते हैं। और Approximate को मैं चलती हुई हालत मानूँगा, क्योंकि उसे मना मानना उस इंसान के लिए ऐप
+तोड़ देता है जिसने हामी भरी थी।
+
+लगातार tracking के लिए मैं `FusedLocationProviderClient` को `callbackFlow` के साथ लूँगा, और पक्का
+करूँगा कि `awaitClose` updates हटा दे — वरना collector के जाने के बाद भी GPS चलता रहता है, और
+battery वाला वह bug users ऐप के सिर मढ़ते हैं। Background वाली location से मैं तब तक बचूँगा जब तक वह
+सुविधा सच में ऐप-बंद-रहते-location न हो: वह foreground के साथ माँगी नहीं जा सकती, उसे Play का review
+form चाहिए, और ज्यादातर मामलों में user के देखते हुए चलती foreground service बेहतर जवाब है।
+</Interview>

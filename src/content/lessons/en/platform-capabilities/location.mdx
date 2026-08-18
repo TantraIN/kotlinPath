@@ -1,0 +1,175 @@
+---
+title: Location and the FusedLocationProvider
+description: Location is the permission users refuse most, and the API reflects that — coarse and fine are separate grants, background is a separate flow entirely, and asking for more than you need is how you get neither.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+There is no single location permission. **Coarse** and **fine** are granted separately and the user
+chooses between them in the dialog; **background** is a second request on a later screen. Asking for
+the strongest of each is the reliable way to be refused all of them.
+</KeyIdea>
+
+## The permissions, in the order they happen
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<!-- only if you genuinely need location with the app closed -->
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+```
+
+```kotlin title="Request.kt" numbered
+val request = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions(),
+) { results ->
+    when {
+        results[ACCESS_FINE_LOCATION] == true -> startPreciseTracking()
+        results[ACCESS_COARSE_LOCATION] == true -> startApproximateTracking()   // still useful
+        else -> showWhyWeNeedIt()
+    }
+}
+
+request.launch(arrayOf(ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION))
+```
+
+Since Android 12 the dialog offers **Precise** and **Approximate**, and a user picking Approximate
+grants coarse only. An app that treats that as a refusal breaks for someone who *did* say yes — which
+is why the `when` above has three branches rather than two.
+
+Coarse is a few hundred metres to a kilometre. For weather, a city, a shop list or a currency, that
+is precise enough, and requesting only coarse is a smaller ask that more people accept.
+
+**Background location cannot be requested in the same dialog.** It must be a second request, after
+foreground is granted, and Android shows it as "Allow all the time" in Settings rather than a prompt.
+Play also requires a review form justifying it. Most apps that think they need it actually need a
+foreground service while the user is watching.
+
+<Quiz
+  question="A run-tracking app requests fine and background location together on first launch. Most users end up with no location at all. What is wrong, and what is the right sequence?"
+  options={[
+    "The manifest is missing `ACCESS_COARSE_LOCATION`, which fine depends on",
+    "Background cannot be granted in the same request as foreground — the system ignores it — and asking for everything before the user has seen the feature produces a reflex denial. Ask for foreground when tracking starts, and for background only if they later want tracking with the app closed",
+    "Location permissions can only be requested from an Activity, not a Fragment"
+  ]}
+  answer={1}
+  explanation="Two rules combine here. Since Android 11 background location cannot be included in the same request as foreground — the system drops it, so the code appears to ask and silently does not — and it must come as a separate request afterwards, which Android may show as a Settings screen rather than a dialog. Separately, asking on first launch is the reflex-denial problem from the permissions lesson, and after two denials the dialog stops appearing at all. The right sequence is: request coarse and fine together at the moment the user taps Start, handle the Approximate case as a working state rather than a failure, run the tracking in a foreground service so it continues while the user is in another app — and only ask for background if they explicitly enable something that needs it with the app closed."
+/>
+
+## Getting a location
+
+```kotlin title="Location.kt" numbered
+private val client = LocationServices.getFusedLocationProviderClient(context)
+
+// one reading, freshly computed
+suspend fun current(): Location? = client.getCurrentLocation(
+    CurrentLocationRequest.Builder()
+        .setPriority(Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+        .build(),
+    null,
+).await()
+
+// a stream
+fun updates(): Flow<Location> = callbackFlow {
+    val callback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.lastLocation?.let(::trySend)
+        }
+    }
+    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+        .setMinUpdateDistanceMeters(10f)
+        .build()
+
+    client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    awaitClose { client.removeLocationUpdates(callback) }      // or it drains the battery forever
+}
+```
+
+`getLastLocation` is the one to be careful with: it returns a cached fix that may be hours old, or
+`null` on a device that has not located itself recently. It is right for "roughly where were you",
+and wrong for anything the user is watching. `getCurrentLocation` computes a fresh one.
+
+`awaitClose` is doing the important work in the flow. Without it, updates continue after the
+collector stops — a GPS request nobody is reading, running until the process dies.
+
+| Priority | Uses | Accuracy |
+| --- | --- | --- |
+| `HIGH_ACCURACY` | GPS | Metres; the expensive one |
+| `BALANCED_POWER_ACCURACY` | Wi-Fi and cell | Around 100m |
+| `LOW_POWER` | Cell towers | City level |
+| `PASSIVE` | Whatever other apps requested | Free, and may never arrive |
+
+<Detail summary="Geofences, and why they are not a loop">
+A geofence asks the system to notify you when the device enters or leaves an area, rather than you
+checking:
+
+```kotlin title="Geofence.kt" numbered
+val fence = Geofence.Builder()
+    .setRequestId("shop-18")
+    .setCircularRegion(lat, lng, 150f)                       // radius in metres
+    .setExpirationDuration(Geofence.NEVER_EXPIRE)
+    .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT)
+    .setLoiteringDelay(60_000)
+    .build()
+```
+
+The system batches this across every app, so one shared evaluation replaces each app polling — which
+is the whole reason to use it rather than a location loop.
+
+Three practical limits. Geofences need background location to fire with the app closed. They are
+cleared by a reboot and must be re-registered, the same as alarms. And a radius under about 100
+metres triggers unreliably indoors, so a small radius produces missed events rather than precision.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and two of them drain the battery">
+**Treating Approximate as a refusal.** The user said yes; coarse is enough for most features.
+
+**Requesting background with foreground.** The system drops it — it must be a separate, later
+request.
+
+**`getLastLocation` for live tracking.** It can be hours stale or `null`.
+
+**No `awaitClose` or `removeLocationUpdates`.** GPS keeps running after nobody is listening.
+
+**`HIGH_ACCURACY` for a city.** GPS for something Wi-Fi would answer, at many times the power cost.
+</Pitfall>
+
+## Practice
+
+1. Choose Approximate in the dialog and confirm your app still works.
+2. Request background in the same call as foreground and log what you actually get.
+3. Compare `getLastLocation` and `getCurrentLocation` after a flight or a long stay indoors.
+4. Collect a location flow, cancel the scope, and check with `dumpsys` whether GPS stopped.
+5. Register a geofence, reboot, and confirm it is gone.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Coarse vs fine | Separate grants; the user picks in the dialog |
+| Approximate | A yes, not a no — handle it as a working state |
+| Background | A separate later request, plus a Play review form |
+| `getLastLocation` | Cached, possibly hours old or `null` |
+| `getCurrentLocation` | A fresh fix, on demand |
+| `callbackFlow` + `awaitClose` | What stops GPS when the collector goes |
+| `Priority` | GPS, Wi-Fi, cell or passive — pick the cheapest that answers |
+| Continuous tracking | Needs a `location` foreground service |
+| Geofence | The system watches, batched across apps |
+| Reboot | Clears geofences, like alarms |
+
+<Interview title="A question where the good answer starts by asking for less">
+"How would you add location to an app?"
+
+By working out how precise it actually needs to be, because coarse and fine are separate grants and
+the user chooses between them — so if a city is enough, I request only coarse, which is a smaller ask
+that more people accept. And I would handle Approximate as a working state, since treating it as a
+refusal breaks the app for someone who agreed.
+
+For continuous tracking I would use `FusedLocationProviderClient` with a `callbackFlow`, making sure
+`awaitClose` removes the updates — otherwise GPS keeps running after the collector is gone, which is
+the battery bug users blame the app for. Background location I would avoid unless the feature is
+genuinely location-with-the-app-closed: it cannot be requested alongside foreground, it needs a Play
+review form, and most cases are better served by a foreground service while the user is watching.
+</Interview>

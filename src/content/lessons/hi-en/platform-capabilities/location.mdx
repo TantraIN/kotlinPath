@@ -1,0 +1,180 @@
+---
+title: Location aur FusedLocationProvider
+description: Location wo permission hai jisse users sabse zyada mana karte hain, aur API usi ko dikhati hai — coarse aur fine alag ijazatein hain, background poora alag raasta hai, aur zarurat se zyada maangna hi wo tarika hai jisse kuch bhi nahi milta.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Location ki koi ek permission hai hi nahi. **Coarse** aur **fine** alag-alag milti hain aur dialog mein
+chunaav user karta hai; **background** baad ki kisi screen par doosri maang hai. Har ek mein sabse
+tagda maangna hi wo pakka raasta hai jisse teenon mein se koi nahi milta.
+</KeyIdea>
+
+## Permissions, usi order mein jismein wo hoti hain
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<!-- sirf tab, jab app band rehte hue sach mein location chahiye -->
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+```
+
+```kotlin title="Request.kt" numbered
+val request = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions(),
+) { results ->
+    when {
+        results[ACCESS_FINE_LOCATION] == true -> startPreciseTracking()
+        results[ACCESS_COARSE_LOCATION] == true -> startApproximateTracking()   // ye bhi kaam ka hai
+        else -> showWhyWeNeedIt()
+    }
+}
+
+request.launch(arrayOf(ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION))
+```
+
+Android 12 se wo dialog **Precise** aur **Approximate** deta hai, aur Approximate chunne wala user sirf
+coarse deta hai. Jo app use mana maan leta hai wo us insaan ke liye toot jata hai jisne haan kahi *thi*
+— isiliye upar wale `when` mein do nahi, teen shakhayein hain.
+
+Coarse kuch sau meter se ek kilometre tak hai. Mausam, shehar, dukanon ki list ya mudra ke liye wo
+kaafi theek hai, aur sirf coarse maangna chhoti maang hai jise zyada log maante hain.
+
+**Background wali location usi dialog mein nahi maangi ja sakti.** Wo doosri maang honi chahiye,
+foreground milne ke baad, aur Android use prompt ke bajaye Settings mein "hamesha ijazat dein" ki tarah
+dikhata hai. Play bhi use sahi thehrane wala ek form maangta hai. Jin zyadatar apps ko lagta hai ki
+unhe wo chahiye, unhe asal mein user ke dekhte hue ek foreground service chahiye.
+
+<Quiz
+  question="Daud naapne wala koi app pehli baar khulte hi fine aur background dono maangta hai. Zyadatar users ke paas aakhir mein koi location nahi bachti. Galat kya hai, aur sahi order kya hai?"
+  options={[
+    "Manifest mein `ACCESS_COARSE_LOCATION` nahi hai, jis par fine tika hai",
+    "Background ko foreground wali usi maang mein nahi diya ja sakta — system use chhod deta hai — aur user ke wo suvidha dekhne se pehle sab kuch maangna aadatan mana dilata hai. Foreground tab maangiye jab tracking shuru ho, aur background sirf tab jab wo baad mein app band rakhkar tracking chahein",
+    "Location ki permissions Fragment nahi, sirf Activity se maangi ja sakti hain"
+  ]}
+  answer={1}
+  explanation="Yahan do niyam milkar kaat-te hain. Android 11 se background wali location ko foreground wali usi maang mein nahi rakha ja sakta — system use gira deta hai, to code maangta hua dikhta hai aur chupchap maangta nahi — aur wo baad mein alag maang bankar aani chahiye, jise Android dialog ke bajaye Settings ki screen ki tarah dikha sakta hai. Alag se, pehli baar khulte hi maangna permissions wale lesson ki aadatan-mana wali mushkil hai, aur do baar mana ke baad wo dialog aana hi band ho jata hai. Sahi order ye hai: user ke Start dabate hi coarse aur fine saath maangiye, Approximate wali haalat ko nakami nahi balki chalti hui haalat maniye, tracking ko foreground service mein chalaiye taki user ke doosre app mein jane par bhi wo chalti rahe — aur background sirf tab maangiye jab wo saaf-saaf aisi koi cheez chalu karein jise app band rehte chahiye."
+/>
+
+## Location lena
+
+```kotlin title="Location.kt" numbered
+private val client = LocationServices.getFusedLocationProviderClient(context)
+
+// ek baar, taza nikali hui
+suspend fun current(): Location? = client.getCurrentLocation(
+    CurrentLocationRequest.Builder()
+        .setPriority(Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+        .build(),
+    null,
+).await()
+
+// ek dhara
+fun updates(): Flow<Location> = callbackFlow {
+    val callback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.lastLocation?.let(::trySend)
+        }
+    }
+    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+        .setMinUpdateDistanceMeters(10f)
+        .build()
+
+    client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    awaitClose { client.removeLocationUpdates(callback) }      // warna battery hamesha ghulti rehti hai
+}
+```
+
+`getLastLocation` se saavdhan rahiye: wo rakhi hui aisi jagah lautata hai jo ghanton purani ho sakti
+hai, ya aise device par `null` jisne haal mein apni jagah nikali hi nahi. Wo "aap mote taur par kahan
+the" ke liye sahi hai, aur jis cheez ko user dekh raha hai uske liye galat. `getCurrentLocation` taza
+nikalta hai.
+
+Flow mein asli kaam `awaitClose` kar raha hai. Uske bina collect karne wale ke rukne ke baad bhi
+updates chalte rehte hain — aisi GPS ki maang jise koi padh hi nahi raha, process marne tak chalti hui.
+
+| Priority | Kya leta hai | Sateekta |
+| --- | --- | --- |
+| `HIGH_ACCURACY` | GPS | Meteron mein; mehnga wala |
+| `BALANCED_POWER_ACCURACY` | Wi-Fi aur cell | Kareeb 100m |
+| `LOW_POWER` | Cell ke meenar | Shehar bhar |
+| `PASSIVE` | Jo doosre apps ne maanga | Muft, aur shayad kabhi na aaye |
+
+<Detail summary="Geofences, aur wo koi loop kyun nahi hain">
+Geofence system se kehta hai ki device kisi ilake mein aaye ya nikle to aapko khabar de, bajaye iske ki
+aap dekhte raho:
+
+```kotlin title="Geofence.kt" numbered
+val fence = Geofence.Builder()
+    .setRequestId("shop-18")
+    .setCircularRegion(lat, lng, 150f)                       // trijya, meteron mein
+    .setExpirationDuration(Geofence.NEVER_EXPIRE)
+    .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT)
+    .setLoiteringDelay(60_000)
+    .build()
+```
+
+System ise har app ke aar-paar ikattha karta hai, to har app ke apne-apne puchte rehne ki jagah ek hi
+share hisab aa jata hai — aur ise location wale loop ke bajaye lene ki poori wajah yahi hai.
+
+Teen vyavharik hadein. App band rehte chalne ke liye geofences ko background wali location chahiye. Wo
+reboot par mit jate hain aur dobara darj karne padte hain, theek alarms ki tarah. Aur kareeb 100 meter
+se chhoti trijya ghar ke andar bharose se nahi chalti, to chhoti trijya sateekta nahi, chhooti hui
+ghatnayein deti hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur unmein se do battery ghol deti hain">
+**Approximate ko mana manna.** User ne haan kahi; zyadatar suvidhaon ke liye coarse kaafi hai.
+
+**Foreground ke saath background maangna.** System use gira deta hai — wo alag, baad ki maang honi
+chahiye.
+
+**Zinda tracking ke liye `getLastLocation`.** Wo ghanton purani ya `null` ho sakti hai.
+
+**`awaitClose` ya `removeLocationUpdates` na hona.** Koi sun nahi raha aur GPS chalta rehta hai.
+
+**Shehar ke liye `HIGH_ACCURACY`.** Jis cheez ka jawab Wi-Fi de deta uske liye GPS, kai guna bijli
+kharch karke.
+</Pitfall>
+
+## Abhyaas
+
+1. Dialog mein Approximate chuniye aur pakka kijiye ki aapka app phir bhi chalta hai.
+2. Foreground wali usi call mein background maangiye aur log kijiye ki sach mein kya milta hai.
+3. Kisi udaan ke baad ya der tak ghar ke andar rehne ke baad `getLastLocation` aur
+   `getCurrentLocation` milaiye.
+4. Location ka flow collect kijiye, scope rokiye, aur `dumpsys` se dekhiye ki GPS ruka ya nahi.
+5. Koi geofence darj kijiye, reboot kijiye, aur pakka kijiye ki wo chala gaya.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Coarse banam fine | Alag ijazatein; chunaav dialog mein user karta hai |
+| Approximate | Haan hai, na nahi — use chalti hui haalat maniye |
+| Background | Baad ki alag maang, aur Play ka review form |
+| `getLastLocation` | Rakhi hui, shayad ghanton purani ya `null` |
+| `getCurrentLocation` | Maangne par taza |
+| `callbackFlow` + `awaitClose` | Collector ke jate hi GPS yahi rokta hai |
+| `Priority` | GPS, Wi-Fi, cell ya passive — sabse sasta jo jawab de |
+| Lagatar tracking | `location` wali foreground service chahiye |
+| Geofence | System dekhta hai, har app ke aar-paar ikattha karke |
+| Reboot | Geofences mita deta hai, alarms ki tarah |
+
+<Interview title="Ek sawal, jiska achha jawab kam maangne se shuru hota hai">
+"Kisi app mein location kaise jodoge?"
+
+Pehle ye nikalkar ki use sach mein kitna sateek hona chahiye, kyunki coarse aur fine alag ijazatein hain
+aur chunaav user karta hai — to agar shehar bhar kaafi hai, main sirf coarse maangta hoon, jo chhoti
+maang hai aur zyada log use maante hain. Aur Approximate ko main chalti hui haalat manunga, kyunki use
+mana manna us insaan ke liye app tod deta hai jisne haami bhari thi.
+
+Lagatar tracking ke liye main `FusedLocationProviderClient` ko `callbackFlow` ke saath lunga, aur pakka
+karunga ki `awaitClose` updates hata de — warna collector ke jane ke baad bhi GPS chalta rehta hai, aur
+battery wala wo bug users app ke sir madhte hain. Background wali location se main tab tak bachunga jab
+tak wo suvidha sach mein app-band-rehte-location na ho: wo foreground ke saath maangi nahi ja sakti,
+use Play ka review form chahiye, aur zyadatar mamlon mein user ke dekhte hue chalti foreground service
+behtar jawab hai.
+</Interview>
