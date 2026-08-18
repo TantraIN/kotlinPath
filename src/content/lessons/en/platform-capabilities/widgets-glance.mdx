@@ -1,0 +1,192 @@
+---
+title: Home screen widgets with Glance
+description: A widget looks like Compose and runs in someone else's process, which is why half of what you know about Compose does not apply. Glance hides the RemoteViews, not the constraints.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Your widget's UI is drawn by the **launcher**, not by your app. Glance lets you describe it in
+Compose syntax, but it compiles to `RemoteViews` — so there is no recomposition, no state that lives
+between updates, and no arbitrary composables. What you write is a snapshot the launcher renders.
+</KeyIdea>
+
+## The shape
+
+```kotlin title="OrderWidget.kt" numbered
+class OrderWidget : GlanceAppWidget() {
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val orders = OrderRepositoryEntryPoint.get(context).todaysOrders()   // load before UI
+
+        provideContent {
+            GlanceTheme {
+                Column(GlanceModifier.fillMaxSize().padding(12.dp).background(GlanceTheme.colors.widgetBackground)) {
+                    Text(context.getString(R.string.widget_title), style = TextStyle(fontWeight = FontWeight.Bold))
+                    orders.take(3).forEach { Text(it.title) }
+                }
+            }
+        }
+    }
+}
+
+class OrderWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget = OrderWidget()
+}
+```
+
+`provideGlance` is `suspend`, and that is where data loading belongs — before `provideContent`, not
+inside it. There is no `LaunchedEffect` here, because there is no ongoing composition to run one in.
+
+## What Compose habits do not survive
+
+| In Compose | In Glance |
+| --- | --- |
+| `Modifier` | `GlanceModifier` — a smaller, separate set |
+| `remember`, `mutableStateOf` | Nothing; state goes in `GlanceStateDefinition` |
+| `LaunchedEffect` | Load in `provideGlance` before `provideContent` |
+| Any composable | Only Glance's own — no `LazyColumn`, no arbitrary drawing |
+| `onClick` calling a function | An `actionRunCallback` or an intent action |
+| Recomposition on state change | You call `update()`; nothing happens on its own |
+
+That last row is the mental shift. A widget does not observe anything. When your data changes, some
+code of yours must explicitly ask the launcher to redraw:
+
+```kotlin title="Update.kt" numbered
+suspend fun refreshWidget(context: Context) {
+    OrderWidget().updateAll(context)
+}
+```
+
+<Quiz
+  question="A widget shows a counter with an increment button. Tapping it works once and then stops responding. What is wrong?"
+  options={[
+    "The widget needs `android:updatePeriodMillis` set to a lower value",
+    "The count is held in a normal variable or `remember`, which does not exist between updates — widget state must be persisted and the widget explicitly updated after each tap",
+    "Widgets allow only one interaction before the launcher rebinds them"
+  ]}
+  answer={1}
+  explanation="A widget's content is a RemoteViews snapshot handed to the launcher. Your process is not running while the user looks at it, so there is no composition holding a value and no recomposition when one changes — a variable captured in the lambda holds whatever it was when the snapshot was built, which is why the first render looks right. The fix has two halves, and doing only one leaves the same symptom. Persist the count, in a GlanceStateDefinition or DataStore, so it survives your process not existing. Then, in the action callback, call updateAll after writing, because nothing redraws on its own. The general rule is that a widget is a rendered snapshot plus an explicit refresh, and every widget bug that looks like frozen UI is one of those two halves missing."
+/>
+
+## Interaction
+
+```kotlin title="Actions.kt" numbered
+Button(
+    text = context.getString(R.string.refresh),
+    onClick = actionRunCallback<RefreshAction>(),          // runs a class, not a lambda
+)
+
+Text(
+    text = order.title,
+    modifier = GlanceModifier.clickable(
+        actionStartActivity<MainActivity>(
+            actionParametersOf(orderIdKey to order.id),
+        )
+    ),
+)
+
+class RefreshAction : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        repository.refresh()
+        OrderWidget().update(context, glanceId)            // redraw, explicitly
+    }
+}
+```
+
+`onClick` cannot take an arbitrary lambda because the click happens in the launcher's process, long
+after your lambda's scope is gone. It has to name something the system can find later — a class, an
+activity, a broadcast — which is `RemoteViews` showing through.
+
+## Configuration
+
+```xml title="res/xml/order_widget_info.xml" numbered
+<appwidget-provider
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:resizeMode="horizontal|vertical"
+    android:description="@string/widget_description"
+    android:previewLayout="@layout/widget_preview" />
+```
+
+`updatePeriodMillis` has a floor of **30 minutes** and is subject to Doze like everything else, so it
+is not a clock. For anything that must be current, update from where the data changes — a WorkManager
+worker, or the repository itself.
+
+`previewLayout` is what the user sees in the widget picker. Without it they see a generic icon, and a
+widget nobody can recognise is a widget nobody adds.
+
+<Detail summary="Sizes, and the limit that bites">
+A widget can be resized, and Glance describes that with `SizeMode`:
+
+```kotlin title="Sizes.kt" numbered
+override val sizeMode = SizeMode.Responsive(
+    setOf(DpSize(180.dp, 110.dp), DpSize(300.dp, 110.dp), DpSize(300.dp, 220.dp)),
+)
+// then inside provideContent
+when (LocalSize.current.width) { /* pick a layout */ }
+```
+
+`Responsive` builds one `RemoteViews` per declared size up front, so the launcher can switch
+instantly. `SizeMode.Exact` rebuilds on every resize, which is smoother to write and slower in use.
+
+The constraint worth knowing is that a `RemoteViews` object has a hard transaction size limit —
+around 1 MB across the Binder — and exceeding it throws. A list of twenty rows with images will hit
+it. That is why widgets show three items and a "see all" tap rather than the whole list, and why
+images in a widget should be small and few.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that make a widget look broken">
+**Expecting state to persist.** No composition survives between updates; persist it.
+
+**Expecting automatic redraws.** Nothing happens until you call `update` or `updateAll`.
+
+**Treating `updatePeriodMillis` as a schedule.** 30-minute floor, and Doze applies.
+
+**Loading data inside `provideContent`.** It belongs in `provideGlance`, which is `suspend` for that
+reason.
+
+**Too much content.** The `RemoteViews` transaction limit throws rather than truncating.
+</Pitfall>
+
+## Practice
+
+1. Build a widget that reads from Room, then change the data and confirm nothing updates until you
+   call `updateAll`.
+2. Hold a counter in a plain variable and watch it freeze after one tap.
+3. Set `updatePeriodMillis` to one minute and measure what actually happens.
+4. Add `SizeMode.Responsive` and resize the widget on the home screen.
+5. Put thirty rows with images in a widget and find the transaction limit.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Who draws it | The launcher, in its process — you supply `RemoteViews` |
+| Glance | Compose syntax over `RemoteViews`, not Compose |
+| `provideGlance` | `suspend`; load data here, before `provideContent` |
+| State | Persisted, or gone — there is no composition between updates |
+| Redraw | Explicit: `update` or `updateAll` |
+| `onClick` | Names a class or activity, never a lambda |
+| `updatePeriodMillis` | 30-minute floor, and Doze applies |
+| `previewLayout` | What the widget picker shows; without it, a generic icon |
+| `SizeMode.Responsive` | Builds each declared size up front |
+| Size limit | About 1 MB of `RemoteViews` — it throws |
+
+<Interview title="A question about where the UI actually runs">
+"Why can't a widget just use Compose state?"
+
+Because the widget is not running in your process. You hand the launcher a `RemoteViews` snapshot and
+it draws that, so there is no live composition to hold a `remember` and nothing to recompose when a
+value changes. Glance gives you Compose syntax over that, which is much nicer to write, but it does
+not change what a widget is.
+
+In practice that means two things. State has to be persisted — in `GlanceStateDefinition` or DataStore
+— because your process may not exist while the user is looking at the widget. And redraws are
+explicit: after writing new data I call `update` or `updateAll`, since nothing observes anything. A
+widget that freezes after one interaction is almost always missing one of those two.
+</Interview>

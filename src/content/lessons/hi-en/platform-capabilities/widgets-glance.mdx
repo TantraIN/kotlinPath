@@ -1,0 +1,195 @@
+---
+title: Glance se home screen ke widgets
+description: Widget dikhta Compose jaisa hai aur chalta kisi aur ke process mein, isiliye Compose ki aadhi jankari yahan lagu nahi hoti. Glance RemoteViews chhupata hai, sharten nahi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Aapke widget ka UI **launcher** banata hai, aapka app nahi. Glance use Compose ki bhasha mein likhne
+deta hai, par wo `RemoteViews` mein badalta hai — to na recomposition hai, na aisi state jo updates ke
+beech zinda rahe, na koi bhi composable chalega. Aap jo likhte ho wo ek jhalak hai jise launcher banata
+hai.
+</KeyIdea>
+
+## Shakal
+
+```kotlin title="OrderWidget.kt" numbered
+class OrderWidget : GlanceAppWidget() {
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val orders = OrderRepositoryEntryPoint.get(context).todaysOrders()   // UI se pehle laiye
+
+        provideContent {
+            GlanceTheme {
+                Column(GlanceModifier.fillMaxSize().padding(12.dp).background(GlanceTheme.colors.widgetBackground)) {
+                    Text(context.getString(R.string.widget_title), style = TextStyle(fontWeight = FontWeight.Bold))
+                    orders.take(3).forEach { Text(it.title) }
+                }
+            }
+        }
+    }
+}
+
+class OrderWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget = OrderWidget()
+}
+```
+
+`provideGlance` `suspend` hai, aur data lana wahin ki baat hai — `provideContent` se pehle, uske andar
+nahi. Yahan koi `LaunchedEffect` nahi hai, kyunki use chalane layak koi chalti hui composition hi nahi
+hai.
+
+## Compose ki kaunsi aadatein yahan nahi bachtin
+
+| Compose mein | Glance mein |
+| --- | --- |
+| `Modifier` | `GlanceModifier` — chhota, alag samooh |
+| `remember`, `mutableStateOf` | Kuch nahi; state `GlanceStateDefinition` mein jati hai |
+| `LaunchedEffect` | `provideContent` se pehle `provideGlance` mein laiye |
+| Koi bhi composable | Sirf Glance ke apne — na `LazyColumn`, na manchahi drawing |
+| `onClick` mein koi function | Koi `actionRunCallback` ya intent ka action |
+| State badalne par recomposition | Aap `update()` bulate ho; apne aap kuch nahi hota |
+
+Aakhri pankti hi soch ka badlaav hai. Widget kisi cheez ko dekhta nahi. Jab aapka data badle, to aapke
+hi kisi code ko saaf-saaf launcher se dobara banane ko kehna padta hai:
+
+```kotlin title="Update.kt" numbered
+suspend fun refreshWidget(context: Context) {
+    OrderWidget().updateAll(context)
+}
+```
+
+<Quiz
+  question="Koi widget ek ginti aur badhane wala button dikhata hai. Us par tap ek baar chalta hai aur phir kuch nahi hota. Galat kya hai?"
+  options={[
+    "Us widget ko `android:updatePeriodMillis` chhota karna padega",
+    "Wo ginti kisi aam variable ya `remember` mein hai, jo updates ke beech hoti hi nahi — widget ki state sahejni padti hai aur har tap ke baad widget ko saaf-saaf update karna padta hai",
+    "Launcher ke dobara jodne se pehle widgets sirf ek baar chhue ja sakte hain"
+  ]}
+  answer={1}
+  explanation="Widget ka content ek RemoteViews jhalak hai jo launcher ko thamai jati hai. User jab use dekh raha hota hai tab aapka process chal hi nahi raha, to na koi composition kisi value ko pakde hai aur na kisi ke badalne par koi recomposition hai — lambda mein pakda gaya variable wahi rehta hai jo jhalak bante waqt tha, isiliye pehli baar sahi dikhta hai. Ilaaj ke do hisse hain, aur sirf ek karne par wahi lakshan bana rehta hai. Ginti sahejiye, kisi GlanceStateDefinition ya DataStore mein, taki wo aapke process ke na hone par bhi bache. Phir action wale callback mein, likhne ke baad updateAll bulaiye, kyunki apne aap kuch dobara nahi banta. Aam niyam ye hai ki widget ek bani hui jhalak aur ek saaf-saaf refresh hai, aur jame hue UI jaisa dikhta har widget bug inhin do mein se kisi ek ke na hone ka hai."
+/>
+
+## Chhoona
+
+```kotlin title="Actions.kt" numbered
+Button(
+    text = context.getString(R.string.refresh),
+    onClick = actionRunCallback<RefreshAction>(),          // koi class chalti hai, lambda nahi
+)
+
+Text(
+    text = order.title,
+    modifier = GlanceModifier.clickable(
+        actionStartActivity<MainActivity>(
+            actionParametersOf(orderIdKey to order.id),
+        )
+    ),
+)
+
+class RefreshAction : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        repository.refresh()
+        OrderWidget().update(context, glanceId)            // dobara banaiye, saaf-saaf
+    }
+}
+```
+
+`onClick` koi manchahi lambda nahi le sakta kyunki wo tap launcher ke process mein hota hai, aapki
+lambda ka daayra khatam hone ke bahut baad. Use aisi cheez ka naam lena padta hai jise system baad mein
+dhoondh sake — koi class, koi activity, koi broadcast — aur yahi `RemoteViews` ka jhalakna hai.
+
+## Settings
+
+```xml title="res/xml/order_widget_info.xml" numbered
+<appwidget-provider
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:resizeMode="horizontal|vertical"
+    android:description="@string/widget_description"
+    android:previewLayout="@layout/widget_preview" />
+```
+
+`updatePeriodMillis` ki farsh **30 minute** hai aur wo bhi baaki har cheez ki tarah Doze ke adheen hai,
+to wo ghadi nahi hai. Jis cheez ko taza rehna hi hai use wahan se update kijiye jahan data badalta hai
+— kisi WorkManager wale worker se, ya khud repository se.
+
+`previewLayout` wo hai jo user ko widget chunne wali list mein dikhta hai. Uske bina use ek aam icon
+dikhta hai, aur jis widget ko koi pehchan na sake use koi jodta bhi nahi.
+
+<Detail summary="Naap, aur wo had jo kaat-ti hai">
+Widget ka naap badla ja sakta hai, aur Glance use `SizeMode` se batata hai:
+
+```kotlin title="Sizes.kt" numbered
+override val sizeMode = SizeMode.Responsive(
+    setOf(DpSize(180.dp, 110.dp), DpSize(300.dp, 110.dp), DpSize(300.dp, 220.dp)),
+)
+// phir provideContent ke andar
+when (LocalSize.current.width) { /* koi layout chuniye */ }
+```
+
+`Responsive` har bataye hue naap ke liye pehle hi ek `RemoteViews` bana leta hai, taki launcher turant
+badal sake. `SizeMode.Exact` har baar naap badalne par dobara banata hai, jo likhne mein sehaj hai aur
+chalne mein dheema.
+
+Janne layak shart ye hai ki kisi `RemoteViews` ki len-den ke naap ki pakki had hai — Binder ke aar-paar
+kareeb 1 MB — aur usse upar wo phenkta hai. Tasveeron wali bees rows ki list usse takrayegi. Isiliye
+widgets teen cheezein aur "sab dekhiye" wala tap dikhate hain, poori list nahi, aur isiliye widget mein
+tasveerein chhoti aur gini-chuni honi chahiye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jinse widget toota hua lagta hai">
+**State ke bache rehne ki ummid.** Updates ke beech koi composition nahi bachti; use sahejiye.
+
+**Apne aap dobara banne ki ummid.** Jab tak aap `update` ya `updateAll` na bulao, kuch nahi hota.
+
+**`updatePeriodMillis` ko samay-sarni manna.** 30 minute ki farsh, aur Doze lagu.
+
+**`provideContent` ke andar data lana.** Wo `provideGlance` ki jagah hai, jo isiliye `suspend` hai.
+
+**Bahut zyada content.** `RemoteViews` ki len-den wali had kaat-ti nahi, phenkti hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Aisa widget banaiye jo Room se padhe, phir data badliye aur pakka kijiye ki `updateAll` bulane tak
+   kuch nahi badalta.
+2. Ginti ko saade variable mein rakhiye aur ek tap ke baad use jamte dekhiye.
+3. `updatePeriodMillis` ek minute kijiye aur naapiye ki sach mein kya hota hai.
+4. `SizeMode.Responsive` jodiye aur home screen par widget ka naap badliye.
+5. Widget mein tasveeron wali tees rows daaliye aur len-den ki had dhoondhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Banata kaun hai | Launcher, uske process mein — aap `RemoteViews` dete ho |
+| Glance | `RemoteViews` ke upar Compose ki bhasha, Compose nahi |
+| `provideGlance` | `suspend`; data yahin laiye, `provideContent` se pehle |
+| State | Saheji hui, warna gayab — updates ke beech koi composition nahi |
+| Dobara banana | Saaf-saaf: `update` ya `updateAll` |
+| `onClick` | Kisi class ya activity ka naam leta hai, lambda ka kabhi nahi |
+| `updatePeriodMillis` | 30 minute ki farsh, aur Doze lagu |
+| `previewLayout` | Widget chunne wali list mein yahi dikhta hai; uske bina aam icon |
+| `SizeMode.Responsive` | Har bataye naap ko pehle hi bana leta hai |
+| Naap ki had | Kareeb 1 MB `RemoteViews` — wo phenkta hai |
+
+<Interview title="Ek sawal, ki wo UI chalta kahan hai">
+"Widget seedhe Compose ki state kyun nahi le sakta?"
+
+Kyunki wo widget aapke process mein chal hi nahi raha. Aap launcher ko ek `RemoteViews` jhalak thamate
+ho aur wo use banata hai, to na koi zinda composition hai jo `remember` pakde aur na kisi value ke
+badalne par kuch recompose hota hai. Glance uske upar Compose ki bhasha deta hai, jo likhne mein kahin
+achhi hai, par wo ye nahi badalta ki widget hai kya.
+
+Vyavhar mein iska matlab do baatein hain. State sahejni padti hai — `GlanceStateDefinition` ya DataStore
+mein — kyunki user jab widget dekh raha ho tab aapka process ho hi na. Aur dobara banana saaf-saaf karna
+padta hai: naya data likhne ke baad main `update` ya `updateAll` bulata hoon, kyunki koi kisi ko dekh
+nahi raha. Jo widget ek baar chhoone ke baad jam jata hai usmein lagbhag hamesha in dono mein se ek nahi
+hota.
+</Interview>
