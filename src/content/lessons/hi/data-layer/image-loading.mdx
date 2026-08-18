@@ -1,0 +1,173 @@
+---
+title: Coil से image loading
+description: तस्वीर वह इकलौता data है जिसका memory में नाप उसके download के नाप से कोई रिश्ता नहीं रखता। सिर्फ यही बात है जिसकी वजह से यहाँ हर ऐप कोई library लेता है, और जिसकी वजह से सादा तरीका memory खत्म कर देता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+200 KB की कोई JPEG memory में 200 KB नहीं होती — वह decode होकर **चौड़ाई गुणा ऊँचाई गुणा चार bytes**
+होती है। 12 megapixel की तस्वीर `Bitmap` बनकर करीब 48 MB है। Image loading सुविधाजनक API पहने हुई
+memory की सँभाल है, और Coil की हर सुविधा उसी आँकड़े से निकलती है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+सीधा तरीका, किसी list में:
+
+```kotlin title="Naive.kt" numbered
+val bytes = URL(url).readBytes()                       // किस thread पर?
+val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)   // पूरे नाप पर
+imageView.setImageBitmap(bitmap)                       // 100dp की view में
+```
+
+तीन नाकामियाँ, और आखिरी वाली महँगी है। Threading है ही नहीं, तो यह रोकता है। Cache नहीं है, तो वापस
+scroll करने पर दोबारा download होता है। और decode पूरे नाप पर है — 4000×3000 की तस्वीर 48 MB बन जाती
+है, उस view को भरने के लिए जिसे करीब 0.16 MB चाहिए था। बीस rows पर वह `OutOfMemoryError` है, और
+तस्वीरों वाली list का ऐप मार देना यही जाना-पहचाना तरीका है।
+
+Coil वाला रूप:
+
+```kotlin title="Coil.kt" numbered
+AsyncImage(
+    model = order.imageUrl,
+    contentDescription = null,
+    modifier = Modifier.size(100.dp),
+    contentScale = ContentScale.Crop,
+)
+```
+
+वह जगह नापता है, सिर्फ उतने ही नाप पर decode करता है, नतीजा memory और disk दोनों में रखता है, row के
+scroll होकर निकल जाने पर request रोक देता है, और यह काम main thread से हटाकर करता है।
+
+## वह सच में करता क्या है
+
+| कदम | क्यों मायने रखता है |
+| --- | --- |
+| जगह नापता है | दिखने वाले नाप पर decode, स्रोत के नाप पर नहीं |
+| Memory cache | Decode हुए bitmaps का `LruCache`, URL **और नाप** दोनों से बँधा |
+| Disk cache | बिना decode हुए bytes, तो दोबारा खुलने पर download नहीं होता |
+| निकलते ही रोकना | Scroll होकर गई row bandwidth के लिए नहीं लड़ती |
+| Main thread से हटकर | Decode करना CPU का काम है और सस्ता नहीं है |
+
+Memory cache की key में नाप का होना रुककर सोचने लायक है। वही URL 100dp पर और पूरी screen पर दो
+entries हैं, क्योंकि वे दो अलग bitmaps हैं। इसीलिए किसी और नाप का placeholder दूसरी decode को रोक
+नहीं पाता।
+
+<Quiz
+  question="Thumbnails का कोई grid ऊँचे दर्जे के phone पर आराम से scroll होता है और बीच के दर्जे वाले पर बुरी तरह अटकता है। तस्वीरें पूरे नाप की हैं, और server पर thumbnail वाला कोई endpoint नहीं है। इलाज क्या है?"
+  options={[
+    "Memory cache बड़ा कीजिए ताकि ज्यादा thumbnails लदे रहें",
+    "ऐप में कुछ नहीं — server को thumbnail वाला endpoint चाहिए",
+    "पक्का कीजिए कि request से पहले जगह का नाप पता हो, ताकि decode पूरे नाप पर होकर छोटा किए जाने के बजाय सीधे thumbnail के नाप पर हो",
+  ]}
+  answer={2}
+  explanation="बड़ा cache गलत चीज ज्यादा रखता है: अगर हर bitmap पूरे नाप पर decode हो रहा है, तो cache 48 MB वाली चीजों से भरता है और दबाव घटने के बजाय बढ़ता है। Server पर thumbnail वाला endpoint सच में मदद करता, download घटाकर — पर अटकन download के वक्त की नहीं है, वह decode की है, जो हर तस्वीर पर होता है, चाहे bytes कहीं से भी आए हों। Coil जिस जगह पर बना रहा है उसी से decode का नाप तय करता है, तो इलाज है उस जगह का नाप बता देना: AsyncImage पर Modifier.size, या request में साफ-साफ नाप। बिना किसी हद के वह स्रोत के नाप पर decode करके बाद में छोटा कर सकता है, और महँगा क्रम यही है। इसीलिए ऊँचे दर्जे के phone ने दिक्कत छिपा ली — काम बिलकुल वही था, बस उसके पास उसे सोख लेने की गुंजाइश थी।"
+/>
+
+## वे options जो अपनी जगह वसूल करते हैं
+
+```kotlin title="Request.kt" numbered
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(order.imageUrl)
+        .crossfade(true)                  // लदना छिपाता है, झपकाने के बजाय
+        .memoryCacheKey(order.id)         // बदलते signed URL के आर-पार टिकी हुई
+        .placeholder(R.drawable.skeleton)
+        .error(R.drawable.broken)
+        .build(),
+    contentDescription = order.title,
+    modifier = Modifier.size(100.dp),
+)
+```
+
+`placeholder` और `error` सजावट नहीं हैं। Placeholder के बिना तस्वीर आने तक उस row की कोई ऊँचाई ही
+नहीं होती, तो list दोबारा बैठती है और उसके नीचे सब कुछ उछलता है। `error` वाली drawable के बिना नाकाम
+लदाई एक अनदेखा खाली हिस्सा है, जो किसी rendering के bug जैसा दिखता है।
+
+`memoryCacheKey` उन signed URLs के लिए मायने रखता है — वे, जिनकी query में मियाद वाला कोई token होता
+है। URL हर session में बदलता है, तो डिफॉल्ट key हर बार चूकती है और ऐसी तस्वीर दोबारा download होती है
+जो कभी बदली ही नहीं। टिकी हुई id पर key रखने से यह ठीक हो जाता है।
+
+<Note>
+`contentDescription` पर वही नियम है जो किसी भी `Icon` पर: जब तस्वीर कोई मतलब लिए हो तब असली विवरण,
+और सजावटी हो तब `null`। Products की list में product की तस्वीर आमतौर पर सजावटी है, क्योंकि product का
+नाम उसी के बगल में है और screen reader वरना दोनों पढ़ेगा।
+</Note>
+
+<Detail summary="Loader एक बार सजाना, और Glide के बजाय Coil क्यों">
+Cache के नाप और साझा बर्ताव एक ही `ImageLoader` पर रहते हैं, जो बाकी ऐप वाले `OkHttpClient` से ही
+बनता है:
+
+```kotlin title="ImageLoaderModule.kt" numbered
+val imageLoader = ImageLoader.Builder(context)
+    .okHttpClient(okHttpClient)                 // connection pool और interceptors साझा
+    .memoryCache { MemoryCache.Builder(context).maxSizePercent(0.25).build() }
+    .diskCache { DiskCache.Builder().directory(context.cacheDir.resolve("images")).build() }
+    .build()
+```
+
+Client साझा करना वह बारीकी है जो लोग छोड़ देते हैं: तब आपका auth वाला interceptor तस्वीरों पर भी
+लगता है, तो signed-in तस्वीर का URL बिना किसी दूसरे auth रास्ते के चल जाता है।
+
+गौर कीजिए कि disk cache कहाँ जाता है — `cacheDir`, ठीक वैसे जैसे storage वाले पाठ ने बताया था,
+क्योंकि इनमें से हर file दोबारा download हो सकती है।
+
+Glide के मुकाबले Coil पहले Kotlin का है और coroutines पर बना है, wrapper के बजाय अपनी Compose वाली
+API देता है, और काफी छोटा है। Glide अब भी बढ़िया है और view वाले किसी बड़े codebase में, जो पहले से
+उसे ले रहा है, वही सही जवाब है; चलते हुए ऐप को बस बदलने के लिए बदलने की कोई वजह नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो अटकन या OOM की शक्ल में दिखती हैं">
+**बिना हद वाली जगह।** छोटी view भरने के लिए स्रोत के नाप पर decode। ऊपर वाला quiz देखिए।
+
+**Placeholder न होना।** तस्वीर लदने तक row की कोई ऊँचाई नहीं, तो list दोबारा बैठती और उछलती है।
+
+**Signed URL को cache की key बनाना।** Key हर session में बदलती है, तो cache कभी लगती ही नहीं।
+
+**तस्वीरों के लिए अलग `OkHttpClient`।** दूसरा connection pool, और आपका auth वाला interceptor लगता ही
+नहीं।
+
+**बिना पक्की item key के `LazyColumn` में तस्वीरें लादना।** सिर्फ जगह बदली rows की requests
+recomposition पर दोबारा शुरू हो जाती हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. बिना नाप की हद बताए पूरे नाप की तस्वीर 100dp की view में लादिए, और memory वाला profiler देखिए।
+2. किसी grid को तेजी से scroll कीजिए और गिनिए कि कितनी requests रुक जाती हैं।
+3. Placeholder हटाइए और हर तस्वीर के आने पर list को दोबारा बैठते देखिए।
+4. वही तस्वीर दो नापों पर लादिए और पक्का कीजिए कि memory cache में दो entries हैं।
+5. ऐप का `OkHttpClient` loader से साझा कीजिए और पक्का कीजिए कि तस्वीरों की requests पर आपका auth
+   header दिखता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| वह आँकड़ा | Decode हुआ नाप = चौड़ाई × ऊँचाई × 4 bytes |
+| `AsyncImage` | Compose वाला दरवाजा |
+| जगह का नाप | View के हिसाब से decode, स्रोत के नहीं |
+| Memory cache | Decode हुए bitmaps, URL **और** नाप दोनों से बँधे |
+| Disk cache | बिना decode हुए bytes, `cacheDir` में |
+| `crossfade` | झपकाने के बजाय लदना छिपाता है |
+| `placeholder` | Row को ऊँचाई देता है, तो list दोबारा नहीं बैठती |
+| `memoryCacheKey` | तब चाहिए जब URL signed हो और बदलता हो |
+| साझा `OkHttpClient` | एक connection pool, और तस्वीरों पर भी auth लगता है |
+| `contentDescription` | मतलब हो तो विवरण, सजावटी हो तो `null` |
+
+<Interview title="एक सवाल, जो असल में bitmap की memory का है">
+"बस bitmap decode करने के बजाय image loading वाली library क्यों?"
+
+क्योंकि सस्ता हिस्सा download है। 200 KB की JPEG decode होकर चौड़ाई गुणा ऊँचाई गुणा चार bytes बनती है
+— 12 megapixel की तस्वीर memory में करीब 48 MB — तो स्रोत के नाप पर decode हुई तस्वीरों की list
+memory खत्म कर देती है, network चाहे कितना भी तेज हो।
+
+Library इसे यह करके सुलझाती है कि वह जगह नापती है और सिर्फ दिखने वाले नाप पर decode करती है, फिर
+decode हुए bitmaps को URL और नाप से बाँधकर memory में रखती है, और बिना decode हुए bytes disk पर, ताकि
+दोबारा खुलने पर download न हो। वह row के scroll होकर निकलते ही requests भी रोक देती है, जो memory
+जितना ही bandwidth के लिए भी मायने रखता है। सजाने वाली जो बारीकी मैं बताऊँगा वह है ऐप का
+`OkHttpClient` loader से साझा करना, ताकि तस्वीरें वही connection pool लें और auth वाला interceptor
+उन्हें विरासत में मिले, न कि उनके लिए दूसरा रास्ता बनाना पड़े।
+</Interview>

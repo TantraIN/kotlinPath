@@ -1,0 +1,177 @@
+---
+title: Coil se image loading
+description: Tasveer wo iklauta data hai jiska memory mein naap uske download ke naap se koi rishta nahi rakhta. Sirf yahi baat hai jiski wajah se yahan har app koi library leta hai, aur jiski wajah se saada tarika memory khatam kar deta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+200 KB ki koi JPEG memory mein 200 KB nahi hoti — wo decode hokar **width guna height guna chaar
+bytes** hoti hai. 12 megapixel ki tasveer `Bitmap` bankar kareeb 48 MB hai. Image loading suvidhajanak
+API pehne hui memory ki sambhal hai, aur Coil ki har suvidha usi aankde se nikalti hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Seedha tarika, kisi list mein:
+
+```kotlin title="Naive.kt" numbered
+val bytes = URL(url).readBytes()                       // kis thread par?
+val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)   // poore naap par
+imageView.setImageBitmap(bitmap)                       // 100dp ki view mein
+```
+
+Teen nakamiyan, aur aakhri wali mehngi hai. Threading hai hi nahi, to ye rokta hai. Cache nahi hai, to
+wapas scroll karne par dobara download hota hai. Aur decode poore naap par hai — 4000×3000 ki tasveer
+48 MB ban jati hai, us view ko bharne ke liye jise kareeb 0.16 MB chahiye tha. Bees rows par wo
+`OutOfMemoryError` hai, aur tasveeron wali list ka app maar dena yahi jana-pehchana tarika hai.
+
+Coil wala roop:
+
+```kotlin title="Coil.kt" numbered
+AsyncImage(
+    model = order.imageUrl,
+    contentDescription = null,
+    modifier = Modifier.size(100.dp),
+    contentScale = ContentScale.Crop,
+)
+```
+
+Wo jagah naapta hai, sirf utne hi naap par decode karta hai, result memory aur disk dono mein rakhta
+hai, row ke scroll hokar nikal jane par request rok deta hai, aur ye kaam main thread se hatakar karta
+hai.
+
+## Wo sach mein karta kya hai
+
+| Kadam | Kyun maayne rakhta hai |
+| --- | --- |
+| Jagah naapta hai | Dikhne wale naap par decode, srot ke naap par nahi |
+| Memory cache | Decode hue bitmaps ka `LruCache`, URL **aur naap** dono se bandha |
+| Disk cache | Bina decode hue bytes, to dobara khulne par download nahi hota |
+| Nikalte hi rokna | Scroll hokar gayi row bandwidth ke liye nahi ladti |
+| Main thread se hatkar | Decode karna CPU ka kaam hai aur sasta nahi hai |
+
+Memory cache ki key mein naap ka hona rukkar sochne layak hai. Wahi URL 100dp par aur poori screen par
+do entries hain, kyunki wo do alag bitmaps hain. Isiliye kisi aur naap ka placeholder doosri decode ko
+rok nahi pata.
+
+<Quiz
+  question="Thumbnails ka koi grid unche darje ke phone par aaram se scroll hota hai aur beech ke darje wale par buri tarah atakta hai. Tasveerein poore naap ki hain, aur server par thumbnail wala koi endpoint nahi hai. Ilaaj kya hai?"
+  options={[
+    "Memory cache bada kijiye taki zyada thumbnails lade rahein",
+    "App mein kuch nahi — server ko thumbnail wala endpoint chahiye",
+    "Pakka kijiye ki request se pehle jagah ka naap pata ho, taki decode poore naap par hokar chhota kiye jane ke bajaye seedhe thumbnail ke naap par ho",
+  ]}
+  answer={2}
+  explanation="Bada cache galat cheez zyada rakhta hai: agar har bitmap poore naap par decode ho raha hai, to cache 48 MB wali cheezon se bharta hai aur dabav ghatne ke bajaye badhta hai. Server par thumbnail wala endpoint sach mein madad karta, download ghatakar — par atkan download ke waqt ki nahi hai, wo decode ki hai, jo har tasveer par hota hai, chahe bytes kahin se bhi aaye hon. Coil jis jagah par bana raha hai usi se decode ka naap tay karta hai, to ilaaj hai us jagah ka naap bata dena: AsyncImage par Modifier.size, ya request mein saaf-saaf naap. Bina kisi had ke wo srot ke naap par decode karke baad mein chhota kar sakta hai, aur mehnga order yahi hai. Isiliye unche darje ke phone ne mushkil chhupa li — kaam bilkul wahi tha, bas uske paas use sokh lene ki gunjaish thi."
+/>
+
+## Wo options jo apni jagah wasool karte hain
+
+```kotlin title="Request.kt" numbered
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(order.imageUrl)
+        .crossfade(true)                  // ladna chhupata hai, jhapkane ke bajaye
+        .memoryCacheKey(order.id)         // badalte signed URL ke aar-paar tiki hui
+        .placeholder(R.drawable.skeleton)
+        .error(R.drawable.broken)
+        .build(),
+    contentDescription = order.title,
+    modifier = Modifier.size(100.dp),
+)
+```
+
+`placeholder` aur `error` sajawat nahi hain. Placeholder ke bina tasveer aane tak us row ki koi
+unchai hi nahi hoti, to list dobara baithti hai aur uske neeche sab kuch uchhalta hai. `error` wali
+drawable ke bina nakaam ladai ek andekha khaali hissa hai, jo kisi rendering ke bug jaisa dikhta hai.
+
+`memoryCacheKey` un signed URLs ke liye maayne rakhta hai — wo, jinki query mein miyad wala koi token
+hota hai. URL har session mein badalta hai, to default key har baar chookti hai aur aisi tasveer dobara
+download hoti hai jo kabhi badli hi nahi. Tiki hui id par key rakhne se ye theek ho jata hai.
+
+<Note>
+`contentDescription` par wahi niyam hai jo kisi bhi `Icon` par: jab tasveer koi matlab liye ho tab
+asli vivaran, aur sajawati ho tab `null`. Products ki list mein product ki tasveer aam taur par
+sajawati hai, kyunki product ka naam usi ke bagal mein hai aur screen reader warna dono padhega.
+</Note>
+
+<Detail summary="Loader ek baar sajana, aur Glide ke bajaye Coil kyun">
+Cache ke naap aur share kiya gaya behaviour ek hi `ImageLoader` par rehte hain, jo baaki app wale
+`OkHttpClient` se hi banta hai:
+
+```kotlin title="ImageLoaderModule.kt" numbered
+val imageLoader = ImageLoader.Builder(context)
+    .okHttpClient(okHttpClient)                 // connection pool aur interceptors share
+    .memoryCache { MemoryCache.Builder(context).maxSizePercent(0.25).build() }
+    .diskCache { DiskCache.Builder().directory(context.cacheDir.resolve("images")).build() }
+    .build()
+```
+
+Client share karna wo bareeki hai jo log chhod dete hain: tab aapka auth wala interceptor tasveeron
+par bhi lagta hai, to signed-in tasveer ka URL bina kisi doosre auth raaste ke chal jata hai.
+
+Gaur kijiye ki disk cache kahan jata hai — `cacheDir`, theek waise jaise storage wale lesson ne bataya
+tha, kyunki inmein se har file dobara download ho sakti hai.
+
+Glide ke muqable Coil pehle Kotlin ka hai aur coroutines par bana hai, wrapper ke bajaye apni Compose
+wali API deta hai, aur kaafi chhota hai. Glide ab bhi badhiya hai aur view wale kisi bade codebase
+mein, jo pehle se use le raha hai, wahi sahi jawab hai; chalte hue app ko bas badalne ke liye badalne
+ki koi wajah nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo atkan ya OOM ki shakal mein dikhti hain">
+**Bina had wali jagah.** Chhoti view bharne ke liye srot ke naap par decode. Upar wala quiz dekhiye.
+
+**Placeholder na hona.** Tasveer ladne tak row ki koi unchai nahi, to list dobara baithti aur uchhalti
+hai.
+
+**Signed URL ko cache ki key banana.** Key har session mein badalti hai, to cache kabhi lagti hi nahi.
+
+**Tasveeron ke liye alag `OkHttpClient`.** Doosra connection pool, aur aapka auth wala interceptor
+lagta hi nahi.
+
+**Bina pakki item key ke `LazyColumn` mein tasveerein ladna.** Sirf jagah badli rows ki requests
+recomposition par dobara shuru ho jati hain.
+</Pitfall>
+
+## Abhyaas
+
+1. Bina naap ki had bataye poore naap ki tasveer 100dp ki view mein ladiye, aur memory wala profiler
+   dekhiye.
+2. Kisi grid ko tezi se scroll kijiye aur giniye ki kitni requests ruk jati hain.
+3. Placeholder hataiye aur har tasveer ke aane par list ko dobara baithte dekhiye.
+4. Wahi tasveer do naapon par ladiye aur pakka kijiye ki memory cache mein do entries hain.
+5. App ka `OkHttpClient` loader se share kijiye aur pakka kijiye ki tasveeron ki requests par aapka
+   auth header dikhta hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Wo aankda | Decode hua naap = width × height × 4 bytes |
+| `AsyncImage` | Compose wala darwaza |
+| Jagah ka naap | View ke hisab se decode, srot ke nahi |
+| Memory cache | Decode hue bitmaps, URL **aur** naap dono se bandhe |
+| Disk cache | Bina decode hue bytes, `cacheDir` mein |
+| `crossfade` | Jhapkane ke bajaye ladna chhupata hai |
+| `placeholder` | Row ko unchai deta hai, to list dobara nahi baithti |
+| `memoryCacheKey` | Tab chahiye jab URL signed ho aur badalta ho |
+| Share kiya `OkHttpClient` | Ek connection pool, aur tasveeron par bhi auth lagta hai |
+| `contentDescription` | Matlab ho to vivaran, sajawati ho to `null` |
+
+<Interview title="Ek sawal, jo asal mein bitmap ki memory ka hai">
+"Bas bitmap decode karne ke bajaye image loading wali library kyun?"
+
+Kyunki sasta hissa download hai. 200 KB ki JPEG decode hokar width guna height guna chaar bytes banti
+hai — 12 megapixel ki tasveer memory mein kareeb 48 MB — to srot ke naap par decode hui tasveeron ki
+list memory khatam kar deti hai, network chahe kitna bhi tez ho.
+
+Library ise ye karke suljhati hai ki wo jagah naapti hai aur sirf dikhne wale naap par decode karti
+hai, phir decode hue bitmaps ko URL aur naap se baandhkar memory mein rakhti hai, aur bina decode hue
+bytes disk par, taki dobara khulne par download na ho. Wo row ke scroll hokar nikalte hi requests bhi
+rok deti hai, jo memory jitna hi bandwidth ke liye bhi maayne rakhta hai. Sajane wali jo bareeki main
+bataunga wo hai app ka `OkHttpClient` loader se share karna, taki tasveerein wahi connection pool lein
+aur auth wala interceptor unhe virasat mein mile, na ki unke liye doosra raasta banana pade.
+</Interview>

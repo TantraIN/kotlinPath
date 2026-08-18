@@ -1,0 +1,174 @@
+---
+title: Image loading with Coil
+description: An image is the one piece of data whose in-memory size has nothing to do with its download size. That single fact is why every app uses a library here, and why the naive version runs out of memory.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A 200 KB JPEG is not 200 KB in memory — it is **width times height times four bytes**, decoded. A
+12-megapixel photo is roughly 48 MB as a `Bitmap`. Image loading is memory management wearing a
+convenient API, and every feature Coil has follows from that number.
+</KeyIdea>
+
+## Why this matters
+
+The direct version, in a list:
+
+```kotlin title="Naive.kt" numbered
+val bytes = URL(url).readBytes()                       // on which thread?
+val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)   // full resolution
+imageView.setImageBitmap(bitmap)                       // into a 100dp view
+```
+
+Three failures, and the last one is the expensive one. There is no threading, so this blocks. There
+is no cache, so scrolling back re-downloads. And the decode is at full resolution — a 4000×3000 photo
+becomes 48 MB to fill a view that needed about 0.16 MB. Twenty rows of that is an
+`OutOfMemoryError`, and it is the classic way a list of photos kills an app.
+
+The Coil version:
+
+```kotlin title="Coil.kt" numbered
+AsyncImage(
+    model = order.imageUrl,
+    contentDescription = null,
+    modifier = Modifier.size(100.dp),
+    contentScale = ContentScale.Crop,
+)
+```
+
+That measures the target, decodes only to the size it needs, caches the result in memory and on disk,
+cancels the request if the row scrolls away, and moves the work off the main thread.
+
+## What it is actually doing
+
+| Step | Why it matters |
+| --- | --- |
+| Measures the target | Decodes to the displayed size, not the source size |
+| Memory cache | An `LruCache` of decoded bitmaps, keyed by URL **and size** |
+| Disk cache | The encoded bytes, so a restart does not re-download |
+| Cancels on detach | A scrolled-away row stops competing for bandwidth |
+| Off the main thread | Decoding is CPU work and it is not cheap |
+
+The memory cache key including the size is worth pausing on. The same URL at 100dp and at full screen
+are two entries, because they are two different bitmaps. That is also why a placeholder of a
+different size does not prevent a second decode.
+
+<Quiz
+  question="A grid of thumbnails scrolls smoothly on a high-end phone and stutters badly on a mid-range one. The images are full-resolution photos from a server with no thumbnail endpoint. What is the fix?"
+  options={[
+    "Increase the memory cache size so more thumbnails stay loaded",
+    "Nothing in the app — the server needs a thumbnail endpoint",
+    "Make sure the target size is known before the request, so the decode happens at thumbnail size rather than full size and then downscaled",
+  ]}
+  answer={2}
+  explanation="A bigger cache stores more of the wrong thing: if each bitmap is decoded at full resolution, the cache fills with 48 MB objects and the pressure gets worse, not better. A server-side thumbnail endpoint would genuinely help by cutting the download, but the stutter is not download time — it is the decode, which happens on every image regardless of where the bytes came from. Coil sizes the decode from the target it is drawing into, so the fix is making that target known: a Modifier.size on the AsyncImage, or an explicit size in the request. Without a constraint it may decode at source resolution and scale down afterwards, which is the expensive order. This is also why the high-end phone hid the problem — the work was identical, it just had the headroom to absorb it."
+/>
+
+## The options that earn their place
+
+```kotlin title="Request.kt" numbered
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(order.imageUrl)
+        .crossfade(true)                  // hides the load rather than flashing
+        .memoryCacheKey(order.id)         // stable across a changing signed URL
+        .placeholder(R.drawable.skeleton)
+        .error(R.drawable.broken)
+        .build(),
+    contentDescription = order.title,
+    modifier = Modifier.size(100.dp),
+)
+```
+
+`placeholder` and `error` are not decoration. Without a placeholder the row has no height until the
+image arrives, so the list reflows and everything below it jumps. Without an `error` drawable a failed
+load is an invisible gap that looks like a rendering bug.
+
+`memoryCacheKey` matters for signed URLs — the kind with an expiring token in the query string. The
+URL changes every session, so the default key misses every time and re-downloads an image that never
+changed. Keying on the stable id fixes it.
+
+<Note>
+`contentDescription` follows the same rule as any `Icon`: a real description when the image carries
+meaning, `null` when it is decorative. A product photo in a list of products is usually decorative,
+because the product name is right next to it and a screen reader would otherwise read both.
+</Note>
+
+<Detail summary="Configuring the loader once, and why Coil rather than Glide">
+Cache sizes and shared behaviour belong on one `ImageLoader`, built with the same `OkHttpClient` as
+the rest of the app:
+
+```kotlin title="ImageLoaderModule.kt" numbered
+val imageLoader = ImageLoader.Builder(context)
+    .okHttpClient(okHttpClient)                 // shares the connection pool and interceptors
+    .memoryCache { MemoryCache.Builder(context).maxSizePercent(0.25).build() }
+    .diskCache { DiskCache.Builder().directory(context.cacheDir.resolve("images")).build() }
+    .build()
+```
+
+Sharing the client is the detail people miss: your auth interceptor then applies to images too, so a
+signed-in image URL works without a second auth path.
+
+Note where the disk cache goes — `cacheDir`, exactly as the storage lesson described, because every
+one of these files can be re-downloaded.
+
+Against Glide, Coil is Kotlin-first and coroutine-based, ships a Compose API rather than a wrapper,
+and is considerably smaller. Glide remains excellent and is still the right answer in a large
+view-based codebase already using it; there is no reason to migrate a working app for its own sake.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that show up as jank or OOM">
+**An unconstrained target.** Decoding at source resolution to fill a small view. See the quiz.
+
+**No placeholder.** The row has no height until the image loads, so the list reflows and jumps.
+
+**A signed URL as the cache key.** The key changes every session, so nothing ever hits the cache.
+
+**A separate `OkHttpClient` for images.** A second connection pool, and your auth interceptor does
+not apply.
+
+**Loading images into a `LazyColumn` without a stable item key.** Recomposition restarts requests for
+rows that only moved.
+</Pitfall>
+
+## Practice
+
+1. Load a full-resolution photo into a 100dp view without a size constraint, and watch the memory
+   profiler.
+2. Scroll a grid quickly and count the requests that get cancelled.
+3. Remove the placeholder and watch the list reflow as each image arrives.
+4. Load the same image at two sizes and confirm there are two memory cache entries.
+5. Share the app's `OkHttpClient` with the loader and confirm your auth header appears on image
+   requests.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The number | Decoded size is width × height × 4 bytes |
+| `AsyncImage` | The Compose entry point |
+| Target size | Decode to the view, not to the source |
+| Memory cache | Decoded bitmaps, keyed by URL **and** size |
+| Disk cache | Encoded bytes, in `cacheDir` |
+| `crossfade` | Hides the load instead of flashing |
+| `placeholder` | Gives the row height, so the list does not reflow |
+| `memoryCacheKey` | Needed when the URL is signed and changes |
+| Shared `OkHttpClient` | One connection pool, and auth applies to images |
+| `contentDescription` | A label when meaningful, `null` when decorative |
+
+<Interview title="A question that is really about bitmap memory">
+"Why use an image loading library instead of just decoding a bitmap?"
+
+Because the download is the cheap part. A 200 KB JPEG decodes to width times height times four bytes
+— a 12-megapixel photo is about 48 MB in memory — so a list of photos decoded at source resolution
+runs out of memory regardless of how fast the network is.
+
+A library solves that by measuring the target and decoding only to the size being displayed, then
+caching decoded bitmaps in memory keyed by URL and size, and encoded bytes on disk so a restart does
+not re-download. It also cancels requests when a row scrolls away, which matters as much for
+bandwidth as for memory. The configuration detail I would mention is sharing the app's `OkHttpClient`
+with the loader, so images reuse the connection pool and inherit the auth interceptor rather than
+needing a second path.
+</Interview>
