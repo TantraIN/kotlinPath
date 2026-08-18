@@ -1,0 +1,211 @@
+---
+title: DataStore, SharedPreferences ki jagah lene wala
+description: SharedPreferences mein likhne ke do tarike hain aur dono main thread par galat hain. DataStore unki jagah ek Flow aur ek suspend function rakhta hai, jo sunne mein jitna bada badlaav lagta hai usse chhota hai aur ANR ki ek asli kism khatam kar deta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`SharedPreferences` kisi file ke upar ek saath-saath chalne wali API hai, to uska padhna rokta hai
+aur uske dono likhne ke tarike main thread ko atka sakte hain. DataStore wahi kaam hai, bas **padhne
+ke liye `Flow` aur likhne ke liye `suspend` function** ke saath — rukavat isliye gayi ki API ab use
+maangne hi nahi deti.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Jana-pehchana roop:
+
+```kotlin title="Prefs.kt" numbered
+val prefs = context.getSharedPreferences("settings", MODE_PRIVATE)   // poori file padhta hai
+val dark = prefs.getBoolean("dark_mode", false)                      // rok sakta hai
+
+prefs.edit().putBoolean("dark_mode", true).apply()                   // turant lautta hai...
+```
+
+Teen lines mein teen mushkilein chhupi hain.
+
+`getSharedPreferences` pehli baar chhoone par poori XML file padhta aur parse karta hai. Andar se wo
+alag thread par hota hai, par uske poora hone se pehle kiya gaya koi bhi `get` uske poora hone tak
+**rok deta hai**.
+
+`apply()` turant lautta hai aur peeche kisi thread par likhta hai — jo tab tak safe lagta hai jab tak
+aapko pata na chale ki Android `onPause` aur `onStop` ke dauran har bache hue `apply()` ko saath-saath
+rukkar poora karata hai. Us pal ki dheemi disk ek aisi main-thread rukavat hai jo aapne likhi nahi
+aur apne code mein dikhti bhi nahi.
+
+Aur `commit()` rokne ke baare mein imandaar hai, isiliye log `apply()` uthate hain aur upar wali
+mushkil virasat mein pa jate hain.
+
+DataStore wala roop:
+
+```kotlin title="SettingsRepository.kt" numbered
+private val Context.dataStore by preferencesDataStore(name = "settings")
+
+class SettingsRepository(private val context: Context) {
+
+    private object Keys {
+        val DARK_MODE = booleanPreferencesKey("dark_mode")
+    }
+
+    val darkMode: Flow<Boolean> = context.dataStore.data
+        .map { it[Keys.DARK_MODE] ?: false }
+
+    suspend fun setDarkMode(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.DARK_MODE] = enabled }
+    }
+}
+```
+
+Padhna ek `Flow` hai, to dark mode dekh rahi koi screen tab badalti hai jab koi doosri screen use
+badle. Likhna `suspend` hai, to aap use galti se main thread par nahi kar sakte. Inmein se koi bhi
+suvidha nahi hai — ye API ka aapko wo bug likhne hi na dena hai.
+
+<Note>
+`preferencesDataStore` ek property delegate hai, aur wajah hai: wo har file ke liye har process mein
+ek hi instance manwata hai. Ek hi file par do `DataStore` objects `IllegalStateException` phenkte
+hain, aur ye jaanbujhkar hai — saath-saath chalne ki jo guarantees hain wo usi iklaute instance se
+tikti hain.
+</Note>
+
+## Errors yahan bhi values hain
+
+File bigad sakti hai. `SharedPreferences` ise chupchap defaults lautakar sambhalta hai; DataStore us
+exception ko flow mein bhej deta hai, aur faisla aap karte ho:
+
+```kotlin title="Corruption.kt" numbered
+val darkMode: Flow<Boolean> = context.dataStore.data
+    .catch { e ->
+        if (e is IOException) emit(emptyPreferences())    // crash ke bajaye naye sire se shuru
+        else throw e
+    }
+    .map { it[Keys.DARK_MODE] ?: false }
+```
+
+Us `catch` ke bina, na padhi ja sakne wali file us screen ko gira deti hai jo use collect kar rahi
+hai. Uske saath app defaults par laut aata hai — wahi anjaam jo `SharedPreferences` deta hai, bas ab
+wo aapka kiya hua faisla hai, virasat mein mila hua nahi.
+
+<Quiz
+  question="Koi settings screen ek preference likhti hai aur turant use `dataStore.data.first()` se wapas padhti hai. Dheeme device par kabhi-kabhi purani value milti hai. Kyun?"
+  options={[
+    "DataStore padhne ko cache karta hai, to likhne ne abhi cache hataya nahi hai",
+    "Aisa hota hi nahi — `edit` tab tak rukta hai jab tak likha hua pakka na ho jaye, to uske baad ka har padhna nai value dekhta hai. Bug kahin aur hai: likhne se pehle padhna, ya kisi doosre DataStore instance par padhna",
+    "`first()` hamesha cache wali shuruati value lautata hai aur aapko `drop(1)` chahiye",
+  ]}
+  answer={1}
+  explanation="DataStore isi guarantee ke liye hai, aur ise saaf-saaf kehna zaruri hai: edit tab tak rukta hai jab tak badlaav lag na jaye aur data disk par likh na jaye, to uske baad order mein aane wala koi bhi padhna nai value dekhta hai. SharedPreferences.apply() theek yahi wada nahi karta. To purani value milne ka matlab hai ki order wo nahi hai jo code dekhkar lagta hai — aam taur par padhna kisi alag coroutine mein shuru hua jo pehle chal pada, ya likhne ka intezar kiye bina use chhod diya gaya, ya usi file par doosra DataStore instance bana jo daud haar gaya. Aakhri wala aajkal ki versions mein isiliye phenkta hai kyunki pehle wo yahi lakshan paida karta tha. Seekh ye hai ki jab koi system koi mazboot guarantee deta hai, to usse ulta dikhta lakshan lagbhag hamesha aapki apni concurrency ka suraag hota hai, library ka nahi."
+/>
+
+## Do roop, aur unka sauda
+
+<Compare
+  left={{
+    title: "Preferences DataStore",
+    subtitle: "Key-value, bina type ke",
+    accent: "emerald",
+    points: [
+      "+ Pehle se likhe SharedPreferences wale code jaisi hi shakal",
+      "+ Na schema, na codegen, batane ko kuch nahi",
+      "- Key mein galti chupchap default ban jati hai, error nahi",
+      "- Koi type safety nahi: type key batati hai, manwata koi nahi",
+    ],
+  }}
+  right={{
+    title: "Proto DataStore",
+    subtitle: "Type wala schema",
+    accent: "violet",
+    points: [
+      "+ Schema khud ek type hai, to fields compile waqt check hote hain",
+      "+ Defaults aur dhancha ek hi jagah bataye jate hain",
+      "+ Andaruni aur doharaye jane wale fields theek se sambhalta hai",
+      "- Ek .proto file aur protobuf plugin chahiye",
+    ],
+  }}
+/>
+
+Gine-chune flags ke liye Preferences hi sahi default hai. Proto apni taiyari tab wasool karta hai jab
+rakhi jane wali shakal sach mein koi object ho, jiske kai fields saath-saath badalte hon — aisi user
+settings jinhe aapas mein mel khana hai, ya koi rakha hua session.
+
+<Detail summary="SharedPreferences se bina kuch khoye aana">
+DataStore purani file ek baar padhta hai aur phir use chhod deta hai:
+
+```kotlin title="Migration.kt" numbered
+private val Context.dataStore by preferencesDataStore(
+    name = "settings",
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, "settings"))
+    },
+)
+```
+
+Migration pehli baar chhoone par chalta hai, har key utha lata hai, aur safal hone par purani file
+mita deta hai. Wo dobara chalane par bhi wahi karta hai, to beech mein crash hone par mool file
+sahi-salamat rehti hai aur wo bas dobara chal jata hai.
+
+Do baatein theek rakhni hain. Ek-ek key ke bajaye sab kuch ek saath laiye, warna ek hi setting ke do
+thikane ban jate hain aur aisa bug milta hai jo is par tika hai ki aakhri baar kis screen ne likha.
+Aur `SharedPreferences` ki file khud mat mitaiye — wo migration ka kaam hai, aur use jaldi hatane ka
+matlab hai ki migration ke dauran crash hone wala user apni settings kho deta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo ek mushkil ke badle doosri le aati hain">
+**Ek file par do instances.** Delegate isi ko rokne ke liye hai; har call par haath se `DataStore`
+banana phenkta hai, aur pehle bigad bhi deta tha.
+
+**`data` par `catch` na hona.** Bigdi hui file us screen par crash ban jati hai jo use collect karti
+hai.
+
+**Value saath-saath padhne ke liye `runBlocking`.** Ye theek wahi main-thread rukavat wapas le aata
+hai jise DataStore ne hataya tha, aam taur par app ke shuru hone mein, jahan wo sabse zyada dikhti
+hai.
+
+**Bada ya dhanche wala data rakhna.** Har edit par wo poori file dobara likhta hai, to wo settings
+aur flags ke liye hai. Records ki list Room ki table hai.
+
+**Ek-ek key karke migrate karna.** Ek setting ke do thikane, aur aisa behaviour jo is par tika hai ki
+aakhri baar kis screen ne likha.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi ek `SharedPreferences` flag ko DataStore se badliye aur use ek saath do screens se dekhiye.
+2. `SharedPreferencesMigration` jodiye aur kisi file browser se pakka kijiye ki purani XML gayab ho
+   gayi.
+3. DataStore ki file jaanbujhkar bigadiye aur crash dekhiye, phir `catch` jodkar defaults dekhiye.
+4. Ek preference likhiye aur usi coroutine mein `first()` se wapas padhiye, phir do alag `launch`
+   blocks mein, aur dono milaiye.
+5. Kisi composable ki body se bina scope ke suspend wali likhai bulaiye aur compile ki error padhiye
+   — wahi error API ka apna kaam karna hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `SharedPreferences` | File ke upar saath-saath chalne wali; `apply()` bhi `onPause` par atkata hai |
+| DataStore | Padhne ko `Flow`, likhne ko `suspend` |
+| `preferencesDataStore` | Delegate, jo har file par ek instance manwata hai |
+| `edit {}` | Likha hua pakka hone tak rukta hai |
+| `data` par `catch` | Bigdi file defaults ban jati hai, aapke faisle se |
+| Preferences | Bina type wala key-value; galti chupchap default |
+| Proto | Type wala schema; `.proto` aur plugin chahiye |
+| `SharedPreferencesMigration` | Ek baar chalta hai, dobara chalne layak, purani file mitata hai |
+| Kiske liye galat | Lists aur records — wo Room hai |
+| Kabhi nahi | Use saath-saath padhne ke liye `runBlocking` |
+
+<Interview title="Ek sawal, jiske achhe jawab mein ANR ka naam aata hai">
+"SharedPreferences ki jagah DataStore kyun?"
+
+Kyunki `SharedPreferences` kisi file ke upar saath-saath chalne wali cheez hai aur main thread se
+likhne ka koi safe tarika hai hi nahi. `commit()` khulkar rokta hai, aur `apply()` sirf alag thread
+wala dikhta hai — Android `onPause` aur `onStop` ke dauran bache hue likhne ke kaamon ko rukkar poora
+karata hai, to dheemi disk ek main-thread rukavat ban jati hai jo aapke apne code mein kahin nahi
+dikhti. Wo ANR ki asli wajah hai aur aapke methods ke profiler trace mein adrishya hai.
+
+DataStore lakshan nahi, gunjaish hatata hai: padhna `Flow` hai aur likhna `suspend`, to main thread
+rukta hi nahi kyunki API use rukne nahi deti. Wo errors ko saaf bhi kar deta hai — bigdi file chupchap
+defaults lautane ke bajaye flow mein dikhti hai — aur padhna likhne ko order se dekhta hai, jiska wada
+`apply()` ne kabhi kiya hi nahi.
+</Interview>

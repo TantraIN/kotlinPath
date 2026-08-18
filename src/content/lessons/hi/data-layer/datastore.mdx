@@ -1,0 +1,205 @@
+---
+title: DataStore, SharedPreferences की जगह लेने वाला
+description: SharedPreferences में लिखने के दो तरीके हैं और दोनों main thread पर गलत हैं। DataStore उनकी जगह एक Flow और एक suspend function रखता है, जो सुनने में जितना बड़ा बदलाव लगता है उससे छोटा है और ANR की एक असली किस्म खत्म कर देता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`SharedPreferences` किसी file के ऊपर एक साथ-साथ चलने वाली API है, तो उसका पढ़ना रोकता है और उसके
+दोनों लिखने के तरीके main thread को अटका सकते हैं। DataStore वही काम है, बस **पढ़ने के लिए `Flow`
+और लिखने के लिए `suspend` function** के साथ — रुकावट इसलिए गई कि API अब उसे माँगने ही नहीं देती।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+जाना-पहचाना रूप:
+
+```kotlin title="Prefs.kt" numbered
+val prefs = context.getSharedPreferences("settings", MODE_PRIVATE)   // पूरी file पढ़ता है
+val dark = prefs.getBoolean("dark_mode", false)                      // रोक सकता है
+
+prefs.edit().putBoolean("dark_mode", true).apply()                   // तुरंत लौटता है...
+```
+
+तीन लाइनों में तीन दिक्कतें छिपी हैं।
+
+`getSharedPreferences` पहली बार छूने पर पूरी XML file पढ़ता और parse करता है। अंदर से वह अलग thread
+पर होता है, पर उसके पूरा होने से पहले किया गया कोई भी `get` उसके पूरा होने तक **रोक देता है**।
+
+`apply()` तुरंत लौटता है और पीछे किसी thread पर लिखता है — जो तब तक सुरक्षित लगता है जब तक आपको पता
+न चले कि Android `onPause` और `onStop` के दौरान हर बचे हुए `apply()` को साथ-साथ रुककर पूरा कराता
+है। उस पल की धीमी disk एक ऐसी main-thread रुकावट है जो आपने लिखी नहीं और अपने code में दिखती भी
+नहीं।
+
+और `commit()` रोकने के बारे में ईमानदार है, इसीलिए लोग `apply()` उठाते हैं और ऊपर वाली दिक्कत विरासत
+में पा जाते हैं।
+
+DataStore वाला रूप:
+
+```kotlin title="SettingsRepository.kt" numbered
+private val Context.dataStore by preferencesDataStore(name = "settings")
+
+class SettingsRepository(private val context: Context) {
+
+    private object Keys {
+        val DARK_MODE = booleanPreferencesKey("dark_mode")
+    }
+
+    val darkMode: Flow<Boolean> = context.dataStore.data
+        .map { it[Keys.DARK_MODE] ?: false }
+
+    suspend fun setDarkMode(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.DARK_MODE] = enabled }
+    }
+}
+```
+
+पढ़ना एक `Flow` है, तो dark mode देख रही कोई screen तब बदलती है जब कोई दूसरी screen उसे बदले। लिखना
+`suspend` है, तो आप उसे गलती से main thread पर नहीं कर सकते। इनमें से कोई भी सुविधा नहीं है — यह API
+का आपको वह bug लिखने ही न देना है।
+
+<Note>
+`preferencesDataStore` एक property delegate है, और वजह है: वह हर file के लिए हर process में एक ही
+instance मनवाता है। एक ही file पर दो `DataStore` objects `IllegalStateException` फेंकते हैं, और यह
+जानबूझकर है — साथ-साथ चलने की जो गारंटियाँ हैं वे उसी इकलौते instance से टिकती हैं।
+</Note>
+
+## Errors यहाँ भी values हैं
+
+File बिगड़ सकती है। `SharedPreferences` इसे चुपचाप defaults लौटाकर सँभालता है; DataStore उस exception
+को flow में भेज देता है, और फैसला आप करते हैं:
+
+```kotlin title="Corruption.kt" numbered
+val darkMode: Flow<Boolean> = context.dataStore.data
+    .catch { e ->
+        if (e is IOException) emit(emptyPreferences())    // crash के बजाय नए सिरे से शुरू
+        else throw e
+    }
+    .map { it[Keys.DARK_MODE] ?: false }
+```
+
+उस `catch` के बिना, न पढ़ी जा सकने वाली file उस screen को गिरा देती है जो उसे collect कर रही है।
+उसके साथ ऐप defaults पर लौट आता है — वही नतीजा जो `SharedPreferences` देता है, बस अब वह आपका किया
+हुआ फैसला है, विरासत में मिला हुआ नहीं।
+
+<Quiz
+  question="कोई settings screen एक preference लिखती है और तुरंत उसे `dataStore.data.first()` से वापस पढ़ती है। धीमे device पर कभी-कभी पुरानी value मिलती है। क्यों?"
+  options={[
+    "DataStore पढ़ने को cache करता है, तो लिखने ने अभी cache हटाया नहीं है",
+    "ऐसा होता ही नहीं — `edit` तब तक रुकता है जब तक लिखा हुआ पक्का न हो जाए, तो उसके बाद का हर पढ़ना नई value देखता है। Bug कहीं और है: लिखने से पहले पढ़ना, या किसी दूसरे DataStore instance पर पढ़ना",
+    "`first()` हमेशा cache वाली शुरुआती value लौटाता है और आपको `drop(1)` चाहिए",
+  ]}
+  answer={1}
+  explanation="DataStore इसी गारंटी के लिए है, और इसे साफ-साफ कहना जरूरी है: edit तब तक रुकता है जब तक बदलाव लग न जाए और data disk पर लिख न जाए, तो उसके बाद क्रम में आने वाला कोई भी पढ़ना नई value देखता है। SharedPreferences.apply() ठीक यही वादा नहीं करता। तो पुरानी value मिलने का मतलब है कि क्रम वह नहीं है जो code देखकर लगता है — आमतौर पर पढ़ना किसी अलग coroutine में शुरू हुआ जो पहले चल पड़ा, या लिखने का इंतजार किए बिना उसे छोड़ दिया गया, या उसी file पर दूसरा DataStore instance बना जो दौड़ हार गया। आखिरी वाला आजकल की versions में इसीलिए फेंकता है क्योंकि पहले वह यही लक्षण पैदा करता था। सीख यह है कि जब कोई system कोई मजबूत गारंटी देता है, तो उससे उलटा दिखता लक्षण लगभग हमेशा आपकी अपनी concurrency का सुराग होता है, library का नहीं।"
+/>
+
+## दो रूप, और उनका सौदा
+
+<Compare
+  left={{
+    title: "Preferences DataStore",
+    subtitle: "Key-value, बिना type के",
+    accent: "emerald",
+    points: [
+      "+ पहले से लिखे SharedPreferences वाले code जैसी ही शक्ल",
+      "+ न schema, न codegen, बताने को कुछ नहीं",
+      "- Key में गलती चुपचाप default बन जाती है, error नहीं",
+      "- कोई type safety नहीं: type key बताती है, मनवाता कोई नहीं",
+    ],
+  }}
+  right={{
+    title: "Proto DataStore",
+    subtitle: "Type वाला schema",
+    accent: "violet",
+    points: [
+      "+ Schema खुद एक type है, तो fields compile वक्त जाँचे जाते हैं",
+      "+ Defaults और ढाँचा एक ही जगह बताए जाते हैं",
+      "+ अंदरूनी और दोहराए जाने वाले fields ठीक से सँभालता है",
+      "- एक .proto file और protobuf plugin चाहिए",
+    ],
+  }}
+/>
+
+गिने-चुने flags के लिए Preferences ही सही डिफॉल्ट है। Proto अपनी तैयारी तब वसूल करता है जब रखी जाने
+वाली शक्ल सच में कोई object हो, जिसके कई fields साथ-साथ बदलते हों — ऐसी user settings जिन्हें आपस
+में मेल खाना है, या कोई रखा हुआ session।
+
+<Detail summary="SharedPreferences से बिना कुछ खोए आना">
+DataStore पुरानी file एक बार पढ़ता है और फिर उसे छोड़ देता है:
+
+```kotlin title="Migration.kt" numbered
+private val Context.dataStore by preferencesDataStore(
+    name = "settings",
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, "settings"))
+    },
+)
+```
+
+Migration पहली बार छूने पर चलता है, हर key उठा लाता है, और सफल होने पर पुरानी file मिटा देता है। वह
+दोबारा चलाने पर भी वही करता है, तो बीच में crash होने पर मूल file सही-सलामत रहती है और वह बस दोबारा
+चल जाता है।
+
+दो बातें ठीक रखनी हैं। एक-एक key के बजाय सब कुछ एक साथ लाइए, वरना एक ही setting के दो ठिकाने बन जाते
+हैं और ऐसा bug मिलता है जो इस पर टिका है कि आखिरी बार किस screen ने लिखा। और `SharedPreferences` की
+file खुद मत मिटाइए — वह migration का काम है, और उसे जल्दी हटाने का मतलब है कि migration के दौरान
+crash होने वाला user अपनी settings खो देता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो एक दिक्कत के बदले दूसरी ले आती हैं">
+**एक file पर दो instances।** Delegate इसी को रोकने के लिए है; हर call पर हाथ से `DataStore` बनाना
+फेंकता है, और पहले बिगाड़ भी देता था।
+
+**`data` पर `catch` न होना।** बिगड़ी हुई file उस screen पर crash बन जाती है जो उसे collect करती है।
+
+**Value साथ-साथ पढ़ने के लिए `runBlocking`।** यह ठीक वही main-thread रुकावट वापस ले आता है जिसे
+DataStore ने हटाया था, आमतौर पर ऐप के शुरू होने में, जहाँ वह सबसे ज्यादा दिखती है।
+
+**बड़ा या ढाँचे वाला data रखना।** हर edit पर वह पूरी file दोबारा लिखता है, तो वह settings और flags
+के लिए है। Records की list Room की table है।
+
+**एक-एक key करके migrate करना।** एक setting के दो ठिकाने, और ऐसा बर्ताव जो इस पर टिका है कि आखिरी
+बार किस screen ने लिखा।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी एक `SharedPreferences` flag को DataStore से बदलिए और उसे एक साथ दो screens से देखिए।
+2. `SharedPreferencesMigration` जोड़िए और किसी file browser से पक्का कीजिए कि पुरानी XML गायब हो गई।
+3. DataStore की file जानबूझकर बिगाड़िए और crash देखिए, फिर `catch` जोड़कर defaults देखिए।
+4. एक preference लिखिए और उसी coroutine में `first()` से वापस पढ़िए, फिर दो अलग `launch` blocks में,
+   और दोनों मिलाइए।
+5. किसी composable की body से बिना scope के suspend वाली लिखाई बुलाइए और compile की error पढ़िए —
+   वही error API का अपना काम करना है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `SharedPreferences` | File के ऊपर साथ-साथ चलने वाली; `apply()` भी `onPause` पर अटकाता है |
+| DataStore | पढ़ने को `Flow`, लिखने को `suspend` |
+| `preferencesDataStore` | Delegate, जो हर file पर एक instance मनवाता है |
+| `edit {}` | लिखा हुआ पक्का होने तक रुकता है |
+| `data` पर `catch` | बिगड़ी file defaults बन जाती है, आपके फैसले से |
+| Preferences | बिना type वाला key-value; गलती चुपचाप default |
+| Proto | Type वाला schema; `.proto` और plugin चाहिए |
+| `SharedPreferencesMigration` | एक बार चलता है, दोबारा चलने लायक, पुरानी file मिटाता है |
+| किसके लिए गलत | Lists और records — वह Room है |
+| कभी नहीं | उसे साथ-साथ पढ़ने के लिए `runBlocking` |
+
+<Interview title="एक सवाल, जिसके अच्छे जवाब में ANR का नाम आता है">
+"SharedPreferences की जगह DataStore क्यों?"
+
+क्योंकि `SharedPreferences` किसी file के ऊपर साथ-साथ चलने वाली चीज है और main thread से लिखने का कोई
+सुरक्षित तरीका है ही नहीं। `commit()` खुलकर रोकता है, और `apply()` सिर्फ अलग thread वाला दिखता है —
+Android `onPause` और `onStop` के दौरान बचे हुए लिखने के कामों को रुककर पूरा कराता है, तो धीमी disk
+एक main-thread रुकावट बन जाती है जो आपके अपने code में कहीं नहीं दिखती। वह ANR की असली वजह है और
+आपके methods के profiler trace में अदृश्य है।
+
+DataStore लक्षण नहीं, गुंजाइश हटाता है: पढ़ना `Flow` है और लिखना `suspend`, तो main thread रुकता ही
+नहीं क्योंकि API उसे रुकने नहीं देती। वह errors को साफ भी कर देता है — बिगड़ी file चुपचाप defaults
+लौटाने के बजाय flow में दिखती है — और पढ़ना लिखने को क्रम से देखता है, जिसका वादा `apply()` ने कभी
+किया ही नहीं।
+</Interview>

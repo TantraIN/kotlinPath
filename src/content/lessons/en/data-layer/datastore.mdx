@@ -1,0 +1,204 @@
+---
+title: DataStore, the replacement for SharedPreferences
+description: SharedPreferences has two ways to write and both are wrong on the main thread. DataStore replaces them with a Flow and a suspend function, which is a smaller change than it sounds and fixes a real class of ANR.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`SharedPreferences` is a synchronous API over a file, so its reads block and both of its writes can
+stall the main thread. DataStore is the same job with a **`Flow` for reading and a `suspend`
+function for writing** — the blocking is gone because the API no longer lets you ask for it.
+</KeyIdea>
+
+## Why this matters
+
+The familiar version:
+
+```kotlin title="Prefs.kt" numbered
+val prefs = context.getSharedPreferences("settings", MODE_PRIVATE)   // reads the whole file
+val dark = prefs.getBoolean("dark_mode", false)                      // may block
+
+prefs.edit().putBoolean("dark_mode", true).apply()                   // returns immediately...
+```
+
+Three problems hide in three lines.
+
+`getSharedPreferences` loads and parses the entire XML file on first access. It is asynchronous
+internally, but any `get` before that finishes **blocks** until it does.
+
+`apply()` returns immediately and writes on a background thread — which sounds safe until you learn
+that Android flushes every pending `apply()` synchronously during `onPause` and `onStop`. A slow
+disk at that moment is a main-thread stall you did not write and cannot see in your own code.
+
+And `commit()` is honest about blocking, which is why people reach for `apply()` and inherit the
+problem above.
+
+The DataStore version:
+
+```kotlin title="SettingsRepository.kt" numbered
+private val Context.dataStore by preferencesDataStore(name = "settings")
+
+class SettingsRepository(private val context: Context) {
+
+    private object Keys {
+        val DARK_MODE = booleanPreferencesKey("dark_mode")
+    }
+
+    val darkMode: Flow<Boolean> = context.dataStore.data
+        .map { it[Keys.DARK_MODE] ?: false }
+
+    suspend fun setDarkMode(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.DARK_MODE] = enabled }
+    }
+}
+```
+
+Reading is a `Flow`, so a screen observing dark mode updates when any other screen changes it.
+Writing is `suspend`, so you cannot do it on the main thread by accident. Neither of those is a
+convenience — they are the API refusing to let you write the bug.
+
+<Note>
+`preferencesDataStore` is a property delegate for a reason: it enforces one instance per file per
+process. Two `DataStore` objects over the same file throw `IllegalStateException`, and that is
+deliberate — the single instance is what makes the concurrency guarantees hold.
+</Note>
+
+## Errors are values here too
+
+A file can be corrupt. `SharedPreferences` handles that by silently returning defaults; DataStore
+emits an exception into the flow, and you decide:
+
+```kotlin title="Corruption.kt" numbered
+val darkMode: Flow<Boolean> = context.dataStore.data
+    .catch { e ->
+        if (e is IOException) emit(emptyPreferences())    // start fresh rather than crash
+        else throw e
+    }
+    .map { it[Keys.DARK_MODE] ?: false }
+```
+
+Without that `catch`, an unreadable file crashes the screen collecting it. With it, the app falls
+back to defaults — the same outcome `SharedPreferences` gives you, except now it is a decision you
+made rather than one you inherited.
+
+<Quiz
+  question="A settings screen writes a preference and immediately reads it back with `dataStore.data.first()`. On a slow device the read sometimes returns the old value. Why?"
+  options={[
+    "DataStore caches reads, so the write has not invalidated the cache yet",
+    "It does not — `edit` suspends until the write is durable, so a read after it always sees the new value. The bug is elsewhere: reading before the write, or on a different DataStore instance",
+    "`first()` always returns the cached initial value and you need `drop(1)`",
+  ]}
+  answer={1}
+  explanation="This is the guarantee DataStore exists to provide, and it is worth being precise about: edit suspends until the transform has been applied and the data written to disk, so any read ordered after it observes the new value. That is exactly what SharedPreferences.apply() does not promise. So a stale read means the ordering is not what the code looks like — commonly the read was launched in a separate coroutine that started first, or the write was fired without awaiting it, or a second DataStore instance was created over the same file and lost the race. The last one throws in current versions precisely because it used to produce this symptom. The lesson is that when a system offers a strong ordering guarantee, a symptom that contradicts it is nearly always a clue about your own concurrency rather than the library's."
+/>
+
+## Two flavours, and the trade
+
+<Compare
+  left={{
+    title: "Preferences DataStore",
+    subtitle: "Key-value, untyped",
+    accent: "emerald",
+    points: [
+      "+ Drop-in shape for existing SharedPreferences code",
+      "+ No schema, no codegen, nothing to define",
+      "- A typo in a key is a silent default, not an error",
+      "- No type safety: the key declares the type, nothing enforces it",
+    ],
+  }}
+  right={{
+    title: "Proto DataStore",
+    subtitle: "A typed schema",
+    accent: "violet",
+    points: [
+      "+ The schema is a type, so fields are checked at compile time",
+      "+ Defaults and structure are declared in one place",
+      "+ Handles nested and repeated fields properly",
+      "- Needs a .proto file and the protobuf plugin",
+    ],
+  }}
+/>
+
+Preferences is the right default for a handful of flags. Proto earns its setup when the stored shape
+is a real object with several fields that change together — user settings that must stay consistent,
+or a cached session.
+
+<Detail summary="Migrating from SharedPreferences without losing anything">
+DataStore reads the old file once and then leaves it alone:
+
+```kotlin title="Migration.kt" numbered
+private val Context.dataStore by preferencesDataStore(
+    name = "settings",
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, "settings"))
+    },
+)
+```
+
+The migration runs on first access, copies every key across, and deletes the old file when it
+succeeds. It is idempotent, so a crash halfway leaves the original intact and it simply runs again.
+
+Two things to get right. Migrate everything at once rather than key by key, or you end up with two
+sources of truth for the same setting and a bug that depends on which screen wrote last. And do not
+delete the `SharedPreferences` file yourself — the migration owns that, and removing it early means
+a user who crashes during the migration loses their settings.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that trade one problem for another">
+**Two instances over one file.** The delegate exists to prevent this; creating a `DataStore`
+manually per call throws, and used to corrupt.
+
+**No `catch` on `data`.** A corrupt file becomes a crash on whichever screen collects it.
+
+**`runBlocking` to read a value synchronously.** This puts back the exact main-thread block DataStore
+removed, usually in application startup where it is most visible.
+
+**Storing large or structured data.** It rewrites the whole file on every edit, so it is for settings
+and flags. A list of records is a Room table.
+
+**Migrating one key at a time.** Two sources of truth for one setting, and behaviour that depends on
+which screen wrote last.
+</Pitfall>
+
+## Practice
+
+1. Replace one `SharedPreferences` flag with DataStore and observe it from two screens at once.
+2. Add `SharedPreferencesMigration` and confirm with a file browser that the old XML disappears.
+3. Corrupt the DataStore file deliberately and watch the crash, then add the `catch` and watch the
+   defaults.
+4. Write a preference and read it back with `first()` in the same coroutine, then in two separate
+   `launch` blocks, and compare.
+5. Call a suspend write from a composable body without a scope and read the compile error — that
+   error is the API doing its job.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `SharedPreferences` | Synchronous over a file; `apply()` still stalls at `onPause` |
+| DataStore | `Flow` to read, `suspend` to write |
+| `preferencesDataStore` | Delegate enforcing one instance per file |
+| `edit {}` | Suspends until the write is durable |
+| `catch` on `data` | A corrupt file becomes defaults, by your decision |
+| Preferences | Untyped key-value; a typo is a silent default |
+| Proto | A typed schema; needs a `.proto` and the plugin |
+| `SharedPreferencesMigration` | Runs once, idempotent, deletes the old file |
+| Wrong tool for | Lists and records — that is Room |
+| Never | `runBlocking` to read it synchronously |
+
+<Interview title="A question where the good answer names the ANR">
+"Why replace SharedPreferences with DataStore?"
+
+Because `SharedPreferences` is synchronous over a file and there is no safe way to write from the
+main thread. `commit()` blocks openly, and `apply()` only looks asynchronous — Android flushes
+pending writes synchronously during `onPause` and `onStop`, so a slow disk becomes a main-thread
+stall that does not appear anywhere in your own code. That is a real ANR source and it is invisible
+in a profiler trace of your methods.
+
+DataStore removes the possibility rather than the symptom: reads are a `Flow` and writes are
+`suspend`, so the main thread never blocks because the API will not let it. It also makes errors
+explicit — a corrupt file surfaces in the flow instead of silently returning defaults — and reads
+observe writes in order, which `apply()` never promised.
+</Interview>
