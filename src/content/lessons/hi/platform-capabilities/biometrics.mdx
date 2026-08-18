@@ -1,0 +1,161 @@
+---
+title: Biometric से पहचान
+description: जो biometric prompt सही लौटाए वह सुरक्षा नहीं है — वह एक boolean है जिसे कोई भी बदला हुआ ऐप लौटा सकता है। असली बचाव तब आता है जब Keystore की कोई key उस पहचान से बँधी हो, ताकि उसके बिना data पढ़ा ही न जा सके।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+"Fingerprint से login" से लोग दो अलग चीजें समझते हैं। एक है **फाटक**: prompt सफल होता है और आपका code
+आगे बढ़ जाता है — सुविधाजनक, और उस हमलावर के सामने बेकार जिसके हाथ में device है। दूसरी उस पहचान से
+**Keystore की key** बाँध देती है, तो user के पहचान बताने तक data खुल ही नहीं सकता। सुरक्षा सिर्फ दूसरी
+है।
+</KeyIdea>
+
+## Prompt
+
+```kotlin title="Biometrics.kt" numbered
+val manager = BiometricManager.from(context)
+
+when (manager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)) {
+    BiometricManager.BIOMETRIC_SUCCESS -> showPrompt()
+    BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> promptToEnrol()
+    BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
+    BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> fallToPassword()
+    else -> fallToPassword()
+}
+
+val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+        val cipher = result.cryptoObject?.cipher ?: return    // cipher नहीं, तो सुरक्षा नहीं
+        unlock(cipher)
+    }
+    override fun onAuthenticationError(code: Int, message: CharSequence) {
+        if (code == BiometricPrompt.ERROR_NEGATIVE_BUTTON) fallToPassword()
+    }
+    override fun onAuthenticationFailed() { /* एक गलत उँगली; prompt खुला रहता है */ }
+})
+```
+
+`onAuthenticationFailed` और `onAuthenticationError` अलग हैं और अक्सर उलझा दिए जाते हैं। `Failed` का
+मतलब है कि यह कोशिश मेल नहीं खाई और prompt अब भी खुला है — कुछ भी बंद मत कीजिए। `Error` का मतलब है कि
+बात खत्म: रद्द हुआ, ताला लग गया, या hardware ही नहीं।
+
+`BIOMETRIC_STRONG` वह श्रेणी है जिसे किसी key से बाँधा जा सकता है। `BIOMETRIC_WEAK` — कुछ चेहरे वाले
+और पुराने fingerprint वाले तरीके — नहीं बाँधे जा सकते, तो `WEAK` के साथ `CryptoObject` चलेगा ही नहीं।
+यह असुविधा नहीं है; यह platform का बहाना करने से इनकार है।
+
+<Quiz
+  question="कोई ऐप `onAuthenticationSucceeded` चलते ही रखा हुआ auth token खोल देता है। सुरक्षा की समीक्षा उसे नामंजूर कर देती है। क्यों, जबकि fingerprint सच में मेल खाया था?"
+  options={[
+    "उसे `DEVICE_CREDENTIAL` भी लेना चाहिए, ताकि बिना fingerprint वाले users भी घुस सकें",
+    "वह सफलता वाला callback ऐप के अपने process के अंदर एक boolean भर है — कोई बदला हुआ build या hook किया गया ऐप सीधे unlock वाला रास्ता बुला सकता है, क्योंकि वह token शुरू से पढ़ा जा सकता था",
+    "`BiometricPrompt` Fragment नहीं, किसी Activity से दिखाया जाना चाहिए"
+  ]}
+  answer={1}
+  explanation="Prompt भरोसे लायक है; उससे निकाला गया नतीजा नहीं। अगर वह token तब भी खुल सकता है जब आपका process चाहे, तो पहचान बताना आपके code की एक शाखा भर है, और जो APK बदल सकता है या process से जुड़ सकता है वह दूसरी शाखा ले लेता है। Fingerprint का सच में मेल खाना इसमें कुछ नहीं बदलता, क्योंकि जाँच और data दोनों सरहद के एक ही तरफ हैं। इलाज है सरहद खिसकाना: setUserAuthenticationRequired(true) वाली Keystore की key बनाइए, उससे token को encrypt कीजिए, और CryptoObject से एक Cipher भेजिए। तब वह key hardware में रहती है और user के पहचान बताने तक वह काम करने से मना कर देती है, तो prompt छोड़ देने वाले हमलावर के हाथ सिर्फ बंद पड़ा data आता है। इसीलिए ऊपर वाला callback cipher न होने पर लौट जाता है — बिना cipher वाली सफलता ने ऐसा कुछ साबित नहीं किया जिस पर काम किया जाए।"
+/>
+
+## Key को user से बाँधना
+
+```kotlin title="Key.kt" numbered
+val spec = KeyGenParameterSpec.Builder("token_key", PURPOSE_ENCRYPT or PURPOSE_DECRYPT)
+    .setBlockModes(BLOCK_MODE_GCM)
+    .setEncryptionPaddings(ENCRYPTION_PADDING_NONE)
+    .setUserAuthenticationRequired(true)                 // यही वह लाइन है जो मायने रखती है
+    .setInvalidatedByBiometricEnrollment(true)           // नया fingerprint => key खत्म
+    .build()
+
+KeyGenerator.getInstance(KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+    init(spec)
+    generateKey()
+}
+
+prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+```
+
+`setUserAuthenticationRequired(true)` ही किसी UI के बहाव को सुरक्षा की सरहद बना देता है। Key की असली
+सामग्री सुरक्षित hardware से बाहर जाती ही नहीं, और जब तक user पहचान न बताए तब तक hardware उसे इस्तेमाल
+करने से मना कर देता है।
+
+`setInvalidatedByBiometricEnrollment(true)` का मतलब है कि नया fingerprint दर्ज होते ही वह key हमेशा के
+लिए खत्म — और बात यही है: चुराए हुए खुले phone में अपना fingerprint जोड़ने वाला फिर भी कुछ खोल नहीं
+सकता। इसका नतीजा यह है कि आपके code को `KeyPermanentlyInvalidatedException` सँभालना पड़ेगा — बंद पड़ा
+data मिटाकर user से दोबारा sign in कराइए। जो ऐप वहाँ crash करता है उसने सुरक्षा की सुविधा को support
+ticket बना दिया।
+
+<Detail summary="वापसी के रास्ते, और वह इकलौता जोड़ जो चलता ही नहीं">
+```kotlin title="Prompt.kt" numbered
+val info = BiometricPrompt.PromptInfo.Builder()
+    .setTitle(getString(R.string.unlock_title))
+    .setSubtitle(getString(R.string.unlock_subtitle))
+    .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+    .build()
+```
+
+`DEVICE_CREDENTIAL` user को अपने PIN, pattern या password पर लौटने देता है, और उसे रखना आमतौर पर सही
+है — जिसने कोई biometric दर्ज ही नहीं किया, या जिसकी उँगली गीली है, वह भी अंदर आ जाता है।
+
+जानने लायक नियम यह है कि `setNegativeButtonText` और `DEVICE_CREDENTIAL` एक साथ नहीं चलते: device का
+credential *ही* वह मना वाला button है, और दोनों रखने पर वह फेंकता है। एक चुनिए, और जब तक आपकी अपनी
+वापसी वाली screen सच में न हो, `DEVICE_CREDENTIAL` को चुनिए।
+
+जहाँ biometric key नहीं बल्कि फाटक है, वहाँ उससे आगे निकलने का रास्ता दीजिए। जो ऐप सिर्फ fingerprint
+से खुलता है वह उस user को बाहर कर देता है जिसका sensor खराब हो गया, और वह उस खतरे से बुरा नतीजा है
+जिससे वह बचा रहा था।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली ही पूरा पाठ है">
+**अकेले सफलता वाले callback पर भरोसा।** `CryptoObject` के बिना वह आपके process का एक boolean है।
+
+**`CryptoObject` के साथ `BIOMETRIC_WEAK`।** कमजोर श्रेणियाँ किसी key को सँभाल नहीं सकतीं; वह चलेगा ही
+नहीं।
+
+**`KeyPermanentlyInvalidatedException` न सँभालना।** Fingerprint दर्ज होना key खत्म कर देता है — data
+मिटाइए और दोबारा पहचान कराइए, crash मत कीजिए।
+
+**`DEVICE_CREDENTIAL` के साथ `setNegativeButtonText`।** वे एक साथ नहीं चलते और वह फेंकता है।
+
+**`Failed` और `Error` को उलझाना।** `Failed` एक गलत कोशिश है और prompt अब भी खुला है।
+</Pitfall>
+
+## अभ्यास
+
+1. बिना `CryptoObject` के पहचान बताइए, फिर unlock वाले रास्ते तक किसी और तरीके से पहुँचने की कोशिश
+   कीजिए।
+2. Keystore की key से कोई token encrypt कीजिए, पहचान बताइए, और उसे खोलिए।
+3. नया fingerprint दर्ज कीजिए और पक्का कीजिए कि आपका code खत्म हुई key सँभालता है।
+4. मना वाला button और `DEVICE_CREDENTIAL` दोनों रखिए और exception पढ़िए।
+5. तीन बार पहचान में नाकाम होइए और क्रम से log कीजिए कि कौन से callbacks चले।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| फाटक बनाम key | आपके process का एक boolean, या ऐसा data जो खुल ही न सके |
+| `CryptoObject` | जो इसे सुविधा नहीं, सुरक्षा बनाता है |
+| `BIOMETRIC_STRONG` | इकलौती श्रेणी जो Keystore की key सँभाल सकती है |
+| `setUserAuthenticationRequired` | वह लाइन जो सरहद बनाती है |
+| `setInvalidatedByBiometricEnrollment` | नया fingerprint key खत्म कर देता है, जानबूझकर |
+| `KeyPermanentlyInvalidatedException` | Data मिटाइए और दोबारा पहचान कराइए |
+| `canAuthenticate` | दिखाने से पहले जाँचिए; कुछ दर्ज न होना और hardware न होना सँभालिए |
+| `DEVICE_CREDENTIAL` | PIN वाली वापसी; मना वाले button के साथ नहीं चलता |
+| `Failed` | एक गलत कोशिश; prompt खुला रहता है |
+| `Error` | बात खत्म — रद्द, ताला लगा, या मौजूद ही नहीं |
+
+<Interview title="एक सवाल, जो सुविधा और सुरक्षा को अलग करता है">
+"संवेदनशील data बचाने के लिए क्या `BiometricPrompt` काफी है?"
+
+अकेले नहीं। सफलता वाला callback आपके अपने process के अंदर एक boolean है, तो अगर वह data तब भी खुल
+सकता है जब ऐप चाहे, तो पहचान बताना बस एक शाखा है — और जो APK बदल सकता है या process से जुड़ सकता है वह
+दूसरी शाखा ले लेता है। Prompt ईमानदार है; कमजोर वह नतीजा है जो उससे निकाला जाता है।
+
+असली बचाव का मतलब है सरहद को अपने code से बाहर ले जाना: `setUserAuthenticationRequired(true)` से बनी
+Keystore की key, उससे encrypt किया हुआ data, और `CryptoObject` से भेजा गया एक `Cipher`। वह key
+सुरक्षित hardware में रहती है और user के पहचान बताने तक काम नहीं करती, तो prompt छोड़ देने पर हमलावर
+के हाथ बंद पड़ा data रह जाता है। मैं `setInvalidatedByBiometricEnrollment(true)` भी लगाऊँगा, ताकि
+चुराए हुए phone में fingerprint जोड़ना उस key को खत्म कर दे — और
+`KeyPermanentlyInvalidatedException` को data मिटाकर तथा user से दोबारा sign in कराकर सँभालूँगा, crash
+करके नहीं।
+</Interview>

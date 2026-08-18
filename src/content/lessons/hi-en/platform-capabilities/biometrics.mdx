@@ -1,0 +1,163 @@
+---
+title: Biometric se pehchan
+description: Jo biometric prompt sahi lautaye wo suraksha nahi hai — wo ek boolean hai jise koi bhi badla hua app lauta sakta hai. Asli bachav tab aata hai jab Keystore ki koi key us pehchan se bandhi ho, taki uske bina data padha hi na ja sake.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+"Fingerprint se login" se log do alag cheezein samajhte hain. Ek hai **phaatak**: prompt safal hota hai
+aur aapka code aage badh jata hai — suvidhajanak, aur us hamlawar ke saamne bekaar jiske haath mein
+device hai. Doosri us pehchan se **Keystore ki key** baandh deti hai, to user ke pehchan batane tak
+data khul hi nahi sakta. Suraksha sirf doosri hai.
+</KeyIdea>
+
+## Prompt
+
+```kotlin title="Biometrics.kt" numbered
+val manager = BiometricManager.from(context)
+
+when (manager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)) {
+    BiometricManager.BIOMETRIC_SUCCESS -> showPrompt()
+    BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> promptToEnrol()
+    BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
+    BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> fallToPassword()
+    else -> fallToPassword()
+}
+
+val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+        val cipher = result.cryptoObject?.cipher ?: return    // cipher nahi, to suraksha nahi
+        unlock(cipher)
+    }
+    override fun onAuthenticationError(code: Int, message: CharSequence) {
+        if (code == BiometricPrompt.ERROR_NEGATIVE_BUTTON) fallToPassword()
+    }
+    override fun onAuthenticationFailed() { /* ek galat ungli; prompt khula rehta hai */ }
+})
+```
+
+`onAuthenticationFailed` aur `onAuthenticationError` alag hain aur aksar uljha diye jate hain. `Failed`
+ka matlab hai ki ye koshish mel nahi khai aur prompt ab bhi khula hai — kuch bhi band mat kijiye.
+`Error` ka matlab hai ki baat khatam: radd hua, taala lag gaya, ya hardware hi nahi.
+
+`BIOMETRIC_STRONG` wo shreni hai jise kisi key se baandha ja sakta hai. `BIOMETRIC_WEAK` — kuch chehre
+wale aur purane fingerprint wale tarike — nahi baandhe ja sakte, to `WEAK` ke saath `CryptoObject`
+chalega hi nahi. Ye asuvidha nahi hai; ye platform ka bahana karne se inkaar hai.
+
+<Quiz
+  question="Koi app `onAuthenticationSucceeded` chalte hi rakha hua auth token khol deta hai. Suraksha ki sameeksha use namanzoor kar deti hai. Kyun, jabki fingerprint sach mein mel khaya tha?"
+  options={[
+    "Use `DEVICE_CREDENTIAL` bhi lena chahiye, taki bina fingerprint wale users bhi ghus sakein",
+    "Wo safalta wala callback app ke apne process ke andar ek boolean bhar hai — koi badla hua build ya hook kiya gaya app seedhe unlock wala raasta bula sakta hai, kyunki wo token shuru se padha ja sakta tha",
+    "`BiometricPrompt` Fragment nahi, kisi Activity se dikhaya jana chahiye"
+  ]}
+  answer={1}
+  explanation="Prompt bharose layak hai; usse nikala gaya result nahi. Agar wo token tab bhi khul sakta hai jab aapka process chahe, to pehchan batana aapke code ki ek shakha bhar hai, aur jo APK badal sakta hai ya process se jud sakta hai wo doosri shakha le leta hai. Fingerprint ka sach mein mel khana ismein kuch nahi badalta, kyunki check aur data dono sarhad ke ek hi taraf hain. Ilaaj hai sarhad khiskana: setUserAuthenticationRequired(true) wali Keystore ki key banaiye, usse token ko encrypt kijiye, aur CryptoObject se ek Cipher bhejiye. Tab wo key hardware mein rehti hai aur user ke pehchan batane tak wo kaam karne se mana kar deti hai, to prompt chhod dene wale hamlawar ke haath sirf band pada data aata hai. Isiliye upar wala callback cipher na hone par laut jata hai — bina cipher wali safalta ne aisa kuch sabit nahi kiya jis par kaam kiya jaye."
+/>
+
+## Key ko user se baandhna
+
+```kotlin title="Key.kt" numbered
+val spec = KeyGenParameterSpec.Builder("token_key", PURPOSE_ENCRYPT or PURPOSE_DECRYPT)
+    .setBlockModes(BLOCK_MODE_GCM)
+    .setEncryptionPaddings(ENCRYPTION_PADDING_NONE)
+    .setUserAuthenticationRequired(true)                 // yahi wo line hai jo maayne rakhti hai
+    .setInvalidatedByBiometricEnrollment(true)           // naya fingerprint => key khatam
+    .build()
+
+KeyGenerator.getInstance(KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+    init(spec)
+    generateKey()
+}
+
+prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+```
+
+`setUserAuthenticationRequired(true)` hi kisi UI ke bahav ko suraksha ki sarhad bana deta hai. Key ki
+asli samagri surakshit hardware se bahar jati hi nahi, aur jab tak user pehchan na bataye tab tak
+hardware use istemal karne se mana kar deta hai.
+
+`setInvalidatedByBiometricEnrollment(true)` ka matlab hai ki naya fingerprint darj hote hi wo key
+hamesha ke liye khatam — aur baat yahi hai: churaye hue khule phone mein apna fingerprint jodne wala
+phir bhi kuch khol nahi sakta. Iska anjaam ye hai ki aapke code ko `KeyPermanentlyInvalidatedException`
+sambhalna padega — band pada data mitakar user se dobara sign in karaiye. Jo app wahan crash karta hai
+usne suraksha ki suvidha ko support ticket bana diya.
+
+<Detail summary="Wapsi ke raaste, aur wo iklauta jod jo chalta hi nahi">
+```kotlin title="Prompt.kt" numbered
+val info = BiometricPrompt.PromptInfo.Builder()
+    .setTitle(getString(R.string.unlock_title))
+    .setSubtitle(getString(R.string.unlock_subtitle))
+    .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+    .build()
+```
+
+`DEVICE_CREDENTIAL` user ko apne PIN, pattern ya password par lautne deta hai, aur use rakhna aam taur
+par sahi hai — jisne koi biometric darj hi nahi kiya, ya jiski ungli geeli hai, wo bhi andar aa jata
+hai.
+
+Janne layak niyam ye hai ki `setNegativeButtonText` aur `DEVICE_CREDENTIAL` ek saath nahi chalte:
+device ka credential *hi* wo mana wala button hai, aur dono rakhne par wo phenkta hai. Ek chuniye, aur
+jab tak aapki apni wapsi wali screen sach mein na ho, `DEVICE_CREDENTIAL` ko chuniye.
+
+Jahan biometric key nahi balki phaatak hai, wahan usse aage nikalne ka raasta dijiye. Jo app sirf
+fingerprint se khulta hai wo us user ko bahar kar deta hai jiska sensor kharab ho gaya, aur wo us khatre
+se bura anjaam hai jisse wo bacha raha tha.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli hi poora lesson hai">
+**Akele safalta wale callback par bharosa.** `CryptoObject` ke bina wo aapke process ka ek boolean hai.
+
+**`CryptoObject` ke saath `BIOMETRIC_WEAK`.** Kamzor shreniyan kisi key ko sambhal nahi saktin; wo
+chalega hi nahi.
+
+**`KeyPermanentlyInvalidatedException` na sambhalna.** Fingerprint darj hona key khatam kar deta hai —
+data mitaiye aur dobara pehchan karaiye, crash mat kijiye.
+
+**`DEVICE_CREDENTIAL` ke saath `setNegativeButtonText`.** Wo ek saath nahi chalte aur wo phenkta hai.
+
+**`Failed` aur `Error` ko uljhana.** `Failed` ek galat koshish hai aur prompt ab bhi khula hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Bina `CryptoObject` ke pehchan bataiye, phir unlock wale raaste tak kisi aur tarike se pahunchne ki
+   koshish kijiye.
+2. Keystore ki key se koi token encrypt kijiye, pehchan bataiye, aur use kholiye.
+3. Naya fingerprint darj kijiye aur pakka kijiye ki aapka code khatam hui key sambhalta hai.
+4. Mana wala button aur `DEVICE_CREDENTIAL` dono rakhiye aur exception padhiye.
+5. Teen baar pehchan mein nakaam hoiye aur order se log kijiye ki kaun se callbacks chale.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Phaatak banam key | Aapke process ka ek boolean, ya aisa data jo khul hi na sake |
+| `CryptoObject` | Jo ise suvidha nahi, suraksha banata hai |
+| `BIOMETRIC_STRONG` | Iklauti shreni jo Keystore ki key sambhal sakti hai |
+| `setUserAuthenticationRequired` | Wo line jo sarhad banati hai |
+| `setInvalidatedByBiometricEnrollment` | Naya fingerprint key khatam kar deta hai, jaanbujhkar |
+| `KeyPermanentlyInvalidatedException` | Data mitaiye aur dobara pehchan karaiye |
+| `canAuthenticate` | Dikhane se pehle check kijiye; kuch darj na hona aur hardware na hona sambhaliye |
+| `DEVICE_CREDENTIAL` | PIN wali wapsi; mana wale button ke saath nahi chalta |
+| `Failed` | Ek galat koshish; prompt khula rehta hai |
+| `Error` | Baat khatam — radd, taala laga, ya maujood hi nahi |
+
+<Interview title="Ek sawal, jo suvidha aur suraksha ko alag karta hai">
+"Sanvedansheel data bachane ke liye kya `BiometricPrompt` kaafi hai?"
+
+Akele nahi. Safalta wala callback aapke apne process ke andar ek boolean hai, to agar wo data tab bhi
+khul sakta hai jab app chahe, to pehchan batana bas ek shakha hai — aur jo APK badal sakta hai ya
+process se jud sakta hai wo doosri shakha le leta hai. Prompt imandaar hai; kamzor wo result hai jo usse
+nikala jata hai.
+
+Asli bachav ka matlab hai sarhad ko apne code se bahar le jana: `setUserAuthenticationRequired(true)` se
+bani Keystore ki key, usse encrypt kiya hua data, aur `CryptoObject` se bheja gaya ek `Cipher`. Wo key
+surakshit hardware mein rehti hai aur user ke pehchan batane tak kaam nahi karti, to prompt chhod dene
+par hamlawar ke haath band pada data reh jata hai. Main `setInvalidatedByBiometricEnrollment(true)` bhi
+lagaunga, taki churaye hue phone mein fingerprint jodna us key ko khatam kar de — aur
+`KeyPermanentlyInvalidatedException` ko data mitakar tatha user se dobara sign in karakar sambhalunga,
+crash karke nahi.
+</Interview>

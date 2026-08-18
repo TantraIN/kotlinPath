@@ -1,0 +1,160 @@
+---
+title: Biometric authentication
+description: A biometric prompt that returns true is not security — it is a boolean any modified app can return. Real protection comes from tying a Keystore key to the authentication, so the data cannot be read without it.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+There are two different things people mean by "fingerprint login". One is a **gate**: the prompt
+succeeds and your code proceeds — convenient, and worth nothing against an attacker with the device.
+The other binds a **Keystore key** to the authentication, so the data is undecryptable until the user
+authenticates. Only the second is security.
+</KeyIdea>
+
+## The prompt
+
+```kotlin title="Biometrics.kt" numbered
+val manager = BiometricManager.from(context)
+
+when (manager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)) {
+    BiometricManager.BIOMETRIC_SUCCESS -> showPrompt()
+    BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> promptToEnrol()
+    BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
+    BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> fallToPassword()
+    else -> fallToPassword()
+}
+
+val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+        val cipher = result.cryptoObject?.cipher ?: return    // no cipher, no security
+        unlock(cipher)
+    }
+    override fun onAuthenticationError(code: Int, message: CharSequence) {
+        if (code == BiometricPrompt.ERROR_NEGATIVE_BUTTON) fallToPassword()
+    }
+    override fun onAuthenticationFailed() { /* one bad finger; the prompt stays open */ }
+})
+```
+
+`onAuthenticationFailed` and `onAuthenticationError` are different and often confused.
+`Failed` means this attempt did not match and the prompt is still open — do not dismiss anything.
+`Error` means it is over: cancelled, locked out, or no hardware.
+
+`BIOMETRIC_STRONG` is the class that can be tied to a key. `BIOMETRIC_WEAK` — some face and older
+fingerprint implementations — cannot, so a `CryptoObject` with `WEAK` will not work at all. That is
+not an inconvenience; it is the platform refusing to pretend.
+
+<Quiz
+  question="An app unlocks a stored auth token when `onAuthenticationSucceeded` fires. A security review rejects it. Why, given that the fingerprint genuinely matched?"
+  options={[
+    "It should use `DEVICE_CREDENTIAL` as well, so users without a fingerprint can get in",
+    "The success callback is only a boolean in the app's own process — a modified build or a hooked app can call the unlock path directly, because the token was readable all along",
+    "`BiometricPrompt` must be shown from an Activity rather than a Fragment"
+  ]}
+  answer={1}
+  explanation="The prompt is trustworthy; the conclusion drawn from it is not. If the token is decryptable whenever your process wants it, then authentication is just a branch in your code, and anyone who can modify the APK or attach to the process takes the other branch. Nothing about the fingerprint being genuine changes that, because the check and the data live on the same side of the boundary. The fix is to move the boundary: generate a Keystore key with setUserAuthenticationRequired(true), encrypt the token with it, and pass a Cipher through CryptoObject. The key then lives in hardware and will not perform the operation until the user authenticates, so an attacker skipping the prompt is left with ciphertext. That is why the callback above returns early when the cipher is absent — a success with no cipher has proved nothing worth acting on."
+/>
+
+## Binding a key to the user
+
+```kotlin title="Key.kt" numbered
+val spec = KeyGenParameterSpec.Builder("token_key", PURPOSE_ENCRYPT or PURPOSE_DECRYPT)
+    .setBlockModes(BLOCK_MODE_GCM)
+    .setEncryptionPaddings(ENCRYPTION_PADDING_NONE)
+    .setUserAuthenticationRequired(true)                 // the line that matters
+    .setInvalidatedByBiometricEnrollment(true)           // new fingerprint => key is destroyed
+    .build()
+
+KeyGenerator.getInstance(KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+    init(spec)
+    generateKey()
+}
+
+prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+```
+
+`setUserAuthenticationRequired(true)` is what turns a UI flow into a security boundary. The key
+material never leaves the secure hardware, and the hardware refuses to use it until the user has
+authenticated.
+
+`setInvalidatedByBiometricEnrollment(true)` means enrolling a new fingerprint permanently destroys
+the key — which is the point: someone who adds their own fingerprint to a stolen unlocked phone still
+cannot decrypt anything. The consequence is that your code must handle
+`KeyPermanentlyInvalidatedException` by clearing the encrypted data and asking the user to sign in
+again. An app that crashes there has turned a security feature into a support ticket.
+
+<Detail summary="Fallbacks, and the one combination that is not allowed">
+```kotlin title="Prompt.kt" numbered
+val info = BiometricPrompt.PromptInfo.Builder()
+    .setTitle(getString(R.string.unlock_title))
+    .setSubtitle(getString(R.string.unlock_subtitle))
+    .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+    .build()
+```
+
+`DEVICE_CREDENTIAL` lets the user fall back to their PIN, pattern or password, and including it is
+usually right — a user with no enrolled biometric, or a wet finger, still gets in.
+
+The rule to know is that `setNegativeButtonText` and `DEVICE_CREDENTIAL` are mutually exclusive: the
+device credential *is* the negative button, and setting both throws. Pick one, and prefer
+`DEVICE_CREDENTIAL` unless you genuinely have your own fallback screen.
+
+Where biometrics are a gate rather than a key, offer a way past them. An app that can only be opened
+with a fingerprint locks out the user whose sensor stopped working, and that is a worse outcome than
+the risk it was guarding against.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one is the whole lesson">
+**Trusting the success callback alone.** Without a `CryptoObject` it is a boolean in your process.
+
+**`BIOMETRIC_WEAK` with a `CryptoObject`.** Weak classes cannot back a key; it will not work.
+
+**Not handling `KeyPermanentlyInvalidatedException`.** Enrolling a fingerprint destroys the key —
+clear the data and re-authenticate, do not crash.
+
+**`setNegativeButtonText` with `DEVICE_CREDENTIAL`.** They are mutually exclusive and it throws.
+
+**Confusing `Failed` with `Error`.** `Failed` is one bad attempt with the prompt still open.
+</Pitfall>
+
+## Practice
+
+1. Authenticate without a `CryptoObject`, then try to reach the unlock path by other means.
+2. Encrypt a token with a Keystore key, authenticate, and decrypt it.
+3. Enrol a new fingerprint and confirm your code handles the invalidated key.
+4. Set both a negative button and `DEVICE_CREDENTIAL` and read the exception.
+5. Fail authentication three times and log which callbacks fire, in order.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Gate vs key | A boolean in your process, or data that cannot be decrypted |
+| `CryptoObject` | What makes it security rather than UX |
+| `BIOMETRIC_STRONG` | The only class that can back a Keystore key |
+| `setUserAuthenticationRequired` | The line that creates the boundary |
+| `setInvalidatedByBiometricEnrollment` | A new fingerprint destroys the key, by design |
+| `KeyPermanentlyInvalidatedException` | Clear the data and re-authenticate |
+| `canAuthenticate` | Check before showing; handle none-enrolled and no-hardware |
+| `DEVICE_CREDENTIAL` | PIN fallback; mutually exclusive with a negative button |
+| `Failed` | One bad attempt; the prompt stays open |
+| `Error` | It is over — cancelled, locked out, unavailable |
+
+<Interview title="A question that separates UX from security">
+"Is `BiometricPrompt` enough to protect sensitive data?"
+
+Not on its own. The success callback is a boolean inside your own process, so if the data is
+decryptable whenever the app wants it, authentication is just a branch — and someone who can modify
+the APK or attach to the process takes the other branch. The prompt is honest; the conclusion drawn
+from it is what is weak.
+
+Real protection means moving the boundary out of your code: a Keystore key created with
+`setUserAuthenticationRequired(true)`, the data encrypted with it, and a `Cipher` passed through
+`CryptoObject`. The key stays in secure hardware and will not operate until the user authenticates,
+so skipping the prompt leaves an attacker with ciphertext. I would also set
+`setInvalidatedByBiometricEnrollment(true)`, so adding a fingerprint to a stolen phone destroys the
+key — and handle `KeyPermanentlyInvalidatedException` by clearing the data and asking the user to sign
+in again, rather than crashing.
+</Interview>
