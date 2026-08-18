@@ -1,0 +1,199 @@
+---
+title: BroadcastReceiver aur system ki ghatnayein
+description: Broadcasts wo tarika hain jisse system ek saath har app ko batata hai ki kuch hua. Jo kuch aap pa sakte ho usmein se zyadatar aapko lena nahi chahiye — aur jo lene layak hain unke saath das second ki had aati hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Receiver kareeb **das second** chalta hai, main thread par, aise process mein jo warna zinda bhi na
+hota. Wahi had poore design ki shart hai: receiver kisi cheez ko *notice karne* ki jagah hai aur use
+kisi tikau cheez ko thamane ki, kaam karne ki kabhi nahi.
+</KeyIdea>
+
+## Darj karne ke do tarike, aur wo aapas mein badle nahi ja sakte
+
+```kotlin title="Manifest.kt" numbered
+// Manifest mein likha — system aapka process shuru karke bhi use pahuncha sakta hai
+<receiver android:name=".BootReceiver" android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+    </intent-filter>
+</receiver>
+```
+
+```kotlin title="Runtime.kt" numbered
+// Code mein darj — sirf tab tak jab tak aapka hissa zinda hai
+private val receiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) { /* ... */ }
+}
+
+override fun onStart() {
+    super.onStart()
+    ContextCompat.registerReceiver(
+        this, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+        ContextCompat.RECEIVER_NOT_EXPORTED,        // target-33 aur uske upar zaruri
+    )
+}
+
+override fun onStop() {
+    super.onStop()
+    unregisterReceiver(receiver)                     // warna activity leak hoti hai
+}
+```
+
+Jo farak maayne rakhta hai wo ye hai ki aapke app ko jaga kaun sakta hai. Manifest wala receiver
+system ko sirf broadcast pahunchane ke liye aapka process shuru karne deta hai; runtime wala tabhi
+chalta hai jab aap pehle se chal rahe ho.
+
+Android 8 se **zyadatar implicit broadcasts manifest se chalte hi nahi**. Ye jaanbujhkar tha: jis
+phone mein pachaas app har connectivity badalne par jaagte hain wo apni battery bekaar mein kharch
+karta hai. Gini-chuni chhootein bachi hain — `BOOT_COMPLETED`, `LOCALE_CHANGED`, aur ek chhoti list —
+aur baaki sab chalte waqt darj karna padta hai, yani sunne ke liye aapke app ko chalna padega.
+
+<Quiz
+  question="Koi receiver `BOOT_COMPLETED` par server se sync karta hai. Test wale device par chalta hai aur kisi user ke phone par kuch nahi karta. Do sambhavit wajahein kya hain?"
+  options={[
+    "Us receiver ko `android:enabled=\"true\"` chahiye, jo default nahi hai",
+    "Install ke baad wo app kabhi khola hi nahi gaya — to wo ruki hui haalat mein hai aur use koi broadcast milta hi nahi — aur wo sync khud receiver ki das second ki had se badi hai",
+    "`BOOT_COMPLETED` ko Android 8 mein baaki implicit broadcasts ke saath hata diya gaya tha",
+  ]}
+  answer={1}
+  explanation="Yahan do alag niyam kaat-te hain, aur dono us device par adrishya hain jis par aap bana rahe ho. Pehla, jo app install hokar kabhi chalaya nahi gaya — ya jise user ne force-stop kar diya — wo ruki hui haalat mein hai, aur system use koi bhi broadcast nahi pahunchata, BOOT_COMPLETED samet. Aapka likha kuch bhi usse bahar nahi nikal sakta; wo isiliye hai ki install hokar bekaar pada app chal na sake. Aapke test wale device par wo isliye nahi dikhta ki aap app kholte hi aa rahe ho. Doosra, jab wo chalta bhi hai to onReceive ko main thread par kareeb das second milte hain, aur network wali sync utne mein poori nahi hogi — aur coroutine shuru karne se bhi kaam nahi banta, kyunki onReceive ke lautte hi process maara ja sakta hai. Sahi shakal ye hai ki receiver mein WorkManager ko line mein lagane ke alawa kuch na ho, jo us had aur us process dono se bach jata hai."
+/>
+
+## Iklauti safe shakal
+
+```kotlin title="BootReceiver.kt" numbered
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return   // hamesha check kijiye
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "sync-after-boot",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<SyncWorker>().build(),
+        )
+    }
+}
+```
+
+Gaur kijiye ki kya nahi hai: na coroutine, na network ki call, na database mein likhai. Receiver
+notice karke saunp deta hai, aur har tikau cheez us worker mein hoti hai — jis par samay ki koi had
+nahi, jo process marne par bachta hai, aur jo sharton ka intezar kar sakta hai.
+
+`intent.action` check karna vehem nahi hai. Ek hi receiver par aksar kai filters hote hain, aur
+exported receiver ko device ka koi bhi app kuch bhi bhej sakta hai.
+
+`goAsync()` us birle maamle ke liye hai jahan sach mein thoda aur waqt chahiye, par wo had hatata
+nahi, kuch second badhata hai, aur aapko `finish()` bulana hi padta hai warna system ek wake lock
+pakde rehta hai. Lagbhag har cheez ke liye uski jagah WorkManager hai.
+
+## Export karna, aur wo flag jo ab zaruri hai
+
+```xml title="AndroidManifest.xml" numbered
+<receiver android:name=".BootReceiver" android:exported="true">   <!-- system bhejta hai -->
+<receiver android:name=".InternalReceiver" android:exported="false" /> <!-- sirf aapka app -->
+```
+
+Target SDK 33 se, chalte waqt receiver darj karne par saaf-saaf batana padta hai ki wo exported hai ya
+nahi — `RECEIVER_NOT_EXPORTED` ya `RECEIVER_EXPORTED` — aur chhodne par wo phenkta hai. Aapko chahiye
+lagbhag hamesha `NOT_EXPORTED`: exported receiver ko koi bhi app chala sakta hai, yani wo aapke app
+mein ghusne ka aisa darwaza hai jise aapne kholna chaha hi nahi tha.
+
+<Note>
+App ke apne andar ki ghatnaon ke liye broadcasts lijiye hi mat. Repository mein ek `SharedFlow` wahi
+kaam types ke saath karta hai, na koi `Intent`, na manifest ki entry, na suraksha wali koi satah.
+`LocalBroadcastManager` theek isi wajah se hataya ja chuka hai.
+</Note>
+
+## Wo ghatnayein jo sach mein lene layak hain
+
+| Broadcast | Darj karna | Kisliye |
+| --- | --- | --- |
+| `BOOT_COMPLETED` | Manifest | Alarms dobara lagaiye — wo reboot par nahi bachte |
+| `LOCALE_CHANGED` | Manifest | Rakhi hui saji-sajai strings dobara banaiye |
+| `ACTION_TIME_CHANGED` | Manifest | Samay par tiki har cheez dobara giniye |
+| `ACTION_POWER_CONNECTED` | Runtime | Charge hote waqt koi mehnga kaam shuru kijiye |
+| `ACTION_BATTERY_CHANGED` | Sirf runtime | Battery ka star; chipku hai, to turant milta hai |
+
+`BOOT_COMPLETED` ke paas asli kaam hai: `AlarmManager` wale alarms reboot par mit jate hain, to jis app
+mein samay par reminders hain use unhe yahin dobara lagana padta hai. WorkManager apna kaam khud dobara
+laga leta hai, aur use chunne ki ye ek aur wajah hai.
+
+<Detail summary="Aajkal ke jawab aam taur par broadcasts kyun nahi hote">
+Jin cheezon ke liye kabhi receiver liya jata tha unmein se zyadatar ke paas ab behtar API hai, aur har
+baar tarika wahi hai: jo cheez har app ko dhakelti thi uski jagah wo cheez aa gayi jise aap dekhte ho.
+
+**Connectivity** — `ConnectivityManager.registerNetworkCallback` asli kshamtaon ke saath callback deta
+hai, na ki aisa broadcast jo aapko jakar puchne ko kahe.
+
+**Samay par laga kaam** — WorkManager reboot ke aar-paar khud dobara lag jata hai, to boot wala koi
+receiver likhna hi nahi padta.
+
+**Push sandesh** — Firebase kisi service tak pahunchata hai, aur process shuru karne ke niyam khud
+sambhalta hai.
+
+Jo broadcast sach mein kaam ka bacha hai wo *device* ke baare mein hai, aapke app ke baare mein nahi:
+boot hona, bhasha badalna, ghadi badalna. Agar aap apne hi app ki haalat janne ke liye receiver utha
+rahe ho, to jawab koi flow hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur unmein se do banate waqt adrishya hain">
+**`onReceive` ke andar kaam.** Das second, main thread par, aise process mein jo turant baad mar sakta
+hai. Uski jagah line mein lagaiye.
+
+**Ruke hue app se kuch milne ki ummid.** Kabhi na chalaya gaya ya force-stop kiya gaya matlab koi
+broadcast nahi, `BOOT_COMPLETED` samet.
+
+**Implicit broadcast ke liye manifest wala receiver.** Android 8 se band, chhoti list ke bahar.
+
+**Runtime wala receiver hatana bhoolna.** Wo us `Context` ko pakde rehta hai jisse darj hua tha, yani
+activity ka leak.
+
+**Default se exported.** Koi bhi app use chala sakta hai. Jab tak bhejne wala system na ho,
+`RECEIVER_NOT_EXPORTED` lijiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Aisa `BOOT_COMPLETED` receiver likhiye jo kaam line mein lagata hai, phir reboot kijiye aur pakka
+   kijiye ki wo chalta hai.
+2. App ko force-stop kijiye, reboot kijiye, aur pakka kijiye ki receiver nahi chalta.
+3. `onReceive` mein paanch second ki neend daaliye aur ANR dekhiye.
+4. `onStart` mein runtime wala receiver darj kijiye aur kabhi mat hataiye, phir device ghumakar leak
+   dekhiye.
+5. Connectivity wale receiver ko `registerNetworkCallback` se badliye aur milaiye ki dono kya batate
+   hain.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Had | Kareeb das second, main thread par |
+| Shakal | Notice kijiye aur line mein lagaiye; kaam yahan kabhi nahi |
+| Manifest wala | System aapka process shuru karke bhi pahuncha sakta hai |
+| Runtime wala | Sirf aapke hisse ke zinda rehte; use hataiye |
+| Implicit broadcasts | Android 8 se manifest mein band, chhoti chhoot-list ke saath |
+| Ruki hui haalat | Kabhi na chalaye ya force-stop kiye app ko kuch nahi milta |
+| `exported` | Target 33 se batana zaruri; `NOT_EXPORTED` hi chahiye |
+| `goAsync()` | Kuch second deta hai, chhoot nahi; `finish()` bulana hi padta hai |
+| `BOOT_COMPLETED` | Alarms dobara lagaiye — WorkManager khud lag jata hai |
+| App ke andar ki ghatnayein | Koi `SharedFlow`, broadcast nahi |
+
+<Interview title="Ek sawal, jo ye check kar raha hai ki aapko wo had pata hai ya nahi">
+"Device ke reboot hone ke baad data sync aap kaise karoge?"
+
+Aise `BOOT_COMPLETED` receiver se jiski poori body WorkManager ki ek request line mein lagati hai —
+khud receiver mein koi network call nahi. `onReceive` main thread par kareeb das second ke saath chalta
+hai, aur uske lautte hi process maara ja sakta hai, to wahan shuru kiya coroutine bhi safe nahi hai. Us
+worker par samay ki koi had nahi, wo process marne par bachta hai, aur network wali shart ka intezar
+kar sakta hai.
+
+Do baatein main bataunga. Agar app kabhi chalaya hi nahi gaya, ya user ne use force-stop kiya, to wo
+ruki hui haalat mein hai aur use koi broadcast milta hi nahi — usse bahar nikalne ka koi raasta nahi
+hai, aur jis device par aap bana rahe ho us par wo adrishya hai. Aur jis kaam ko WorkManager pehle se
+sambhalta hai uske liye boot wala koi receiver likhna hi nahi padta, kyunki wo reboot ke aar-paar khud
+dobara lag jata hai.
+</Interview>

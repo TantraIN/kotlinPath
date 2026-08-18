@@ -1,0 +1,193 @@
+---
+title: BroadcastReceiver and system events
+description: Broadcasts are how the system tells every app at once that something happened. Most of what you can receive, you should not — and the ones worth having come with a ten-second budget.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A receiver runs for about **ten seconds**, on the main thread, in a process that may not otherwise be
+alive. That budget is the whole design constraint: a receiver is a place to *notice* something and
+hand it to something durable, never a place to do work.
+</KeyIdea>
+
+## Two ways to register, and they are not interchangeable
+
+```kotlin title="Manifest.kt" numbered
+// Declared in the manifest — the system can start your process to deliver it
+<receiver android:name=".BootReceiver" android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+    </intent-filter>
+</receiver>
+```
+
+```kotlin title="Runtime.kt" numbered
+// Registered in code — only while your component is alive
+private val receiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) { /* ... */ }
+}
+
+override fun onStart() {
+    super.onStart()
+    ContextCompat.registerReceiver(
+        this, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+        ContextCompat.RECEIVER_NOT_EXPORTED,        // required target-33 and above
+    )
+}
+
+override fun onStop() {
+    super.onStop()
+    unregisterReceiver(receiver)                     // or it leaks the activity
+}
+```
+
+The difference that matters is who can wake your app. A manifest receiver lets the system start your
+process just to deliver the broadcast; a runtime one only fires while you are already running.
+
+Since Android 8, **most implicit broadcasts no longer work from the manifest at all**. That was
+deliberate: a phone with fifty apps all waking on every connectivity change spends its battery on
+nothing. A handful of exceptions remain — `BOOT_COMPLETED`, `LOCALE_CHANGED`, and a short list of
+others — and everything else must be registered at run time, which means your app has to be running
+to hear it.
+
+<Quiz
+  question="A receiver handles `BOOT_COMPLETED` by syncing with the server. It works on a test device and does nothing on a user's phone. What are the two likely reasons?"
+  options={[
+    "The receiver needs `android:enabled=\"true\"`, which is not the default",
+    "The app has never been opened since install — so it is in the stopped state and receives no broadcasts at all — and the sync itself exceeds the receiver's ten-second budget",
+    "`BOOT_COMPLETED` was removed in Android 8 along with the other implicit broadcasts",
+  ]}
+  answer={1}
+  explanation="Two separate rules bite here, and both are invisible on a device you have been developing on. First, an app that has been installed but never launched — or force-stopped by the user — is in the stopped state, and the system delivers it no broadcasts whatsoever, including BOOT_COMPLETED. Nothing you write can opt out of that; it exists so an installed-but-unused app cannot run. Your test device does not show it because you have been opening the app all along. Second, even when it does fire, onReceive gets about ten seconds on the main thread, and a network sync will not finish in it — and launching a coroutine does not help, because the process may be killed the moment onReceive returns. The correct shape is to do nothing in the receiver except enqueue WorkManager, which survives both the budget and the process."
+/>
+
+## The only safe shape
+
+```kotlin title="BootReceiver.kt" numbered
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return   // always check
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "sync-after-boot",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<SyncWorker>().build(),
+        )
+    }
+}
+```
+
+Notice what is absent: no coroutine, no network call, no database write. The receiver notices and
+delegates, and everything durable happens in the worker — which has no time limit, survives process
+death, and can wait for constraints.
+
+Checking `intent.action` is not paranoia. A single receiver often has several filters, and an
+exported one can be sent anything by any app on the device.
+
+`goAsync()` exists for the rare case where you genuinely need a little longer, but it extends the
+budget to seconds rather than removing it, and you must call `finish()` or the system holds a wake
+lock. For almost everything, WorkManager is the answer instead.
+
+## Exporting, and the flag that is now mandatory
+
+```xml title="AndroidManifest.xml" numbered
+<receiver android:name=".BootReceiver" android:exported="true">   <!-- system sends it -->
+<receiver android:name=".InternalReceiver" android:exported="false" /> <!-- only your app -->
+```
+
+Since target SDK 33, registering a receiver at run time requires saying explicitly whether it is
+exported — `RECEIVER_NOT_EXPORTED` or `RECEIVER_EXPORTED` — and omitting it throws. The default you
+want is almost always `NOT_EXPORTED`: an exported receiver can be triggered by any app, so it is an
+entry point into your app that you did not intend to open.
+
+<Note>
+For app-internal events, do not use broadcasts at all. A `SharedFlow` in a repository does the same
+job with types, no `Intent`, no manifest entry and no security surface. `LocalBroadcastManager` is
+deprecated for exactly this reason.
+</Note>
+
+## The events actually worth receiving
+
+| Broadcast | Registration | Use |
+| --- | --- | --- |
+| `BOOT_COMPLETED` | Manifest | Reschedule alarms — they do not survive a reboot |
+| `LOCALE_CHANGED` | Manifest | Rebuild cached formatted strings |
+| `ACTION_TIME_CHANGED` | Manifest | Recompute anything time-based |
+| `ACTION_POWER_CONNECTED` | Runtime | Start something expensive while charging |
+| `ACTION_BATTERY_CHANGED` | Runtime only | Battery level; sticky, so it fires immediately |
+
+`BOOT_COMPLETED` is the one with a real job: `AlarmManager` alarms are cleared by a reboot, so an app
+with scheduled reminders must reschedule them here. WorkManager reschedules its own work, which is
+one more reason to prefer it.
+
+<Detail summary="Why the modern answers are usually not broadcasts">
+Most things a receiver was once used for now have a better API, and the pattern is the same each
+time: something that pushes to every app has been replaced by something you observe.
+
+**Connectivity** — `ConnectivityManager.registerNetworkCallback` gives a callback with the actual
+capabilities, rather than a broadcast telling you to go and ask.
+
+**Scheduled work** — WorkManager reschedules across reboot itself, so there is no boot receiver to
+write.
+
+**Push messages** — Firebase delivers to a service, with the process-start rules handled for you.
+
+The broadcast that remains genuinely useful is the one about the *device* rather than your app:
+booting, the locale changing, the clock changing. If you are reaching for a receiver to learn
+something about your own app's state, the answer is a flow.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and two of them are invisible in development">
+**Work inside `onReceive`.** Ten seconds, on the main thread, in a process that may die immediately
+after. Enqueue instead.
+
+**Expecting a stopped app to receive anything.** Never launched or force-stopped means no broadcasts
+at all, `BOOT_COMPLETED` included.
+
+**A manifest receiver for an implicit broadcast.** Blocked since Android 8, outside a short list.
+
+**Forgetting to unregister a runtime receiver.** It holds the `Context` it was registered with, which
+is an activity leak.
+
+**Exported by default.** Any app can trigger it. Use `RECEIVER_NOT_EXPORTED` unless the system is the
+sender.
+</Pitfall>
+
+## Practice
+
+1. Write a `BOOT_COMPLETED` receiver that enqueues work, then reboot and confirm the work runs.
+2. Force-stop the app, reboot, and confirm the receiver does not fire.
+3. Put a five-second sleep in `onReceive` and watch the ANR.
+4. Register a runtime receiver in `onStart` and never unregister it, then rotate and watch the leak.
+5. Replace a connectivity receiver with `registerNetworkCallback` and compare what each tells you.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Budget | About ten seconds, on the main thread |
+| The shape | Notice and enqueue; never do the work here |
+| Manifest receiver | The system can start your process to deliver it |
+| Runtime receiver | Only while your component is alive; unregister it |
+| Implicit broadcasts | Blocked from the manifest since Android 8, with a short exemption list |
+| Stopped state | Never-launched or force-stopped apps receive nothing |
+| `exported` | Must be declared since target 33; `NOT_EXPORTED` is the default you want |
+| `goAsync()` | Buys seconds, not freedom; you must call `finish()` |
+| `BOOT_COMPLETED` | Reschedule alarms — WorkManager reschedules itself |
+| App-internal events | A `SharedFlow`, not a broadcast |
+
+<Interview title="A question that is testing whether you know the budget">
+"How would you sync data after the device reboots?"
+
+With a `BOOT_COMPLETED` receiver whose entire body enqueues a WorkManager request — no network call
+in the receiver itself. `onReceive` runs on the main thread with about ten seconds, and the process
+can be killed as soon as it returns, so a coroutine started there is not safe either. The worker has
+no time limit, survives process death, and can wait for a network constraint.
+
+Two things I would mention. If the app has never been launched, or the user force-stopped it, it is
+in the stopped state and receives no broadcasts at all — that is not something you can opt out of,
+and it is invisible on a device you have been developing on. And for work that WorkManager already
+manages, there is no boot receiver to write, because it reschedules itself across a reboot.
+</Interview>

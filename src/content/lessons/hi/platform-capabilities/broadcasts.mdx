@@ -1,0 +1,194 @@
+---
+title: BroadcastReceiver और system की घटनाएँ
+description: Broadcasts वह तरीका हैं जिससे system एक साथ हर ऐप को बताता है कि कुछ हुआ। जो कुछ आप पा सकते हैं उसमें से ज्यादातर आपको लेना नहीं चाहिए — और जो लेने लायक हैं उनके साथ दस सेकंड की हद आती है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Receiver करीब **दस सेकंड** चलता है, main thread पर, ऐसे process में जो वरना जिंदा भी न होता। वही हद
+पूरे design की शर्त है: receiver किसी चीज को *नोटिस करने* की जगह है और उसे किसी टिकाऊ चीज को थमाने की,
+काम करने की कभी नहीं।
+</KeyIdea>
+
+## दर्ज करने के दो तरीके, और वे आपस में बदले नहीं जा सकते
+
+```kotlin title="Manifest.kt" numbered
+// Manifest में लिखा — system आपका process शुरू करके भी उसे पहुँचा सकता है
+<receiver android:name=".BootReceiver" android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+    </intent-filter>
+</receiver>
+```
+
+```kotlin title="Runtime.kt" numbered
+// Code में दर्ज — सिर्फ तब तक जब तक आपका हिस्सा जिंदा है
+private val receiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) { /* ... */ }
+}
+
+override fun onStart() {
+    super.onStart()
+    ContextCompat.registerReceiver(
+        this, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+        ContextCompat.RECEIVER_NOT_EXPORTED,        // target-33 और उसके ऊपर जरूरी
+    )
+}
+
+override fun onStop() {
+    super.onStop()
+    unregisterReceiver(receiver)                     // वरना activity leak होती है
+}
+```
+
+जो फर्क मायने रखता है वह यह है कि आपके ऐप को जगा कौन सकता है। Manifest वाला receiver system को सिर्फ
+broadcast पहुँचाने के लिए आपका process शुरू करने देता है; runtime वाला तभी चलता है जब आप पहले से चल
+रहे हों।
+
+Android 8 से **ज्यादातर implicit broadcasts manifest से चलते ही नहीं**। यह जानबूझकर था: जिस phone
+में पचास ऐप हर connectivity बदलने पर जागते हैं वह अपनी battery बेकार में खर्च करता है। गिनी-चुनी
+छूटें बची हैं — `BOOT_COMPLETED`, `LOCALE_CHANGED`, और एक छोटी सूची — और बाकी सब चलते वक्त दर्ज करना
+पड़ता है, यानी सुनने के लिए आपके ऐप को चलना पड़ेगा।
+
+<Quiz
+  question="कोई receiver `BOOT_COMPLETED` पर server से sync करता है। Test वाले device पर चलता है और किसी user के phone पर कुछ नहीं करता। दो संभावित वजहें क्या हैं?"
+  options={[
+    "उस receiver को `android:enabled=\"true\"` चाहिए, जो default नहीं है",
+    "Install के बाद वह ऐप कभी खोला ही नहीं गया — तो वह रुकी हुई हालत में है और उसे कोई broadcast मिलता ही नहीं — और वह sync खुद receiver की दस सेकंड की हद से बड़ी है",
+    "`BOOT_COMPLETED` को Android 8 में बाकी implicit broadcasts के साथ हटा दिया गया था",
+  ]}
+  answer={1}
+  explanation="यहाँ दो अलग नियम काटते हैं, और दोनों उस device पर अदृश्य हैं जिस पर आप बना रहे हैं। पहला, जो ऐप install होकर कभी चलाया नहीं गया — या जिसे user ने force-stop कर दिया — वह रुकी हुई हालत में है, और system उसे कोई भी broadcast नहीं पहुँचाता, BOOT_COMPLETED समेत। आपका लिखा कुछ भी उससे बाहर नहीं निकाल सकता; वह इसीलिए है कि install होकर बेकार पड़ा ऐप चल न सके। आपके test वाले device पर वह इसलिए नहीं दिखता कि आप ऐप खोलते ही आ रहे हैं। दूसरा, जब वह चलता भी है तो onReceive को main thread पर करीब दस सेकंड मिलते हैं, और network वाली sync उतने में पूरी नहीं होगी — और coroutine शुरू करने से भी काम नहीं बनता, क्योंकि onReceive के लौटते ही process मारा जा सकता है। सही शक्ल यह है कि receiver में WorkManager को कतार में लगाने के अलावा कुछ न हो, जो उस हद और उस process दोनों से बच जाता है।"
+/>
+
+## इकलौती सुरक्षित शक्ल
+
+```kotlin title="BootReceiver.kt" numbered
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return   // हमेशा जाँचिए
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "sync-after-boot",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<SyncWorker>().build(),
+        )
+    }
+}
+```
+
+गौर कीजिए कि क्या नहीं है: न coroutine, न network की call, न database में लिखाई। Receiver नोटिस करके
+सौंप देता है, और हर टिकाऊ चीज उस worker में होती है — जिस पर समय की कोई हद नहीं, जो process मरने पर
+बचता है, और जो शर्तों का इंतजार कर सकता है।
+
+`intent.action` जाँचना वहम नहीं है। एक ही receiver पर अक्सर कई filters होते हैं, और exported receiver
+को device का कोई भी ऐप कुछ भी भेज सकता है।
+
+`goAsync()` उस बिरले मामले के लिए है जहाँ सच में थोड़ा और वक्त चाहिए, पर वह हद हटाता नहीं, कुछ सेकंड
+बढ़ाता है, और आपको `finish()` बुलाना ही पड़ता है वरना system एक wake lock पकड़े रहता है। लगभग हर चीज
+के लिए उसकी जगह WorkManager है।
+
+## Export करना, और वह flag जो अब जरूरी है
+
+```xml title="AndroidManifest.xml" numbered
+<receiver android:name=".BootReceiver" android:exported="true">   <!-- system भेजता है -->
+<receiver android:name=".InternalReceiver" android:exported="false" /> <!-- सिर्फ आपका ऐप -->
+```
+
+Target SDK 33 से, चलते वक्त receiver दर्ज करने पर साफ-साफ बताना पड़ता है कि वह exported है या नहीं —
+`RECEIVER_NOT_EXPORTED` या `RECEIVER_EXPORTED` — और छोड़ने पर वह फेंकता है। आपको चाहिए लगभग हमेशा
+`NOT_EXPORTED`: exported receiver को कोई भी ऐप चला सकता है, यानी वह आपके ऐप में घुसने का ऐसा दरवाजा
+है जिसे आपने खोलना चाहा ही नहीं था।
+
+<Note>
+ऐप के अपने अंदर की घटनाओं के लिए broadcasts लीजिए ही मत। Repository में एक `SharedFlow` वही काम types
+के साथ करता है, न कोई `Intent`, न manifest की entry, न सुरक्षा वाली कोई सतह। `LocalBroadcastManager`
+ठीक इसी वजह से हटाया जा चुका है।
+</Note>
+
+## वे घटनाएँ जो सच में लेने लायक हैं
+
+| Broadcast | दर्ज करना | किसलिए |
+| --- | --- | --- |
+| `BOOT_COMPLETED` | Manifest | Alarms दोबारा लगाइए — वे reboot पर नहीं बचते |
+| `LOCALE_CHANGED` | Manifest | रखी हुई सजी-सजाई strings दोबारा बनाइए |
+| `ACTION_TIME_CHANGED` | Manifest | समय पर टिकी हर चीज दोबारा गिनिए |
+| `ACTION_POWER_CONNECTED` | Runtime | Charge होते वक्त कोई महँगा काम शुरू कीजिए |
+| `ACTION_BATTERY_CHANGED` | सिर्फ runtime | Battery का स्तर; चिपकू है, तो तुरंत मिलता है |
+
+`BOOT_COMPLETED` के पास असली काम है: `AlarmManager` वाले alarms reboot पर मिट जाते हैं, तो जिस ऐप में
+समय पर reminders हैं उसे उन्हें यहीं दोबारा लगाना पड़ता है। WorkManager अपना काम खुद दोबारा लगा लेता
+है, और उसे चुनने की यह एक और वजह है।
+
+<Detail summary="आजकल के जवाब आमतौर पर broadcasts क्यों नहीं होते">
+जिन चीजों के लिए कभी receiver लिया जाता था उनमें से ज्यादातर के पास अब बेहतर API है, और हर बार तरीका
+वही है: जो चीज हर ऐप को धकेलती थी उसकी जगह वह चीज आ गई जिसे आप देखते हैं।
+
+**Connectivity** — `ConnectivityManager.registerNetworkCallback` असली क्षमताओं के साथ callback देता
+है, न कि ऐसा broadcast जो आपको जाकर पूछने को कहे।
+
+**समय पर लगा काम** — WorkManager reboot के आर-पार खुद दोबारा लग जाता है, तो boot वाला कोई receiver
+लिखना ही नहीं पड़ता।
+
+**Push संदेश** — Firebase किसी service तक पहुँचाता है, और process शुरू करने के नियम खुद सँभालता है।
+
+जो broadcast सच में काम का बचा है वह *device* के बारे में है, आपके ऐप के बारे में नहीं: boot होना,
+भाषा बदलना, घड़ी बदलना। अगर आप अपने ही ऐप की हालत जानने के लिए receiver उठा रहे हैं, तो जवाब कोई flow
+है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और उनमें से दो बनाते वक्त अदृश्य हैं">
+**`onReceive` के अंदर काम।** दस सेकंड, main thread पर, ऐसे process में जो तुरंत बाद मर सकता है। उसकी
+जगह कतार में लगाइए।
+
+**रुके हुए ऐप से कुछ मिलने की उम्मीद।** कभी न चलाया गया या force-stop किया गया मतलब कोई broadcast
+नहीं, `BOOT_COMPLETED` समेत।
+
+**Implicit broadcast के लिए manifest वाला receiver।** Android 8 से बंद, छोटी सूची के बाहर।
+
+**Runtime वाला receiver हटाना भूलना।** वह उस `Context` को पकड़े रहता है जिससे दर्ज हुआ था, यानी
+activity का leak।
+
+**Default से exported।** कोई भी ऐप उसे चला सकता है। जब तक भेजने वाला system न हो, `RECEIVER_NOT_EXPORTED`
+लीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. ऐसा `BOOT_COMPLETED` receiver लिखिए जो काम कतार में लगाता है, फिर reboot कीजिए और पक्का कीजिए कि
+   वह चलता है।
+2. ऐप को force-stop कीजिए, reboot कीजिए, और पक्का कीजिए कि receiver नहीं चलता।
+3. `onReceive` में पाँच सेकंड की नींद डालिए और ANR देखिए।
+4. `onStart` में runtime वाला receiver दर्ज कीजिए और कभी मत हटाइए, फिर device घुमाकर leak देखिए।
+5. Connectivity वाले receiver को `registerNetworkCallback` से बदलिए और मिलाइए कि दोनों क्या बताते हैं।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| हद | करीब दस सेकंड, main thread पर |
+| शक्ल | नोटिस कीजिए और कतार में लगाइए; काम यहाँ कभी नहीं |
+| Manifest वाला | System आपका process शुरू करके भी पहुँचा सकता है |
+| Runtime वाला | सिर्फ आपके हिस्से के जिंदा रहते; उसे हटाइए |
+| Implicit broadcasts | Android 8 से manifest में बंद, छोटी छूट-सूची के साथ |
+| रुकी हुई हालत | कभी न चलाए या force-stop किए ऐप को कुछ नहीं मिलता |
+| `exported` | Target 33 से बताना जरूरी; `NOT_EXPORTED` ही चाहिए |
+| `goAsync()` | कुछ सेकंड देता है, छूट नहीं; `finish()` बुलाना ही पड़ता है |
+| `BOOT_COMPLETED` | Alarms दोबारा लगाइए — WorkManager खुद लग जाता है |
+| ऐप के अंदर की घटनाएँ | कोई `SharedFlow`, broadcast नहीं |
+
+<Interview title="एक सवाल, जो यह जाँच रहा है कि आपको वह हद पता है या नहीं">
+"Device के reboot होने के बाद data sync आप कैसे करेंगे?"
+
+ऐसे `BOOT_COMPLETED` receiver से जिसकी पूरी body WorkManager की एक request कतार में लगाती है — खुद
+receiver में कोई network call नहीं। `onReceive` main thread पर करीब दस सेकंड के साथ चलता है, और उसके
+लौटते ही process मारा जा सकता है, तो वहाँ शुरू किया coroutine भी सुरक्षित नहीं है। उस worker पर समय
+की कोई हद नहीं, वह process मरने पर बचता है, और network वाली शर्त का इंतजार कर सकता है।
+
+दो बातें मैं बताऊँगा। अगर ऐप कभी चलाया ही नहीं गया, या user ने उसे force-stop किया, तो वह रुकी हुई
+हालत में है और उसे कोई broadcast मिलता ही नहीं — उससे बाहर निकलने का कोई रास्ता नहीं है, और जिस device
+पर आप बना रहे हैं उस पर वह अदृश्य है। और जिस काम को WorkManager पहले से सँभालता है उसके लिए boot वाला
+कोई receiver लिखना ही नहीं पड़ता, क्योंकि वह reboot के आर-पार खुद दोबारा लग जाता है।
+</Interview>
