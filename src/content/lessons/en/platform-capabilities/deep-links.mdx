@@ -1,0 +1,173 @@
+---
+title: Deep links and App Links
+description: A deep link opens a screen from outside your app. An App Link does it without a chooser dialog — and the difference is a file on your web server, not a line in your manifest.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Any app can claim a custom scheme like `myapp://`, so the system has to ask the user which one to
+open. An **App Link** uses `https://` and proves ownership through a file hosted on your domain — and
+that proof is what removes the chooser.
+</KeyIdea>
+
+## The two kinds
+
+```xml title="AndroidManifest.xml" numbered
+<activity android:name=".MainActivity" android:exported="true">
+
+    <!-- custom scheme: works instantly, and anyone can claim it too -->
+    <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="myapp" android:host="orders" />
+    </intent-filter>
+
+    <!-- App Link: verified, no chooser -->
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" android:host="example.com" android:pathPrefix="/orders" />
+    </intent-filter>
+</activity>
+```
+
+`BROWSABLE` is the category that lets a browser or another app fire the intent; without it the link
+works from `adb` and nowhere else, which is a confusing half-hour.
+
+`android:exported="true"` is required — an activity reachable from outside must say so — and it is a
+reminder that this is an entry point into your app that anyone can send data to.
+
+## The verification file
+
+```json title="/.well-known/assetlinks.json" numbered
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.example.app",
+    "sha256_cert_fingerprints": ["AB:CD:..."]
+  }
+}]
+```
+
+It must be served from `https://example.com/.well-known/assetlinks.json` as
+`application/json`, over HTTPS, with no redirect. The system fetches it at install and matches the
+fingerprint against the certificate that signed the APK.
+
+That last part is where most failures come from: the fingerprint must be the one Android will
+actually see. With Play App Signing that is Google's key from the Play Console, not your upload key —
+and a debug build is signed with the debug key, which is a third fingerprint again. Listing all of
+them is normal.
+
+<Quiz
+  question="App Links verify correctly in a debug build. After release to Play, tapping a link shows a chooser dialog instead of opening the app. What is wrong?"
+  options={[
+    "`autoVerify` only works on the first intent-filter in the manifest",
+    "The `assetlinks.json` lists the debug or upload certificate fingerprint, not the one Play re-signed the app with — so verification fails and the link falls back to a chooser",
+    "App Links do not work for apps distributed through Play"
+  ]}
+  answer={1}
+  explanation="With Play App Signing, Google re-signs the app with its own key before distributing it, so the certificate on a user's device is not the one you built with. Verification compares the installed app's signature against the fingerprints in assetlinks.json, and the debug or upload fingerprint will not match. The correct value is under App Integrity in the Play Console — and the usual fix is to list several fingerprints, so debug, upload and Play-signed builds all verify. Two things make this hard to diagnose: verification happens at install, so it never retries on its own after you fix the file, and failure is silent — you get a chooser rather than an error. adb shell pm get-app-links <package> reports the actual state per host, and reinstalling forces a re-check."
+/>
+
+## Receiving the link
+
+```kotlin title="Handle.kt" numbered
+// Compose Navigation matches it against a typed route
+composable<OrderDetail>(
+    deepLinks = listOf(navDeepLink<OrderDetail>(basePath = "https://example.com/orders")),
+) { backStackEntry ->
+    OrderDetailScreen(orderId = backStackEntry.toRoute<OrderDetail>().id)
+}
+```
+
+```kotlin title="Manual.kt" numbered
+// or by hand, in an activity
+override fun onNewIntent(intent: Intent) {          // note: not onCreate
+    super.onNewIntent(intent)
+    intent.data?.lastPathSegment?.let(::openOrder)
+}
+```
+
+`onNewIntent` is the one people miss. If the activity is already running — `singleTop` or
+`singleTask` — a new link arrives there rather than through `onCreate`, so an app that only reads
+`intent.data` in `onCreate` handles the first link and silently ignores every later one.
+
+Treat the incoming URI as untrusted. Anyone can send your app a link, so an id from a path segment
+belongs in a parameterised query and a redirect target needs validating against a list you control.
+
+<Detail summary="Testing, and the pieces that are easy to get almost right">
+```bash title="adb" numbered
+# fire a link as if a browser did
+adb shell am start -a android.intent.action.VIEW -d "https://example.com/orders/18"
+
+# what the system thinks of your verification, per host
+adb shell pm get-app-links com.example.app
+
+# force it to check again
+adb shell pm verify-app-links --re-verify com.example.app
+```
+
+`pm get-app-links` is the tool worth remembering: it prints each host with `verified`, `legacy_failure`
+or `1024` (unknown), which tells you whether the problem is the file or the manifest.
+
+Three things that are commonly almost right. A redirect on `assetlinks.json` fails verification —
+serve it directly. `www.example.com` and `example.com` are different hosts and both need listing.
+And verification runs at install, so fixing the file does nothing for already-installed users until
+they reinstall or the system re-checks.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and three of them fail silently">
+**Missing `BROWSABLE`.** Works from `adb`, does nothing from a browser.
+
+**The wrong certificate fingerprint.** Play re-signs the app; use the Play Console value, and list
+several.
+
+**A redirect on `assetlinks.json`.** Verification requires a direct HTTPS response.
+
+**Only handling `onCreate`.** A running activity receives later links through `onNewIntent`.
+
+**Trusting the URI.** It is an entry point anyone can send data to.
+</Pitfall>
+
+## Practice
+
+1. Add a custom scheme link and open it with `adb`, then from a browser without `BROWSABLE`.
+2. Host `assetlinks.json` and run `pm get-app-links` before and after.
+3. Deliberately use the wrong fingerprint and observe the chooser rather than an error.
+4. Open a link while the app is already running, with and without `onNewIntent`.
+5. Send a link with a path segment your app does not expect, and check what it does.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Custom scheme | Instant, unverified, and anyone can claim it |
+| App Link | `https`, verified by a file on your domain, no chooser |
+| `autoVerify` | Asks the system to check at install |
+| `BROWSABLE` | Without it, only `adb` can fire the link |
+| `assetlinks.json` | `/.well-known/`, HTTPS, no redirect, `application/json` |
+| Fingerprint | The Play-signed certificate, not your upload key |
+| Verification timing | At install; fixes need a reinstall or a re-check |
+| Failure mode | A chooser, not an error |
+| `onNewIntent` | Where later links arrive if the activity is running |
+| The URI | Untrusted input from an external entry point |
+
+<Interview title="A question whose answer is usually a certificate">
+"App Links work in debug and show a chooser after release. Why?"
+
+Because the fingerprint in `assetlinks.json` is not the one the system sees. With Play App Signing,
+Google re-signs the app with its own key, so the certificate on a user's device differs from the one
+you built with — verification fails, and the failure mode is a chooser rather than an error, which is
+why it looks like a configuration problem rather than a signing one. The fix is the fingerprint from
+App Integrity in the Play Console, and I would list the debug, upload and Play keys so every build
+verifies.
+
+Two related things I would check: verification runs at install and does not retry on its own, so
+existing users need a reinstall after the file is fixed; and `adb shell pm get-app-links` reports the
+state per host, which distinguishes a bad file from a bad manifest.
+</Interview>

@@ -1,0 +1,177 @@
+---
+title: Deep links aur App Links
+description: Deep link app ke bahar se koi screen kholta hai. App Link wahi kaam bina chooser wale dialog ke karta hai — aur farak aapke manifest ki kisi line mein nahi, aapke web server par rakhi ek file mein hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`myapp://` jaisi apni scheme koi bhi app ghoshit kar sakta hai, to system ko puchna hi padta hai ki
+kaunsa kholein. **App Link** `https://` leta hai aur maalikana aapke domain par rakhi ek file se sabit
+karta hai — aur wahi saboot chooser ko hatata hai.
+</KeyIdea>
+
+## Dono kismein
+
+```xml title="AndroidManifest.xml" numbered
+<activity android:name=".MainActivity" android:exported="true">
+
+    <!-- apni scheme: turant chalti hai, aur use koi aur bhi ghoshit kar sakta hai -->
+    <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="myapp" android:host="orders" />
+    </intent-filter>
+
+    <!-- App Link: pushti ki hui, koi chooser nahi -->
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" android:host="example.com" android:pathPrefix="/orders" />
+    </intent-filter>
+</activity>
+```
+
+`BROWSABLE` wo category hai jo kisi browser ya doosre app ko wo intent bhejne deti hai; uske bina link
+`adb` se chalta hai aur kahin nahi, jo uljhane wala aadha ghanta hai.
+
+`android:exported="true"` zaruri hai — jo activity bahar se pahunchi ja sakti hai use ye kehna hi hoga
+— aur ye yaad dilata hai ki ye aapke app mein ghusne ka aisa darwaza hai jismein koi bhi data bhej
+sakta hai.
+
+## Pushti wali file
+
+```json title="/.well-known/assetlinks.json" numbered
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.example.app",
+    "sha256_cert_fingerprints": ["AB:CD:..."]
+  }
+}]
+```
+
+Use `https://example.com/.well-known/assetlinks.json` se, `application/json` ki tarah, HTTPS par, aur
+bina kisi redirect ke milna chahiye. System use install ke waqt lata hai aur us fingerprint ko us
+certificate se milata hai jisse APK par hastakshar hue.
+
+Aakhri hissa hi zyadatar nakamiyon ki jad hai: fingerprint wahi hona chahiye jo Android sach mein
+dekhega. Play App Signing ke saath wo Play Console mein rakhi Google ki key hai, aapki upload wali key
+nahi — aur debug wala build debug key se hastaksharit hai, yani teesra fingerprint. Un sabko likhna aam
+baat hai.
+
+<Quiz
+  question="Debug wale build mein App Links ki pushti theek hoti hai. Play par release ke baad link par tap karne se app khulne ke bajaye chooser wala dialog aata hai. Galat kya hai?"
+  options={[
+    "`autoVerify` sirf manifest ke pehle intent-filter par chalta hai",
+    "`assetlinks.json` mein debug ya upload wale certificate ka fingerprint hai, wo nahi jisse Play ne app par dobara hastakshar kiye — to pushti nakaam hoti hai aur link chooser par laut aata hai",
+    "Play se bantne wale apps ke liye App Links chalte hi nahi"
+  ]}
+  answer={1}
+  explanation="Play App Signing ke saath Google app baantne se pehle us par apni key se dobara hastakshar karta hai, to user ke device par jo certificate hai wo wo nahi hai jisse aapne build kiya tha. Pushti lage hue app ke hastakshar ko assetlinks.json ke fingerprints se milati hai, aur debug ya upload wala fingerprint mel nahi khayega. Sahi value Play Console mein App Integrity ke neeche hai — aur aam ilaaj hai kai fingerprints likh dena, taki debug, upload aur Play ke hastakshar wale, teenon builds ki pushti ho. Do cheezein ise pehchanna mushkil banati hain: pushti install ke waqt hoti hai, to file theek karne ke baad wo apne aap dobara nahi hoti, aur nakami chupchap hai — aapko error nahi, chooser milta hai. adb shell pm get-app-links <package> har host ki asli haalat batata hai, aur dobara install karne se pushti phir se chalti hai."
+/>
+
+## Link ko lena
+
+```kotlin title="Handle.kt" numbered
+// Compose Navigation use type wale route se milata hai
+composable<OrderDetail>(
+    deepLinks = listOf(navDeepLink<OrderDetail>(basePath = "https://example.com/orders")),
+) { backStackEntry ->
+    OrderDetailScreen(orderId = backStackEntry.toRoute<OrderDetail>().id)
+}
+```
+
+```kotlin title="Manual.kt" numbered
+// ya haath se, kisi activity mein
+override fun onNewIntent(intent: Intent) {          // gaur kijiye: onCreate nahi
+    super.onNewIntent(intent)
+    intent.data?.lastPathSegment?.let(::openOrder)
+}
+```
+
+`onNewIntent` wahi hai jise log chook jate hain. Agar wo activity pehle se chal rahi hai — `singleTop`
+ya `singleTask` — to naya link `onCreate` ke bajaye wahan aata hai, to jo app `intent.data` sirf
+`onCreate` mein padhta hai wo pehla link sambhalta hai aur uske baad ke har link ko chupchap andekha
+kar deta hai.
+
+Aate hue URI ko bharose ke layak mat maniye. Aapke app ko koi bhi link bhej sakta hai, to path ke kisi
+hisse se aayi id parameters wali query ki jagah hai aur redirect ka nishana aisi list se check hona
+chahiye jo aapke akhtiyaar mein ho.
+
+<Detail summary="Test karna, aur wo hisse jo aksar lagbhag sahi hote hain">
+```bash title="adb" numbered
+# aise link chalaiye mano kisi browser ne chalaya ho
+adb shell am start -a android.intent.action.VIEW -d "https://example.com/orders/18"
+
+# aapki pushti ke baare mein system kya sochta hai, har host par
+adb shell pm get-app-links com.example.app
+
+# use dobara jaanchne par majboor kijiye
+adb shell pm verify-app-links --re-verify com.example.app
+```
+
+`pm get-app-links` yaad rakhne layak auzar hai: wo har host ke saath `verified`, `legacy_failure` ya
+`1024` (pata nahi) chhapta hai, jisse pata chalta hai ki mushkil us file mein hai ya manifest mein.
+
+Teen cheezein aksar lagbhag sahi hoti hain. `assetlinks.json` par redirect hone se pushti nakaam ho
+jati hai — use seedhe parosiye. `www.example.com` aur `example.com` alag hosts hain aur dono likhne
+padte hain. Aur pushti install ke waqt chalti hai, to file theek karne se pehle se lage hue users ke
+liye tab tak kuch nahi hota jab tak wo dobara install na karein ya system phir se pushti na kar le.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur unmein se teen chupchap nakaam hoti hain">
+**`BROWSABLE` ka na hona.** `adb` se chalta hai, browser se kuch nahi karta.
+
+**Galat certificate ka fingerprint.** Play app par dobara hastakshar karta hai; Play Console wali value
+lijiye, aur kai likhiye.
+
+**`assetlinks.json` par redirect.** Pushti ko seedha HTTPS jawab chahiye.
+
+**Sirf `onCreate` sambhalna.** Chal rahi activity ko baad ke links `onNewIntent` se milte hain.
+
+**URI par bharosa.** Wo aisa darwaza hai jismein koi bhi data bhej sakta hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Apni scheme wala link jodiye aur use `adb` se kholiye, phir bina `BROWSABLE` ke kisi browser se.
+2. `assetlinks.json` rakhiye aur usse pehle tatha baad mein `pm get-app-links` chalaiye.
+3. Jaanbujhkar galat fingerprint lijiye aur error ke bajaye chooser dekhiye.
+4. App ke chalte hue koi link kholiye, `onNewIntent` ke saath aur uske bina.
+5. Aisa link bhejiye jiska path wala hissa aapka app nahi janta, aur dekhiye ki wo kya karta hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Apni scheme | Turant, bina pushti, aur use koi bhi ghoshit kar sakta hai |
+| App Link | `https`, aapke domain ki file se pushta, koi chooser nahi |
+| `autoVerify` | System se install ke waqt jaanchne ko kehta hai |
+| `BROWSABLE` | Uske bina sirf `adb` wo link chala sakta hai |
+| `assetlinks.json` | `/.well-known/`, HTTPS, bina redirect, `application/json` |
+| Fingerprint | Play ke hastakshar wala certificate, aapki upload key nahi |
+| Pushti kab | Install par; sudhaar ke liye dobara install ya dobara pushti chahiye |
+| Nakami ki shakal | Chooser, koi error nahi |
+| `onNewIntent` | Activity chal rahi ho to baad ke links yahin aate hain |
+| Wo URI | Bahari darwaze se aaya, bharose ke layak nahi |
+
+<Interview title="Ek sawal, jiska jawab aam taur par koi certificate hai">
+"App Links debug mein chalte hain aur release ke baad chooser dikhate hain. Kyun?"
+
+Kyunki `assetlinks.json` ka fingerprint wo nahi hai jo system dekhta hai. Play App Signing ke saath
+Google app par apni key se dobara hastakshar karta hai, to user ke device ka certificate usse alag hai
+jisse aapne build kiya — pushti nakaam hoti hai, aur nakami ki shakal error nahi balki chooser hai,
+isiliye ye hastakshar ki nahi, settings ki mushkil jaisi lagti hai. Ilaaj hai Play Console mein App
+Integrity wala fingerprint, aur main debug, upload tatha Play, teenon keys likhunga taki har build ki
+pushti ho.
+
+Do saath ki cheezein main dekhunga: pushti install par chalti hai aur apne aap dobara nahi hoti, to
+file theek karne ke baad pehle se lage users ko dobara install karna padega; aur
+`adb shell pm get-app-links` har host ki haalat batata hai, jisse kharab file aur kharab manifest alag
+ho jate hain.
+</Interview>

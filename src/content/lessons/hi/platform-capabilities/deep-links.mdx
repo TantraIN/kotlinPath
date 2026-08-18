@@ -1,0 +1,172 @@
+---
+title: Deep links और App Links
+description: Deep link ऐप के बाहर से कोई screen खोलता है। App Link वही काम बिना chooser वाले dialog के करता है — और फर्क आपके manifest की किसी लाइन में नहीं, आपके web server पर रखी एक file में है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`myapp://` जैसी अपनी scheme कोई भी ऐप घोषित कर सकता है, तो system को पूछना ही पड़ता है कि कौन सा
+खोलें। **App Link** `https://` लेता है और मालिकाना आपके domain पर रखी एक file से साबित करता है — और
+वही सबूत chooser को हटाता है।
+</KeyIdea>
+
+## दोनों किस्में
+
+```xml title="AndroidManifest.xml" numbered
+<activity android:name=".MainActivity" android:exported="true">
+
+    <!-- अपनी scheme: तुरंत चलती है, और उसे कोई और भी घोषित कर सकता है -->
+    <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="myapp" android:host="orders" />
+    </intent-filter>
+
+    <!-- App Link: पुष्टि की हुई, कोई chooser नहीं -->
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" android:host="example.com" android:pathPrefix="/orders" />
+    </intent-filter>
+</activity>
+```
+
+`BROWSABLE` वह category है जो किसी browser या दूसरे ऐप को वह intent भेजने देती है; उसके बिना link
+`adb` से चलता है और कहीं नहीं, जो उलझाने वाला आधा घंटा है।
+
+`android:exported="true"` जरूरी है — जो activity बाहर से पहुँची जा सकती है उसे यह कहना ही होगा — और
+यह याद दिलाता है कि यह आपके ऐप में घुसने का ऐसा दरवाजा है जिसमें कोई भी data भेज सकता है।
+
+## पुष्टि वाली file
+
+```json title="/.well-known/assetlinks.json" numbered
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.example.app",
+    "sha256_cert_fingerprints": ["AB:CD:..."]
+  }
+}]
+```
+
+उसे `https://example.com/.well-known/assetlinks.json` से, `application/json` की तरह, HTTPS पर, और
+बिना किसी redirect के मिलना चाहिए। System उसे install के वक्त लाता है और उस fingerprint को उस
+certificate से मिलाता है जिससे APK पर हस्ताक्षर हुए।
+
+आखिरी हिस्सा ही ज्यादातर नाकामियों की जड़ है: fingerprint वही होना चाहिए जो Android सच में देखेगा।
+Play App Signing के साथ वह Play Console में रखी Google की key है, आपकी upload वाली key नहीं — और
+debug वाला build debug key से हस्ताक्षरित है, यानी तीसरा fingerprint। उन सबको लिखना आम बात है।
+
+<Quiz
+  question="Debug वाले build में App Links की पुष्टि ठीक होती है। Play पर release के बाद link पर tap करने से ऐप खुलने के बजाय chooser वाला dialog आता है। गलत क्या है?"
+  options={[
+    "`autoVerify` सिर्फ manifest के पहले intent-filter पर चलता है",
+    "`assetlinks.json` में debug या upload वाले certificate का fingerprint है, वह नहीं जिससे Play ने ऐप पर दोबारा हस्ताक्षर किए — तो पुष्टि नाकाम होती है और link chooser पर लौट आता है",
+    "Play से बँटने वाले ऐप्स के लिए App Links चलते ही नहीं"
+  ]}
+  answer={1}
+  explanation="Play App Signing के साथ Google ऐप बाँटने से पहले उस पर अपनी key से दोबारा हस्ताक्षर करता है, तो user के device पर जो certificate है वह वह नहीं है जिससे आपने build किया था। पुष्टि लगे हुए ऐप के हस्ताक्षर को assetlinks.json के fingerprints से मिलाती है, और debug या upload वाला fingerprint मेल नहीं खाएगा। सही value Play Console में App Integrity के नीचे है — और आम इलाज है कई fingerprints लिख देना, ताकि debug, upload और Play के हस्ताक्षर वाले, तीनों builds की पुष्टि हो। दो चीजें इसे पहचानना मुश्किल बनाती हैं: पुष्टि install के वक्त होती है, तो file ठीक करने के बाद वह अपने आप दोबारा नहीं होती, और नाकामी चुपचाप है — आपको error नहीं, chooser मिलता है। adb shell pm get-app-links <package> हर host की असली हालत बताता है, और दोबारा install करने से जाँच फिर से चलती है।"
+/>
+
+## Link को लेना
+
+```kotlin title="Handle.kt" numbered
+// Compose Navigation उसे type वाले route से मिलाता है
+composable<OrderDetail>(
+    deepLinks = listOf(navDeepLink<OrderDetail>(basePath = "https://example.com/orders")),
+) { backStackEntry ->
+    OrderDetailScreen(orderId = backStackEntry.toRoute<OrderDetail>().id)
+}
+```
+
+```kotlin title="Manual.kt" numbered
+// या हाथ से, किसी activity में
+override fun onNewIntent(intent: Intent) {          // गौर कीजिए: onCreate नहीं
+    super.onNewIntent(intent)
+    intent.data?.lastPathSegment?.let(::openOrder)
+}
+```
+
+`onNewIntent` वही है जिसे लोग चूक जाते हैं। अगर वह activity पहले से चल रही है — `singleTop` या
+`singleTask` — तो नया link `onCreate` के बजाय वहाँ आता है, तो जो ऐप `intent.data` सिर्फ `onCreate` में
+पढ़ता है वह पहला link सँभालता है और उसके बाद के हर link को चुपचाप अनदेखा कर देता है।
+
+आते हुए URI को भरोसे के लायक मत मानिए। आपके ऐप को कोई भी link भेज सकता है, तो path के किसी हिस्से से
+आई id parameters वाली query की जगह है और redirect का निशाना ऐसी सूची से जाँचा जाना चाहिए जो आपके
+अख्तियार में हो।
+
+<Detail summary="Test करना, और वे हिस्से जो अक्सर लगभग सही होते हैं">
+```bash title="adb" numbered
+# ऐसे link चलाइए मानो किसी browser ने चलाया हो
+adb shell am start -a android.intent.action.VIEW -d "https://example.com/orders/18"
+
+# आपकी पुष्टि के बारे में system क्या सोचता है, हर host पर
+adb shell pm get-app-links com.example.app
+
+# उसे दोबारा जाँचने पर मजबूर कीजिए
+adb shell pm verify-app-links --re-verify com.example.app
+```
+
+`pm get-app-links` याद रखने लायक औजार है: वह हर host के साथ `verified`, `legacy_failure` या `1024`
+(पता नहीं) छापता है, जिससे पता चलता है कि दिक्कत उस file में है या manifest में।
+
+तीन चीजें अक्सर लगभग सही होती हैं। `assetlinks.json` पर redirect होने से पुष्टि नाकाम हो जाती है —
+उसे सीधे परोसिए। `www.example.com` और `example.com` अलग hosts हैं और दोनों लिखने पड़ते हैं। और पुष्टि
+install के वक्त चलती है, तो file ठीक करने से पहले से लगे हुए users के लिए तब तक कुछ नहीं होता जब तक
+वे दोबारा install न करें या system फिर से जाँच न ले।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और उनमें से तीन चुपचाप नाकाम होती हैं">
+**`BROWSABLE` का न होना।** `adb` से चलता है, browser से कुछ नहीं करता।
+
+**गलत certificate का fingerprint।** Play ऐप पर दोबारा हस्ताक्षर करता है; Play Console वाली value
+लीजिए, और कई लिखिए।
+
+**`assetlinks.json` पर redirect।** पुष्टि को सीधा HTTPS जवाब चाहिए।
+
+**सिर्फ `onCreate` सँभालना।** चल रही activity को बाद के links `onNewIntent` से मिलते हैं।
+
+**URI पर भरोसा।** वह ऐसा दरवाजा है जिसमें कोई भी data भेज सकता है।
+</Pitfall>
+
+## अभ्यास
+
+1. अपनी scheme वाला link जोड़िए और उसे `adb` से खोलिए, फिर बिना `BROWSABLE` के किसी browser से।
+2. `assetlinks.json` रखिए और उससे पहले तथा बाद में `pm get-app-links` चलाइए।
+3. जानबूझकर गलत fingerprint लीजिए और error के बजाय chooser देखिए।
+4. ऐप के चलते हुए कोई link खोलिए, `onNewIntent` के साथ और उसके बिना।
+5. ऐसा link भेजिए जिसका path वाला हिस्सा आपका ऐप नहीं जानता, और देखिए कि वह क्या करता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| अपनी scheme | तुरंत, बिना पुष्टि, और उसे कोई भी घोषित कर सकता है |
+| App Link | `https`, आपके domain की file से पुष्ट, कोई chooser नहीं |
+| `autoVerify` | System से install के वक्त जाँचने को कहता है |
+| `BROWSABLE` | उसके बिना सिर्फ `adb` वह link चला सकता है |
+| `assetlinks.json` | `/.well-known/`, HTTPS, बिना redirect, `application/json` |
+| Fingerprint | Play के हस्ताक्षर वाला certificate, आपकी upload key नहीं |
+| पुष्टि कब | Install पर; सुधार के लिए दोबारा install या दोबारा जाँच चाहिए |
+| नाकामी की शक्ल | Chooser, कोई error नहीं |
+| `onNewIntent` | Activity चल रही हो तो बाद के links यहीं आते हैं |
+| वह URI | बाहरी दरवाजे से आया, भरोसे के लायक नहीं |
+
+<Interview title="एक सवाल, जिसका जवाब आमतौर पर कोई certificate है">
+"App Links debug में चलते हैं और release के बाद chooser दिखाते हैं। क्यों?"
+
+क्योंकि `assetlinks.json` का fingerprint वह नहीं है जो system देखता है। Play App Signing के साथ
+Google ऐप पर अपनी key से दोबारा हस्ताक्षर करता है, तो user के device का certificate उससे अलग है
+जिससे आपने build किया — पुष्टि नाकाम होती है, और नाकामी की शक्ल error नहीं बल्कि chooser है, इसीलिए
+यह हस्ताक्षर की नहीं, settings की दिक्कत जैसी लगती है। इलाज है Play Console में App Integrity वाला
+fingerprint, और मैं debug, upload तथा Play, तीनों keys लिखूँगा ताकि हर build की पुष्टि हो।
+
+दो साथ की चीजें मैं देखूँगा: पुष्टि install पर चलती है और अपने आप दोबारा नहीं होती, तो file ठीक करने
+के बाद पहले से लगे users को दोबारा install करना पड़ेगा; और `adb shell pm get-app-links` हर host की
+हालत बताता है, जिससे खराब file और खराब manifest अलग हो जाते हैं।
+</Interview>
