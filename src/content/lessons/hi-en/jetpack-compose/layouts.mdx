@@ -1,0 +1,184 @@
+---
+title: Column, Row, Box aur arrangement
+description: Teen composables aapki banai lagbhag har screen ka zyadatar hissa laga dete hain. Sirf ek baat saaf rakhni hai — aap kis disha ki baat kar rahe hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Column`, `Row` aur `Box` lagbhag sab kuch sambhal lete hain. **Arrangement** bachchon ko mukhya
+disha mein lagata hai; **alignment** unhe aar-paar wali disha mein. Compose ki har layout wali
+uljhan inhin do shabdon ka aapas mein badal jana hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Na koi `ConstraintLayout` uthana hai, na kisi XML se joojhna. Screen functions ke andar functions
+hai, aur kisi cheez ki jagah wahi composable tay karta hai jiske andar wo hai.
+
+```kotlin title="Basics.kt" numbered
+Column {                        // bachche upar se neeche
+    Text("Order #1204")
+    Text("Delivered")
+}
+
+Row {                           // bachche agal-bagal
+    Icon(Icons.Default.Star, contentDescription = null)
+    Text("4.8")
+}
+
+Box {                           // bachche ek ke upar ek
+    Image(painter, contentDescription = null)
+    Text("Sale", Modifier.align(Alignment.TopEnd))
+}
+```
+
+## Wo iklauti table jo yaad rakhne layak hai
+
+| Layout | Mukhya disha | Kaun lagata hai | Aar-paar disha | Kaun lagata hai |
+| --- | --- | --- | --- | --- |
+| `Column` | Khadi | `verticalArrangement` | Aadi | `horizontalAlignment` |
+| `Row` | Aadi | `horizontalArrangement` | Khadi | `verticalAlignment` |
+| `Box` | — | `contentAlignment` | — | Har bachche par `Modifier.align` |
+
+Ise aise padhiye: **arrangement phailata hai, alignment seedh mein lagata hai**. Arrangement ko
+baantne ke liye poori ek disha ki khaali jagah milti hai; alignment sirf ye tay karta hai ki
+bachcha uske aar-paar kahan baithe.
+
+<Quiz
+  question="Aap chahte hain ki `Column` ke bachche aade mein beech mein aayein, to aap `Column(verticalArrangement = Arrangement.Center)` likhte hain. Wo baayein or hi rehte hain. Kyun?"
+  options={[
+    "`Arrangement.Center` tabhi chalta hai jab Column ki height pakki ho",
+    "Arrangement mukhya disha par lagta hai, jo Column ke liye khadi hai — aadi ke liye `horizontalAlignment` hai",
+    "Beech mein lane ke liye har bachche par `Modifier.fillMaxWidth()` chahiye",
+  ]}
+  answer={1}
+  explanation="Column ki mukhya disha khadi hai, to verticalArrangement tay karta hai ki bachche upar se neeche kaise bantenge — Center poore dher ko upalabdh height ke beech mein le aata hai, jo asar to sach mein hota hai par shayad wo nahi jo aap chahte the. Disha ke aar-paar har bachcha horizontalAlignment se lagta hai. To ilaaj hai Column(horizontalAlignment = Alignment.CenterHorizontally). Yahi jaal Row mein ulta chalta hai, jahan khade mein beech mein lana verticalAlignment hai, koi arrangement nahi."
+/>
+
+## Arrangement sirf beech mein lana nahi hai
+
+```kotlin title="Arrangements.kt" numbered
+Row(horizontalArrangement = Arrangement.SpaceBetween) { }   // sire kinaron par, beech ki jagah barabar
+Row(horizontalArrangement = Arrangement.SpaceAround) { }    // kinaron par aadhi jagah
+Row(horizontalArrangement = Arrangement.SpaceEvenly) { }    // har jagah barabar, kinare bhi
+Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { } // bachchon ke beech tay doori
+```
+
+<Tip>
+`Arrangement.spacedBy` har bachche par lage padding ki jagah le leta hai. Har item par modifier ke
+bajaye parent par ek value, aur jahan do padding wale bachche milte hain wahan dohri jagah bhi
+nahi.
+</Tip>
+
+## `weight` bachi hui jagah baantta hai
+
+```kotlin title="Weight.kt" numbered
+Row {
+    Text("Title", Modifier.weight(1f))          // bachi hui width le leta hai
+    Icon(Icons.Default.MoreVert, contentDescription = null)
+}
+```
+
+Bina weight wale bachche pehle measure hote hain, aur jo bachta hai wo weight walon mein anupat se
+bantta hai. Ye view system wala `layout_weight` hi hai, bas `0dp` wali rasm ke bina.
+
+<Warning>
+`weight` ko baantne ke liye bandhi hui disha chahiye. `verticalScroll` wale `Column` ke andar
+height ki koi had nahi hoti — baantne ko bachi hui jagah hi nahi hoti — isliye wahan khada
+`weight` wo nahi karta jo aap sochte hain aur aksar phenk deta hai.
+</Warning>
+
+## `Box` aur use bharne ke do tarike
+
+```kotlin title="BoxFill.kt" numbered
+Box {
+    // Box apne doosre bachchon se measure ho chukne ke baad khud ko uske naap ka kar leta hai
+    Spacer(Modifier.matchParentSize().background(scrim))
+
+    Text("Featured")            // Box ko naap yahi bachcha deta hai
+}
+```
+
+`fillMaxSize` bachche ko utna bada karta hai jitna aai hui had deti hai, to wo `Box` ka naap tay
+karne mein *shamil* ho jata hai. `matchParentSize` bachche ko baad mein `Box` jitna kar deta hai,
+aur uske naap par asar nahi dalta. Koi scrim, koi upar ki lakeer ya ripple ki parat doosra wala
+chahti hai.
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Har bachcha theek ek baar measure hota hai" meta="pakka niyam">
+    Compose ek pass mein kisi bachche ko do baar measure karne se mana karta hai. Isiliye gehri
+    nesting par wo guna-bhaag wali keemat nahi padti jo ek ke andar ek `LinearLayout` weights par
+    padti hai.
+  </TimelineItem>
+  <TimelineItem title="Had neeche jati hai, naap wapas aata hai" meta="ek hi pass">
+    Parent `Constraints` bhejta hai — kam se kam aur zyada se zyada width-height — aur har bachcha
+    ek naap batata hai. Phir parent unhe jagah deta hai.
+  </TimelineItem>
+  <TimelineItem title="Intrinsics bachaav ka darwaza hain" meta="aur unki keemat hai">
+    Jab parent ko measure karne se pehle sach mein bachche ka naap chahiye, to `IntrinsicSize`
+    uske baare mein alag sawal puchta hai. Ye ek aur sawal hai, isliye ise sirf wahin lijiye jahan
+    layout kisi aur tarah se kaha hi na ja sake.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="ConstraintLayout kahan gaya">
+Wo Compose ke liye bhi hai, aur zyadatar screens ko uski zarurat nahi. XML mein sapaat constraint
+graph jis nesting ki keemat ki wajah se faayde ka sauda tha, wo keemat kaafi had tak chali gayi
+hai, to `Row` wala `Column` aam taur par padhne mein bhi behtar hai aur tez bhi kaafi.
+`ConstraintLayout` tab uthaiye jab koi rishta sach mein ek ke andar ek rakhkar nahi kaha ja sakta
+— kai views par phaila koi barrier, ya anupat wali koi chain.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo lagatar saamne aati hain">
+**Alignment ki jagah arrangement.** Upar wala quiz. Jis disha mein hilne ki ummid thi usmein kuch
+nahi hila, to jodi mein se galat wala uthaya gaya hai.
+
+**`Box` ke overlay ke liye `fillMaxSize`.** Isse overlay hi `Box` ka naap tay karne lagta hai, to
+box apne parent jitna phail jata hai. `matchParentSize` lijiye.
+
+**Scroll hote `Column` mein `weight`.** Jis disha ki koi had nahi, wahan baantne ko bachi hui
+jagah bhi nahi hoti.
+
+**`spacedBy` ki jagah har bachche par padding.** Phir agal-bagal ke bachchon ke beech aapki sochi
+hui doori ki dugni jagah aa jati hai, aur doori badalni ho to har item badalna padta hai.
+</Pitfall>
+
+## Practice
+
+1. `Column` ke bachchon ko ek saath aade aur khade dono mein beech mein laiye, aur bolkar kahiye
+   ki kaun sa parameter kya kar raha hai.
+2. Ek row banaiye jismein title, khaali jagah aur aakhir mein icon ho — teen tarikon se: `weight`,
+   `SpaceBetween`, aur `Spacer(Modifier.weight(1f))`. Tay kijiye kaun sa padhne mein sabse achha
+   hai.
+3. Kisi tasveer ke upar `fillMaxSize` se gaadha scrim rakhiye, layout ko phailte dekhiye, phir
+   `matchParentSize` par jaiye.
+4. Har bachche wale padding ki jagah `Arrangement.spacedBy` rakhiye aur giniye kitni lines mitin.
+5. Das `Column` ek ke andar ek rakhiye aur frame ka samay napiye. Ek ke andar ek `LinearLayout` se
+   jo ummid hoti usse milaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `Column` | Mukhya disha khadi; `verticalArrangement`, `horizontalAlignment` |
+| `Row` | Mukhya disha aadi; `horizontalArrangement`, `verticalAlignment` |
+| `Box` | Bachche ek ke upar ek; `contentAlignment` aur har bachche par `Modifier.align` |
+| Arrangement | Mukhya disha ki khaali jagah baantta hai |
+| Alignment | Bachche ko disha ke aar-paar rakhta hai |
+| `spacedBy` | Parent par doori ki ek value, har bachche par padding nahi |
+| `weight` | Mukhya disha ki bachi jagah baantta hai; disha bandhi honi chahiye |
+| `matchParentSize` | `Box` jitna naap, uske naap par asar dale bina |
+| Measurement | Har bachcha ek baar, to nesting sasti hai |
+
+<Interview title="Wo sawal jo mamuli lagta hai aur hai nahi">
+"Arrangement aur alignment mein farak kya hai?"
+
+Arrangement bachchon ko layout ki mukhya disha mein baantta hai aur isliye unke *beech* ki jagah
+tay karta hai; alignment kisi bachche ko doosri disha ke aar-paar rakhta hai. Kaam ki baat ye
+jodna hai ki API aisi kyun hai: baantne layak khaali jagah sirf mukhya disha mein hoti hai, isliye
+`SpaceBetween`, `SpaceEvenly` aur `spacedBy` jaisi poori shabdawali sirf usi disha ko chahiye.
+</Interview>

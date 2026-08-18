@@ -1,0 +1,179 @@
+---
+title: Column, Row, Box और arrangement
+description: तीन composables आपकी बनाई लगभग हर screen का ज्यादातर हिस्सा लगा देते हैं। सिर्फ एक बात साफ रखनी है — आप किस दिशा की बात कर रहे हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Column`, `Row` और `Box` लगभग सब कुछ सँभाल लेते हैं। **Arrangement** बच्चों को मुख्य दिशा में
+लगाता है; **alignment** उन्हें आर-पार वाली दिशा में। Compose की हर layout वाली उलझन इन्हीं दो
+शब्दों का आपस में बदल जाना है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+न कोई `ConstraintLayout` उठाना है, न किसी XML से जूझना। Screen functions के अंदर functions हैं,
+और किसी चीज की जगह वही composable तय करता है जिसके अंदर वह है।
+
+```kotlin title="Basics.kt" numbered
+Column {                        // बच्चे ऊपर से नीचे
+    Text("Order #1204")
+    Text("Delivered")
+}
+
+Row {                           // बच्चे अगल-बगल
+    Icon(Icons.Default.Star, contentDescription = null)
+    Text("4.8")
+}
+
+Box {                           // बच्चे एक के ऊपर एक
+    Image(painter, contentDescription = null)
+    Text("Sale", Modifier.align(Alignment.TopEnd))
+}
+```
+
+## वह इकलौती table जो याद रखने लायक है
+
+| Layout | मुख्य दिशा | कौन लगाता है | आर-पार दिशा | कौन लगाता है |
+| --- | --- | --- | --- | --- |
+| `Column` | खड़ी | `verticalArrangement` | आड़ी | `horizontalAlignment` |
+| `Row` | आड़ी | `horizontalArrangement` | खड़ी | `verticalAlignment` |
+| `Box` | — | `contentAlignment` | — | हर बच्चे पर `Modifier.align` |
+
+इसे ऐसे पढ़िए: **arrangement फैलाता है, alignment सीध में लगाता है**। Arrangement को बाँटने के लिए
+पूरी एक दिशा की खाली जगह मिलती है; alignment सिर्फ यह तय करता है कि बच्चा उसके आर-पार कहाँ बैठे।
+
+<Quiz
+  question="आप चाहते हैं कि `Column` के बच्चे आड़े में बीच में आएँ, तो आप `Column(verticalArrangement = Arrangement.Center)` लिखते हैं। वे बाईं ओर ही रहते हैं। क्यों?"
+  options={[
+    "`Arrangement.Center` तभी चलता है जब Column की ऊँचाई पक्की हो",
+    "Arrangement मुख्य दिशा पर लगता है, जो Column के लिए खड़ी है — आड़ी के लिए `horizontalAlignment` है",
+    "बीच में लाने के लिए हर बच्चे पर `Modifier.fillMaxWidth()` चाहिए",
+  ]}
+  answer={1}
+  explanation="Column की मुख्य दिशा खड़ी है, तो verticalArrangement तय करता है कि बच्चे ऊपर से नीचे कैसे बँटेंगे — Center पूरे ढेर को उपलब्ध ऊँचाई के बीच में ले आता है, जो असर तो सच में होता है पर शायद वह नहीं जो आप चाहते थे। दिशा के आर-पार हर बच्चा horizontalAlignment से लगता है। तो इलाज है Column(horizontalAlignment = Alignment.CenterHorizontally)। यही जाल Row में उल्टा चलता है, जहाँ खड़े में बीच में लाना verticalAlignment है, कोई arrangement नहीं।"
+/>
+
+## Arrangement सिर्फ बीच में लाना नहीं है
+
+```kotlin title="Arrangements.kt" numbered
+Row(horizontalArrangement = Arrangement.SpaceBetween) { }   // सिरे किनारों पर, बीच की जगह बराबर
+Row(horizontalArrangement = Arrangement.SpaceAround) { }    // किनारों पर आधी जगह
+Row(horizontalArrangement = Arrangement.SpaceEvenly) { }    // हर जगह बराबर, किनारे भी
+Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { } // बच्चों के बीच तय दूरी
+```
+
+<Tip>
+`Arrangement.spacedBy` हर बच्चे पर लगे padding की जगह ले लेता है। हर item पर modifier के बजाय
+parent पर एक value, और जहाँ दो padding वाले बच्चे मिलते हैं वहाँ दोहरी जगह भी नहीं।
+</Tip>
+
+## `weight` बची हुई जगह बाँटता है
+
+```kotlin title="Weight.kt" numbered
+Row {
+    Text("Title", Modifier.weight(1f))          // बची हुई चौड़ाई ले लेता है
+    Icon(Icons.Default.MoreVert, contentDescription = null)
+}
+```
+
+बिना weight वाले बच्चे पहले measure होते हैं, और जो बचता है वह weight वालों में अनुपात से बँटता
+है। यह view system वाला `layout_weight` ही है, बस `0dp` वाली रस्म के बिना।
+
+<Warning>
+`weight` को बाँटने के लिए बँधी हुई दिशा चाहिए। `verticalScroll` वाले `Column` के अंदर ऊँचाई की कोई
+हद नहीं होती — बाँटने को बची हुई जगह ही नहीं होती — इसलिए वहाँ खड़ा `weight` वह नहीं करता जो आप
+सोचते हैं और अक्सर फेंक देता है।
+</Warning>
+
+## `Box` और उसे भरने के दो तरीके
+
+```kotlin title="BoxFill.kt" numbered
+Box {
+    // Box अपने दूसरे बच्चों से measure हो चुकने के बाद खुद को उसके नाप का कर लेता है
+    Spacer(Modifier.matchParentSize().background(scrim))
+
+    Text("Featured")            // Box को नाप यही बच्चा देता है
+}
+```
+
+`fillMaxSize` बच्चे को उतना बड़ा करता है जितना आई हुई हद देती है, तो वह `Box` का नाप तय करने में
+*शामिल* हो जाता है। `matchParentSize` बच्चे को बाद में `Box` जितना कर देता है, और उसके नाप पर असर
+नहीं डालता। कोई scrim, कोई ऊपर की लकीर या ripple की परत दूसरे वाला चाहती है।
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="हर बच्चा ठीक एक बार measure होता है" meta="पक्का नियम">
+    Compose एक pass में किसी बच्चे को दो बार measure करने से मना करता है। इसीलिए गहरी nesting पर
+    वह गुणा-भाग वाली कीमत नहीं पड़ती जो एक के अंदर एक `LinearLayout` weights पर पड़ती है।
+  </TimelineItem>
+  <TimelineItem title="हद नीचे जाती है, नाप वापस आता है" meta="एक ही pass">
+    Parent `Constraints` भेजता है — कम से कम और ज्यादा से ज्यादा चौड़ाई-ऊँचाई — और हर बच्चा एक
+    नाप बताता है। फिर parent उन्हें जगह देता है।
+  </TimelineItem>
+  <TimelineItem title="Intrinsics बचाव का दरवाजा हैं" meta="और उनकी कीमत है">
+    जब parent को measure करने से पहले सच में बच्चे का नाप चाहिए, तो `IntrinsicSize` उसके बारे में
+    अलग सवाल पूछता है। यह एक और सवाल है, इसलिए इसे सिर्फ वहीं लीजिए जहाँ layout किसी और तरह से
+    कहा ही न जा सके।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="ConstraintLayout कहाँ गया">
+वह Compose के लिए भी है, और ज्यादातर screens को उसकी जरूरत नहीं। XML में सपाट constraint graph
+जिस nesting की कीमत की वजह से फायदे का सौदा था, वह कीमत काफी हद तक चली गई है, तो `Row` वाला
+`Column` आमतौर पर पढ़ने में भी बेहतर है और तेज भी काफी। `ConstraintLayout` तब उठाइए जब कोई रिश्ता
+सच में एक के अंदर एक रखकर नहीं कहा जा सकता — कई views पर फैला कोई barrier, या अनुपात वाली कोई
+chain।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो लगातार सामने आती हैं">
+**Alignment की जगह arrangement।** ऊपर वाला quiz। जिस दिशा में हिलने की उम्मीद थी उसमें कुछ नहीं
+हिला, तो जोड़ी में से गलत वाला उठाया गया है।
+
+**`Box` के overlay के लिए `fillMaxSize`।** इससे overlay ही `Box` का नाप तय करने लगता है, तो box
+अपने parent जितना फैल जाता है। `matchParentSize` लीजिए।
+
+**Scroll होते `Column` में `weight`।** जिस दिशा की कोई हद नहीं, वहाँ बाँटने को बची हुई जगह भी
+नहीं होती।
+
+**`spacedBy` की जगह हर बच्चे पर padding।** फिर अगल-बगल के बच्चों के बीच आपकी सोची हुई दूरी की
+दोगुनी जगह आ जाती है, और दूरी बदलनी हो तो हर item बदलना पड़ता है।
+</Pitfall>
+
+## अभ्यास
+
+1. `Column` के बच्चों को एक साथ आड़े और खड़े दोनों में बीच में लाइए, और बोलकर कहिए कि कौन सा
+   parameter क्या कर रहा है।
+2. एक row बनाइए जिसमें title, खाली जगह और आखिर में icon हो — तीन तरीकों से: `weight`,
+   `SpaceBetween`, और `Spacer(Modifier.weight(1f))`। तय कीजिए कौन सा पढ़ने में सबसे अच्छा है।
+3. किसी तस्वीर के ऊपर `fillMaxSize` से गाढ़ा scrim रखिए, layout को फैलते देखिए, फिर
+   `matchParentSize` पर जाइए।
+4. हर बच्चे वाले padding की जगह `Arrangement.spacedBy` रखिए और गिनिए कितनी lines मिटीं।
+5. दस `Column` एक के अंदर एक रखिए और frame का समय नापिए। एक के अंदर एक `LinearLayout` से जो
+   उम्मीद होती उससे मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `Column` | मुख्य दिशा खड़ी; `verticalArrangement`, `horizontalAlignment` |
+| `Row` | मुख्य दिशा आड़ी; `horizontalArrangement`, `verticalAlignment` |
+| `Box` | बच्चे एक के ऊपर एक; `contentAlignment` और हर बच्चे पर `Modifier.align` |
+| Arrangement | मुख्य दिशा की खाली जगह बाँटता है |
+| Alignment | बच्चे को दिशा के आर-पार रखता है |
+| `spacedBy` | Parent पर दूरी की एक value, हर बच्चे पर padding नहीं |
+| `weight` | मुख्य दिशा की बची जगह बाँटता है; दिशा बँधी होनी चाहिए |
+| `matchParentSize` | `Box` जितना नाप, उसके नाप पर असर डाले बिना |
+| Measurement | हर बच्चा एक बार, तो nesting सस्ती है |
+
+<Interview title="वह सवाल जो मामूली लगता है और है नहीं">
+"Arrangement और alignment में फर्क क्या है?"
+
+Arrangement बच्चों को layout की मुख्य दिशा में बाँटता है और इसलिए उनके *बीच* की जगह तय करता है;
+alignment किसी बच्चे को दूसरी दिशा के आर-पार रखता है। काम की बात यह जोड़ना है कि API ऐसी क्यों है:
+बाँटने लायक खाली जगह सिर्फ मुख्य दिशा में होती है, इसलिए `SpaceBetween`, `SpaceEvenly` और
+`spacedBy` जैसी पूरी शब्दावली सिर्फ उसी दिशा को चाहिए।
+</Interview>

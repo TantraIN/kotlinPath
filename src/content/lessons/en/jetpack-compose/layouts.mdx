@@ -1,0 +1,177 @@
+---
+title: Column, Row, Box and arrangement
+description: Three composables lay out most of every screen you will build. The only thing you have to keep straight is which axis you are talking about.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Column`, `Row` and `Box` cover almost everything. **Arrangement** positions children along the
+main axis; **alignment** positions them across it. Every layout confusion in Compose is those two
+words swapped.
+</KeyIdea>
+
+## Why this matters
+
+There is no `ConstraintLayout` to reach for and no XML to fight. A screen is functions inside
+functions, and the position of a thing is decided by the composable that contains it.
+
+```kotlin title="Basics.kt" numbered
+Column {                        // children stacked top to bottom
+    Text("Order #1204")
+    Text("Delivered")
+}
+
+Row {                           // children side by side
+    Icon(Icons.Default.Star, contentDescription = null)
+    Text("4.8")
+}
+
+Box {                           // children on top of one another
+    Image(painter, contentDescription = null)
+    Text("Sale", Modifier.align(Alignment.TopEnd))
+}
+```
+
+## The one table worth memorising
+
+| Layout | Main axis | Positioned by | Cross axis | Positioned by |
+| --- | --- | --- | --- | --- |
+| `Column` | Vertical | `verticalArrangement` | Horizontal | `horizontalAlignment` |
+| `Row` | Horizontal | `horizontalArrangement` | Vertical | `verticalAlignment` |
+| `Box` | — | `contentAlignment` | — | `Modifier.align` per child |
+
+Read it as: **arrangement spreads, alignment lines up**. Arrangement gets a whole axis of free
+space to distribute; alignment only decides where a child sits across it.
+
+<Quiz
+  question="You want a `Column`'s children centred horizontally, so you write `Column(verticalArrangement = Arrangement.Center)`. They stay on the left. Why?"
+  options={[
+    "`Arrangement.Center` only works when the Column has a fixed height",
+    "Arrangement acts on the main axis, which for a Column is vertical — horizontal is `horizontalAlignment`",
+    "Centring needs `Modifier.fillMaxWidth()` on every child",
+  ]}
+  answer={1}
+  explanation="A Column's main axis is vertical, so verticalArrangement decides how children are distributed top to bottom — Center moves the whole stack to the middle of the available height, which is a real effect and probably not what you wanted. Across the axis, each child is placed by horizontalAlignment. So the fix is Column(horizontalAlignment = Alignment.CenterHorizontally). The same trap runs the other way in a Row, where centring vertically is verticalAlignment, not an arrangement."
+/>
+
+## Arrangement is more than centring
+
+```kotlin title="Arrangements.kt" numbered
+Row(horizontalArrangement = Arrangement.SpaceBetween) { }   // ends pinned, gaps equal
+Row(horizontalArrangement = Arrangement.SpaceAround) { }    // half gaps at the ends
+Row(horizontalArrangement = Arrangement.SpaceEvenly) { }    // all gaps equal, ends included
+Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { } // fixed gap between children
+```
+
+<Tip>
+`Arrangement.spacedBy` replaces padding on every child. One value on the parent instead of a
+modifier on each item, and no double gap where two padded children meet.
+</Tip>
+
+## `weight` divides what is left
+
+```kotlin title="Weight.kt" numbered
+Row {
+    Text("Title", Modifier.weight(1f))          // takes the remaining width
+    Icon(Icons.Default.MoreVert, contentDescription = null)
+}
+```
+
+Children without a weight are measured first, and what remains is split between the weighted ones
+in proportion. It is `layout_weight` from the view system, without the `0dp` ritual.
+
+<Warning>
+`weight` needs a bounded axis to divide. Inside a `Column` with `verticalScroll` the height is
+unbounded — there is no leftover space to share — so a vertical `weight` there does not do what
+you expect and often throws.
+</Warning>
+
+## `Box` and the two ways to fill it
+
+```kotlin title="BoxFill.kt" numbered
+Box {
+    // Sizes itself to the Box AFTER the Box has been measured by its other children
+    Spacer(Modifier.matchParentSize().background(scrim))
+
+    Text("Featured")            // this child is what gives the Box its size
+}
+```
+
+`fillMaxSize` makes a child as large as the incoming constraints allow, and so it *participates*
+in deciding the `Box`'s size. `matchParentSize` sizes the child to the `Box` after the fact, and
+does not influence it. A scrim, a border overlay or a ripple layer wants the second one.
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Every child is measured exactly once" meta="a hard rule">
+    Compose forbids measuring a child twice in one pass. That is why deep nesting does not carry
+    the exponential cost it does with nested `LinearLayout` weights.
+  </TimelineItem>
+  <TimelineItem title="Constraints go down, sizes come back" meta="one pass">
+    A parent passes `Constraints` — min and max width and height — and each child answers with a
+    size. The parent then places them.
+  </TimelineItem>
+  <TimelineItem title="Intrinsics are the escape hatch" meta="and they cost">
+    When a parent genuinely needs a child's size before measuring, `IntrinsicSize` asks a separate
+    question about it. It is an extra query, so use it only where a layout truly cannot be
+    expressed otherwise.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Where did ConstraintLayout go?">
+It exists for Compose too, and most screens do not need it. The nesting cost that made a flat
+constraint graph worthwhile in XML is largely gone, so a `Column` of `Row`s is usually both
+faster to read and fast enough. Reach for `ConstraintLayout` when a relationship genuinely cannot
+be nested — a barrier across several views, or a chain with a ratio.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that show up constantly">
+**Arrangement where you meant alignment.** The quiz above. If nothing moved along the axis you
+expected, you used the wrong one of the pair.
+
+**`fillMaxSize` for a `Box` overlay.** It makes the overlay define the `Box`'s size, so the box
+grows to fill its parent. Use `matchParentSize`.
+
+**`weight` inside a scrolling `Column`.** An unbounded axis has no leftover space to divide.
+
+**Padding on every child instead of `spacedBy`.** Adjacent children then have double the gap you
+intended, and changing the spacing means editing every item.
+</Pitfall>
+
+## Practice
+
+1. Centre a `Column`'s children horizontally and vertically at once, and say out loud which
+   parameter does which.
+2. Build a row with a title, a spacer and a trailing icon three ways: `weight`, `SpaceBetween`,
+   and a `Spacer(Modifier.weight(1f))`. Decide which reads best.
+3. Put a dark scrim over an image with `fillMaxSize`, watch the layout grow, then switch to
+   `matchParentSize`.
+4. Replace per-child padding with `Arrangement.spacedBy` and count the lines you deleted.
+5. Nest ten `Column`s and measure the frame time. Compare with what you would expect from nested
+   `LinearLayout`s.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `Column` | Vertical main axis; `verticalArrangement`, `horizontalAlignment` |
+| `Row` | Horizontal main axis; `horizontalArrangement`, `verticalAlignment` |
+| `Box` | Stacks children; `contentAlignment` and per-child `Modifier.align` |
+| Arrangement | Distributes free space along the main axis |
+| Alignment | Places a child across the axis |
+| `spacedBy` | One gap value on the parent, no per-child padding |
+| `weight` | Splits the leftover main-axis space; needs a bounded axis |
+| `matchParentSize` | Sizes to the `Box` without influencing it |
+| Measurement | Every child measured once, so nesting is cheap |
+
+<Interview title="A question that sounds trivial and is not">
+"What is the difference between arrangement and alignment?"
+
+Arrangement distributes children along the layout's main axis and therefore controls the space
+*between* them; alignment places a child across the other axis. The useful addition is why the
+API is shaped that way: only the main axis has leftover space to distribute, so only that axis
+needs a whole vocabulary of `SpaceBetween`, `SpaceEvenly` and `spacedBy`.
+</Interview>
