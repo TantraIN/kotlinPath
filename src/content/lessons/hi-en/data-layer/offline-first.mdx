@@ -1,0 +1,215 @@
+---
+title: "Offline-first: cache, sync aur conflict"
+description: Offline-first hawai jahaz ke liye jodi jane wali suvidha nahi hai. Wo is baare mein ek dawa hai ki sach rehta kahan hai, aur wo dawa karte hi is phase ke baaki har sawal ka jawab pehle se maujood hota hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Offline-first ka matlab hai ki **database sach ka thikana hai aur network likhne wala**. Screen kisi
+request ka intezar karti hi nahi, kyunki wo kabhi usse padhti hi nahi thi. Tab offline chalna koi
+banai hui suvidha nahi reh jata, wo muft mein mil jata hai — padhne ka raasta network par kabhi tika
+hi nahi tha.
+</KeyIdea>
+
+## Wo shakal, jiski taraf baaki sab ishara kar raha tha
+
+```kotlin title="OrderRepository.kt" numbered
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository {
+
+    // padhna: hamesha database, kabhi network nahi
+    override fun observeOrders(): Flow<List<Order>> =
+        dao.observeAll().map { it.map(OrderEntity::toDomain) }
+
+    // likhna: network ka iklauta kaam hai database bharna
+    override suspend fun refresh(): Outcome<Unit> = safeCall {
+        val fresh = api.orders().map(OrderDto::toEntity)
+        dao.replaceAll(fresh)                      // ek transaction, ek invalidation
+    }
+}
+```
+
+Poora pattern yahi hai. `refresh()` safalta ya nakami lautata hai aur **koi data nahi** — naye orders
+har screen tak usi `Flow` se pahunchte hain jo wo hamesha se padh rahi thi. Do screens aapas mein ulat
+nahi saktin, kyunki padhne ki jagah ek hi hai.
+
+<Figure caption="Ek hi disha. Network likhta hai, database bhejta hai, aur kisi screen ke paas data pane ka doosra raasta hai hi nahi.">
+  <PipelineDiagram
+    title="Offline-first ka chakra"
+    description="Refresh database mein likhta hai; database har dekhne wale tak bhejta hai; screen dikha deti hai. Nakami padhne ka raasta kabhi nahi rokti."
+    stages={[
+      { label: "Network", sub: "sirf likhta hai", accent: "amber" },
+      { label: "Database", sub: "sach", accent: "emerald" },
+      { label: "Flow", sub: "har dekhne wala", accent: "sky" },
+      { label: "Screen", sub: "kabhi intezar nahi", accent: "violet" },
+    ]}
+  />
+</Figure>
+
+## UI sach mein dikhati kya hai
+
+State ke model ko "mere paas data nahi hai" aur "main refresh nahi kar paya" ko alag rakhna hi padta
+hai, kyunki offline-first unhe ek-doosre se azad kar deta hai:
+
+```kotlin title="OrderUiState.kt" numbered
+data class OrderUiState(
+    val orders: List<Order> = emptyList(),
+    val isRefreshing: Boolean = false,
+    val refreshFailed: DataError? = null,      // patti ki tarah dikhta hai, screen ki tarah nahi
+) {
+    val showEmptyState: Boolean get() = orders.isEmpty() && !isRefreshing
+}
+```
+
+Rakhe hue orders ke saath nakaam refresh chalti hui list ke upar ek chhoti patti hai. Khaali database
+ke saath nakaam refresh error wali screen hai. Wahi nakami, do peshkash — aur ek akela `isError` flag
+ye farak keh hi nahi sakta, isiliye use lene wale app us data ke upar "internet nahi hai" dikhate hain
+jo user ko saaf dikh raha hota hai.
+
+<Quiz
+  question="Koi user offline rehte hue kisi order ka note badalta hai. App use Room mein likh deta hai taki UI turant badle, phir connectivity lautne par sync karta hai. Agle refresh par wo note purani value par laut jata hai. Kyun?"
+  options={[
+    "Room ne wo likhai kho di kyunki wo bina connectivity ke hui thi",
+    "`replaceAll` ne us local badlaav ke upar server ki copy likh di, jise wo badlaav kabhi mila hi nahi — us row par kabhi ye nishan laga hi nahi ki usmein bina sync hue badlaav hain",
+    "Flow ne purani value bheji aur use `distinctUntilChanged` chahiye",
+  ]}
+  answer={1}
+  explanation="Pehle Room mein likhna sahi hai — usi se wo badlaav turant dikhta hai. Bug ye hai ki us row ke paas is baat ka koi nishan nahi hai ki wo maili hai, to agla refresh server ko upar maankar use badal deta hai. Ilaaj hai entity par ek flag, pendingSync, jo user ke badalne par lage aur sirf tab hate jab server use maan le. Tab refresh badalne ke bajaye milata hai: server ki rows saaf local rows ke upar likhti hain aur maili ko haath nahi lagatin, aur ek alag sync wala kadam unhe upar bhejta hai. Yahi wo jagah hai jahan offline-first padhne ka pattern rehna chhodkar likhne ka pattern ban jata hai, aur imandari se kehna chahiye ki ye sach mein zyada mushkil hai — ab ek row ke do likhne wale hain, aur conflict ki paribhasha yahi hai."
+/>
+
+## Likhai, aur usse paida hota conflict
+
+Offline padhna aasan hai. Offline likhne ka matlab hai ki ek hi row do jagah badal sakti hai, aur kisi
+ko tay karna hai ki kaunsa badlaav jeetega.
+
+```kotlin title="OrderEntity.kt" numbered
+@Entity(tableName = "orders")
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val note: String,
+    val updatedAt: Long,
+    val pendingSync: Boolean = false,          // is row mein local badlaav hain
+)
+```
+
+```kotlin title="Sync.kt" numbered
+suspend fun sync(): Outcome<Unit> = safeCall {
+    // pehle local badlaav bhejiye, taki neeche aata data unhe mita na sake
+    dao.pendingOrders().forEach { local ->
+        api.update(local.id, local.toPatch())
+        dao.markSynced(local.id)
+    }
+
+    val remote = api.orders().map(OrderDto::toEntity)
+    db.withTransaction {
+        val dirty = dao.pendingIds().toSet()
+        dao.upsert(remote.filterNot { it.id in dirty })   // bache hue badlaav kabhi mat mitaiye
+    }
+}
+```
+
+Pehle bhejiye, phir laiye, aur kisi maili row ke upar kabhi mat likhiye. Ye do niyam iske bigadne ke
+zyadatar raaste band kar dete hain.
+
+| Tarika | Niyam | Kiske liye sahi |
+| --- | --- | --- |
+| Aakhri likhai jeete | Sabse naya `updatedAt` | Notes, drafts, ek hi device ka istemal |
+| Server jeete | Server hamesha upar likhta hai | Keematein, stock, jo bhi upar se tay hota hai |
+| Client jeete | Local hamesha upar likhta hai | Sirf device ki settings |
+| Milaiye | Field dar field, ya koi CRDT | Saath milkar likhna |
+| Puchiye | Dono dikhaiye, user chune | Kam hota hai, mehnga hai, kabhi-kabhi sahi hai |
+
+Yahan koi default nahi hai. Har entity par chuniye, aur likh lijiye — jis app ne kabhi tay hi nahi
+kiya wo anjane mein "aakhri likhai jeete" chala raha hai, jo kisi note ke liye theek hai aur kisi
+hisab-kitab ke liye galat.
+
+<Detail summary="Sync chalta kahan hai">
+`viewModelScope` mein chalta sync tab mar jata hai jab user screen se nikalta hai, aur jis kaam ko
+poora hona hi hai uske liye wo galat umar hai. Uska sahi ghar `WorkManager` hai:
+
+```kotlin title="SyncWorker.kt" numbered
+class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = when (repository.sync()) {
+        is Outcome.Success -> Result.success()
+        is Outcome.Failure -> Result.retry()          // ruk-rukkar dobara, reboot ke baad bhi
+    }
+}
+
+val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+    .build()
+```
+
+Yahan jo maayne rakhta hai wo wo shart hai: connectivity aane tak wo kaam chalta hi nahi, to aapko
+apna network sunne wala likhna nahi padta, aur `Result.retry()` ko badhta hua antaral tatha reboot ke
+baad bhi bache rehna muft mein mil jata hai.
+
+`WorkManager` platform wale phase ka hai aur usmein isse kahin zyada hai. Wo yahan isliye dikha ki
+zarurat offline-first hi paida karta hai — jis pal bina network ke likhai ho sakti hai, usi pal kisi
+ko use baad mein poora karne ka zimma lena padta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo offline-first app ko saade app se bhi bura bana deti hain">
+**Kahin bhi network se padhna.** Ek screen ka aisa karna wahi matbhed wapas le aata hai jise hatane ke
+liye ye pattern tha.
+
+**`refresh()` ka data lautana.** Tab bulane walon ke paas padhne ka doosra raasta hai, aur anushasan
+chala gaya.
+
+**Koi mailepan ka nishan na hona.** Local badlaav agle refresh par chupchap mit jate hain. Upar wala
+quiz dekhiye.
+
+**Bhejne se pehle lana.** Server ki copy pehle aa jati hai aur aapka bina sync hua badlaav chala jata
+hai.
+
+**Ek akela `isError` flag.** User ko saaf dikhte rakhe hue orders ke upar "internet nahi hai" dikhta
+hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Network band kijiye aur app ko paanch minute chalaiye. Jo kuch bhi ghoomta ya error deta hai wo
+   padhne ka aisa raasta hai jo ab bhi network chhoota hai.
+2. `refresh()` ko `Outcome<Unit>` lautane wala banaiye aur uska lautaya hua istemal karte har bulane
+   wale ko mitaiye.
+3. Ek `pendingSync` flag jodiye, offline badlaav kijiye, refresh kijiye, aur pakka kijiye ki wo
+   badlaav bacha raha.
+4. `sync()` mein bhejne aur lane ka order ulatiye aur kisi badlaav ko gayab hote dekhiye.
+5. Har entity ke liye conflict ka tarika likh lijiye. Jinka jawab aap nahi de paate, khatra unhin mein
+   hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Offline-first | Database sach hai; network usmein likhta hai |
+| Padhna | Hamesha database se aata `Flow` |
+| `refresh()` | Safalta ya nakami lautata hai, data kabhi nahi |
+| Offline chalna | Padhne ke raaste se khud nikalta hai, alag se banaya nahi jata |
+| Khaali banam nakaam | Alag haalatein, alag UI |
+| `pendingSync` | Is row mein local badlaav hain; iske upar mat likhiye |
+| Pehle bhejiye, phir laiye | Warna aata hua data bina sync hue badlaav ko mita deta hai |
+| Conflict ka tarika | Har entity par chuna jata hai, default se kabhi nahi |
+| `WorkManager` | Sync ka ghar, connectivity ki shart ke saath |
+| Mushkil hissa | Likhai, padhna nahi |
+
+<Interview title="Ek sawal, jo padhne ki kahani ko likhne ki kahani se alag karta hai">
+"Offline-first app aap kaise banaoge?"
+
+Database ko sach ka iklauta thikana banakar. Har padhna Room se aata `Flow` hai, aur network ka
+iklauta kaam hai usmein likhna — to `refresh()` safalta ya nakami lautata hai, data nahi, aur naya
+data UI tak usi dhara se pahunchta hai jo wo pehle se padh rahi thi. Tab offline chalna meri banai
+suvidha nahi hoti; padhne ka raasta network par kabhi tika hi nahi tha.
+
+Padhna aasan aadha hai. Jis pal user offline *badlaav* kar sakta hai, usi pal ek row do jagah badal
+sakti hai aur mere paas conflict hai. Main locally badli hui rows par `pendingSync` ka nishan
+lagaunga, lane se pehle bhejunga, aur aate hue data ko kisi maili row ke upar kabhi nahi likhne
+doonga — aur har entity par hal ka tarika khud chununga, koi ek maankar nahi, kyunki
+aakhri-likhai-jeete kisi note ke liye theek hai aur kisi hisab-kitab ke liye galat. Sync khud
+`WorkManager` mein rahega, connectivity ki shart ke saath, na ki aise `viewModelScope` mein jo user ke
+screen chhodte hi mar jata hai.
+</Interview>

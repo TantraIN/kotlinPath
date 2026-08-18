@@ -1,0 +1,208 @@
+---
+title: "Offline-first: cache, sync और conflict"
+description: Offline-first हवाई जहाज के लिए जोड़ी जाने वाली सुविधा नहीं है। वह इस बारे में एक दावा है कि सच रहता कहाँ है, और वह दावा करते ही इस phase के बाकी हर सवाल का जवाब पहले से मौजूद होता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Offline-first का मतलब है कि **database सच का ठिकाना है और network लिखने वाला**। Screen किसी request
+का इंतजार करती ही नहीं, क्योंकि वह कभी उससे पढ़ती ही नहीं थी। तब offline चलना कोई बनाई हुई सुविधा
+नहीं रह जाता, वह मुफ्त में मिल जाता है — पढ़ने का रास्ता network पर कभी टिका ही नहीं था।
+</KeyIdea>
+
+## वह शक्ल, जिसकी तरफ बाकी सब इशारा कर रहा था
+
+```kotlin title="OrderRepository.kt" numbered
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository {
+
+    // पढ़ना: हमेशा database, कभी network नहीं
+    override fun observeOrders(): Flow<List<Order>> =
+        dao.observeAll().map { it.map(OrderEntity::toDomain) }
+
+    // लिखना: network का इकलौता काम है database भरना
+    override suspend fun refresh(): Outcome<Unit> = safeCall {
+        val fresh = api.orders().map(OrderDto::toEntity)
+        dao.replaceAll(fresh)                      // एक transaction, एक invalidation
+    }
+}
+```
+
+पूरा pattern यही है। `refresh()` सफलता या नाकामी लौटाता है और **कोई data नहीं** — नए orders हर
+screen तक उसी `Flow` से पहुँचते हैं जो वह हमेशा से पढ़ रही थी। दो screens आपस में उलट नहीं सकतीं,
+क्योंकि पढ़ने की जगह एक ही है।
+
+<Figure caption="एक ही दिशा। Network लिखता है, database भेजता है, और किसी screen के पास data पाने का दूसरा रास्ता है ही नहीं।">
+  <PipelineDiagram
+    title="Offline-first का चक्र"
+    description="Refresh database में लिखता है; database हर देखने वाले तक भेजता है; screen दिखा देती है। नाकामी पढ़ने का रास्ता कभी नहीं रोकती।"
+    stages={[
+      { label: "Network", sub: "सिर्फ लिखता है", accent: "amber" },
+      { label: "Database", sub: "सच", accent: "emerald" },
+      { label: "Flow", sub: "हर देखने वाला", accent: "sky" },
+      { label: "Screen", sub: "कभी इंतजार नहीं", accent: "violet" },
+    ]}
+  />
+</Figure>
+
+## UI सच में दिखाती क्या है
+
+State के model को "मेरे पास data नहीं है" और "मैं refresh नहीं कर पाया" को अलग रखना ही पड़ता है,
+क्योंकि offline-first उन्हें एक-दूसरे से आजाद कर देता है:
+
+```kotlin title="OrderUiState.kt" numbered
+data class OrderUiState(
+    val orders: List<Order> = emptyList(),
+    val isRefreshing: Boolean = false,
+    val refreshFailed: DataError? = null,      // पट्टी की तरह दिखता है, screen की तरह नहीं
+) {
+    val showEmptyState: Boolean get() = orders.isEmpty() && !isRefreshing
+}
+```
+
+रखे हुए orders के साथ नाकाम refresh चलती हुई list के ऊपर एक छोटी पट्टी है। खाली database के साथ
+नाकाम refresh error वाली screen है। वही नाकामी, दो पेशकश — और एक अकेला `isError` flag यह फर्क कह ही
+नहीं सकता, इसीलिए उसे लेने वाले ऐप उस data के ऊपर "internet नहीं है" दिखाते हैं जो user को साफ दिख
+रहा होता है।
+
+<Quiz
+  question="कोई user offline रहते हुए किसी order का note बदलता है। ऐप उसे Room में लिख देता है ताकि UI तुरंत बदले, फिर connectivity लौटने पर sync करता है। अगले refresh पर वह note पुरानी value पर लौट जाता है। क्यों?"
+  options={[
+    "Room ने वह लिखाई खो दी क्योंकि वह बिना connectivity के हुई थी",
+    "`replaceAll` ने उस local बदलाव के ऊपर server की copy लिख दी, जिसे वह बदलाव कभी मिला ही नहीं — उस row पर कभी यह निशान लगा ही नहीं कि उसमें बिना sync हुए बदलाव हैं",
+    "Flow ने पुरानी value भेजी और उसे `distinctUntilChanged` चाहिए",
+  ]}
+  answer={1}
+  explanation="पहले Room में लिखना सही है — उसी से वह बदलाव तुरंत दिखता है। Bug यह है कि उस row के पास इस बात का कोई निशान नहीं है कि वह मैली है, तो अगला refresh server को ऊपर मानकर उसे बदल देता है। इलाज है entity पर एक flag, pendingSync, जो user के बदलने पर लगे और सिर्फ तब हटे जब server उसे मान ले। तब refresh बदलने के बजाय मिलाता है: server की rows साफ local rows के ऊपर लिखती हैं और मैली को हाथ नहीं लगातीं, और एक अलग sync वाला कदम उन्हें ऊपर भेजता है। यही वह जगह है जहाँ offline-first पढ़ने का pattern रहना छोड़कर लिखने का pattern बन जाता है, और ईमानदारी से कहना चाहिए कि यह सच में ज्यादा मुश्किल है — अब एक row के दो लिखने वाले हैं, और conflict की परिभाषा यही है।"
+/>
+
+## लिखाई, और उससे पैदा होता conflict
+
+Offline पढ़ना आसान है। Offline लिखने का मतलब है कि एक ही row दो जगह बदल सकती है, और किसी को तय करना
+है कि कौन सा बदलाव जीतेगा।
+
+```kotlin title="OrderEntity.kt" numbered
+@Entity(tableName = "orders")
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val note: String,
+    val updatedAt: Long,
+    val pendingSync: Boolean = false,          // इस row में local बदलाव हैं
+)
+```
+
+```kotlin title="Sync.kt" numbered
+suspend fun sync(): Outcome<Unit> = safeCall {
+    // पहले local बदलाव भेजिए, ताकि नीचे आता data उन्हें मिटा न सके
+    dao.pendingOrders().forEach { local ->
+        api.update(local.id, local.toPatch())
+        dao.markSynced(local.id)
+    }
+
+    val remote = api.orders().map(OrderDto::toEntity)
+    db.withTransaction {
+        val dirty = dao.pendingIds().toSet()
+        dao.upsert(remote.filterNot { it.id in dirty })   // बचे हुए बदलाव कभी मत मिटाइए
+    }
+}
+```
+
+पहले भेजिए, फिर लाइए, और किसी मैली row के ऊपर कभी मत लिखिए। ये दो नियम इसके बिगड़ने के ज्यादातर
+रास्ते बंद कर देते हैं।
+
+| तरीका | नियम | किसके लिए सही |
+| --- | --- | --- |
+| आखिरी लिखाई जीते | सबसे नया `updatedAt` | Notes, drafts, एक ही device का इस्तेमाल |
+| Server जीते | Server हमेशा ऊपर लिखता है | कीमतें, stock, जो भी ऊपर से तय होता है |
+| Client जीते | Local हमेशा ऊपर लिखता है | सिर्फ device की settings |
+| मिलाइए | Field दर field, या कोई CRDT | साथ मिलकर लिखना |
+| पूछिए | दोनों दिखाइए, user चुने | कम होता है, महँगा है, कभी-कभी सही है |
+
+यहाँ कोई डिफॉल्ट नहीं है। हर entity पर चुनिए, और लिख लीजिए — जिस ऐप ने कभी तय ही नहीं किया वह अनजाने
+में "आखिरी लिखाई जीते" चला रहा है, जो किसी note के लिए ठीक है और किसी हिसाब-किताब के लिए गलत।
+
+<Detail summary="Sync चलता कहाँ है">
+`viewModelScope` में चलता sync तब मर जाता है जब user screen से निकलता है, और जिस काम को पूरा होना ही
+है उसके लिए वह गलत उम्र है। उसका सही घर `WorkManager` है:
+
+```kotlin title="SyncWorker.kt" numbered
+class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = when (repository.sync()) {
+        is Outcome.Success -> Result.success()
+        is Outcome.Failure -> Result.retry()          // रुक-रुककर दोबारा, reboot के बाद भी
+    }
+}
+
+val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+    .build()
+```
+
+यहाँ जो मायने रखता है वह वह शर्त है: connectivity आने तक वह काम चलता ही नहीं, तो आपको अपना network
+सुनने वाला लिखना नहीं पड़ता, और `Result.retry()` को बढ़ता हुआ अंतराल तथा reboot के बाद भी बचे रहना
+मुफ्त में मिल जाता है।
+
+`WorkManager` platform वाले phase का है और उसमें इससे कहीं ज्यादा है। वह यहाँ इसलिए दिखा कि जरूरत
+offline-first ही पैदा करता है — जिस पल बिना network के लिखाई हो सकती है, उसी पल किसी को उसे बाद में
+पूरा करने का जिम्मा लेना पड़ता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो offline-first ऐप को सादे ऐप से भी बुरा बना देती हैं">
+**कहीं भी network से पढ़ना।** एक screen का ऐसा करना वही मतभेद वापस ले आता है जिसे हटाने के लिए यह
+pattern था।
+
+**`refresh()` का data लौटाना।** तब बुलाने वालों के पास पढ़ने का दूसरा रास्ता है, और अनुशासन चला गया।
+
+**कोई मैलेपन का निशान न होना।** Local बदलाव अगले refresh पर चुपचाप मिट जाते हैं। ऊपर वाला quiz
+देखिए।
+
+**भेजने से पहले लाना।** Server की copy पहले आ जाती है और आपका बिना sync हुआ बदलाव चला जाता है।
+
+**एक अकेला `isError` flag।** User को साफ दिखते रखे हुए orders के ऊपर "internet नहीं है" दिखता है।
+</Pitfall>
+
+## अभ्यास
+
+1. Network बंद कीजिए और ऐप को पाँच मिनट चलाइए। जो कुछ भी घूमता या error देता है वह पढ़ने का ऐसा
+   रास्ता है जो अब भी network छूता है।
+2. `refresh()` को `Outcome<Unit>` लौटाने वाला बनाइए और उसका लौटाया हुआ इस्तेमाल करते हर बुलाने वाले
+   को मिटाइए।
+3. एक `pendingSync` flag जोड़िए, offline बदलाव कीजिए, refresh कीजिए, और पक्का कीजिए कि वह बदलाव बचा
+   रहा।
+4. `sync()` में भेजने और लाने का क्रम उलटिए और किसी बदलाव को गायब होते देखिए।
+5. हर entity के लिए conflict का तरीका लिख लीजिए। जिनका जवाब आप नहीं दे पाते, खतरा उन्हीं में है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Offline-first | Database सच है; network उसमें लिखता है |
+| पढ़ना | हमेशा database से आता `Flow` |
+| `refresh()` | सफलता या नाकामी लौटाता है, data कभी नहीं |
+| Offline चलना | पढ़ने के रास्ते से खुद निकलता है, अलग से बनाया नहीं जाता |
+| खाली बनाम नाकाम | अलग हालतें, अलग UI |
+| `pendingSync` | इस row में local बदलाव हैं; इसके ऊपर मत लिखिए |
+| पहले भेजिए, फिर लाइए | वरना आता हुआ data बिना sync हुए बदलाव को मिटा देता है |
+| Conflict का तरीका | हर entity पर चुना जाता है, डिफॉल्ट से कभी नहीं |
+| `WorkManager` | Sync का घर, connectivity की शर्त के साथ |
+| मुश्किल हिस्सा | लिखाई, पढ़ना नहीं |
+
+<Interview title="एक सवाल, जो पढ़ने की कहानी को लिखने की कहानी से अलग करता है">
+"Offline-first ऐप आप कैसे बनाएँगे?"
+
+Database को सच का इकलौता ठिकाना बनाकर। हर पढ़ना Room से आता `Flow` है, और network का इकलौता काम है
+उसमें लिखना — तो `refresh()` सफलता या नाकामी लौटाता है, data नहीं, और नया data UI तक उसी धारा से
+पहुँचता है जो वह पहले से पढ़ रही थी। तब offline चलना मेरी बनाई सुविधा नहीं होती; पढ़ने का रास्ता
+network पर कभी टिका ही नहीं था।
+
+पढ़ना आसान आधा है। जिस पल user offline *बदलाव* कर सकता है, उसी पल एक row दो जगह बदल सकती है और मेरे
+पास conflict है। मैं locally बदली हुई rows पर `pendingSync` का निशान लगाऊँगा, लाने से पहले भेजूँगा,
+और आते हुए data को किसी मैली row के ऊपर कभी नहीं लिखने दूँगा — और हर entity पर हल का तरीका खुद
+चुनूँगा, कोई एक मानकर नहीं, क्योंकि आखिरी-लिखाई-जीते किसी note के लिए ठीक है और किसी हिसाब-किताब के
+लिए गलत। Sync खुद `WorkManager` में रहेगा, connectivity की शर्त के साथ, न कि ऐसे `viewModelScope` में
+जो user के screen छोड़ते ही मर जाता है।
+</Interview>

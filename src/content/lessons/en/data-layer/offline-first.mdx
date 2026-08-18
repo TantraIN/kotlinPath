@@ -1,0 +1,206 @@
+---
+title: "Offline-first: cache, sync and conflict"
+description: Offline-first is not a feature you add for aeroplanes. It is a claim about where truth lives, and once you make it every other question in this phase already has an answer.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Offline-first means the **database is the source of truth and the network is a writer**. The screen
+never waits for a request, because it was never reading from one. Working offline then stops being a
+feature you build and becomes something you get for free — the read path never depended on the
+network.
+</KeyIdea>
+
+## The shape everything else has been pointing at
+
+```kotlin title="OrderRepository.kt" numbered
+class OfflineFirstOrderRepository(
+    private val api: OrderApi,
+    private val dao: OrderDao,
+) : OrderRepository {
+
+    // reads: always the database, never the network
+    override fun observeOrders(): Flow<List<Order>> =
+        dao.observeAll().map { it.map(OrderEntity::toDomain) }
+
+    // writes: the network's only job is to fill the database
+    override suspend fun refresh(): Outcome<Unit> = safeCall {
+        val fresh = api.orders().map(OrderDto::toEntity)
+        dao.replaceAll(fresh)                      // one transaction, one invalidation
+    }
+}
+```
+
+That is the whole pattern. `refresh()` returns success or failure and **no data** — the new orders
+reach every screen through the same `Flow` they always used. Two screens cannot disagree, because
+there is only one place to read from.
+
+<Figure caption="One direction. The network writes, the database emits, and no screen has a second way to get data.">
+  <PipelineDiagram
+    title="The offline-first loop"
+    description="A refresh writes into the database; the database emits to every observer; the screen renders. Failure never blocks the read path."
+    stages={[
+      { label: "Network", sub: "writes only", accent: "amber" },
+      { label: "Database", sub: "the truth", accent: "emerald" },
+      { label: "Flow", sub: "every observer", accent: "sky" },
+      { label: "Screen", sub: "never waits", accent: "violet" },
+    ]}
+  />
+</Figure>
+
+## What the UI actually shows
+
+The state model has to separate "I have no data" from "I could not refresh", because offline-first
+makes them independent:
+
+```kotlin title="OrderUiState.kt" numbered
+data class OrderUiState(
+    val orders: List<Order> = emptyList(),
+    val isRefreshing: Boolean = false,
+    val refreshFailed: DataError? = null,      // shown as a banner, not a screen
+) {
+    val showEmptyState: Boolean get() = orders.isEmpty() && !isRefreshing
+}
+```
+
+A failed refresh with cached orders is a small banner over a working list. A failed refresh with an
+empty database is an error screen. The same failure, two presentations — and a single `isError` flag
+cannot express the difference, which is why apps that use one show "no internet" over data the user
+can plainly see.
+
+<Quiz
+  question="A user edits an order's note offline. The app writes it to Room so the UI updates immediately, then syncs when connectivity returns. On the next refresh the note reverts to the old value. Why?"
+  options={[
+    "Room lost the write because it happened without connectivity",
+    "`replaceAll` overwrote the local edit with the server's copy, which never received it — the row was never marked as having unsynced changes",
+    "The Flow emitted a stale value and needs `distinctUntilChanged`",
+  ]}
+  answer={1}
+  explanation="Writing to Room first is right — that is what makes the edit appear instantly. The bug is that the row carries no record of being dirty, so the next refresh treats the server as authoritative and replaces it. The fix is a flag on the entity, `pendingSync`, set when the user edits and cleared only after the server accepts. Refresh then merges rather than replaces: server rows overwrite clean local rows and leave dirty ones alone, and a separate sync step pushes those up. This is the point where offline-first stops being a read pattern and becomes a write pattern, and it is worth being honest that it is genuinely harder — you now have two writers for one row, which is the definition of a conflict."
+/>
+
+## Writes, and the conflict they create
+
+Reading offline is easy. Writing offline means the same row can change in two places, and someone has
+to decide which change wins.
+
+```kotlin title="OrderEntity.kt" numbered
+@Entity(tableName = "orders")
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val note: String,
+    val updatedAt: Long,
+    val pendingSync: Boolean = false,          // this row has local changes
+)
+```
+
+```kotlin title="Sync.kt" numbered
+suspend fun sync(): Outcome<Unit> = safeCall {
+    // push local changes first, so the pull cannot overwrite them
+    dao.pendingOrders().forEach { local ->
+        api.update(local.id, local.toPatch())
+        dao.markSynced(local.id)
+    }
+
+    val remote = api.orders().map(OrderDto::toEntity)
+    db.withTransaction {
+        val dirty = dao.pendingIds().toSet()
+        dao.upsert(remote.filterNot { it.id in dirty })   // never clobber a pending edit
+    }
+}
+```
+
+Push before pull, and never overwrite a dirty row. Those two rules remove most of the ways this goes
+wrong.
+
+| Strategy | Rule | Right for |
+| --- | --- | --- |
+| Last write wins | Newest `updatedAt` | Notes, drafts, single-device use |
+| Server wins | Server always overwrites | Prices, stock, anything authoritative |
+| Client wins | Local always overwrites | Local-only settings |
+| Merge | Field by field, or a CRDT | Collaborative editing |
+| Ask | Show both, let the user pick | Rare, expensive, sometimes correct |
+
+There is no default. Pick per entity, and write it down — an app that has never decided is using "last
+write wins" by accident, which is fine for a note and wrong for a balance.
+
+<Detail summary="Where the sync runs">
+A sync in `viewModelScope` dies when the user leaves the screen, which is the wrong lifetime for work
+that must finish. `WorkManager` is the right home:
+
+```kotlin title="SyncWorker.kt" numbered
+class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = when (repository.sync()) {
+        is Outcome.Success -> Result.success()
+        is Outcome.Failure -> Result.retry()          // backs off, survives reboot
+    }
+}
+
+val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+    .build()
+```
+
+The constraint is the part that matters here: the work does not run until there is connectivity, so
+you are not writing your own network listener, and `Result.retry()` gets exponential backoff and
+survives a reboot for free.
+
+`WorkManager` belongs to the platform phase and there is more to it than this. The reason it appears
+now is that offline-first is what creates the need — the moment writes can happen without a network,
+something has to own finishing them later.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that make an offline-first app worse than a naive one">
+**Reading from the network anywhere.** One screen doing it reintroduces the disagreement the pattern
+existed to remove.
+
+**`refresh()` returning data.** Then callers have a second read path, and the discipline is gone.
+
+**No dirty flag.** Local edits are silently overwritten on the next refresh. See the quiz.
+
+**Pulling before pushing.** The server's copy lands first and your unsynced edit is gone.
+
+**One `isError` flag.** "No internet" appears over a list of cached orders the user can see.
+</Pitfall>
+
+## Practice
+
+1. Turn off the network and use the app for five minutes. Anything that spins or errors is a read
+   path that still touches the network.
+2. Make `refresh()` return `Outcome<Unit>` and delete every caller that used its return value.
+3. Add a `pendingSync` flag, edit offline, refresh, and confirm the edit survives.
+4. Reverse the order of push and pull in `sync()` and watch an edit disappear.
+5. Write down the conflict strategy for each entity. The ones you cannot answer are the risky ones.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Offline-first | The database is truth; the network writes to it |
+| Reads | Always a `Flow` from the database |
+| `refresh()` | Returns success or failure, never data |
+| Offline support | Falls out of the read path, not built separately |
+| Empty vs failed | Different states, different UI |
+| `pendingSync` | This row has local changes; do not overwrite |
+| Push then pull | Or the pull clobbers the unsynced edit |
+| Conflict strategy | Chosen per entity, never by default |
+| `WorkManager` | Where a sync lives, with a connectivity constraint |
+| The hard part | Writes, not reads |
+
+<Interview title="A question that separates the read story from the write story">
+"How would you build an offline-first app?"
+
+By making the database the single source of truth. Every read is a `Flow` from Room, and the network's
+only job is to write into it — so `refresh()` returns success or failure and no data, and new data
+reaches the UI through the stream it already used. Offline support is then not a feature I built; the
+read path simply never depended on the network.
+
+Reads are the easy half. The moment a user can *edit* offline, the same row can change in two places
+and I have a conflict. I would mark locally changed rows with a `pendingSync` flag, push before
+pulling, and never let a pull overwrite a dirty row — and I would pick a resolution strategy per
+entity rather than assuming one, because last-write-wins is fine for a note and wrong for a balance.
+The sync itself belongs in `WorkManager` with a connectivity constraint, not in a `viewModelScope`
+that dies when the user leaves the screen.
+</Interview>
