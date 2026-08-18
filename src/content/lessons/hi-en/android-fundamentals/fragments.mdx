@@ -144,7 +144,7 @@ class DetailFragment : Fragment(R.layout.fragment_detail) {
 ```
 
 Navigation component ka Safe Args yahi pattern aapke liye bana deta hai, types compile time par
-jaanche hue. Dono tarikon mein data `Bundle` mein pahunchta hai, aur yahi use bachata hai.
+check kiye hue. Dono tarikon mein data `Bundle` mein pahunchta hai, aur yahi use bachata hai.
 </Detail>
 
 ## Common galtiyan
@@ -161,7 +161,7 @@ view tree ko zinda rakhta hai.
 fail ho jata hai kyunki `FragmentManager` khaali constructor bulata hai. `arguments` use karo.
 
 **View lifecycle ke bahar views chhoona.** `onCreate` mein likhi koi cheez, ya aisa callback jo
-`onDestroyView` ke baad aa sakta hai, `_binding` ko null pa sakta hai. Lifecycle state jaancho
+`onDestroyView` ke baad aa sakta hai, `_binding` ko null pa sakta hai. Lifecycle state check karo
 ya kaam ko theek se baandho.
 </Pitfall>
 

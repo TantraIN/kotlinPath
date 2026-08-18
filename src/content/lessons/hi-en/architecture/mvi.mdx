@@ -71,7 +71,7 @@ Ek saaf-suthra function, jiska test ek line mein ho jata hai:
     "UI mein, jo phir result doosri intent banakar wapas bhejta hai",
   ]}
   answer={1}
-  explanation="Reducer ko saaf-suthra rehna hi hai, kyunki yahi poora faayda hai: isi se badlaav do values se jaancha ja sakta hai, dobara chalaya ja sakta hai, aur do baar chalne par bhi surakshit rehta hai. Uske andar network call hone se wahi input alag-alag results dene lagta aur ek aise function mein coroutine ghaseet lata jo asal mein ganit bhar hona chahiye. To reducer Refresh ko loading wali state mein badalta hai, aur ViewModel — wahi intent dekhkar — kaam shuru karta hai aur baad mein Loaded ya Failed intent usi darwaze se wapas bhejta hai. Teesra vikalp chakkar ke baare mein galat nahi hai, par wo lane ka faisla UI mein rakh deta hai, jis parat ko sabse kam pata hona chahiye."
+  explanation="Reducer ko saaf-suthra rehna hi hai, kyunki yahi poora faayda hai: isi se badlaav do values se check kiya ja sakta hai, dobara chalaya ja sakta hai, aur do baar chalne par bhi surakshit rehta hai. Uske andar network call hone se wahi input alag-alag results dene lagta aur ek aise function mein coroutine ghaseet lata jo asal mein ganit bhar hona chahiye. To reducer Refresh ko loading wali state mein badalta hai, aur ViewModel — wahi intent dekhkar — kaam shuru karta hai aur baad mein Loaded ya Failed intent usi darwaze se wapas bhejta hai. Teesra vikalp chakkar ke baare mein galat nahi hai, par wo lane ka faisla UI mein rakh deta hai, jis parat ko sabse kam pata hona chahiye."
 />
 
 ```kotlin title="ViewModel.kt" numbered
@@ -148,7 +148,7 @@ par nahi tikta.
     accent: "violet",
     points: [
       "+ Har badlaav ka ek naam aur ek hi paribhasha",
-      "+ Reducer saaf-suthre function ki tarah jaancha jata hai, bina nakli cheezon ke",
+      "+ Reducer saaf-suthre function ki tarah check kiya jata hai, bina nakli cheezon ke",
       "+ Intents darj karke dobara chalaye ja sakte hain, to bug hubahu lautaya ja sakta hai",
       "- Ek button wali screen ke liye teen types aur ek chakkar",
     ],
@@ -216,7 +216,7 @@ matlab hai ki har screen ke reducer mein aisi shakhayein hain jahan wo kabhi pah
 "MVI mein side effects kahan rehte hain?"
 
 Reducer ke bahar. Reducer state aur intent se nai state banata hai aur use saaf-suthra rehna hai —
-wahi safai use do values se jaanchne layak aur kisi log se dobara chalane layak banati hai.
+wahi safai use do values se check karne layak aur kisi log se dobara chalane layak banati hai.
 `ViewModel` us intent ko dekhta hai, kaam shuru karta hai, aur result doosri intent banakar wapas
 dalta hai; navigation jaisi ek baar hone wali cheezein alag effect wale raaste se nikalti hain,
 kyunki unhe state mein rakhne ka matlab hai ki wo har rotation par dobara chalengi.

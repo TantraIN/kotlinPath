@@ -1,12 +1,12 @@
 ---
-title: Modifiers, aur kram kyun maayne rakhta hai
-description: Modifier ki kadi styles ki koi potli nahi hai. Wo lapeton ki ek kram wali list hai, aur unmein se do ko aapas mein badal dene se badal jata hai ki user ko dikhta kya hai aur wo tap kya kar sakta hai.
+title: Modifiers, aur order kyun maayne rakhta hai
+description: Modifier ki kadi styles ki koi potli nahi hai. Wo lapeton ki ek order wali list hai, aur unmein se do ko aapas mein badal dene se badal jata hai ki user ko dikhta kya hai aur wo tap kya kar sakta hai.
 updated: 2026-08-14
 ---
 
 <KeyIdea>
 `Modifier.a().b()` ka matlab hai **`a` `b` ko lapetta hai**. Kadi ka pehla modifier sabse bahar
-wala hai, isliye kram sajawat nahi hai — wo naap, background aur chhoone ki jagah tay karta hai.
+wala hai, isliye order sajawat nahi hai — wo naap, background aur chhoone ki jagah tay karta hai.
 </KeyIdea>
 
 ## Ye kyun zaruri hai
@@ -95,7 +95,7 @@ nahi hai.
 
 <Timeline>
   <TimelineItem title="Kadi ek linked list hai" meta="Modifier.Element">
-    `Modifier.padding(8.dp).background(Red)` `then` se jude do elements banata hai. List kram se
+    `Modifier.padding(8.dp).background(Red)` `then` se jude do elements banata hai. List order se
     chali jati hai, sabse bahar wale se shuru.
   </TimelineItem>
   <TimelineItem title="Har element agle ko lapetta hai" meta="layout, draw, input">
@@ -146,7 +146,7 @@ ilaka, aur chhoone ki jagah accessibility ki had se neeche.
 
 ## Practice
 
-1. `padding` aur `background` ke dono kram agal-bagal likhiye aur unhe dekhiye.
+1. `padding` aur `background` ke dono order agal-bagal likhiye aur unhe dekhiye.
 2. `clickable` se pehle `padding` rakhkar list ki row banaiye, phir dono badliye, aur ripple ki
    shakal badalte dekhiye.
 3. Jis component mein `modifier` parameter nahi hai usmein jodiye, phir uske do namune bulane wali
@@ -169,9 +169,9 @@ ilaka, aur chhoone ki jagah accessibility ki had se neeche.
 | Apne modifiers | `Modifier` par saade extension functions |
 
 <Interview title="Ye sab puchte hain, aur doosra aadha hissa jawabon ko alag kar deta hai">
-"Kya modifier ka kram maayne rakhta hai?"
+"Kya modifier ka order maayne rakhta hai?"
 
-Haan — kadi kram wali hai aur pehla modifier sabse bahar ka lapeta hai. Jo jawab asli istemal
+Haan — kadi order wali hai aur pehla modifier sabse bahar ka lapeta hai. Jo jawab asli istemal
 dikhata hai wo padding-background wala namuna nahi, uska result hai: `padding` se pehle
 `clickable` rakhne par padding bhi chhoone ki jagah mein aa jata hai, aur baad mein rakhne par
 charon taraf ek mari hui patti chhoot jati hai — isi tarah koi row dekhne mein bilkul theek rehkar

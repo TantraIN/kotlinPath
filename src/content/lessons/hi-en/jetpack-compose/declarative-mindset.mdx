@@ -79,7 +79,7 @@ toolkit isi ko sasta rakhne ke liye bana hai.
   question="Aap composable ke bahar `var runs = 0` rakhte hain aur andar `runs++` karte hain, ye dekhne ke liye ki wo kitni baar chalta hai. Aankda bematlab nikalta hai. Kyun?"
   options={[
     "Compose function ko cache kar leta hai, to wo sirf ek baar hi chalta hai",
-    "Composables kai baar, kisi bhi kram mein, kisi bhi thread par chal sakte hain, ya bilkul chhode ja sakte hain",
+    "Composables kai baar, kisi bhi order mein, kisi bhi thread par chal sakte hain, ya bilkul chhode ja sakte hain",
     "Aankda sahi aane ke liye variable ko `@Volatile` hona chahiye",
   ]}
   answer={1}
@@ -157,7 +157,7 @@ wo padhta hai.
 hi frame mein kai baar chal sakta hai, isliye jis cheez ka asar hota hai wo side-effect API se
 hokar jayegi, seedhe body mein kabhi nahi.
 
-**Kram ki ummid rakhna.** Aas-paas ke composables ke chalne ka koi tay kram nahi hai aur wo
+**Kram ki ummid rakhna.** Aas-paas ke composables ke chalne ka koi tay order nahi hai aur wo
 saath-saath bhi chal sakte hain. Jo code is par tika hai ki ek doosre se pehle chalega, wo pehle
 se hi toota hua hai.
 </Pitfall>

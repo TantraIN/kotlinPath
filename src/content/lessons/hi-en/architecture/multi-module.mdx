@@ -1,0 +1,186 @@
+---
+title: Multi-module projects aur build ka samay
+description: Modules architecture ke niyamon ko compile error mein badal dete hain aur poore rebuild ko aadhe-adhoore mein. Dono faayde ek hi cheez se aate hain — aisa dependency graph jo build tool ko dikhta hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Module ki sarhad hi wo iklauti cheez hai jo nirbharta ke niyam ko **tay ki hui baat ke bajaye lagu**
+banati hai. Ek hi module mein `data` ka `ui` import karna compile ho jata hai; modules ke aar-paar
+nahi hota — aur wahi graph Gradle ko poore project ke bajaye uska ek hissa dobara banane deta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Folders ek riwaj hain jise thaka hua insan shukrawar ko tod deta hai. Gradle ki nirbharta ek tathya
+hai:
+
+```kotlin title="core/domain/build.gradle.kts"
+dependencies {
+    // kuch nahi. Maksad yahi hai.
+}
+```
+
+```kotlin title="core/data/build.gradle.kts"
+dependencies {
+    implementation(projects.core.domain)
+    implementation(libs.retrofit)
+    implementation(libs.room.runtime)
+}
+```
+
+Ab domain mein koi `import android.` review ka comment nahi hai; wo compile hi nahi hota.
+
+## Ek jamavat jo badhne par bhi chalti hai
+
+| Module | Ismein kya hai | Kis par nirbhar |
+| --- | --- | --- |
+| `app` | Application class, navigation host, DI ki jod-tod | Har feature par |
+| `feature:orders` | Kisi ek feature ki screens aur `ViewModel` | `core:domain`, `core:ui` |
+| `core:domain` | Models, niyam, repository ke interfaces | Kisi par nahi |
+| `core:data` | Repository ke implementations, network, database | `core:domain` |
+| `core:ui` | Design system, shared composables | Apne bahar kisi par nahi |
+
+Do features kabhi ek-doosre par nirbhar nahi hone chahiye. Jab ek ko doosre ki screen kholni ho, to
+jawab koi route ya shared module mein rakha koi interface hai — seedhi nirbharta nahi, jisse wo
+chakkar banta hai jise Gradle mana kar deta hai.
+
+## Wo shabd jo aapke build ka samay tay karta hai
+
+```kotlin title="Build.kt"
+dependencies {
+    implementation(projects.core.domain)   // sirf mujhe dikhta hai
+    api(projects.core.model)               // mujhe bhi aur mujh par nirbhar har kisi ko bhi
+}
+```
+
+<Quiz
+  question="`feature:orders` mein `api(projects.core.data)` likha hai. Aap `core:data` ki ek andaruni class badalte hain. Dobara compile kya hota hai?"
+  options={[
+    "Sirf `core:data`, kyunki badlaav andaruni hai",
+    "`core:data`, `feature:orders`, aur `feature:orders` par nirbhar sab kuch — kyunki `api` use unke compile classpath par bhi rakh deta hai",
+    "Poora project, kyunki Gradle bata hi nahi sakta ki kya badla",
+  ]}
+  answer={1}
+  explanation="api kisi nirbharta ko aage tak khol deta hai: uske neeche wale sab usi ke saath compile hote hain, to uske badalne par wo sab dobara banne ki line mein aa jate hain. implementation use unke compile classpath se bahar rakhta hai, to us module ke andar hua badlaav wahin ruk jata hai aur sirf uska seedha istemal karne wala dobara banta hai. Isiliye default implementation hona chahiye aur api sirf us birle mamle ke liye, jab us nirbharta ka koi type sach mein aapke public API mein dikhta ho. Jo project har jagah api lagata hai usmein modular build jitni files hoti hain aur dobara banne ka bartaav ek hi module jaisa."
+/>
+
+<Tip>
+Andaruni badlaav `implementation` ke saath bhi aam taur par neeche kisi ko kuch nahi bhugtata, par
+public signature ka badlaav — ABI — hamesha aage phailta hai. Kaam ka niyam yahi hai: koi private
+field bejhijhak badliye, aur kisi public function ke parameters badalne par bade rebuild ki ummid
+rakhiye.
+</Tip>
+
+## Chalees build files, ek paribhasha
+
+Bees modules yani bees lagbhag ek jaisi Gradle files. Convention plugin se wo ek hi reh jati hai:
+
+```kotlin title="build-logic/convention/AndroidLibraryConventionPlugin.kt" numbered
+class AndroidLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("com.android.library")
+        pluginManager.apply("org.jetbrains.kotlin.android")
+
+        extensions.configure<LibraryExtension> {
+            compileSdk = 35
+            defaultConfig.minSdk = 24
+        }
+    }
+}
+```
+
+```kotlin title="core/data/build.gradle.kts"
+plugins {
+    alias(libs.plugins.myapp.android.library)
+}
+```
+
+Har module ki build file sirf nirbhartaon ki list reh jati hai, aur `compileSdk` badhana bees ke
+bajaye ek badlaav ho jata hai.
+
+<Detail summary="Chaude graphs tez bante hain, gehre nahi">
+Gradle modules ko wahan tak saath-saath compile karta hai jahan tak graph ijazat de, to ginti se
+zyada shakal maayne rakhti hai:
+
+```text title="Shapes" no-glossary
+Gehra — kuch bhi saath nahi         Chauda — teen ek saath
+app                                app
+ └ feature                          ├ feature:orders
+    └ data                          ├ feature:profile
+       └ common                     └ feature:search
+```
+
+Ise aam taur par wo `core:common` module bigadta hai jis par sab nirbhar hain aur jise har koi
+badalta hai. Uska har badlaav poore project ko bekar kar deta hai, to saath-saath banna sirf kagaz
+par reh jata hai. Aisa koi module aapke paas hai to dekhiye usmein hai kya — aam taur par wo teen
+bina matlab wali cheezein hoti hain jo teen chhote modules banna chahti hain.
+
+Dhancha badalne se pehle napiye:
+
+```bash title="Terminal" no-glossary
+./gradlew :app:assembleDebug --scan
+```
+</Detail>
+
+## Keemat, saaf-saaf
+
+Baantna karna sasta hai aur wapas lena mehnga. Aapki jodi hui har sarhad wo jagah hai jahan kisi
+class ko hilana Gradle ka badlaav ban jata hai, aur jis design ko aap abhi tatol hi rahe hain usmein
+classes lagatar hilti hain.
+
+Ek theek-thaak order: ek module se shuru kijiye, niyam bachane layak hote hi `core:domain` jodiye, ek
+se zyada log kisi feature par kaam karne lagein to use alag kijiye, aur uske baad hi build scan
+saamne rakhkar build ke samay ke peeche padiye.
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo modular project ko ek hi module se bhi bura bana deti hain">
+**Default mein `api`.** Files poori, incremental build bilkul nahi. Jab tak koi type sach mein aapke
+public API se bahar na jhaank raha ho, `implementation` lijiye.
+
+**Sarvshaktiman `core:common`.** Sab us par nirbhar, sab use badalte hain, kuch bhi saath-saath nahi
+banta.
+
+**Feature ki feature par nirbharta.** Gradle us chakkar se mana kar deta hai, aur uska jugaad — kisi
+shared module se hokar chhota raasta — aam taur par usi module ko upar wala sarvshaktiman module bana
+deta hai.
+
+**Har class ke liye ek module.** Configuration ka samay aur IDE ki indexing har module ki alag keemat
+hain. Pachas nanhe modules paanch samajhdar modules se dheeme pad sakte hain.
+</Pitfall>
+
+## Practice
+
+1. Ek module wali app se `core:domain` alag kijiye aur usmein koi Android import jodkar dekhiye.
+2. Kisi ek nirbharta par `implementation` ko `api` kijiye, uske peeche ki koi class badliye, aur
+   milaiye ki Gradle kya-kya dobara banata hai.
+3. Build scan chalaiye aur wo module dhundhiye jiska intezar baaki har module karta hai.
+4. Ek convention plugin likhiye aur teen build files se dohrai hui settings mita dijiye.
+5. Apna module graph kheenchiye aur do features ke beech ki har rekha par nishan lagaiye. Har ek wo
+   design wala faisla hai jo aapne abhi liya nahi hai.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Module ki sarhad | Nirbharta ke niyam ko tay ki hui baat ke bajaye lagu banati hai |
+| `core:domain` | Kisi par nirbhar nahi; poori kasauti yahi hai |
+| `implementation` | Nirbhar logon ke compile classpath se bahar — yahi default |
+| `api` | Aage tak khula; sirf tab jab koi type sach mein bahar jhankta ho |
+| ABI ka badlaav | Public signature badalne par neeche sab banta hai; andaruni aam taur par nahi |
+| Convention plugin | Bees lagbhag ek jaisi build files ke bajaye ek paribhasha |
+| Graph ki shakal | Chauda saath-saath banta hai; gehra nahi |
+| `core:common` | Aam adchan; aam taur par ek naam pehne teen modules |
+| Keemat | Sarhadein jodna sasta hai aur hilana mehnga |
+
+<Interview title="Build ke samay wala sawal, jo asal mein dependency graph ke baare mein hai">
+"`api` aur `implementation` mein farak kya hai?"
+
+`implementation` kisi nirbharta ko un sabke compile classpath se bahar rakhta hai jo aap par nirbhar
+hain, to uske andar hua badlaav aapke module par ruk jata hai; `api` use aage tak khol deta hai, to
+neeche wala sab usi ke saath compile hota hai aur uske badalne par dobara banta hai. Jo vakya dikhata
+hai ki ye asal mein bhugta gaya hai wo uska asar hai: har jagah `api` lagane se aisa project milta
+hai jismein modular build jitni files hain aur dobara banne ka bartaav ek hi module jaisa — yani
+dono ka sabse bura hissa.
+</Interview>

@@ -112,7 +112,7 @@ class ProfileActivity : ComponentActivity() {
 // Bhejna
 intent.putExtra("orderId", "A-1042")
 
-// Lena — key aur type, dono bina jaanch ke
+// Lena — key aur type, dono bina check ke
 val id = intent.getStringExtra("orderId") ?: return finish()
 ```
 
@@ -145,7 +145,7 @@ bulane wala galti kar hi na sake.
 <Detail summary="Android 11 par `resolveActivity` chalna kyun band ho gaya">
 API 30 se aapki app ko zyadatar dusri installed apps dikhti hi nahi. Jin apps mein aapne ruchi
 nahi likhi unke liye `queryIntentActivities` aur `resolveActivity` kuch nahi lautate, isliye
-purana "launch se pehle jaanch lo" wala tarika *koi handler nahi* batata hai, jabki handler
+purana "launch se pehle check kar lo" wala tarika *koi handler nahi* batata hai, jabki handler
 maujood hota hai.
 
 Ilaaj ya to ye likhna hai ki aap kya dhundhte ho:
@@ -159,7 +159,7 @@ Ilaaj ya to ye likhna hai ki aap kya dhundhte ho:
 </queries>
 ```
 
-…ya, isse bhi aasan, jaanchna chhodkar nakami sambhal lena:
+…ya, isse bhi aasan, check karna chhodkar nakami sambhal lena:
 
 ```kotlin title="Safe.kt"
 try {

@@ -23,17 +23,17 @@ data class OrderUiState(
 
 Chaar fields, solah jod, aur unmein se kareeb chaar ka hi koi matlab hai. Baaki galti se pahunch
 mein hain — kisi dobara koshish ke beech aa gayi koi error, data aane ke baad bhi baasi pada
-`isEmpty` — aur un haalaton mein screen kya karti hai ye aapke `if` ke kram se tay hota hai.
+`isEmpty` — aur un haalaton mein screen kya karti hai ye aapke `if` ke order se tay hota hai.
 
 <Quiz
   question="Upar wali state mein `isLoading` sahi hai aur `error` bhi null nahi hai, ek hi waqt par. User ko dikhta kya hai?"
   options={[
     "Error, kyunki errors ko hamesha pehle rakha jata hai",
-    "Jo bhi shakha render wale code mein pehle jaanchi gayi ho — model mein ye tay hai hi nahi",
+    "Jo bhi shakha render wale code mein pehle check ki gayi ho — model mein ye tay hai hi nahi",
     "Dono, kyunki state dono ki ijazat deti hai",
   ]}
   answer={1}
-  explanation="Us data class mein kahin nahi likha ki kaun jeetega, to jawab usi if mein rehta hai jo UI ka code pehle likh deta hai — aur wahi state dikhane wali doosri screen koi aur kram chun legi. Booleans se banane ki asli keemat yahi hai: state ka matlab uske type mein nahi hota, wo har us jagah bikhra rehta hai jo use padhti hai. Sealed type us faisle ko model mein le aata hai, jahan uski theek ek hi copy hoti hai, aur compiler se janchwata hai ki har padhne wala har haalat sambhal raha hai."
+  explanation="Us data class mein kahin nahi likha ki kaun jeetega, to jawab usi if mein rehta hai jo UI ka code pehle likh deta hai — aur wahi state dikhane wali doosri screen koi aur order chun legi. Booleans se banane ki asli keemat yahi hai: state ka matlab uske type mein nahi hota, wo har us jagah bikhra rehta hai jo use padhti hai. Sealed type us faisle ko model mein le aata hai, jahan uski theek ek hi copy hoti hai, aur compiler se janchwata hai ki har padhne wala har haalat sambhal raha hai."
 />
 
 ## Alag-alag haalaton wali shakal
@@ -155,7 +155,7 @@ parakhne layak rehti hai aur resource dhundhna wahin hota hai jahan `Context` pe
     Isi se `when` bina `else` ke poora hota hai, aur isi se koi haalat jodna chupchap chhootne ke
     bajaye compile error ban jata hai.
   </TimelineItem>
-  <TimelineItem title="`when` expression ki tarah jaancha jata hai" meta="statement ki tarah nahi">
+  <TimelineItem title="`when` expression ki tarah check kiya jata hai" meta="statement ki tarah nahi">
     Result kisi ko dena, ya lautana, poora hona zaruri bana deta hai. Saada `when` statement chhooti
     hui shakha khushi-khushi andekhi kar deta hai.
   </TimelineItem>
@@ -168,7 +168,7 @@ parakhne layak rehti hai aur resource dhundhna wahin hota hai jahan `Context` pe
 ## Common galtiyan
 
 <Pitfall title="Chaar jo namumkin haalatein wapas le aati hain">
-**Booleans ki potli.** Solah jod, chaar matlab, aur priority ka kram UI mein bikhra hua.
+**Booleans ki potli.** Solah jod, chaar matlab, aur priority ka order UI mein bikhra hua.
 
 **`when` mein `else`.** Wo compiler ko theek tab chup kar deta hai jab aap usse sabse zyada bulwana
 chahte the — ab nai haalat seedhe `else` mein ja girti hai.

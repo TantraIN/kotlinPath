@@ -1,0 +1,180 @@
+---
+title: Multi-module projects और build का समय
+description: Modules architecture के नियमों को compile error में बदल देते हैं और पूरे rebuild को आधे-अधूरे में। दोनों फायदे एक ही चीज से आते हैं — ऐसा dependency graph जो build tool को दिखता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Module की सरहद ही वह इकलौती चीज है जो निर्भरता के नियम को **तय की हुई बात के बजाय लागू** बनाती है।
+एक ही module में `data` का `ui` import करना compile हो जाता है; modules के आर-पार नहीं होता — और
+वही graph Gradle को पूरे project के बजाय उसका एक हिस्सा दोबारा बनाने देता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Folders एक रिवाज हैं जिसे थका हुआ इंसान शुक्रवार को तोड़ देता है। Gradle की निर्भरता एक तथ्य है:
+
+```kotlin title="core/domain/build.gradle.kts"
+dependencies {
+    // कुछ नहीं। मकसद यही है।
+}
+```
+
+```kotlin title="core/data/build.gradle.kts"
+dependencies {
+    implementation(projects.core.domain)
+    implementation(libs.retrofit)
+    implementation(libs.room.runtime)
+}
+```
+
+अब domain में कोई `import android.` review का comment नहीं है; वह compile ही नहीं होता।
+
+## एक जमावट जो बढ़ने पर भी चलती है
+
+| Module | इसमें क्या है | किस पर निर्भर |
+| --- | --- | --- |
+| `app` | Application class, navigation host, DI की जोड़-तोड़ | हर feature पर |
+| `feature:orders` | किसी एक feature की screens और `ViewModel` | `core:domain`, `core:ui` |
+| `core:domain` | Models, नियम, repository के interfaces | किसी पर नहीं |
+| `core:data` | Repository के implementations, network, database | `core:domain` |
+| `core:ui` | Design system, साझा composables | अपने बाहर किसी पर नहीं |
+
+दो features कभी एक-दूसरे पर निर्भर नहीं होने चाहिए। जब एक को दूसरे की screen खोलनी हो, तो जवाब कोई
+route या साझा module में रखा कोई interface है — सीधी निर्भरता नहीं, जिससे वह चक्कर बनता है जिसे
+Gradle मना कर देता है।
+
+## वह शब्द जो आपके build का समय तय करता है
+
+```kotlin title="Build.kt"
+dependencies {
+    implementation(projects.core.domain)   // सिर्फ मुझे दिखता है
+    api(projects.core.model)               // मुझे भी और मुझ पर निर्भर हर किसी को भी
+}
+```
+
+<Quiz
+  question="`feature:orders` में `api(projects.core.data)` लिखा है। आप `core:data` की एक अंदरूनी class बदलते हैं। दोबारा compile क्या होता है?"
+  options={[
+    "सिर्फ `core:data`, क्योंकि बदलाव अंदरूनी है",
+    "`core:data`, `feature:orders`, और `feature:orders` पर निर्भर सब कुछ — क्योंकि `api` उसे उनके compile classpath पर भी रख देता है",
+    "पूरा project, क्योंकि Gradle बता ही नहीं सकता कि क्या बदला",
+  ]}
+  answer={1}
+  explanation="api किसी निर्भरता को आगे तक खोल देता है: उसके नीचे वाले सब उसी के साथ compile होते हैं, तो उसके बदलने पर वे सब दोबारा बनने की कतार में आ जाते हैं। implementation उसे उनके compile classpath से बाहर रखता है, तो उस module के अंदर हुआ बदलाव वहीं रुक जाता है और सिर्फ उसका सीधा इस्तेमाल करने वाला दोबारा बनता है। इसीलिए default implementation होना चाहिए और api सिर्फ उस बिरले मामले के लिए, जब उस निर्भरता का कोई type सच में आपके सार्वजनिक API में दिखता हो। जो project हर जगह api लगाता है उसमें modular build जितनी files होती हैं और दोबारा बनने का बरताव एक ही module जैसा।"
+/>
+
+<Tip>
+अंदरूनी बदलाव `implementation` के साथ भी आमतौर पर नीचे किसी को कुछ नहीं भुगताता, पर सार्वजनिक
+हस्ताक्षर का बदलाव — ABI — हमेशा आगे फैलता है। काम का नियम यही है: कोई private field बेझिझक बदलिए,
+और किसी सार्वजनिक function के parameters बदलने पर बड़े rebuild की उम्मीद रखिए।
+</Tip>
+
+## चालीस build files, एक परिभाषा
+
+बीस modules यानी बीस लगभग एक जैसी Gradle files। Convention plugin से वह एक ही रह जाती है:
+
+```kotlin title="build-logic/convention/AndroidLibraryConventionPlugin.kt" numbered
+class AndroidLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("com.android.library")
+        pluginManager.apply("org.jetbrains.kotlin.android")
+
+        extensions.configure<LibraryExtension> {
+            compileSdk = 35
+            defaultConfig.minSdk = 24
+        }
+    }
+}
+```
+
+```kotlin title="core/data/build.gradle.kts"
+plugins {
+    alias(libs.plugins.myapp.android.library)
+}
+```
+
+हर module की build file सिर्फ निर्भरताओं की सूची रह जाती है, और `compileSdk` बढ़ाना बीस के बजाय एक
+बदलाव हो जाता है।
+
+<Detail summary="चौड़े graphs तेज बनते हैं, गहरे नहीं">
+Gradle modules को वहाँ तक साथ-साथ compile करता है जहाँ तक graph इजाजत दे, तो गिनती से ज्यादा शक्ल
+मायने रखती है:
+
+```text title="Shapes" no-glossary
+गहरा — कुछ भी साथ नहीं              चौड़ा — तीन एक साथ
+app                                app
+ └ feature                          ├ feature:orders
+    └ data                          ├ feature:profile
+       └ common                     └ feature:search
+```
+
+इसे आमतौर पर वह `core:common` module बिगाड़ता है जिस पर सब निर्भर हैं और जिसे हर कोई बदलता है। उसका
+हर बदलाव पूरे project को बेकार कर देता है, तो साथ-साथ बनना सिर्फ कागज पर रह जाता है। ऐसा कोई module
+आपके पास है तो देखिए उसमें है क्या — आमतौर पर वह तीन बिना मतलब वाली चीजें होती हैं जो तीन छोटे
+modules बनना चाहती हैं।
+
+ढाँचा बदलने से पहले नापिए:
+
+```bash title="Terminal" no-glossary
+./gradlew :app:assembleDebug --scan
+```
+</Detail>
+
+## कीमत, साफ-साफ
+
+बाँटना करना सस्ता है और वापस लेना महँगा। आपकी जोड़ी हुई हर सरहद वह जगह है जहाँ किसी class को हिलाना
+Gradle का बदलाव बन जाता है, और जिस design को आप अभी टटोल ही रहे हैं उसमें classes लगातार हिलती हैं।
+
+एक ठीक-ठाक क्रम: एक module से शुरू कीजिए, नियम बचाने लायक होते ही `core:domain` जोड़िए, एक से ज्यादा
+लोग किसी feature पर काम करने लगें तो उसे अलग कीजिए, और उसके बाद ही build scan सामने रखकर build के
+समय के पीछे पड़िए।
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो modular project को एक ही module से भी बुरा बना देती हैं">
+**Default में `api`।** Files पूरी, incremental build बिलकुल नहीं। जब तक कोई type सच में आपके
+सार्वजनिक API से बाहर न झाँक रहा हो, `implementation` लीजिए।
+
+**सर्वशक्तिमान `core:common`।** सब उस पर निर्भर, सब उसे बदलते हैं, कुछ भी साथ-साथ नहीं बनता।
+
+**Feature की feature पर निर्भरता।** Gradle उस चक्कर से मना कर देता है, और उसका जुगाड़ — किसी साझा
+module से होकर छोटा रास्ता — आमतौर पर उसी module को ऊपर वाला सर्वशक्तिमान module बना देता है।
+
+**हर class के लिए एक module।** Configuration का समय और IDE की indexing हर module की अलग कीमत हैं।
+पचास नन्हे modules पाँच समझदार modules से धीमे पड़ सकते हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. एक module वाली app से `core:domain` अलग कीजिए और उसमें कोई Android import जोड़कर देखिए।
+2. किसी एक निर्भरता पर `implementation` को `api` कीजिए, उसके पीछे की कोई class बदलिए, और मिलाइए कि
+   Gradle क्या-क्या दोबारा बनाता है।
+3. Build scan चलाइए और वह module ढूँढ़िए जिसका इंतजार बाकी हर module करता है।
+4. एक convention plugin लिखिए और तीन build files से दोहराई हुई settings मिटा दीजिए।
+5. अपना module graph खींचिए और दो features के बीच की हर रेखा पर निशान लगाइए। हर एक वह design वाला
+   फैसला है जो आपने अभी लिया नहीं है।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Module की सरहद | निर्भरता के नियम को तय की हुई बात के बजाय लागू बनाती है |
+| `core:domain` | किसी पर निर्भर नहीं; पूरी कसौटी यही है |
+| `implementation` | निर्भर लोगों के compile classpath से बाहर — यही default |
+| `api` | आगे तक खुला; सिर्फ तब जब कोई type सच में बाहर झाँकता हो |
+| ABI का बदलाव | सार्वजनिक हस्ताक्षर बदलने पर नीचे सब बनता है; अंदरूनी आमतौर पर नहीं |
+| Convention plugin | बीस लगभग एक जैसी build files के बजाय एक परिभाषा |
+| Graph की शक्ल | चौड़ा साथ-साथ बनता है; गहरा नहीं |
+| `core:common` | आम अड़चन; आमतौर पर एक नाम पहने तीन modules |
+| कीमत | सरहदें जोड़ना सस्ता है और हिलाना महँगा |
+
+<Interview title="Build के समय वाला सवाल, जो असल में dependency graph के बारे में है">
+"`api` और `implementation` में फर्क क्या है?"
+
+`implementation` किसी निर्भरता को उन सबके compile classpath से बाहर रखता है जो आप पर निर्भर हैं, तो
+उसके अंदर हुआ बदलाव आपके module पर रुक जाता है; `api` उसे आगे तक खोल देता है, तो नीचे वाला सब उसी
+के साथ compile होता है और उसके बदलने पर दोबारा बनता है। जो वाक्य दिखाता है कि यह असल में भुगता गया
+है वह नतीजा है: हर जगह `api` लगाने से ऐसा project मिलता है जिसमें modular build जितनी files हैं और
+दोबारा बनने का बरताव एक ही module जैसा — यानी दोनों का सबसे बुरा हिस्सा।
+</Interview>

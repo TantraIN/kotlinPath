@@ -1,0 +1,179 @@
+---
+title: Multi-module projects and build times
+description: Modules turn architecture rules into compile errors and a full rebuild into a partial one. Both benefits come from the same thing — a dependency graph the build tool can see.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A module boundary is the only thing that makes the dependency rule **enforced rather than agreed**.
+In one module, `data` importing `ui` compiles; across modules it does not, and the same graph is
+what lets Gradle rebuild a fraction of the project instead of all of it.
+</KeyIdea>
+
+## Why this matters
+
+Folders are a convention that a tired person breaks on a Friday. A Gradle dependency is a fact:
+
+```kotlin title="core/domain/build.gradle.kts"
+dependencies {
+    // nothing. That is the point.
+}
+```
+
+```kotlin title="core/data/build.gradle.kts"
+dependencies {
+    implementation(projects.core.domain)
+    implementation(libs.retrofit)
+    implementation(libs.room.runtime)
+}
+```
+
+Now an `import android.` in domain is not a code review comment; it does not compile.
+
+## A layout that scales
+
+| Module | Contains | Depends on |
+| --- | --- | --- |
+| `app` | The application class, navigation host, DI wiring | Every feature |
+| `feature:orders` | Screens, `ViewModel`s for one feature | `core:domain`, `core:ui` |
+| `core:domain` | Models, rules, repository interfaces | Nothing |
+| `core:data` | Repository implementations, network, database | `core:domain` |
+| `core:ui` | Design system, shared composables | Nothing outside itself |
+
+Two features must never depend on each other. When one needs to open a screen in another, the
+answer is a route or an interface in a shared module — not a direct dependency, which creates a
+cycle Gradle will refuse.
+
+## The keyword that decides your build times
+
+```kotlin title="Build.kt"
+dependencies {
+    implementation(projects.core.domain)   // visible to me only
+    api(projects.core.model)               // visible to me and to everyone who depends on me
+}
+```
+
+<Quiz
+  question="`feature:orders` declares `api(projects.core.data)`. You change one internal class in `core:data`. What recompiles?"
+  options={[
+    "Only `core:data`, because the change is internal",
+    "`core:data`, `feature:orders`, and everything that depends on `feature:orders` — because `api` puts it on their compile classpath too",
+    "The whole project, since Gradle cannot tell what changed",
+  ]}
+  answer={1}
+  explanation="api exposes a dependency transitively: everyone downstream compiles against it, so everyone downstream is a candidate for recompilation when it changes. implementation keeps it off their compile classpath, so a change inside that module stops there and only its direct consumer rebuilds. This is why the default should be implementation and api reserved for the rare case where a type from that dependency genuinely appears in your public API. A project that uses api everywhere has all the file count of a modular build and the rebuild behaviour of a single module."
+/>
+
+<Tip>
+An internal change usually costs nothing downstream even with `implementation`, but a change to a
+public signature — the ABI — always propagates. That is the practical rule: rename a private field
+freely, and expect a wide rebuild when you change a public function's parameters.
+</Tip>
+
+## Forty build files, one definition
+
+Twenty modules means twenty near-identical Gradle files. A convention plugin makes there be one:
+
+```kotlin title="build-logic/convention/AndroidLibraryConventionPlugin.kt" numbered
+class AndroidLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("com.android.library")
+        pluginManager.apply("org.jetbrains.kotlin.android")
+
+        extensions.configure<LibraryExtension> {
+            compileSdk = 35
+            defaultConfig.minSdk = 24
+        }
+    }
+}
+```
+
+```kotlin title="core/data/build.gradle.kts"
+plugins {
+    alias(libs.plugins.myapp.android.library)
+}
+```
+
+Every module's build file becomes a list of dependencies and nothing else, and raising `compileSdk`
+is one edit instead of twenty.
+
+<Detail summary="Wide graphs build fast; deep ones do not">
+Gradle compiles modules in parallel where the graph allows, so shape matters more than count:
+
+```text title="Shapes" no-glossary
+Deep — nothing overlaps            Wide — three build at once
+app                                app
+ └ feature                          ├ feature:orders
+    └ data                          ├ feature:profile
+       └ common                     └ feature:search
+```
+
+The usual thing that ruins this is a `core:common` module that everything depends on and everyone
+edits. Every change to it invalidates the entire project, so the parallelism is theoretical. If you
+have one of these, look at what is inside — it is usually three unrelated things that want to be
+three small modules.
+
+Measure before restructuring:
+
+```bash title="Terminal" no-glossary
+./gradlew :app:assembleDebug --scan
+```
+</Detail>
+
+## The cost, stated plainly
+
+Splitting is cheap to do and expensive to undo. Every boundary you add is a place where moving a
+class becomes a Gradle edit, and a design you are still discovering will move classes constantly.
+
+A reasonable order: start with one module, add `core:domain` the moment the rules are worth
+protecting, split features when more than one person is working on them, and only then chase build
+times with a build scan in front of you.
+
+## Common mistakes
+
+<Pitfall title="Four that make a modular project worse than a single one">
+**`api` by default.** All the files, none of the incremental build. Use `implementation` unless a
+type genuinely leaks through your public API.
+
+**A god `core:common`.** Everything depends on it, everyone edits it, nothing builds in parallel.
+
+**Feature depending on feature.** Gradle rejects the cycle, and the workaround — a shortcut through
+a shared module — usually turns that module into the god module above.
+
+**One module per class.** Configuration time and IDE indexing are per-module costs. Fifty tiny
+modules can be slower than five sensible ones.
+</Pitfall>
+
+## Practice
+
+1. Extract `core:domain` from a single-module app and try to add an Android import to it.
+2. Change `implementation` to `api` on one dependency, edit a class behind it, and compare what
+   Gradle rebuilds.
+3. Run a build scan and find the module every other module waits for.
+4. Write a convention plugin and delete the duplicated configuration from three build files.
+5. Draw your module graph and mark every edge between two features. Each one is a design decision
+   you have not made yet.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Module boundary | Makes the dependency rule enforced, not agreed |
+| `core:domain` | Depends on nothing; that is the whole test |
+| `implementation` | Stays off consumers' compile classpath — the default |
+| `api` | Exposed transitively; use it only when a type genuinely leaks |
+| ABI change | A public signature change rebuilds downstream; internals usually do not |
+| Convention plugin | One definition instead of twenty near-identical build files |
+| Graph shape | Wide builds in parallel; deep does not |
+| `core:common` | The usual bottleneck; usually three modules wearing one name |
+| Cost | Boundaries are cheap to add and expensive to move |
+
+<Interview title="A question about build times that is really about the dependency graph">
+"What is the difference between `api` and `implementation`?"
+
+`implementation` keeps a dependency off the compile classpath of anything that depends on you, so a
+change inside it stops at your module; `api` exposes it transitively, so everything downstream
+compiles against it and rebuilds when it changes. The sentence that shows it has been used in anger
+is the consequence: `api` everywhere gives you a project with the file count of a modular build and
+the rebuild behaviour of a single module, which is the worst of both.
+</Interview>

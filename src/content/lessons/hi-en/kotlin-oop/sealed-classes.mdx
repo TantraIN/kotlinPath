@@ -33,7 +33,7 @@ fun render(state: UiState): String = when (state) {
     UiState.Loading    -> "spinner"
     is UiState.Success -> "${state.items.size} items"
     is UiState.Error   -> "error: ${state.message}"
-    // koi else nahi — compiler har case jaanch chuka hai
+    // koi else nahi — compiler har case check kar chuka hai
 }
 
 fun main() {

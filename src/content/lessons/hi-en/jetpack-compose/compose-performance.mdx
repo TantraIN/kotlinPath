@@ -141,11 +141,11 @@ mein zaruri thi, aur screen par baasi data dikhega. Us bug ka na koi stack trace
 
 ## Common galtiyan
 
-<Pitfall title="Paanch, mote taur par maayne rakhne ke kram mein">
+<Pitfall title="Paanch, mote taur par maayne rakhne ke order mein">
 **Ped mein bahut upar state padhna.** Kisi parent mein ek padhna uske neeche sab kuch bekar kar
 deta hai. Padhna usi composable tak neeche laiye jo use dikhata hai.
 
-**Composition mein collection dobara banana.** Wahin chhaantna ya kram lagana har baar neeche ek
+**Composition mein collection dobara banana.** Wahin chhaantna ya order lagana har baar neeche ek
 nai cheez thamata hai. Use `remember(input)` mein lapetiye.
 
 **Composable ki body mein bhaari kaam.** Wo usi dayre ke andar hai jo dobara chalta hai, to use koi
@@ -190,7 +190,7 @@ nahi.
 "Bewajah ki recomposition aap dhundhenge aur theek kaise karenge?"
 
 Pehle napenge: kahan ho rahi hai ye Layout Inspector ki recomposition ginti se, phir kaun sa
-parameter unstable hai ye Compose compiler ki report se. Ilaaj isi kram mein — state padhna ped
+parameter unstable hai ye Compose compiler ki report se. Ilaaj isi order mein — state padhna ped
 mein neeche lana, nikali hui collections ko `remember` mein lapetna, aur uske baad hi type ko sach
 mein na badalne wala banana. Ye jodna kaam ka hai ki strong skipping default se chalu hone ke baad
 lambda ki stability wali purani salah kaafi had tak bekar ho chuki hai, par har recomposition par
