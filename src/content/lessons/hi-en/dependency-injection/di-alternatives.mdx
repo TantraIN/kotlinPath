@@ -1,0 +1,183 @@
+---
+title: Koin, haath se DI aur KMP wala sawal
+description: Sirf Android wale app ke liye Hilt default hai, aur wo iklauta samajhdar chunaav nahi hai. Sauda compile waqt ki suraksha banam build ki raftar aur portability ka hai, aur ye keh pana zaruri hai ki aap khareed kya rahe ho.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Har DI ka auzar ek hi sawal ka jawab deta hai — ise banata kaun hai — aur farak ismein hai ki **wo
+jawab check kab hota hai**. Hilt compile waqt check karta hai. Koin tab, jab wo cheez pehli baar
+maangi jaye. Haath se ki gayi DI tab, jab aap use likhte ho. Yahi ek dhuri zyadatar sauda samjha deti
+hai, ye bhi ki Kotlin Multiplatform jawab kyun badal deta hai.
+</KeyIdea>
+
+## Teenon raaste, imandari se
+
+<Compare
+  left={{
+    title: "Hilt",
+    subtitle: "Compile waqt, sirf Android",
+    accent: "violet",
+    points: [
+      "+ Gayab dependency us type ka naam leti build ki error hai",
+      "+ Android ki umrein bani-banai — ViewModel, Activity, retained scopes",
+      "+ Google sambhalta hai, aur zyadatar Android teams yahi leti hain",
+      "- Annotation processing har build lamba karti hai",
+      "- Sirf JVM aur Android, to Kotlin Multiplatform nahi",
+    ],
+  }}
+  right={{
+    title: "Koin",
+    subtitle: "Chalte waqt, pehle Kotlin ka",
+    accent: "emerald",
+    points: [
+      "+ Koi code nahi banta, to builds tez rehte hain",
+      "+ Saada Kotlin DSL — wiring padha ja sakne wala code hai, annotations nahi",
+      "+ Kotlin Multiplatform par chalta hai",
+      "- Gayab dependency tab phenkti hai jab wo screen khule",
+      "- Hal karne mein ek lookup lagta hai, halanki naapne layak kam hi",
+    ],
+  }}
+/>
+
+Aur haath se ki gayi DI, jo pehle lesson ne likhkar dikhai thi: ek container, koi library nahi, poora
+akhtiyaar. Wo logon ki ummid se zyada der chalti hai aur scope wali umron tatha `ViewModel` ki
+factories par ruk jati hai.
+
+```kotlin title="KoinModule.kt" numbered
+val appModule = module {
+    single { OkHttpClient.Builder().addInterceptor(get<AuthInterceptor>()).build() }
+    single { Retrofit.Builder().baseUrl(BASE_URL).client(get()).build() }
+    single { get<Retrofit>().create(OrderApi::class.java) }
+    single<OrderRepository> { OfflineFirstOrderRepository(get(), get()) }
+    viewModel { OrderViewModel(get()) }
+}
+```
+
+Use Hilt wale roop ke saamne rakhkar padhiye aur farak dikh jata hai: `single` hi `@Singleton` hai,
+`factory` bina scope wala, aur `get()` wahi hai jo Hilt constructor ke parameters se khud nikal leta
+tha. Wiring aam Kotlin hai jise aap debugger mein ek-ek kadam chala sakte ho — jo sach mein padhne
+mein zyada achhi hai, aur yahi wajah bhi hai ki app chalne se pehle use kisi ne check nahi kiya.
+
+<Quiz
+  question="Koi team build ki raftar ke liye Hilt se Koin par jati hai. Do mahine baad kam khulne wali settings wali screen production mein `NoBeanDefFoundException` ke saath crash karti hai. Hua kya, aur unhe kya karna chahiye tha?"
+  options={[
+    "Koin production ke liye theek nahi hai — unhe wapas jana chahiye",
+    "Koi dependency kabhi darj hi nahi hui, aur chunki Koin chalte waqt hal karta hai, kisi user ke wo screen kholne tak use koi pakad nahi paya. Kisi unit test mein `checkModules()` poora graph check kar leta aur use CI mein hi pakad leta",
+    "Module galat order mein likha gaya tha, aur order theek karne se ye theek ho jata hai",
+  ]}
+  answer={1}
+  explanation="Chalte waqt hal karne ki keemat theek yahi hai, aur wo asli keemat hai, koi kitabi baat nahi: jis screen ko test karte waqt koi nahi kholta, wahi tooti hui bhej di jati hai. Par anjaam ye nahi ki Koin theek nahi hai — anjaam ye hai ki wo check kahin aur le jana padta hai, aur Koin khud checkModules() deta hai, yani aisa test jo har paribhasha par chalkar pakka karta hai ki uski har dependency hal ho sakti hai. CI mein chalane par wo chalte waqt ki nakami ko wapas build waqt ki bana deta hai, jo Hilt aapko muft mein deta hai. Order is baat mein jhansa hai: Koin aalas se hal karta hai, to likhne ka order maayne hi nahi rakhta. Imandaar nichod ye hai ki Koin ek guarantee dekar build ki raftar leta hai, aur wo sauda tabhi sahi hai jab aap us guarantee ko kisi test se wapas khareed lo."
+/>
+
+## KMP wala sawal
+
+Yahin ye chunaav pasand ki baat nahi reh jata.
+
+Hilt, Dagger par bana hai, jo Java ka annotation processor hai aur JVM ka code banata hai. Share kiya
+gaya Kotlin Multiplatform code iOS ke liye, aur aksar JS tatha native ke liye bhi compile hona padta
+hai, to Hilt wahan chal hi nahi sakta — ye ghumakar paar karne wali pabandi nahi, banawat ki baat hai.
+
+To share kiye gaye code ke liye teen asli raaste bachte hain:
+
+| Tarika | Kaise chalta hai |
+| --- | --- |
+| Koin | Multiplatform hai, share kiye code mein jas ka tas chalta hai |
+| Haath se DI | Common code mein ek share container; lamba hai, aur poori tarah portable |
+| kotlin-inject / Metro | KSP se compile waqt wali DI, to ye multiplatform chalti hai |
+
+Aam shakal ek mili-juli hai: share kiye module mein Koin ya haath se DI, aur uske ird-gird Android app
+ko Hilt se wire karna. Ye samjhauta kam aur ye manna zyada hai ki dono hisson ki sharten alag hain.
+
+<Note>
+Agar Kotlin Multiplatform aage ki yojana mein kahin bhi hai, to ye jaldi tay kar lena theek rehta hai.
+Baad mein DI badalna har us class ko chhoota hai jo koi dependency paati hai — aur agar aapne is phase
+ko mana hai, to wo sab hain.
+</Note>
+
+<Detail summary="Build ka waqt jata kahan hai">
+"Annotation processing dheemi hai" jitni baar dohrai jati hai usse kam baar naapi jati hai, aur bareeki
+maayne rakhti hai.
+
+Hilt ki keemat barabar bandhi hui nahi hai. Uska processor sab kuch ikattha karta hai, to kisi
+`@Module` mein badlaav build ke bade hisse ko amanya kar sakta hai — yani dard wala maamla hai DI
+badalne ke baad ka incremental build, na ki saaf build, aur na hi aam code badalna. Chhote app par ye
+dikhta hi nahi; bade kai-module wale app par ye un wajahon mein hai jo log badalte waqt ginate hain.
+
+Library badalne ki sochne se pehle do cheezein ise ghatati hain. Pakka kijiye ki aap kapt nahi balki
+**KSP** par ho, jo usi kaam ke liye kaafi tez hai. Aur modules chhote rakhiye, taki ek badlaav kam
+cheezein amanya kare.
+
+Agar Koin ki sochne ki wajah build ki raftar hai, to pehle naapiye. `--scan` ya koi build profile bata
+dega ki aapke build ka kitna hissa sach mein annotation processing hai, aur wo aksar jhunjhlahat ke
+bataye se chhota nikalta hai.
+</Detail>
+
+## Chunna
+
+| Haalat | Samajhdar chunaav |
+| --- | --- |
+| Sirf Android wala app, kisi bhi naap ka | Hilt |
+| Chhota app, gini-chuni dependencies | Haath se DI — sach mein theek |
+| Kotlin Multiplatform ka share kiya code | Koin, haath se, ya kotlin-inject |
+| Jis build par DI ki processing naapne layak haavi ho | Koin, aur CI mein `checkModules()` |
+| Aapki chhapi hui koi library | Constructor injection, aur koi framework nahi |
+
+Aakhri pankti saaf-saaf kehne layak hai. Kisi library ko apna DI framework us app par kabhi nahi
+thopna chahiye jo use leta hai. Constructors bahar dijiye, aur unhe jo bhi wo lete hain usse wire karne
+dijiye.
+
+## Aam galtiyan
+
+<Pitfall title="Galat chunne ke chaar tarike">
+**Bina `checkModules()` ke Koin apnana.** Aapne compile waqt wali guarantee chhod di aur use wapas
+khareeda nahi, to kam khulne wali koi screen tooti hui bheji jati hai.
+
+**Bina naape build ki raftar par chunna.** Dekhiye ki build ka kitna hissa annotation processing hai,
+aur dekhiye ki aap kapt nahi, KSP par ho.
+
+**Hilt apnane ke baad KMP wali shart pata chalna.** DI badalna har us class ko chhoota hai jo koi
+dependency paati hai.
+
+**Chhapi hui library mein koi framework.** Constructors bahar dijiye; wire karna app tay karega.
+</Pitfall>
+
+## Abhyaas
+
+1. Ek screen Koin se aur wahi screen Hilt se wire kijiye, aur milaiye ki dono kya-kya dikhate hain.
+2. `checkModules()` wala test likhiye aur ek paribhasha mitaiye. Pakka kijiye ki wo nakaam hota hai.
+3. Kisi build ka profile nikaliye aur asli pratishat dhoondhiye jo annotation processing mein jata hai.
+4. Pakka kijiye ki aapka project kapt nahi, KSP leta hai.
+5. Koi chhoti suvidha constructor injection wali library ki tarah likhiye, bina kisi DI framework ke,
+   phir use Hilt lete kisi app se wire kijiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Dhuri | Graph check kab hota hai — compile, pehli maang, ya aapke haath se |
+| Hilt | Compile waqt, sirf Android, Android ka default |
+| Koin | Chalte waqt, pehle Kotlin ka, multiplatform |
+| Haath se DI | Koi library nahi; scopes aur factories tak theek |
+| `checkModules()` | Koin ki chhooti compile waqt wali guarantee CI mein wapas deta hai |
+| KMP | Share kiye code mein Hilt chal hi nahi sakta — banawat, pabandi nahi |
+| Mili-juli | Share kiye code mein Koin ya haath se, Android app ke ird-gird Hilt |
+| Build ki keemat | DI badalne ke baad ke incremental builds mein jama hai |
+| Badalne se pehle | Naapiye, aur pakka kijiye ki KSP par ho |
+| Libraries | Constructor injection, koi framework nahi |
+
+<Interview title="Ek sawal, jo ye check kar raha hai ki aap apna default sahi thehra sakte ho ya nahi">
+"Koin ke bajaye Hilt kyun?"
+
+Sirf Android wale app ke liye, kyunki graph compile waqt check hota hai: gayab dependency us type ka
+naam leti build ki error hai, na ki us screen ko pehli baar kholne par aaya crash jise uski zarurat
+thi. Usmein Android ki umrein bani-banai hain, to `ViewModel` aur retained scopes khud wire karne ke
+bajaye annotations hain.
+
+Main ise seedhe-seedhe behtar kehkar nahi rakhunga. Koin mein koi code nahi banta, to builds tez rehte
+hain, aur wiring saada Kotlin hai jise padha aur debug kiya ja sakta hai — aur sabse ahem, wo Kotlin
+Multiplatform par chalta hai, jo Hilt nahi chal sakta, kyunki Dagger JVM ka code banata hai. Agar main
+Koin chunun to compile waqt wali guarantee wapas pane ke liye CI mein `checkModules()` jodunga. Aur
+chhote app ke liye ek container wali haath se ki gayi DI jayaz jawab hai, jise bhejne mein mujhe koi
+sharm nahi hogi.
+</Interview>

@@ -1,0 +1,181 @@
+---
+title: Koin, manual DI and the KMP question
+description: Hilt is the default for an Android-only app and it is not the only reasonable choice. The trade is compile-time safety against build speed and portability, and it is worth being able to say which one you are buying.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Every DI tool answers the same question — who builds this — and differs on **when the answer is
+checked**. Hilt checks at compile time. Koin checks when the object is first requested. Manual DI
+checks when you write it. That single axis explains most of the trade, including why Kotlin
+Multiplatform changes the answer.
+</KeyIdea>
+
+## The three options, honestly
+
+<Compare
+  left={{
+    title: "Hilt",
+    subtitle: "Compile-time, Android-only",
+    accent: "violet",
+    points: [
+      "+ A missing dependency is a build error naming the type",
+      "+ Android lifetimes built in — ViewModel, Activity, retained scopes",
+      "+ Google-maintained, and what most Android teams use",
+      "- Annotation processing lengthens every build",
+      "- JVM and Android only, so no Kotlin Multiplatform",
+    ],
+  }}
+  right={{
+    title: "Koin",
+    subtitle: "Runtime, Kotlin-first",
+    accent: "emerald",
+    points: [
+      "+ No code generation, so builds stay fast",
+      "+ Plain Kotlin DSL — the wiring is readable code, not annotations",
+      "+ Works on Kotlin Multiplatform",
+      "- A missing dependency throws when the screen opens",
+      "- Resolution costs a lookup, though rarely a measurable one",
+    ],
+  }}
+/>
+
+And manual DI, which the first lesson wrote out: one container, no library, complete control. It
+stays viable longer than people expect and stops scaling at scoped lifetimes and `ViewModel`
+factories.
+
+```kotlin title="KoinModule.kt" numbered
+val appModule = module {
+    single { OkHttpClient.Builder().addInterceptor(get<AuthInterceptor>()).build() }
+    single { Retrofit.Builder().baseUrl(BASE_URL).client(get()).build() }
+    single { get<Retrofit>().create(OrderApi::class.java) }
+    single<OrderRepository> { OfflineFirstOrderRepository(get(), get()) }
+    viewModel { OrderViewModel(get()) }
+}
+```
+
+Read that against the Hilt version and the difference is visible: `single` is `@Singleton`, `factory`
+is unscoped, and `get()` is what Hilt inferred from constructor parameters. The wiring is ordinary
+Kotlin you can step through in a debugger — which is genuinely nicer to read, and is also why nothing
+verified it before the app ran.
+
+<Quiz
+  question="A team moves from Hilt to Koin for build speed. Two months later a rarely-used settings screen crashes in production with `NoBeanDefFoundException`. What happened, and what should they have done?"
+  options={[
+    "Koin is unsuitable for production — they should move back",
+    "A dependency was never registered, and because Koin resolves at run time nothing caught it until a user opened that screen. `checkModules()` in a unit test verifies the whole graph and would have caught it in CI",
+    "The module was declared in the wrong order, and reordering fixes it",
+  ]}
+  answer={1}
+  explanation="This is the exact cost of runtime resolution, and it is a real cost rather than a theoretical one: the screen nobody opens during testing is the screen that ships broken. But the conclusion is not that Koin is unsuitable — it is that the check has to be moved somewhere, and Koin provides checkModules(), a test that walks every definition and verifies each dependency can be resolved. Run in CI it converts the runtime failure back into a build-time one, which is what Hilt gives you for free. Ordering is a red herring: Koin resolves lazily, so declaration order does not matter. The honest summary is that Koin trades a guarantee for build speed, and the trade is only sound if you buy the guarantee back with a test."
+/>
+
+## The KMP question
+
+This is where the choice stops being a preference.
+
+Hilt is built on Dagger, which is a Java annotation processor generating JVM code. Shared Kotlin
+Multiplatform code has to compile to iOS and often to JS and native, so Hilt cannot run there at all —
+not as a limitation to work around, but structurally.
+
+That leaves three real options for shared code:
+
+| Approach | How it works |
+| --- | --- |
+| Koin | Multiplatform, works in shared code unchanged |
+| Manual DI | A shared container in common code; verbose, and completely portable |
+| kotlin-inject / Metro | Compile-time DI via KSP, so it does work multiplatform |
+
+A common shape is a hybrid: Koin or manual DI in the shared module, and Hilt still wiring the Android
+app around it. That is not a compromise so much as a recognition that the two halves have different
+constraints.
+
+<Note>
+If Kotlin Multiplatform is anywhere on the roadmap, this is worth deciding early. Migrating DI later
+touches every class that receives a dependency — which, if you have followed this phase, is all of
+them.
+</Note>
+
+<Detail summary="Where the build time actually goes">
+"Annotation processing is slow" is repeated more often than it is measured, and the detail matters.
+
+Hilt's cost is not spread evenly. Its aggregating processor means a change to a `@Module` can
+invalidate a large part of the build, so the painful case is an incremental build after editing DI —
+not a clean build, and not editing ordinary code. On a small app it is unnoticeable; on a large
+multi-module one it is one of the things people cite when they migrate.
+
+Two things reduce it before you consider changing library. Make sure you are on **KSP** rather than
+kapt, which is substantially faster for the same work. And keep modules narrow, so an edit
+invalidates less.
+
+If build speed is the reason you are considering Koin, measure first. `--scan` or a build profile
+will tell you what fraction of your build is actually annotation processing, and it is often smaller
+than the frustration suggests.
+</Detail>
+
+## Choosing
+
+| Situation | Reasonable choice |
+| --- | --- |
+| Android-only app, any size | Hilt |
+| Small app, few dependencies | Manual DI — genuinely fine |
+| Kotlin Multiplatform shared code | Koin, manual, or kotlin-inject |
+| Build times measurably dominated by DI processing | Koin, with `checkModules()` in CI |
+| A library you publish | Constructor injection and no framework at all |
+
+That last row is worth stating plainly. A library should never impose a DI framework on the app that
+uses it. Expose constructors, let the consumer wire them up with whatever they use.
+
+## Common mistakes
+
+<Pitfall title="Four ways to choose badly">
+**Adopting Koin without `checkModules()`.** You gave up the compile-time guarantee and did not buy it
+back, so a rarely-opened screen ships broken.
+
+**Choosing on build speed without measuring.** Check what fraction of the build is annotation
+processing, and check you are on KSP rather than kapt.
+
+**Discovering the KMP constraint after adopting Hilt.** Migrating DI touches every class that
+receives a dependency.
+
+**A framework in a published library.** Expose constructors; the app decides how to wire them.
+</Pitfall>
+
+## Practice
+
+1. Wire one screen with Koin and the same screen with Hilt, and compare what each makes visible.
+2. Write a `checkModules()` test and delete one definition. Confirm it fails.
+3. Profile a build and find the actual percentage spent on annotation processing.
+4. Confirm your project uses KSP rather than kapt.
+5. Write a small feature as a library with constructor injection and no DI framework, then wire it
+   from an app that uses Hilt.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The axis | When is the graph checked — compile, first request, or by you |
+| Hilt | Compile-time, Android-only, the Android default |
+| Koin | Runtime, Kotlin-first, multiplatform |
+| Manual DI | No library; fine until scopes and factories |
+| `checkModules()` | Buys Koin's missing compile-time guarantee back, in CI |
+| KMP | Hilt cannot run in shared code — structural, not a limitation |
+| Hybrid | Koin or manual in shared code, Hilt around the Android app |
+| Build cost | Concentrated in incremental builds after editing DI |
+| Before switching | Measure, and confirm you are on KSP |
+| Libraries | Constructor injection, no framework |
+
+<Interview title="A question that is testing whether you can justify a default">
+"Why Hilt rather than Koin?"
+
+For an Android-only app, because the graph is verified at compile time: a missing dependency is a
+build error naming the type, rather than a crash the first time someone opens the screen that needed
+it. It also has Android's lifetimes built in, so `ViewModel` and retained scopes are annotations
+rather than something I wire myself.
+
+I would not present it as strictly better. Koin has no code generation, so builds stay faster, and
+the wiring is plain Kotlin you can read and debug — and crucially it works on Kotlin Multiplatform,
+which Hilt cannot, because Dagger generates JVM code. If I chose Koin I would add `checkModules()` to
+CI to buy back the compile-time guarantee. And for a small app, manual DI with one container is a
+legitimate answer that I would not be embarrassed to ship.
+</Interview>

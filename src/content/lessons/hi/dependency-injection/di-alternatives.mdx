@@ -1,0 +1,180 @@
+---
+title: Koin, हाथ से DI और KMP वाला सवाल
+description: सिर्फ Android वाले ऐप के लिए Hilt डिफॉल्ट है, और वह इकलौता समझदार चुनाव नहीं है। सौदा compile वक्त की सुरक्षा बनाम build की रफ्तार और portability का है, और यह कह पाना जरूरी है कि आप खरीद क्या रहे हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+हर DI का औजार एक ही सवाल का जवाब देता है — इसे बनाता कौन है — और फर्क इसमें है कि **वह जवाब जाँचा कब
+जाता है**। Hilt compile वक्त जाँचता है। Koin तब, जब वह चीज पहली बार माँगी जाए। हाथ से की गई DI तब,
+जब आप उसे लिखते हैं। यही एक धुरी ज्यादातर सौदा समझा देती है, यह भी कि Kotlin Multiplatform जवाब क्यों
+बदल देता है।
+</KeyIdea>
+
+## तीनों रास्ते, ईमानदारी से
+
+<Compare
+  left={{
+    title: "Hilt",
+    subtitle: "Compile वक्त, सिर्फ Android",
+    accent: "violet",
+    points: [
+      "+ गायब dependency उस type का नाम लेती build की error है",
+      "+ Android की उम्रें बनी-बनाई — ViewModel, Activity, retained scopes",
+      "+ Google सँभालता है, और ज्यादातर Android teams यही लेती हैं",
+      "- Annotation processing हर build लंबा करती है",
+      "- सिर्फ JVM और Android, तो Kotlin Multiplatform नहीं",
+    ],
+  }}
+  right={{
+    title: "Koin",
+    subtitle: "चलते वक्त, पहले Kotlin का",
+    accent: "emerald",
+    points: [
+      "+ कोई code नहीं बनता, तो builds तेज रहते हैं",
+      "+ सादा Kotlin DSL — wiring पढ़ा जा सकने वाला code है, annotations नहीं",
+      "+ Kotlin Multiplatform पर चलता है",
+      "- गायब dependency तब फेंकती है जब वह screen खुले",
+      "- हल करने में एक lookup लगता है, हालाँकि नापने लायक कम ही",
+    ],
+  }}
+/>
+
+और हाथ से की गई DI, जो पहले पाठ ने लिखकर दिखाई थी: एक container, कोई library नहीं, पूरा अख्तियार। वह
+लोगों की उम्मीद से ज्यादा देर चलती है और scope वाली उम्रों तथा `ViewModel` की factories पर रुक जाती
+है।
+
+```kotlin title="KoinModule.kt" numbered
+val appModule = module {
+    single { OkHttpClient.Builder().addInterceptor(get<AuthInterceptor>()).build() }
+    single { Retrofit.Builder().baseUrl(BASE_URL).client(get()).build() }
+    single { get<Retrofit>().create(OrderApi::class.java) }
+    single<OrderRepository> { OfflineFirstOrderRepository(get(), get()) }
+    viewModel { OrderViewModel(get()) }
+}
+```
+
+उसे Hilt वाले रूप के सामने रखकर पढ़िए और फर्क दिख जाता है: `single` ही `@Singleton` है, `factory`
+बिना scope वाला, और `get()` वही है जो Hilt constructor के parameters से खुद निकाल लेता था। Wiring आम
+Kotlin है जिसे आप debugger में एक-एक कदम चला सकते हैं — जो सच में पढ़ने में ज्यादा अच्छी है, और यही
+वजह भी है कि ऐप चलने से पहले उसे किसी ने जाँचा नहीं।
+
+<Quiz
+  question="कोई team build की रफ्तार के लिए Hilt से Koin पर जाती है। दो महीने बाद कम खुलने वाली settings वाली screen production में `NoBeanDefFoundException` के साथ crash करती है। हुआ क्या, और उन्हें क्या करना चाहिए था?"
+  options={[
+    "Koin production के लिए ठीक नहीं है — उन्हें वापस जाना चाहिए",
+    "कोई dependency कभी दर्ज ही नहीं हुई, और चूँकि Koin चलते वक्त हल करता है, किसी user के वह screen खोलने तक उसे कोई पकड़ नहीं पाया। किसी unit test में `checkModules()` पूरा graph जाँच लेता और उसे CI में ही पकड़ लेता",
+    "Module गलत क्रम में लिखा गया था, और क्रम ठीक करने से यह ठीक हो जाता है",
+  ]}
+  answer={1}
+  explanation="चलते वक्त हल करने की कीमत ठीक यही है, और वह असली कीमत है, कोई किताबी बात नहीं: जिस screen को test करते वक्त कोई नहीं खोलता, वही टूटी हुई भेज दी जाती है। पर नतीजा यह नहीं कि Koin ठीक नहीं है — नतीजा यह है कि वह जाँच कहीं और ले जानी पड़ती है, और Koin खुद checkModules() देता है, यानी ऐसा test जो हर परिभाषा पर चलकर पक्का करता है कि उसकी हर dependency हल हो सकती है। CI में चलाने पर वह चलते वक्त की नाकामी को वापस build वक्त की बना देता है, जो Hilt आपको मुफ्त में देता है। क्रम इस बात में झाँसा है: Koin आलस से हल करता है, तो लिखने का क्रम मायने ही नहीं रखता। ईमानदार निचोड़ यह है कि Koin एक गारंटी देकर build की रफ्तार लेता है, और वह सौदा तभी सही है जब आप उस गारंटी को किसी test से वापस खरीद लें।"
+/>
+
+## KMP वाला सवाल
+
+यहीं यह चुनाव पसंद की बात नहीं रह जाता।
+
+Hilt, Dagger पर बना है, जो Java का annotation processor है और JVM का code बनाता है। साझा Kotlin
+Multiplatform code को iOS के लिए, और अक्सर JS तथा native के लिए भी compile होना पड़ता है, तो Hilt
+वहाँ चल ही नहीं सकता — यह घुमाकर पार करने वाली पाबंदी नहीं, बनावट की बात है।
+
+तो साझा code के लिए तीन असली रास्ते बचते हैं:
+
+| तरीका | कैसे चलता है |
+| --- | --- |
+| Koin | Multiplatform है, साझा code में जस का तस चलता है |
+| हाथ से DI | Common code में एक साझा container; लंबा है, और पूरी तरह portable |
+| kotlin-inject / Metro | KSP से compile वक्त वाली DI, तो यह multiplatform चलती है |
+
+आम शक्ल एक मिली-जुली है: साझा module में Koin या हाथ से DI, और उसके इर्द-गिर्द Android ऐप को Hilt से
+wire करना। यह समझौता कम और यह मानना ज्यादा है कि दोनों हिस्सों की शर्तें अलग हैं।
+
+<Note>
+अगर Kotlin Multiplatform आगे की योजना में कहीं भी है, तो यह जल्दी तय कर लेना ठीक रहता है। बाद में DI
+बदलना हर उस class को छूता है जो कोई dependency पाती है — और अगर आपने इस phase को माना है, तो वे सब
+हैं।
+</Note>
+
+<Detail summary="Build का वक्त जाता कहाँ है">
+"Annotation processing धीमी है" जितनी बार दोहराई जाती है उससे कम बार नापी जाती है, और बारीकी मायने
+रखती है।
+
+Hilt की कीमत बराबर बँटी हुई नहीं है। उसका processor सब कुछ इकट्ठा करता है, तो किसी `@Module` में
+बदलाव build के बड़े हिस्से को अमान्य कर सकता है — यानी दर्द वाला मामला है DI बदलने के बाद का
+incremental build, न कि साफ build, और न ही आम code बदलना। छोटे ऐप पर यह दिखता ही नहीं; बड़े कई-module
+वाले ऐप पर यह उन वजहों में है जो लोग बदलते वक्त गिनाते हैं।
+
+Library बदलने की सोचने से पहले दो चीजें इसे घटाती हैं। पक्का कीजिए कि आप kapt नहीं बल्कि **KSP** पर
+हैं, जो उसी काम के लिए काफी तेज है। और modules छोटे रखिए, ताकि एक बदलाव कम चीजें अमान्य करे।
+
+अगर Koin की सोचने की वजह build की रफ्तार है, तो पहले नापिए। `--scan` या कोई build profile बता देगा कि
+आपके build का कितना हिस्सा सच में annotation processing है, और वह अक्सर झुँझलाहट के बताए से छोटा
+निकलता है।
+</Detail>
+
+## चुनना
+
+| हालत | समझदार चुनाव |
+| --- | --- |
+| सिर्फ Android वाला ऐप, किसी भी नाप का | Hilt |
+| छोटा ऐप, गिनी-चुनी dependencies | हाथ से DI — सच में ठीक |
+| Kotlin Multiplatform का साझा code | Koin, हाथ से, या kotlin-inject |
+| जिस build पर DI की processing नापने लायक हावी हो | Koin, और CI में `checkModules()` |
+| आपकी छापी हुई कोई library | Constructor injection, और कोई framework नहीं |
+
+आखिरी पंक्ति साफ-साफ कहने लायक है। किसी library को अपना DI framework उस ऐप पर कभी नहीं थोपना चाहिए जो
+उसे लेता है। Constructors बाहर दीजिए, और उन्हें जो भी वे लेते हैं उससे wire करने दीजिए।
+
+## आम गलतियाँ
+
+<Pitfall title="गलत चुनने के चार तरीके">
+**बिना `checkModules()` के Koin अपनाना।** आपने compile वक्त वाली गारंटी छोड़ दी और उसे वापस खरीदा
+नहीं, तो कम खुलने वाली कोई screen टूटी हुई भेजी जाती है।
+
+**बिना नापे build की रफ्तार पर चुनना।** देखिए कि build का कितना हिस्सा annotation processing है, और
+देखिए कि आप kapt नहीं, KSP पर हैं।
+
+**Hilt अपनाने के बाद KMP वाली शर्त पता चलना।** DI बदलना हर उस class को छूता है जो कोई dependency पाती
+है।
+
+**छापी हुई library में कोई framework।** Constructors बाहर दीजिए; wire करना ऐप तय करेगा।
+</Pitfall>
+
+## अभ्यास
+
+1. एक screen Koin से और वही screen Hilt से wire कीजिए, और मिलाइए कि दोनों क्या-क्या दिखाते हैं।
+2. `checkModules()` वाला test लिखिए और एक परिभाषा मिटाइए। पक्का कीजिए कि वह नाकाम होता है।
+3. किसी build का profile निकालिए और असली प्रतिशत ढूँढ़िए जो annotation processing में जाता है।
+4. पक्का कीजिए कि आपका project kapt नहीं, KSP लेता है।
+5. कोई छोटी सुविधा constructor injection वाली library की तरह लिखिए, बिना किसी DI framework के, फिर
+   उसे Hilt लेते किसी ऐप से wire कीजिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| धुरी | Graph जाँचा कब जाता है — compile, पहली माँग, या आपके हाथ से |
+| Hilt | Compile वक्त, सिर्फ Android, Android का डिफॉल्ट |
+| Koin | चलते वक्त, पहले Kotlin का, multiplatform |
+| हाथ से DI | कोई library नहीं; scopes और factories तक ठीक |
+| `checkModules()` | Koin की छूटी compile वक्त वाली गारंटी CI में वापस देता है |
+| KMP | साझा code में Hilt चल ही नहीं सकता — बनावट, पाबंदी नहीं |
+| मिली-जुली | साझा code में Koin या हाथ से, Android ऐप के इर्द-गिर्द Hilt |
+| Build की कीमत | DI बदलने के बाद के incremental builds में जमा है |
+| बदलने से पहले | नापिए, और पक्का कीजिए कि KSP पर हैं |
+| Libraries | Constructor injection, कोई framework नहीं |
+
+<Interview title="एक सवाल, जो यह जाँच रहा है कि आप अपना डिफॉल्ट सही ठहरा सकते हैं या नहीं">
+"Koin के बजाय Hilt क्यों?"
+
+सिर्फ Android वाले ऐप के लिए, क्योंकि graph compile वक्त जाँचा जाता है: गायब dependency उस type का
+नाम लेती build की error है, न कि उस screen को पहली बार खोलने पर आया crash जिसे उसकी जरूरत थी। उसमें
+Android की उम्रें बनी-बनाई हैं, तो `ViewModel` और retained scopes खुद wire करने के बजाय annotations
+हैं।
+
+मैं इसे सीधे-सीधे बेहतर कहकर नहीं रखूँगा। Koin में कोई code नहीं बनता, तो builds तेज रहते हैं, और
+wiring सादा Kotlin है जिसे पढ़ा और debug किया जा सकता है — और सबसे अहम, वह Kotlin Multiplatform पर
+चलता है, जो Hilt नहीं चल सकता, क्योंकि Dagger JVM का code बनाता है। अगर मैं Koin चुनूँ तो compile
+वक्त वाली गारंटी वापस पाने के लिए CI में `checkModules()` जोड़ूँगा। और छोटे ऐप के लिए एक container
+वाली हाथ से की गई DI जायज जवाब है, जिसे भेजने में मुझे कोई शर्म नहीं होगी।
+</Interview>
