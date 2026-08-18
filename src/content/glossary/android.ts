@@ -734,4 +734,733 @@ export const ANDROID_GLOSSARY: Glossary = {
     docs: "https://developer.android.com/guide/topics/resources/string-resource#Plurals",
     related: ["getString"],
   },
+
+  View: {
+    term: "View",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.view.View",
+    does: {
+      en: "The base class for everything drawable on screen — one rectangle that measures, lays out and draws itself.",
+      hi: "screen पर दिखने वाली हर चीज की base class — एक आयत जो खुद को measure करती है, जगह देती है और बनाती है।",
+      "hi-en": "Screen par dikhne wali har cheez ki base class — ek aayat jo khud ko measure karti hai, jagah deti hai aur banati hai.",
+    },
+    affects: {
+      en: "Every widget you use inherits its measure, layout and draw contract from here, so `onMeasure` and `onDraw` behave the same in a `TextView` and in your own class.",
+      hi: "आप जो भी widget इस्तेमाल करते हैं उसका measure, layout और draw का करार यहीं से आता है, इसलिए `onMeasure` और `onDraw` `TextView` में और आपकी अपनी class में एक जैसे बरतते हैं।",
+      "hi-en": "Aap jo bhi widget istemal karte hain uska measure, layout aur draw ka karaar yahin se aata hai, isliye `onMeasure` aur `onDraw` `TextView` mein aur aapki apni class mein ek jaise bartte hain.",
+    },
+    docs: "https://developer.android.com/reference/android/view/View",
+    related: ["ViewGroup", "onMeasure", "onDraw"],
+  },
+
+  ViewGroup: {
+    term: "ViewGroup",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.view.ViewGroup",
+    does: {
+      en: "A `View` that holds other views and decides where each of them goes.",
+      hi: "ऐसी `View` जो दूसरी views रखती है और तय करती है कि हर एक कहाँ जाएगी।",
+      "hi-en": "Aisi `View` jo doosri views rakhti hai aur tay karti hai ki har ek kahan jayegi.",
+    },
+    affects: {
+      en: "Only a `ViewGroup` implements `onLayout`, and only its children may use `layout_` attributes — a `layout_weight` on a child of something that is not a `LinearLayout` is silently ignored.",
+      hi: "`onLayout` सिर्फ `ViewGroup` लिखता है, और `layout_` वाले attributes सिर्फ उसके बच्चे इस्तेमाल कर सकते हैं — जो `LinearLayout` नहीं है उसके बच्चे पर लगा `layout_weight` चुपचाप अनदेखा हो जाता है।",
+      "hi-en": "`onLayout` sirf `ViewGroup` likhta hai, aur `layout_` wale attributes sirf uske bachche istemal kar sakte hain — jo `LinearLayout` nahi hai uske bachche par laga `layout_weight` chupchap andekha ho jata hai.",
+    },
+    docs: "https://developer.android.com/reference/android/view/ViewGroup",
+    related: ["View", "LayoutInflater", "RecyclerView"],
+  },
+
+  findViewById: {
+    term: "findViewById",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Walks the inflated view tree looking for a matching id and returns the view, cast to whatever you asked for.",
+      hi: "inflate हुए view के पेड़ में मिलती-जुलती id ढूँढ़ता है और वह view लौटाता है, आपने जो type माँगा उसमें cast करके।",
+      "hi-en": "Inflate hue view ke ped mein milti-julti id dhundhta hai aur wo view lautata hai, aapne jo type maanga usmein cast karke.",
+    },
+    affects: {
+      en: "The cast is unchecked and the id is not verified against this layout, so a wrong type gives `ClassCastException` and a missing id gives `null` — both at run time. `ViewBinding` turns the same two mistakes into compile errors.",
+      hi: "cast की जाँच नहीं होती और id इसी layout में है या नहीं यह भी नहीं देखा जाता, इसलिए गलत type पर `ClassCastException` और न मिलने पर `null` मिलता है — दोनों चलते वक्त। `ViewBinding` इन्हीं दो गलतियों को compile error बना देता है।",
+      "hi-en": "Cast ki jaanch nahi hoti aur id isi layout mein hai ya nahi ye bhi nahi dekha jata, isliye galat type par `ClassCastException` aur na milne par `null` milta hai — dono chalte waqt. `ViewBinding` inhin do galtiyon ko compile error bana deta hai.",
+    },
+    docs: "https://developer.android.com/reference/android/view/View#findViewById(int)",
+    related: ["View", "LayoutInflater"],
+  },
+
+  LayoutInflater: {
+    term: "LayoutInflater",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.view.LayoutInflater",
+    does: {
+      en: "Reads a layout XML file and builds the real `View` objects it describes.",
+      hi: "layout की XML file पढ़कर उसमें बताई गई असली `View` चीजें बनाता है।",
+      "hi-en": "Layout ki XML file padhkar usmein batai gayi asli `View` cheezein banata hai.",
+    },
+    affects: {
+      en: "The third parameter decides attachment: passing `true` adds the new view to the parent immediately, which is wrong inside a `RecyclerView` adapter because the list attaches it itself and you get `IllegalStateException` or a doubled row.",
+      hi: "तीसरा parameter जुड़ाव तय करता है: `true` देने पर नई view तुरंत parent में जुड़ जाती है, जो `RecyclerView` के adapter में गलत है क्योंकि list उसे खुद जोड़ती है और आपको `IllegalStateException` या दोहरी row मिलती है।",
+      "hi-en": "Teesra parameter judaav tay karta hai: `true` dene par nai view turant parent mein jud jati hai, jo `RecyclerView` ke adapter mein galat hai kyunki list use khud jodti hai aur aapko `IllegalStateException` ya dohri row milti hai.",
+    },
+    docs: "https://developer.android.com/reference/android/view/LayoutInflater",
+    related: ["ViewGroup", "onCreateViewHolder", "View"],
+  },
+
+  MeasureSpec: {
+    term: "MeasureSpec",
+    kind: { en: "Nested class", hi: "Nested class", "hi-en": "Nested class" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Packs a size and a mode — `EXACTLY`, `AT_MOST` or `UNSPECIFIED` — into the single int a parent passes down when it measures a child.",
+      hi: "एक size और एक mode — `EXACTLY`, `AT_MOST` या `UNSPECIFIED` — को उस एक int में भरता है जो parent बच्चे को measure करते वक्त नीचे भेजता है।",
+      "hi-en": "Ek size aur ek mode — `EXACTLY`, `AT_MOST` ya `UNSPECIFIED` — ko us ek int mein bharta hai jo parent bachche ko measure karte waqt neeche bhejta hai.",
+    },
+    values: {
+      en: "`EXACTLY` — the parent has decided (`match_parent` or a fixed dp). `AT_MOST` — take what you need up to this (`wrap_content`). `UNSPECIFIED` — no limit, used by scrolling parents.",
+      hi: "`EXACTLY` — parent तय कर चुका है (`match_parent` या पक्का dp)। `AT_MOST` — इससे ज्यादा नहीं, जितना चाहिए ले लो (`wrap_content`)। `UNSPECIFIED` — कोई हद नहीं, scroll करने वाले parents इसे भेजते हैं।",
+      "hi-en": "`EXACTLY` — parent tay kar chuka hai (`match_parent` ya pakka dp). `AT_MOST` — isse zyada nahi, jitna chahiye le lo (`wrap_content`). `UNSPECIFIED` — koi had nahi, scroll karne wale parents ise bhejte hain.",
+    },
+    affects: {
+      en: "A custom view that ignores the mode turns `wrap_content` into `match_parent`, because the default implementation simply accepts the size it was offered.",
+      hi: "जो custom view mode अनदेखा करती है वह `wrap_content` को `match_parent` बना देती है, क्योंकि default तरीका उसे दिया गया size जस का तस मान लेता है।",
+      "hi-en": "Jo custom view mode andekha karti hai wo `wrap_content` ko `match_parent` bana deti hai, kyunki default tarika use diya gaya size jas ka tas maan leta hai.",
+    },
+    docs: "https://developer.android.com/reference/android/view/View.MeasureSpec",
+    related: ["onMeasure", "resolveSize", "setMeasuredDimension"],
+  },
+
+  onMeasure: {
+    term: "onMeasure",
+    kind: { en: "Lifecycle callback", hi: "Lifecycle callback", "hi-en": "Lifecycle callback" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Asks a view how big it wants to be, given the constraints its parent passed down.",
+      hi: "parent ने जो हद भेजी है, उसे देखते हुए view से पूछता है कि वह कितनी बड़ी होना चाहती है।",
+      "hi-en": "Parent ne jo had bheji hai, use dekhte hue view se puchta hai ki wo kitni badi hona chahti hai.",
+    },
+    affects: {
+      en: "It must end in `setMeasuredDimension`, or the framework throws `IllegalStateException`. It can run more than once per layout pass, so anything expensive inside it is paid repeatedly.",
+      hi: "इसका अंत `setMeasuredDimension` पर होना चाहिए, वरना framework `IllegalStateException` फेंकता है। एक layout pass में यह एक से ज्यादा बार चल सकता है, इसलिए इसके अंदर रखा भारी काम बार-बार भुगतना पड़ता है।",
+      "hi-en": "Iska ant `setMeasuredDimension` par hona chahiye, warna framework `IllegalStateException` phenkta hai. Ek layout pass mein ye ek se zyada baar chal sakta hai, isliye iske andar rakha bhaari kaam baar-baar bhugatna padta hai.",
+    },
+    docs: "https://developer.android.com/guide/topics/ui/how-android-draws",
+    related: ["MeasureSpec", "setMeasuredDimension", "resolveSize"],
+  },
+
+  setMeasuredDimension: {
+    term: "setMeasuredDimension",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Records the size a view has settled on, ending its `onMeasure`.",
+      hi: "view ने जो size तय किया है उसे दर्ज करता है, और उसकी `onMeasure` वहीं खत्म करता है।",
+      "hi-en": "View ne jo size tay kiya hai use darj karta hai, aur uski `onMeasure` wahin khatam karta hai.",
+    },
+    affects: {
+      en: "Until it is called the view has no measured size, so `IllegalStateException: onMeasure() did not set the measured dimension` is a missing call, never a wrong number.",
+      hi: "जब तक यह न बुलाया जाए view का कोई measured size होता ही नहीं, इसलिए `IllegalStateException: onMeasure() did not set the measured dimension` का मतलब है यह छूट गया, गलत आँकड़ा कभी नहीं।",
+      "hi-en": "Jab tak ye na bulaya jaye view ka koi measured size hota hi nahi, isliye `IllegalStateException: onMeasure() did not set the measured dimension` ka matlab hai ye chhoot gaya, galat aankda kabhi nahi.",
+    },
+    related: ["onMeasure", "resolveSize", "MeasureSpec"],
+  },
+
+  resolveSize: {
+    term: "resolveSize",
+    kind: { en: "Static method", hi: "Static method", "hi-en": "Static method" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Takes the size a view would like plus the parent's `MeasureSpec`, and returns the size it is actually allowed.",
+      hi: "view जो size चाहती है और parent का `MeasureSpec` लेकर वह size लौटाता है जिसकी असल में इजाजत है।",
+      "hi-en": "View jo size chahti hai aur parent ka `MeasureSpec` lekar wo size lautata hai jiski asal mein ijazat hai.",
+    },
+    affects: {
+      en: "It is the whole reason a correct `onMeasure` is four lines: it handles all three modes, so `wrap_content` and `match_parent` both behave without a `when` block of your own.",
+      hi: "सही `onMeasure` चार line का इसीलिए होता है: यह तीनों modes सँभाल लेता है, तो `wrap_content` और `match_parent` दोनों आपके अपने `when` block के बिना ठीक बरतते हैं।",
+      "hi-en": "Sahi `onMeasure` chaar line ka isiliye hota hai: ye teenon modes sambhal leta hai, to `wrap_content` aur `match_parent` dono aapke apne `when` block ke bina theek bartte hain.",
+    },
+    related: ["onMeasure", "MeasureSpec", "setMeasuredDimension"],
+  },
+
+  onSizeChanged: {
+    term: "onSizeChanged",
+    kind: { en: "Lifecycle callback", hi: "Lifecycle callback", "hi-en": "Lifecycle callback" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Fires once the view's size is settled, before the first draw and again after any resize.",
+      hi: "view का size तय हो जाने पर चलता है, पहली draw से पहले और size बदलने पर दोबारा।",
+      "hi-en": "View ka size tay ho jane par chalta hai, pehli draw se pehle aur size badalne par dobara.",
+    },
+    affects: {
+      en: "It is the correct home for geometry that depends only on the size — rectangles, paths, gradients. Computing those in `onDraw` repeats the work on every frame.",
+      hi: "जो ज्यामिति सिर्फ size पर टिकी है — आयत, path, gradient — उसकी सही जगह यही है। उन्हें `onDraw` में निकालना हर frame पर वही काम दोहराता है।",
+      "hi-en": "Jo geometry sirf size par tiki hai — aayat, path, gradient — uski sahi jagah yahi hai. Unhe `onDraw` mein nikalna har frame par wahi kaam doharata hai.",
+    },
+    related: ["onDraw", "onMeasure", "RectF"],
+  },
+
+  onDraw: {
+    term: "onDraw",
+    kind: { en: "Lifecycle callback", hi: "Lifecycle callback", "hi-en": "Lifecycle callback" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Records the drawing commands for a view onto the `Canvas` it is given.",
+      hi: "view के बनने की सारी बातें उस `Canvas` पर दर्ज करता है जो उसे मिलता है।",
+      "hi-en": "View ke banne ki saari baatein us `Canvas` par darj karta hai jo use milta hai.",
+    },
+    affects: {
+      en: "It runs on every frame while anything animates, so allocating a `Paint`, `RectF` or string here causes garbage collection in the middle of an animation. Allocate in the constructor instead.",
+      hi: "जब तक कुछ भी हिल रहा है यह हर frame पर चलता है, इसलिए यहाँ `Paint`, `RectF` या string बनाना animation के बीचोंबीच garbage collection ले आता है। उन्हें constructor में बनाइए।",
+      "hi-en": "Jab tak kuch bhi hil raha hai ye har frame par chalta hai, isliye yahan `Paint`, `RectF` ya string banana animation ke beechonbeech garbage collection le aata hai. Unhe constructor mein banaiye.",
+    },
+    docs: "https://developer.android.com/guide/topics/ui/custom-components",
+    related: ["Canvas", "Paint", "invalidate"],
+  },
+
+  invalidate: {
+    term: "invalidate",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Marks a view as needing to be drawn again within the bounds it already has.",
+      hi: "view पर निशान लगाता है कि उसे उन्हीं bounds के अंदर दोबारा बनाना है जो उसके पास पहले से हैं।",
+      "hi-en": "View par nishan lagata hai ki use unhin bounds ke andar dobara banana hai jo uske paas pehle se hain.",
+    },
+    affects: {
+      en: "It never re-runs `onMeasure`, so a view that now needs more room keeps its old size and clips. When the size can change, call `requestLayout` instead.",
+      hi: "यह `onMeasure` कभी दोबारा नहीं चलाता, इसलिए जिस view को अब ज्यादा जगह चाहिए वह पुराना size लिए रहती है और कट जाती है। size बदल सकता हो तो `requestLayout` बुलाइए।",
+      "hi-en": "Ye `onMeasure` kabhi dobara nahi chalata, isliye jis view ko ab zyada jagah chahiye wo purana size liye rehti hai aur kat jati hai. Size badal sakta ho to `requestLayout` bulaiye.",
+    },
+    related: ["requestLayout", "onDraw"],
+  },
+
+  requestLayout: {
+    term: "requestLayout",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Schedules a fresh measure and layout pass for the view and its ancestors, with a draw afterwards.",
+      hi: "उस view और उसके ऊपर वालों के लिए नया measure और layout pass तय करता है, और उसके बाद draw भी।",
+      "hi-en": "Us view aur uske upar walon ke liye naya measure aur layout pass tay karta hai, aur uske baad draw bhi.",
+    },
+    affects: {
+      en: "It walks the whole parent chain, so calling it for a pure colour change makes scrolling stutter. Same size means `invalidate`; new size means this.",
+      hi: "यह ऊपर की पूरी कड़ी चलता है, इसलिए सिर्फ रंग बदलने पर इसे बुलाने से scrolling अटकने लगती है। size वही हो तो `invalidate`, नया हो तो यह।",
+      "hi-en": "Ye upar ki poori kadi chalta hai, isliye sirf rang badalne par ise bulane se scrolling atakne lagti hai. Size wahi ho to `invalidate`, naya ho to ye.",
+    },
+    related: ["invalidate", "onMeasure"],
+  },
+
+  Canvas: {
+    term: "Canvas",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.graphics.Canvas",
+    does: {
+      en: "The surface you issue drawing commands to — lines, arcs, text, bitmaps — each with a `Paint`.",
+      hi: "वह सतह जिस पर आप बनाने की बातें भेजते हैं — लकीरें, arcs, text, bitmaps — हर एक किसी `Paint` के साथ।",
+      "hi-en": "Wo satah jis par aap banane ki baatein bhejte hain — lakeerein, arcs, text, bitmaps — har ek kisi `Paint` ke saath.",
+    },
+    affects: {
+      en: "With hardware acceleration your calls are recorded into a display list and replayed on the GPU, so redrawing an unchanged view is nearly free while rebuilding its display list is not.",
+      hi: "hardware acceleration के साथ आपकी बातें एक display list में दर्ज होकर GPU पर दोबारा चलती हैं, इसलिए बिना बदली view को दोबारा बनाना लगभग मुफ्त है पर उसकी display list दोबारा बनाना नहीं।",
+      "hi-en": "Hardware acceleration ke saath aapki baatein ek display list mein darj hokar GPU par dobara chalti hain, isliye bina badli view ko dobara banana lagbhag muft hai par uski display list dobara banana nahi.",
+    },
+    docs: "https://developer.android.com/reference/android/graphics/Canvas",
+    related: ["onDraw", "Paint", "RectF"],
+  },
+
+  Paint: {
+    term: "Paint",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.graphics.Paint",
+    does: {
+      en: "Holds how something is drawn: colour, stroke width, fill or stroke, cap, anti-aliasing, text size.",
+      hi: "रखता है कि कोई चीज कैसे बनेगी: रंग, stroke की मोटाई, भरना या लकीर, cap, anti-aliasing, text का size।",
+      "hi-en": "Rakhta hai ki koi cheez kaise banegi: rang, stroke ki motai, bharna ya lakeer, cap, anti-aliasing, text ka size.",
+    },
+    affects: {
+      en: "A stroke is centred on the path, so half of its width falls outside your bounds and is clipped unless you inset by `strokeWidth / 2`. Creating one in `onDraw` is the classic jank bug.",
+      hi: "stroke लकीर के बीचोंबीच खिंचता है, तो उसकी आधी मोटाई आपके bounds के बाहर पड़कर कट जाती है, जब तक आप `strokeWidth / 2` जितना अंदर न करें। इसे `onDraw` में बनाना अटकन वाला सबसे जाना-पहचाना bug है।",
+      "hi-en": "Stroke lakeer ke beechonbeech khinchta hai, to uski aadhi motai aapke bounds ke bahar padkar kat jati hai, jab tak aap `strokeWidth / 2` jitna andar na karein. Ise `onDraw` mein banana atkan wala sabse jana-pehchana bug hai.",
+    },
+    docs: "https://developer.android.com/reference/android/graphics/Paint",
+    related: ["Canvas", "onDraw", "RectF"],
+  },
+
+  RectF: {
+    term: "RectF",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.graphics.RectF",
+    does: {
+      en: "A rectangle with float edges, used to give `Canvas` the area to draw an arc, oval or rounded shape in.",
+      hi: "float किनारों वाला एक आयत, जिससे `Canvas` को वह जगह बताई जाती है जहाँ arc, अंडाकार या गोल कोनों वाली shape बननी है।",
+      "hi-en": "Float kinaron wala ek aayat, jisse `Canvas` ko wo jagah batai jati hai jahan arc, andakar ya gol kono wali shape banni hai.",
+    },
+    affects: {
+      en: "It is mutable on purpose — keep one field and call `set` in `onSizeChanged` rather than building a new one on every frame.",
+      hi: "यह जानबूझकर बदला जा सकने वाला है — एक ही field रखिए और `onSizeChanged` में `set` बुलाइए, हर frame पर नया बनाने के बजाय।",
+      "hi-en": "Ye jaanbujhkar badla ja sakne wala hai — ek hi field rakhiye aur `onSizeChanged` mein `set` bulaiye, har frame par naya banane ke bajaye.",
+    },
+    related: ["Canvas", "onSizeChanged", "Paint"],
+  },
+
+  AttributeSet: {
+    term: "AttributeSet",
+    kind: { en: "Interface", hi: "Interface", "hi-en": "Interface" },
+    source: "android",
+    importLine: "import android.util.AttributeSet",
+    does: {
+      en: "Carries the raw attributes written on a view's XML tag into its constructor.",
+      hi: "view के XML tag पर लिखे कच्चे attributes उसके constructor तक पहुँचाता है।",
+      "hi-en": "View ke XML tag par likhe kachche attributes uske constructor tak pahunchata hai.",
+    },
+    affects: {
+      en: "It is `null` when the view is created from code, which is why the parameter is nullable and why the constructor is usually written with `@JvmOverloads`.",
+      hi: "जब view code से बनती है तो यह `null` होता है, इसीलिए parameter nullable है और इसीलिए constructor आमतौर पर `@JvmOverloads` के साथ लिखा जाता है।",
+      "hi-en": "Jab view code se banti hai to ye `null` hota hai, isiliye parameter nullable hai aur isiliye constructor aam taur par `@JvmOverloads` ke saath likha jata hai.",
+    },
+    related: ["withStyledAttributes", "View"],
+  },
+
+  withStyledAttributes: {
+    term: "withStyledAttributes",
+    kind: { en: "Extension function", hi: "Extension function", "hi-en": "Extension function" },
+    source: "jetpack",
+    importLine: "import androidx.core.content.withStyledAttributes",
+    does: {
+      en: "Reads your `declare-styleable` attributes out of an `AttributeSet` and recycles the `TypedArray` afterwards.",
+      hi: "आपके `declare-styleable` वाले attributes `AttributeSet` से पढ़ता है और बाद में `TypedArray` recycle कर देता है।",
+      "hi-en": "Aapke `declare-styleable` wale attributes `AttributeSet` se padhta hai aur baad mein `TypedArray` recycle kar deta hai.",
+    },
+    affects: {
+      en: "Doing the same by hand and forgetting `recycle()` leaks a shared buffer, which is why the `core-ktx` wrapper exists at all.",
+      hi: "यही काम हाथ से करके `recycle()` भूल जाना एक साझा buffer leak कर देता है — `core-ktx` का यह लपेटा इसीलिए है।",
+      "hi-en": "Yahi kaam haath se karke `recycle()` bhool jana ek shared buffer leak kar deta hai — `core-ktx` ka ye lapeta isiliye hai.",
+    },
+    related: ["AttributeSet", "View"],
+  },
+
+  onRestoreInstanceState: {
+    term: "onRestoreInstanceState",
+    kind: { en: "Lifecycle callback", hi: "Lifecycle callback", "hi-en": "Lifecycle callback" },
+    source: "android",
+    importLine: null,
+    does: {
+      en: "Hands back the `Parcelable` a view or activity saved earlier, so it can put its state back.",
+      hi: "पहले सँभाला गया `Parcelable` वापस देता है, ताकि view या activity अपना state दोबारा रख सके।",
+      "hi-en": "Pehle sambhala gaya `Parcelable` wapas deta hai, taki view ya activity apna state dobara rakh sake.",
+    },
+    affects: {
+      en: "For a custom view it only runs when the view has an `android:id` in the layout, so a missing id silently loses state on every rotation.",
+      hi: "custom view के लिए यह तभी चलता है जब layout में उस view की `android:id` हो, तो id न होने पर हर rotation पर state चुपचाप खो जाता है।",
+      "hi-en": "Custom view ke liye ye tabhi chalta hai jab layout mein us view ki `android:id` ho, to id na hone par har rotation par state chupchap kho jata hai.",
+    },
+    related: ["onSaveInstanceState", "Bundle"],
+  },
+
+  RecyclerView: {
+    term: "RecyclerView",
+    kind: { en: "AndroidX class", hi: "AndroidX class", "hi-en": "AndroidX class" },
+    source: "jetpack",
+    importLine: "import androidx.recyclerview.widget.RecyclerView",
+    does: {
+      en: "Shows a long list using only as many row views as fit on screen, reusing each one as it scrolls off.",
+      hi: "लंबी list सिर्फ उतनी row views से दिखाता है जितनी screen पर आती हैं, और हर एक को बाहर निकलते ही दोबारा इस्तेमाल कर लेता है।",
+      "hi-en": "Lambi list sirf utni row views se dikhata hai jitni screen par aati hain, aur har ek ko bahar nikalte hi dobara istemal kar leta hai.",
+    },
+    affects: {
+      en: "Because views are reused, `onBindViewHolder` must set every field it can ever set. Any property set only inside an `if` keeps its value from the previous row and shows up on the wrong item.",
+      hi: "views दोबारा इस्तेमाल होती हैं, इसलिए `onBindViewHolder` को हर वह field तय करनी है जिसे वह कभी भी तय कर सकता है। जो चीज सिर्फ किसी `if` के अंदर तय होती है वह पिछली row वाली value लिए रहती है और गलत item पर दिख जाती है।",
+      "hi-en": "Views dobara istemal hoti hain, isliye `onBindViewHolder` ko har wo field tay karni hai jise wo kabhi bhi tay kar sakta hai. Jo cheez sirf kisi `if` ke andar tay hoti hai wo pichhli row wali value liye rehti hai aur galat item par dikh jati hai.",
+    },
+    docs: "https://developer.android.com/develop/ui/views/layout/recyclerview",
+    related: ["ViewHolder", "ListAdapter", "onBindViewHolder"],
+  },
+
+  ViewHolder: {
+    term: "ViewHolder",
+    kind: { en: "Abstract class", hi: "Abstract class", "hi-en": "Abstract class" },
+    source: "jetpack",
+    importLine: "import androidx.recyclerview.widget.RecyclerView",
+    does: {
+      en: "Holds one row's inflated views so the list can rebind them instead of finding them again.",
+      hi: "एक row की inflate हुई views रखता है, ताकि list उन्हें दोबारा ढूँढ़ने के बजाय दोबारा bind कर सके।",
+      "hi-en": "Ek row ki inflate hui views rakhta hai, taki list unhe dobara dhundhne ke bajaye dobara bind kar sake.",
+    },
+    affects: {
+      en: "It is the same object across many different items, so anything you store in it is per-slot, not per-item — a coroutine or listener started here must be cancelled when the holder is rebound.",
+      hi: "यही एक चीज कई अलग items के लिए चलती है, इसलिए इसमें रखा कुछ भी हर slot का है, हर item का नहीं — यहाँ शुरू किया गया coroutine या listener holder के दोबारा bind होते ही रोकना पड़ता है।",
+      "hi-en": "Yahi ek cheez kai alag items ke liye chalti hai, isliye ismein rakha kuch bhi har slot ka hai, har item ka nahi — yahan shuru kiya gaya coroutine ya listener holder ke dobara bind hote hi rokna padta hai.",
+    },
+    related: ["RecyclerView", "onCreateViewHolder", "onBindViewHolder"],
+  },
+
+  onCreateViewHolder: {
+    term: "onCreateViewHolder",
+    kind: { en: "Adapter callback", hi: "Adapter callback", "hi-en": "Adapter callback" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "Inflates one row layout and wraps it in a `ViewHolder`. Called only when the pool has no spare holder.",
+      hi: "एक row का layout inflate करके उसे `ViewHolder` में लपेटता है। तभी बुलाया जाता है जब pool में कोई खाली holder न हो।",
+      "hi-en": "Ek row ka layout inflate karke use `ViewHolder` mein lapetta hai. Tabhi bulaya jata hai jab pool mein koi khaali holder na ho.",
+    },
+    affects: {
+      en: "It runs a handful of times for a list of thousands, so this is where one-time setup belongs — including click listeners, which cost nothing here and cost every scroll in `onBindViewHolder`.",
+      hi: "हजारों की list के लिए यह गिनी-चुनी बार चलता है, इसलिए एक-बार वाला काम यहीं का है — click listeners समेत, जो यहाँ मुफ्त हैं और `onBindViewHolder` में हर scroll पर कीमत माँगते हैं।",
+      "hi-en": "Hazaron ki list ke liye ye gini-chuni baar chalta hai, isliye ek-baar wala kaam yahin ka hai — click listeners samet, jo yahan muft hain aur `onBindViewHolder` mein har scroll par keemat maangte hain.",
+    },
+    related: ["ViewHolder", "LayoutInflater", "onBindViewHolder"],
+  },
+
+  onBindViewHolder: {
+    term: "onBindViewHolder",
+    kind: { en: "Adapter callback", hi: "Adapter callback", "hi-en": "Adapter callback" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "Puts the data for one position into an existing `ViewHolder`.",
+      hi: "किसी एक position का data पहले से मौजूद `ViewHolder` में भरता है।",
+      "hi-en": "Kisi ek position ka data pehle se maujood `ViewHolder` mein bharta hai.",
+    },
+    affects: {
+      en: "It runs on every scroll, for every visible row, so it must stay allocation-free and must set every field unconditionally — no `if` without an `else`.",
+      hi: "यह हर scroll पर, हर दिखती row के लिए चलता है, इसलिए इसमें कुछ नया बनना नहीं चाहिए और हर field बिना शर्त तय होनी चाहिए — कोई `if` बिना `else` के नहीं।",
+      "hi-en": "Ye har scroll par, har dikhti row ke liye chalta hai, isliye ismein kuch naya banna nahi chahiye aur har field bina shart tay honi chahiye — koi `if` bina `else` ke nahi.",
+    },
+    related: ["RecyclerView", "ViewHolder", "onCreateViewHolder"],
+  },
+
+  ListAdapter: {
+    term: "ListAdapter",
+    kind: { en: "AndroidX class", hi: "AndroidX class", "hi-en": "AndroidX class" },
+    source: "jetpack",
+    importLine: "import androidx.recyclerview.widget.ListAdapter",
+    does: {
+      en: "A `RecyclerView` adapter that takes whole lists through `submitList` and works out the changes itself.",
+      hi: "ऐसा `RecyclerView` adapter जो `submitList` से पूरी list लेता है और बदलाव खुद निकाल लेता है।",
+      "hi-en": "Aisa `RecyclerView` adapter jo `submitList` se poori list leta hai aur badlaav khud nikal leta hai.",
+    },
+    affects: {
+      en: "It runs the diff on a background thread and animates only the rows that changed, which replaces `notifyDataSetChanged` and the whole family of manual `notifyItem*` calls.",
+      hi: "यह diff background thread पर चलाता है और सिर्फ बदली हुई rows को animate करता है, जिससे `notifyDataSetChanged` और हाथ से लिखे सारे `notifyItem*` की जरूरत ही नहीं रहती।",
+      "hi-en": "Ye diff background thread par chalata hai aur sirf badli hui rows ko animate karta hai, jisse `notifyDataSetChanged` aur haath se likhe saare `notifyItem*` ki zarurat hi nahi rehti.",
+    },
+    docs: "https://developer.android.com/reference/androidx/recyclerview/widget/ListAdapter",
+    related: ["DiffUtil", "submitList", "RecyclerView"],
+  },
+
+  DiffUtil: {
+    term: "DiffUtil",
+    kind: { en: "AndroidX class", hi: "AndroidX class", "hi-en": "AndroidX class" },
+    source: "jetpack",
+    importLine: "import androidx.recyclerview.widget.DiffUtil",
+    does: {
+      en: "Compares an old list with a new one and reports the minimal set of inserts, removals and changes.",
+      hi: "पुरानी list की नई से तुलना करके सबसे कम insert, remove और change बताता है।",
+      "hi-en": "Purani list ko nai se compare karke sabse kam insert, remove aur change batata hai.",
+    },
+    values: {
+      en: "`areItemsTheSame` asks about identity — usually the id. `areContentsTheSame` asks about the visible content — usually `==` on a data class.",
+      hi: "`areItemsTheSame` पहचान पूछता है — आमतौर पर id। `areContentsTheSame` दिखने वाला content पूछता है — आमतौर पर किसी data class पर `==`।",
+      "hi-en": "`areItemsTheSame` pehchan puchta hai — aam taur par id. `areContentsTheSame` dikhne wala content puchta hai — aam taur par kisi data class par `==`.",
+    },
+    affects: {
+      en: "Getting the two callbacks the wrong way round is why lists animate strangely: identity by content makes every edit look like a delete plus an insert.",
+      hi: "इन दो callbacks को आपस में उलट देना ही वजह है कि lists अजीब तरह से animate करती हैं: पहचान content से करेंगे तो हर बदलाव एक delete और एक insert जैसा दिखेगा।",
+      "hi-en": "In do callbacks ko aapas mein ulat dena hi wajah hai ki lists ajeeb tarah se animate karti hain: pehchan content se karenge to har badlaav ek delete aur ek insert jaisa dikhega.",
+    },
+    docs: "https://developer.android.com/reference/androidx/recyclerview/widget/DiffUtil",
+    related: ["ListAdapter", "submitList"],
+  },
+
+  submitList: {
+    term: "submitList",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "Hands a new list to a `ListAdapter`, which diffs it against the current one and updates the rows.",
+      hi: "`ListAdapter` को नई list देता है, जो उसकी मौजूदा से diff निकालकर rows बदल देता है।",
+      "hi-en": "`ListAdapter` ko nai list deta hai, jo uski maujooda se diff nikalkar rows badal deta hai.",
+    },
+    affects: {
+      en: "It must be a different list instance. Mutating the list you already submitted and calling it again does nothing, because the adapter compares references first and sees the same object.",
+      hi: "list का instance अलग होना चाहिए। जो list आप पहले दे चुके हैं उसी को बदलकर दोबारा देने से कुछ नहीं होता, क्योंकि adapter पहले reference मिलाता है और वही चीज देखता है।",
+      "hi-en": "List ka instance alag hona chahiye. Jo list aap pehle de chuke hain usi ko badalkar dobara dene se kuch nahi hota, kyunki adapter pehle reference milata hai aur wahi cheez dekhta hai.",
+    },
+    related: ["ListAdapter", "DiffUtil"],
+  },
+
+  notifyDataSetChanged: {
+    term: "notifyDataSetChanged",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "Tells a `RecyclerView` that everything may have changed, so it rebinds every visible row.",
+      hi: "`RecyclerView` से कहता है कि सब कुछ बदला हो सकता है, तो वह हर दिखती row दोबारा bind करता है।",
+      "hi-en": "`RecyclerView` se kehta hai ki sab kuch badla ho sakta hai, to wo har dikhti row dobara bind karta hai.",
+    },
+    affects: {
+      en: "It throws away every item animation and rebinds rows that did not change, which shows up as a flicker on every update. `ListAdapter` with `DiffUtil` is the replacement.",
+      hi: "यह हर item animation फेंक देता है और उन rows को भी दोबारा bind करता है जो बदली ही नहीं, जो हर update पर झिलमिलाहट बनकर दिखता है। इसकी जगह `DiffUtil` वाला `ListAdapter` है।",
+      "hi-en": "Ye har item animation phenk deta hai aur un rows ko bhi dobara bind karta hai jo badli hi nahi, jo har update par jhilmilahat bankar dikhta hai. Iski jagah `DiffUtil` wala `ListAdapter` hai.",
+    },
+    related: ["ListAdapter", "DiffUtil", "submitList"],
+  },
+
+  LinearLayoutManager: {
+    term: "LinearLayoutManager",
+    kind: { en: "AndroidX class", hi: "AndroidX class", "hi-en": "AndroidX class" },
+    source: "jetpack",
+    importLine: "import androidx.recyclerview.widget.LinearLayoutManager",
+    does: {
+      en: "Tells a `RecyclerView` to arrange its rows in one straight line, vertically or horizontally.",
+      hi: "`RecyclerView` से कहता है कि rows को एक सीधी लकीर में लगाए, खड़े या आड़े।",
+      "hi-en": "`RecyclerView` se kehta hai ki rows ko ek seedhi lakeer mein lagaye, khade ya aade.",
+    },
+    affects: {
+      en: "Without a layout manager a `RecyclerView` renders nothing at all and logs `No layout manager attached` — it is not an optional detail.",
+      hi: "layout manager के बिना `RecyclerView` कुछ भी नहीं दिखाता और `No layout manager attached` log करता है — यह कोई वैकल्पिक बात नहीं है।",
+      "hi-en": "Layout manager ke bina `RecyclerView` kuch bhi nahi dikhata aur `No layout manager attached` log karta hai — ye koi optional baat nahi hai.",
+    },
+    related: ["RecyclerView", "ListAdapter"],
+  },
+
+  Dialog: {
+    term: "Dialog",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.app.Dialog",
+    does: {
+      en: "A small window drawn above the current screen, attached to the token of the activity that showed it.",
+      hi: "मौजूदा screen के ऊपर बनी एक छोटी window, जो उसे दिखाने वाली activity के token से जुड़ी होती है।",
+      "hi-en": "Maujooda screen ke upar bani ek chhoti window, jo use dikhane wali activity ke token se judi hoti hai.",
+    },
+    affects: {
+      en: "Because it is a window, showing one from a destroyed activity throws `WindowManager$BadTokenException`, and it survives no configuration change on its own. `DialogFragment` exists to own that lifetime for you.",
+      hi: "यह एक window है, इसलिए खत्म हो चुकी activity से दिखाने पर `WindowManager$BadTokenException` आता है, और अपने बल पर यह कोई configuration बदलाव नहीं झेलता। उम्र का यही जिम्मा उठाने के लिए `DialogFragment` है।",
+      "hi-en": "Ye ek window hai, isliye khatam ho chuki activity se dikhane par `WindowManager$BadTokenException` aata hai, aur apne bal par ye koi configuration badlaav nahi jhelta. Umar ka yahi zimma uthane ke liye `DialogFragment` hai.",
+    },
+    docs: "https://developer.android.com/develop/ui/views/components/dialogs",
+    related: ["DialogFragment", "MaterialAlertDialogBuilder", "Activity"],
+  },
+
+  DialogFragment: {
+    term: "DialogFragment",
+    kind: { en: "AndroidX class", hi: "AndroidX class", "hi-en": "AndroidX class" },
+    source: "jetpack",
+    importLine: "import androidx.fragment.app.DialogFragment",
+    does: {
+      en: "A `Fragment` whose container is a dialog window, so the fragment manager owns when it appears and disappears.",
+      hi: "ऐसा `Fragment` जिसका डिब्बा एक dialog window है, तो वह कब दिखेगा और कब जाएगा यह fragment manager तय करता है।",
+      "hi-en": "Aisa `Fragment` jiska dibba ek dialog window hai, to wo kab dikhega aur kab jayega ye fragment manager tay karta hai.",
+    },
+    affects: {
+      en: "It is recreated against the new activity after a rotation, so a dialog no longer vanishes and a late callback no longer crashes. Send answers back with a fragment result, not a captured listener.",
+      hi: "rotation के बाद इसे नई activity के साथ दोबारा बना दिया जाता है, तो न dialog गायब होता है और न देर से आया callback crash करता है। जवाब fragment result से लौटाइए, पकड़े हुए listener से नहीं।",
+      "hi-en": "Rotation ke baad ise nai activity ke saath dobara bana diya jata hai, to na dialog gayab hota hai aur na der se aaya callback crash karta hai. Jawab fragment result se lautaiye, pakde hue listener se nahi.",
+    },
+    docs: "https://developer.android.com/develop/ui/views/components/dialogs#DialogFragment",
+    related: ["Dialog", "onCreateDialog", "setFragmentResult"],
+  },
+
+  onCreateDialog: {
+    term: "onCreateDialog",
+    kind: { en: "Lifecycle callback", hi: "Lifecycle callback", "hi-en": "Lifecycle callback" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "Builds the `Dialog` a `DialogFragment` shows, and is called again after every configuration change.",
+      hi: "`DialogFragment` जो `Dialog` दिखाता है वह यहाँ बनता है, और हर configuration बदलाव के बाद यह दोबारा बुलाया जाता है।",
+      "hi-en": "`DialogFragment` jo `Dialog` dikhata hai wo yahan banta hai, aur har configuration badlaav ke baad ye dobara bulaya jata hai.",
+    },
+    affects: {
+      en: "Anything captured in a button lambda here is captured again on recreation, so state must come from arguments or a `ViewModel`, never from a field set before `show`.",
+      hi: "यहाँ किसी button वाले lambda में पकड़ी गई चीज दोबारा बनने पर फिर से पकड़ी जाती है, इसलिए state arguments या `ViewModel` से आना चाहिए, `show` से पहले भरी गई किसी field से कभी नहीं।",
+      "hi-en": "Yahan kisi button wale lambda mein pakdi gayi cheez dobara banne par phir se pakdi jati hai, isliye state arguments ya `ViewModel` se aana chahiye, `show` se pehle bhari gayi kisi field se kabhi nahi.",
+    },
+    related: ["DialogFragment", "MaterialAlertDialogBuilder"],
+  },
+
+  MaterialAlertDialogBuilder: {
+    term: "MaterialAlertDialogBuilder",
+    kind: { en: "Library class", hi: "Library class", "hi-en": "Library class" },
+    source: "library",
+    importLine: "import com.google.android.material.dialog.MaterialAlertDialogBuilder",
+    does: {
+      en: "Builds an alert dialog with Material 3 shape, colour and typography taken from your theme.",
+      hi: "आपकी theme से shape, रंग और typography लेकर Material 3 वाला alert dialog बनाता है।",
+      "hi-en": "Aapki theme se shape, rang aur typography lekar Material 3 wala alert dialog banata hai.",
+    },
+    affects: {
+      en: "It needs a themed context, so pass `requireContext()` rather than `applicationContext` — the application context has no theme and the dialog comes out unstyled or throws.",
+      hi: "इसे theme वाला context चाहिए, इसलिए `applicationContext` के बजाय `requireContext()` दीजिए — application context के पास theme होती ही नहीं और dialog बेढंगा निकलता है या फेंक देता है।",
+      "hi-en": "Ise theme wala context chahiye, isliye `applicationContext` ke bajaye `requireContext()` dijiye — application context ke paas theme hoti hi nahi aur dialog bedhanga nikalta hai ya phenk deta hai.",
+    },
+    related: ["Dialog", "onCreateDialog", "Context"],
+  },
+
+  BottomSheetDialogFragment: {
+    term: "BottomSheetDialogFragment",
+    kind: { en: "Library class", hi: "Library class", "hi-en": "Library class" },
+    source: "library",
+    importLine: "import com.google.android.material.bottomsheet.BottomSheetDialogFragment",
+    does: {
+      en: "A `DialogFragment` whose window holds a draggable sheet that slides up from the bottom.",
+      hi: "ऐसा `DialogFragment` जिसकी window में नीचे से ऊपर सरकने वाली, खींची जा सकने वाली sheet होती है।",
+      "hi-en": "Aisa `DialogFragment` jiski window mein neeche se upar sarakne wali, kheenchi ja sakne wali sheet hoti hai.",
+    },
+    affects: {
+      en: "The dragging, the collapsed and expanded states and the peek height all come from `BottomSheetBehavior`, so those are configured on the behaviour and not on your layout.",
+      hi: "खींचना, सिकुड़ी और फैली हालतें और peek height सब `BottomSheetBehavior` से आते हैं, तो वे behaviour पर तय होते हैं, आपके layout पर नहीं।",
+      "hi-en": "Kheenchna, sikudi aur phaili haalatein aur peek height sab `BottomSheetBehavior` se aate hain, to wo behaviour par tay hote hain, aapke layout par nahi.",
+    },
+    related: ["DialogFragment", "Dialog"],
+  },
+
+  Snackbar: {
+    term: "Snackbar",
+    kind: { en: "Library class", hi: "Library class", "hi-en": "Library class" },
+    source: "library",
+    importLine: "import com.google.android.material.snackbar.Snackbar",
+    does: {
+      en: "Shows a brief message at the bottom of your own layout, optionally with one action such as Undo.",
+      hi: "आपके अपने layout में नीचे एक छोटा संदेश दिखाता है, चाहें तो एक काम के साथ, जैसे Undo।",
+      "hi-en": "Aapke apne layout mein neeche ek chhota message dikhata hai, chahein to ek action ke saath, jaise Undo.",
+    },
+    affects: {
+      en: "It needs a view from the current hierarchy to anchor into, which is also what lets a `FloatingActionButton` move aside for it. Give it a destroyed fragment's view and it never appears.",
+      hi: "इसे टिकने के लिए अभी की hierarchy की कोई view चाहिए, और इसी वजह से `FloatingActionButton` इसके लिए खिसक जाता है। खत्म हो चुके fragment की view देंगे तो यह दिखेगा ही नहीं।",
+      "hi-en": "Ise tikne ke liye abhi ki hierarchy ki koi view chahiye, aur isi wajah se `FloatingActionButton` iske liye khisak jata hai. Khatam ho chuke fragment ki view denge to ye dikhega hi nahi.",
+    },
+    docs: "https://developer.android.com/develop/ui/views/notifications/snackbar",
+    related: ["Toast", "View"],
+  },
+
+  Toast: {
+    term: "Toast",
+    kind: { en: "Android class", hi: "Android class", "hi-en": "Android class" },
+    source: "android",
+    importLine: "import android.widget.Toast",
+    does: {
+      en: "Shows a short system message that floats above every app and fades away on its own.",
+      hi: "एक छोटा system संदेश दिखाता है जो हर app के ऊपर तैरता है और अपने आप मिट जाता है।",
+      "hi-en": "Ek chhota system message dikhata hai jo har app ke upar tairta hai aur apne aap mit jata hai.",
+    },
+    affects: {
+      en: "It carries no action, cannot be dismissed, and from Android 12 is heavily restricted from the background. Inside your own app a `Snackbar` is almost always the right choice.",
+      hi: "इसमें कोई काम नहीं रखा जा सकता, इसे हटाया नहीं जा सकता, और Android 12 से background से इस पर कड़ी रोक है। अपनी app के अंदर लगभग हमेशा `Snackbar` ही सही चुनाव है।",
+      "hi-en": "Ismein koi action nahi rakha ja sakta, ise hataya nahi ja sakta, aur Android 12 se background se is par kadi rok hai. Apni app ke andar lagbhag hamesha `Snackbar` hi sahi choice hai.",
+    },
+    related: ["Snackbar"],
+  },
+
+  setFragmentResult: {
+    term: "setFragmentResult",
+    kind: { en: "Extension function", hi: "Extension function", "hi-en": "Extension function" },
+    source: "jetpack",
+    importLine: "import androidx.fragment.app.setFragmentResult",
+    does: {
+      en: "Posts a `Bundle` under a key to the fragment manager, for another fragment to pick up.",
+      hi: "किसी key के नीचे एक `Bundle` fragment manager को देता है, ताकि दूसरा fragment उसे उठा सके।",
+      "hi-en": "Kisi key ke neeche ek `Bundle` fragment manager ko deta hai, taki doosra fragment use utha sake.",
+    },
+    affects: {
+      en: "The answer goes to whichever instance is alive when it is delivered, which is why this survives a rotation and a listener you handed over does not.",
+      hi: "जवाब उस instance तक जाता है जो पहुँचाने के वक्त जिंदा है, इसीलिए यह rotation झेल जाता है और आपका थमाया हुआ listener नहीं।",
+      "hi-en": "Jawab us instance tak jata hai jo pahunchane ke waqt zinda hai, isiliye ye rotation jhel jata hai aur aapka thamaya hua listener nahi.",
+    },
+    docs: "https://developer.android.com/guide/fragments/communicate",
+    related: ["setFragmentResultListener", "DialogFragment", "bundleOf"],
+  },
+
+  setFragmentResultListener: {
+    term: "setFragmentResultListener",
+    kind: { en: "Extension function", hi: "Extension function", "hi-en": "Extension function" },
+    source: "jetpack",
+    importLine: "import androidx.fragment.app.setFragmentResultListener",
+    does: {
+      en: "Registers for results posted under a key, and delivers them while the fragment is at least `STARTED`.",
+      hi: "किसी key के नीचे भेजे गए results के लिए दर्ज करता है, और उन्हें तब पहुँचाता है जब fragment कम से कम `STARTED` हो।",
+      "hi-en": "Kisi key ke neeche bheje gaye results ke liye darj karta hai, aur unhe tab pahunchata hai jab fragment kam se kam `STARTED` ho.",
+    },
+    affects: {
+      en: "A result sent while the listener's fragment is stopped is held and delivered when it starts again, so nothing is lost across a rotation and nothing arrives at a dead view.",
+      hi: "जिस वक्त listener वाला fragment रुका हुआ है उस वक्त भेजा गया result रोक लिया जाता है और उसके दोबारा शुरू होने पर पहुँचाया जाता है, तो rotation में कुछ खोता भी नहीं और मरी हुई view तक कुछ पहुँचता भी नहीं।",
+      "hi-en": "Jis waqt listener wala fragment ruka hua hai us waqt bheja gaya result rok liya jata hai aur uske dobara shuru hone par pahunchaya jata hai, to rotation mein kuch khota bhi nahi aur mari hui view tak kuch pahunchta bhi nahi.",
+    },
+    related: ["setFragmentResult", "Fragment", "viewLifecycleOwner"],
+  },
+
+  childFragmentManager: {
+    term: "childFragmentManager",
+    kind: { en: "Property", hi: "Property", "hi-en": "Property" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "The fragment manager that owns fragments nested inside this fragment.",
+      hi: "वह fragment manager जो इस fragment के अंदर वाले fragments सँभालता है।",
+      "hi-en": "Wo fragment manager jo is fragment ke andar wale fragments sambhalta hai.",
+    },
+    affects: {
+      en: "Its fragments are destroyed with this fragment's view, while `parentFragmentManager` outlives it. Using the wrong one is why a nested dialog sometimes reappears on a screen that has moved on.",
+      hi: "इसके fragments इस fragment की view के साथ खत्म होते हैं, जबकि `parentFragmentManager` उससे ज्यादा जीता है। गलत वाला इस्तेमाल करना ही वजह है कि अंदर वाला dialog कभी-कभी आगे बढ़ चुकी screen पर दोबारा आ जाता है।",
+      "hi-en": "Iske fragments is fragment ki view ke saath khatam hote hain, jabki `parentFragmentManager` usse zyada jeeta hai. Galat wala istemal karna hi wajah hai ki andar wala dialog kabhi-kabhi aage badh chuki screen par dobara aa jata hai.",
+    },
+    related: ["supportFragmentManager", "Fragment", "DialogFragment"],
+  },
+
+  MenuProvider: {
+    term: "MenuProvider",
+    kind: { en: "Interface", hi: "Interface", "hi-en": "Interface" },
+    source: "jetpack",
+    importLine: "import androidx.core.view.MenuProvider",
+    does: {
+      en: "Supplies the menu items for a screen and handles taps on them.",
+      hi: "किसी screen के menu items देता है और उन पर tap सँभालता है।",
+      "hi-en": "Kisi screen ke menu items deta hai aur un par tap sambhalta hai.",
+    },
+    affects: {
+      en: "It replaces the deprecated `onCreateOptionsMenu` on `Activity` and `Fragment`, because attaching the menu to a lifecycle owner makes it impossible for a hidden screen's items to stay in the toolbar.",
+      hi: "यह `Activity` और `Fragment` वाले deprecated `onCreateOptionsMenu` की जगह लेता है, क्योंकि menu को lifecycle owner से जोड़ देने पर छिपी हुई screen के items toolbar में रह ही नहीं सकते।",
+      "hi-en": "Ye `Activity` aur `Fragment` wale deprecated `onCreateOptionsMenu` ki jagah leta hai, kyunki menu ko lifecycle owner se jod dene par chhipi hui screen ke items toolbar mein reh hi nahi sakte.",
+    },
+    docs: "https://developer.android.com/reference/androidx/core/view/MenuProvider",
+    related: ["addMenuProvider", "viewLifecycleOwner"],
+  },
+
+  addMenuProvider: {
+    term: "addMenuProvider",
+    kind: { en: "Method", hi: "Method", "hi-en": "Method" },
+    source: "jetpack",
+    importLine: null,
+    does: {
+      en: "Attaches a `MenuProvider`, optionally tied to a lifecycle owner and a minimum state.",
+      hi: "एक `MenuProvider` जोड़ता है, चाहें तो किसी lifecycle owner और कम से कम किसी हालत से बाँधकर।",
+      "hi-en": "Ek `MenuProvider` jodta hai, chahein to kisi lifecycle owner aur kam se kam kisi haalat se bandhkar.",
+    },
+    affects: {
+      en: "Passing `viewLifecycleOwner` removes the provider automatically when the view is destroyed. Leaving it out means the menu items linger over the next screen until you remove them yourself.",
+      hi: "`viewLifecycleOwner` देने पर view खत्म होते ही provider अपने आप हट जाता है। न देने पर menu items अगली screen पर तब तक मँडराते रहते हैं जब तक आप उन्हें खुद न हटाएँ।",
+      "hi-en": "`viewLifecycleOwner` dene par view khatam hote hi provider apne aap hat jata hai. Na dene par menu items agli screen par tab tak mandrate rehte hain jab tak aap unhe khud na hataayein.",
+    },
+    related: ["MenuProvider", "viewLifecycleOwner"],
+  },
 };

@@ -206,7 +206,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
                   }
                   body={
                     lang === "hi"
-                      ? "English, हिन्दी और Hinglish में पढ़िए। तकनीकी शब्द कभी अनुवादित नहीं होते, सिर्फ़ समझाइश बदलती है।"
+                      ? "English, हिन्दी और Hinglish में पढ़िए। तकनीकी शब्द कभी अनुवादित नहीं होते, सिर्फ समझाइश बदलती है।"
                       : lang === "hi-en"
                         ? "English, Hindi aur Hinglish mein padho. Technical terms kabhi translate nahi hote, sirf samjhaish badalti hai."
                         : "Read in English, Hindi or Hinglish. Technical terms are never translated — only the explanation around them changes."

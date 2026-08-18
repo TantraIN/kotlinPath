@@ -55,7 +55,7 @@ export const CURRICULUM: Phase[] = [
     },
     blurb: {
       en: "Understand what you are actually building on, then get a working machine.",
-      hi: "पहले समझिए कि आप बना किस चीज़ पर रहे हैं, फिर मशीन तैयार कीजिए।",
+      hi: "पहले समझिए कि आप बना किस चीज पर रहे हैं, फिर मशीन तैयार कीजिए।",
       "hi-en": "Pehle samjho ki aap bana kis cheez par rahe ho, phir machine ready karo.",
     },
     weeks: 1,
@@ -162,7 +162,7 @@ export const CURRICULUM: Phase[] = [
     },
     blurb: {
       en: "Asynchronous Kotlin done right — the single most important skill for Android.",
-      hi: "Asynchronous Kotlin सही तरीके से — Android के लिए सबसे ज़रूरी कौशल।",
+      hi: "Asynchronous Kotlin सही तरीके से — Android के लिए सबसे जरूरी कौशल।",
       "hi-en": "Asynchronous Kotlin sahi tarike se — Android ke liye sabse zaruri skill.",
     },
     weeks: 3,
@@ -232,7 +232,7 @@ export const CURRICULUM: Phase[] = [
     },
     blurb: {
       en: "Still running most production code in the world. Required for real jobs and maintenance.",
-      hi: "दुनिया का ज़्यादातर production code अब भी इसी पर है। नौकरी और maintenance के लिए ज़रूरी।",
+      hi: "दुनिया का ज्यादातर production code अब भी इसी पर है। नौकरी और maintenance के लिए जरूरी।",
       "hi-en": "Duniya ka zyadatar production code abhi bhi isi par hai. Job aur maintenance ke liye zaruri.",
     },
     weeks: 2,
@@ -265,7 +265,7 @@ export const CURRICULUM: Phase[] = [
     },
     blurb: {
       en: "The primary UI toolkit. Spend the most time here — this is how Android is built today.",
-      hi: "मुख्य UI toolkit। सबसे ज़्यादा समय यहीं दीजिए — आज Android ऐसे ही बनता है।",
+      hi: "मुख्य UI toolkit। सबसे ज्यादा समय यहीं दीजिए — आज Android ऐसे ही बनता है।",
       "hi-en": "Main UI toolkit. Sabse zyada time yahin do — aaj Android aise hi banta hai.",
     },
     weeks: 4,
@@ -306,7 +306,7 @@ export const CURRICULUM: Phase[] = [
     },
     blurb: {
       en: "Stop writing code that only you can change. Layers, boundaries and testable design.",
-      hi: "ऐसा कोड लिखना बंद कीजिए जिसे सिर्फ़ आप बदल सकें। Layers, boundaries और testable design।",
+      hi: "ऐसा कोड लिखना बंद कीजिए जिसे सिर्फ आप बदल सकें। Layers, boundaries और testable design।",
       "hi-en": "Aisa code likhna band karo jise sirf aap badal sako. Layers, boundaries aur testable design.",
     },
     weeks: 2,
@@ -475,7 +475,7 @@ export const CURRICULUM: Phase[] = [
     },
     blurb: {
       en: "Make it fast, make it small, make it safe, make it usable by everyone.",
-      hi: "तेज़ बनाइए, छोटा बनाइए, सुरक्षित बनाइए, और सबके लिए उपयोगी बनाइए।",
+      hi: "तेज बनाइए, छोटा बनाइए, सुरक्षित बनाइए, और सबके लिए उपयोगी बनाइए।",
       "hi-en": "Tez banao, chhota banao, safe banao, aur sabke liye usable banao.",
     },
     weeks: 2,
@@ -536,7 +536,7 @@ export const CURRICULUM: Phase[] = [
     slug: "release",
     title: {
       en: "Release & Professional Workflow",
-      hi: "Release और प्रोफेशनल वर्कफ़्लो",
+      hi: "Release और प्रोफेशनल वर्कफ्लो",
       "hi-en": "Release aur Professional Workflow",
     },
     blurb: {

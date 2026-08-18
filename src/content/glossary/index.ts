@@ -2,6 +2,7 @@ import { ANDROID_GLOSSARY } from "./android";
 import { COROUTINES_GLOSSARY } from "./coroutines";
 import { GRADLE_GLOSSARY } from "./gradle";
 import { KOTLIN_GLOSSARY } from "./kotlin";
+import { LAYOUT_GLOSSARY } from "./layout";
 import { MANIFEST_GLOSSARY } from "./manifest";
 import type { Glossary, GlossaryEntry } from "./types";
 
@@ -23,6 +24,7 @@ export const GLOSSARY: Glossary = {
   ...ANDROID_GLOSSARY,
   ...GRADLE_GLOSSARY,
   ...MANIFEST_GLOSSARY,
+  ...LAYOUT_GLOSSARY,
 };
 
 export const GLOSSARY_TERMS = Object.keys(GLOSSARY);
@@ -38,7 +40,7 @@ const CODE_TERMS = new Set(
     ...GRADLE_GLOSSARY,
   }),
 );
-const XML_TERMS = new Set(Object.keys(MANIFEST_GLOSSARY));
+const XML_TERMS = new Set(Object.keys({ ...MANIFEST_GLOSSARY, ...LAYOUT_GLOSSARY }));
 
 /**
  * Fast membership test used by the Shiki transformer on every token.

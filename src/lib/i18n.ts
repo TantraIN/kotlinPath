@@ -34,7 +34,7 @@ export const LANG_META: Record<Lang, LangMeta> = {
     code: "hi",
     label: "हिन्दी",
     short: "HI",
-    hint: "पूरी व्याख्या हिन्दी में, तकनीकी शब्द अंग्रेज़ी में",
+    hint: "पूरी व्याख्या हिन्दी में, तकनीकी शब्द अंग्रेजी में",
     htmlLang: "hi",
   },
   "hi-en": {
@@ -292,7 +292,7 @@ export const DICT: Record<Lang, Dict> = {
       difficulty: "स्तर",
       notTranslated: "अभी अनुवाद नहीं हुआ",
       notTranslatedBody:
-        "यह पाठ अभी आपकी भाषा में नहीं लिखा गया है, इसलिए आप अंग्रेज़ी संस्करण पढ़ रहे हैं।",
+        "यह पाठ अभी आपकी भाषा में नहीं लिखा गया है, इसलिए आप अंग्रेजी संस्करण पढ़ रहे हैं।",
       copy: "कोड कॉपी करें",
       copied: "कॉपी हो गया",
       runInPlayground: "Kotlin Playground में चलाएँ",
@@ -304,15 +304,15 @@ export const DICT: Record<Lang, Dict> = {
       does: "यह करता क्या है",
       values: "इसमें क्या आ सकता है",
       affects: "इसका असर क्या पड़ता है",
-      noImport: "भाषा में ही बना हुआ है — import की ज़रूरत नहीं",
-      docs: "आधिकारिक दस्तावेज़",
+      noImport: "भाषा में ही बना हुआ है — import की जरूरत नहीं",
+      docs: "आधिकारिक दस्तावेज",
       dismiss: "बंद करें",
     },
     callout: {
       note: "ध्यान दें",
       tip: "सुझाव",
       warning: "सावधान",
-      pitfall: "आम ग़लती",
+      pitfall: "आम गलती",
       interview: "इंटरव्यू प्रश्न",
     },
     search: {
@@ -337,10 +337,10 @@ export const DICT: Record<Lang, Dict> = {
       statsProjects: "प्रोजेक्ट",
       roadmapTitle: "पूरा रोडमैप",
       roadmapSubtitle:
-        "सोलह चरण, ऐसे क्रम में कि कोई चीज़ पढ़ाने से पहले इस्तेमाल न हो।",
+        "सोलह चरण, ऐसे क्रम में कि कोई चीज पढ़ाने से पहले इस्तेमाल न हो।",
     },
     quiz: {
-      label: "ख़ुद जाँचिए",
+      label: "खुद जाँचिए",
       correct: "सही",
       notQuite: "बिलकुल नहीं",
       tryAgain: "फिर कोशिश कीजिए",
@@ -352,7 +352,7 @@ export const DICT: Record<Lang, Dict> = {
       ofDone: "पूरे",
       reset: "प्रगति रीसेट करें",
       resetConfirm: "इस डिवाइस की सारी प्रगति मिटा दें?",
-      savedLocally: "सिर्फ़ इसी browser में सहेजा गया",
+      savedLocally: "सिर्फ इसी browser में सहेजा गया",
       phaseDone: "चरण पूरा",
     },
     difficulty: {
