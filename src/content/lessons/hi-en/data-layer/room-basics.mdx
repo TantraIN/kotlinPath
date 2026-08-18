@@ -1,0 +1,229 @@
+---
+title: "Room: Entity, DAO aur Database"
+description: SQLite shuru se Android mein hai aur use seedhe koi nahi chhoota. Room ki asli den kam boilerplate nahi hai — ye hai ki aapka SQL tab check hota hai jab aap compile karte ho, tab nahi jab koi user screen kholta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Room, SQLite ke upar teen annotations hai: `@Entity` ek table hai, `@Dao` uski queries, aur
+`@Database` dono ko baandhta hai. Jo cheez aapke kaam karne ka tarika badal deti hai wo ye hai ki
+**har query build waqt padhi aur check ki jati hai** — SQL mein ki gayi galti compile ki error hai,
+kisi ke phone par hone wala crash nahi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Saada SQLite, ek cheez dhoondhte hue:
+
+```kotlin title="Raw.kt" numbered
+val cursor = db.rawQuery("SELECT * FROM ordres WHERE id = ?", arrayOf(id))   // galti compile ho gayi
+cursor.use {
+    if (it.moveToFirst()) {
+        Order(
+            id = it.getString(it.getColumnIndexOrThrow("id")),
+            total = it.getInt(it.getColumnIndexOrThrow("total")),   // columns haath se
+        )
+    } else null
+}
+```
+
+Table ka naam galat likha hai aur tab tak koi shikayat nahi karta jab tak koi user us screen par tap
+na kare. Columns haath se bithaye gaye hain, to schema badalte hi ye chupchap toot jata hai. Aur
+`cursor.use` optional nahi hai — bhooliye to har call par ek cursor leak hota hai.
+
+Wahi cheez Room ke saath:
+
+```kotlin title="OrderDao.kt" numbered
+@Dao
+interface OrderDao {
+    @Query("SELECT * FROM orders WHERE id = :id")
+    suspend fun byId(id: String): OrderEntity?
+}
+```
+
+`orders` galat likhiye aur build nakaam hota hai, us query ka naam lete hue. Aisa column jodiye jo
+entity mein nahi hai, to build nakaam hota hai. Yahan leak hone ko koi cursor hai hi nahi.
+
+## Teenon hisse
+
+```kotlin title="OrderEntity.kt" numbered
+@Entity(
+    tableName = "orders",
+    indices = [Index("status"), Index(value = ["created_at"])],
+)
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val total: Int,
+    val status: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+```
+
+```kotlin title="OrderDao.kt" numbered
+@Dao
+interface OrderDao {
+
+    @Query("SELECT * FROM orders ORDER BY created_at DESC")
+    fun observeAll(): Flow<List<OrderEntity>>              // suspend nahi — neeche dekhiye
+
+    @Query("SELECT * FROM orders WHERE status = :status")
+    suspend fun byStatus(status: String): List<OrderEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(orders: List<OrderEntity>)
+
+    @Delete
+    suspend fun delete(order: OrderEntity)
+
+    @Query("DELETE FROM orders")
+    suspend fun clear()
+
+    @Transaction
+    suspend fun replaceAll(orders: List<OrderEntity>) {    // dono, ya koi nahi
+        clear()
+        upsert(orders)
+    }
+}
+```
+
+```kotlin title="AppDatabase.kt" numbered
+@Database(entities = [OrderEntity::class], version = 1, exportSchema = true)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun orderDao(): OrderDao
+}
+```
+
+<Note>
+`replaceAll` par laga `@Transaction` sach mein kaam kar raha hai. Uske bina `clear()` commit ho jata
+hai aur phir bhari hui disk par `upsert()` nakaam hota hai — aur user aisa app kholta hai jisne apne
+saare orders kho diye. Jo bhi kaam sirf poori ikai ki tarah sahi hota hai use ye chahiye.
+</Note>
+
+## Return type sab kuch tay karta hai
+
+DAO ke baare mein samajhne layak sabse kaam ki baat yahi hai.
+
+| Return type | Behaviour |
+| --- | --- |
+| `suspend fun ...: List<T>` | Ek baar chalti hai, main thread se hatkar, ek jhalak lautati hai |
+| `fun ...: Flow<List<T>>` | Abhi emit karti hai, aur jin tables ko padha unmein **har** badlaav par dobara |
+| `fun ...: PagingSource<Int, T>` | Maangne par pages laati hai — do lesson baad |
+| `fun ...: List<T>` | Bulane wale thread par rukkar — main thread par Room isse mana kar deta hai |
+
+`Flow` wali query `suspend` **nahi** hoti, aur log yahin lagatar atakte hain: wo turant lautti hai
+kyunki wo data nahi, dhara lautati hai. Phir Room un tables par nazar rakhta hai jinhe query ne
+chhua, aur unmein se kuch bhi badalne par use dobara chalata hai.
+
+Aakhri hissa hi ahem chetavani hai. Ye invalidation har **table** par hai, har row par nahi: ek order
+dekhta `Flow` tab bhi dobara emit karta hai jab `orders` ki *koi bhi* row badle. Aam taur par ye
+theek hai aur wahi hai jo aap chahte ho. Par jis table mein thok mein likha jata hai, wahan paanch
+sau rows ki sync ek row wali query ko paanch sau baar dobara emit kara sakti hai, jab tak wo likhaiyan
+ek hi transaction mein na hon.
+
+<Quiz
+  question="Kisi screen par `Flow<List<OrderEntity>>` wali query collect ho rahi hai. Peeche chalti koi sync 500 rows ek-ek karke, loop mein likhti hai. Screen kya karti hai?"
+  options={[
+    "Wo aakhir mein ek baar badalti hai, kyunki Room emissions ko ikattha kar deta hai",
+    "Wo 500 baar tak dobara emit karti hai, aur har emission ek poori query aur list ki ek recomposition hai",
+    "Jab tak sync database ka taala nahi chhodti tab tak wo emit karna band kar deti hai",
+  ]}
+  answer={1}
+  explanation="Room ka invalidation tracker har likhne wali transaction par chalta hai, aur 500 alag inserts 500 transactions hain. Har ek orders table ko maila bata deta hai, Flow poori query dobara chalata hai, aur screen recompose hoti hai — to jis sync ko dikhna hi nahi chahiye tha wo saikdon poori-list queries aur saikdon frames ka kaam ban jati hai, jo kisi beech ke darje ke phone par saaf atakti hui list hai. Ilaaj hai un likhaiyon ko ek transaction bana dena: List lene wala @Insert, ya kai DAO calls ko @Transaction wale method mein lapet dena. Tab tracker ek baar chalta hai aur screen ko theek ek nai list dikhti hai. Thok wale DAO methods collections kyun lete hain, iski vyavharik wajah yahi hai — wo signature suvidha nahi, wahi batching hai."
+/>
+
+## Instance theek se banana
+
+```kotlin title="DatabaseModule.kt" numbered
+val database: AppDatabase = Room.databaseBuilder(
+    context.applicationContext,          // Activity nahi — database usse zyada jeeta hai
+    AppDatabase::class.java,
+    "app.db",
+).build()                                 // app bhar mein ek, app jitni umar ka
+```
+
+In paanch lines mein do niyam rehte hain, aur dono ek hi galti hain, alag kapdon mein.
+
+`applicationContext`, kyunki `Activity` ke context se bana database us activity ko tab tak pakde
+rehta hai jab tak database zinda hai — wahi leak jo `Context` wale lesson mein tha, bas lambi umar
+wale maalik ke saath.
+
+**Ek instance, poore app ke liye.** Har call par banana mehnga hai — Room har baar file kholta hai,
+version dekhta hai aur statements taiyar karta hai — aur usse buri baat, ek hi SQLite file par do
+khule haath taale wali errors bulate hain jo sirf saath-saath chalne par dikhti hain. Use singleton
+ki tarah rakhiye, ya agle phase mein kisi DI framework se banwaiye.
+
+<Detail summary="Room sach mein banata kya hai, aur uski errors waisi kyun padhi jati hain">
+Room ek annotation processor hai. `OrderDao` se `OrderDao_Impl` banta hai, jisme isi lesson ki
+shuruat wala cursor code hota hai — sahi likha hua, columns ke indices ek baar nikale hue aur cursor
+band kiya hua. `AppDatabase` se `AppDatabase_Impl` banta hai, jo schema aur kholne wala helper rakhta
+hai.
+
+Wo `build/generated` mein hain, aur kisi uljhane wali Room error ko samajhne ka sabse tez raasta unhe
+padhna hai, kyunki wo error aam taur par usi code ke baare mein hoti hai jo wo likhne ja raha tha.
+Isiliye Room ki errors build waqt, message mein query liye hue aati hain, na ki chalte waqt kisi
+stack trace ke saath.
+
+`exportSchema = true` schema ko JSON banakar `app/schemas/` mein likhta hai. Us directory ko commit
+kijiye. Wahi Room ko ye check karne deta hai ki koi migration sahi hai, aur wahi agle lesson ka
+vishay hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo atkan, leak ya khoye hue data ki shakal mein dikhti hain">
+**Ek-ek insert ka loop.** Saikdon invalidations aur saikdon recompositions. List bhejiye, ya use
+`@Transaction` mein lapetiye.
+
+**`Flow` wali query se `suspend` hone ki ummid.** Wo dhara turant lauta deti hai; rukna sirf collect
+karne mein hai.
+
+**Bina `@Transaction` ke kai kadmon wali likhai.** Beech mein nakami database ko aisi haalat mein
+chhod jati hai jiski aapka code kabhi ummid nahi karta — delete commit ho gaya, insert nahi.
+
+**`Activity` ka context, ya har call par naya database.** Ek leak, aur saath-saath chalne par taale
+wali errors.
+
+**Entities ka upar pahunch jana.** `ViewModel` mein koi Room entity schema ke badlaav ko UI ka
+badlaav bana deti hai, aur repository wale lesson ki mapping functions isi ko rokti hain.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi `@Query` mein table ka naam galat likhiye aur compile ki error padhiye. Wahi column ke saath
+   kijiye.
+2. `Flow` collect karte hue 200 rows loop mein daaliye, emissions giniye, phir ek hi list wale insert
+   par jaiye aur dobara giniye.
+3. Aisa `@Transaction` method likhiye jo table khaali karke bharta hai, phir beech mein phenkiye aur
+   pakka kijiye ki kuch khoya nahi.
+4. Jis column par aap chhante ho us par ek index jodiye, aur `EXPLAIN QUERY PLAN` se query ke raaste
+   milaiye.
+5. `build/generated` kholiye aur apne DAO ka bana hua implementation padhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `@Entity` | Ek table; class hi schema hai |
+| `@Dao` | Queries, jo build waqt check hoti hain |
+| `@Database` | Entities aur version, tatha DAO tak pahunch |
+| `@PrimaryKey` | Pehchan; rowid ke liye `autoGenerate` |
+| `@ColumnInfo` | Column ka naam property ke naam se alag |
+| `suspend fun` | Ek jhalak, main thread se hatkar |
+| `Flow<T>` | Padhi hui tables mein kisi bhi badlaav par dobara emit — `suspend` nahi |
+| Invalidation | Har table par, har transaction par — to likhai thok mein kijiye |
+| `@Transaction` | Kai kadmon wali likhai, jo sirf ikai ki tarah sahi hai |
+| Ek instance | `applicationContext`, singleton, app jitni umar ka |
+
+<Interview title="Ek sawal, jiske achhe jawab mein invalidation ki bareeki aati hai">
+"Seedhe SQLite ke bajaye Room kyun?"
+
+Kyunki queries tab check hoti hain jab main compile karta hoon. Galat likha column ya entity se mel
+na khati query build ki error hai, jo us query ka naam leti hai — na ki wo crash jo pehli baar us
+screen ko kholne wale user ko milta hai. Isse cursor sambhalna bhi hat jata hai, aur leaks wahin the.
+
+Par jo cheez meri data parat ka design badal deti hai wo hai `Flow` wali queries: DAO ek dhara lautata
+hai jo neeche ki tables badalte hi dobara emit karti hai, to database sach ka iklauta thikana ban
+sakta hai aur UI bas use dekhti rehti hai. Janne layak bareeki ye hai ki invalidation har table aur
+har transaction par hai, har row par nahi — to sync ko ek hi transaction mein likhna padta hai, warna
+ek row wali query har insert par ek baar dobara emit karti hai aur list saikdon baar banti hai.
+</Interview>

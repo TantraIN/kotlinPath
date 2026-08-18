@@ -1,0 +1,220 @@
+---
+title: "Room: Entity, DAO and Database"
+description: SQLite has been in Android since the beginning and almost nobody uses it directly. Room's real contribution is not less boilerplate — it is that your SQL is checked when you compile, not when a user opens the screen.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Room is three annotations over SQLite: an `@Entity` is a table, a `@Dao` is the queries, and a
+`@Database` ties them together. The thing that changes how you work is that **every query is parsed
+and type-checked at build time** — a typo in SQL is a compile error, not a crash on someone's phone.
+</KeyIdea>
+
+## Why this matters
+
+Raw SQLite, doing one lookup:
+
+```kotlin title="Raw.kt" numbered
+val cursor = db.rawQuery("SELECT * FROM ordres WHERE id = ?", arrayOf(id))   // typo compiles
+cursor.use {
+    if (it.moveToFirst()) {
+        Order(
+            id = it.getString(it.getColumnIndexOrThrow("id")),
+            total = it.getInt(it.getColumnIndexOrThrow("total")),   // column order, by hand
+        )
+    } else null
+}
+```
+
+The table name is misspelled and nothing complains until a user taps the screen. The column mapping
+is manual, so a schema change breaks it silently. And `cursor.use` is not optional — forget it and
+you leak a cursor per call.
+
+The same lookup with Room:
+
+```kotlin title="OrderDao.kt" numbered
+@Dao
+interface OrderDao {
+    @Query("SELECT * FROM orders WHERE id = :id")
+    suspend fun byId(id: String): OrderEntity?
+}
+```
+
+Misspell `orders` and the build fails, naming the query. Add a column the entity does not have and
+the build fails. There is no cursor to leak.
+
+## The three pieces
+
+```kotlin title="OrderEntity.kt" numbered
+@Entity(
+    tableName = "orders",
+    indices = [Index("status"), Index(value = ["created_at"])],
+)
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val total: Int,
+    val status: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+```
+
+```kotlin title="OrderDao.kt" numbered
+@Dao
+interface OrderDao {
+
+    @Query("SELECT * FROM orders ORDER BY created_at DESC")
+    fun observeAll(): Flow<List<OrderEntity>>              // not suspend — see below
+
+    @Query("SELECT * FROM orders WHERE status = :status")
+    suspend fun byStatus(status: String): List<OrderEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(orders: List<OrderEntity>)
+
+    @Delete
+    suspend fun delete(order: OrderEntity)
+
+    @Query("DELETE FROM orders")
+    suspend fun clear()
+
+    @Transaction
+    suspend fun replaceAll(orders: List<OrderEntity>) {    // both, or neither
+        clear()
+        upsert(orders)
+    }
+}
+```
+
+```kotlin title="AppDatabase.kt" numbered
+@Database(entities = [OrderEntity::class], version = 1, exportSchema = true)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun orderDao(): OrderDao
+}
+```
+
+<Note>
+`@Transaction` on `replaceAll` is doing real work. Without it, `clear()` commits and then `upsert()`
+fails on a full disk — and the user opens an app that has lost every order it had. Any operation
+that is only correct as a unit needs it.
+</Note>
+
+## The return type decides everything
+
+This is the single most useful thing to understand about a DAO.
+
+| Return type | Behaviour |
+| --- | --- |
+| `suspend fun ...: List<T>` | Runs once, off the main thread, returns a snapshot |
+| `fun ...: Flow<List<T>>` | Emits now and again on **every** change to the tables it read |
+| `fun ...: PagingSource<Int, T>` | Loads pages on demand — two lessons from now |
+| `fun ...: List<T>` | Blocking, on the calling thread — Room refuses this on the main thread |
+
+A `Flow` query is **not** `suspend`, and that trips people up constantly: it returns immediately
+because it returns the stream, not the data. Room then watches the tables the query touched and
+re-runs it whenever any of them change.
+
+That last part is the important caveat. The invalidation is per **table**, not per row: a `Flow`
+observing one order re-emits when *any* row in `orders` changes. Usually that is fine and exactly
+what you want. On a table written in bulk it means a sync of five hundred rows can re-emit a
+single-row query five hundred times unless the writes are inside one transaction.
+
+<Quiz
+  question="A `Flow<List<OrderEntity>>` query is collected on a screen. A background sync writes 500 rows in a loop, one insert at a time. What does the screen do?"
+  options={[
+    "It updates once at the end, because Room batches emissions",
+    "It re-emits up to 500 times, and each emission is a full query plus a recomposition of the list",
+    "It stops emitting until the sync releases the database lock",
+  ]}
+  answer={1}
+  explanation="Room's invalidation tracker fires per write transaction, and 500 separate inserts are 500 transactions. Each one marks the orders table dirty, the Flow re-runs the whole query, and the screen recomposes — so a sync that should be invisible turns into hundreds of full-list queries and hundreds of frames of work, which on a mid-range phone is a visibly janky list. The fix is to make the writes one transaction: an @Insert taking a List, or several DAO calls wrapped in a @Transaction method. Then the tracker fires once and the screen sees exactly one new list. This is the practical reason bulk DAO methods take collections rather than being called in a loop — the signature is not a convenience, it is the batching."
+/>
+
+## Getting the instance right
+
+```kotlin title="DatabaseModule.kt" numbered
+val database: AppDatabase = Room.databaseBuilder(
+    context.applicationContext,          // not an Activity — the database outlives it
+    AppDatabase::class.java,
+    "app.db",
+).build()                                 // one per app, for the app's lifetime
+```
+
+Two rules live in those five lines, and both are the same mistake in different clothes.
+
+`applicationContext`, because a database built with an `Activity` context holds that activity for as
+long as the database lives — the leak from the `Context` lesson, with a long-lived owner.
+
+**One instance, for the whole app.** Building it per call is expensive — Room opens the file, checks
+the version and prepares statements each time — and worse, two open handles to one SQLite file
+invite locking errors that only appear under concurrency. Hold it as a singleton, or let a DI
+framework do it in the next phase.
+
+<Detail summary="What Room actually generates, and why the errors read the way they do">
+Room is an annotation processor. `OrderDao` produces `OrderDao_Impl`, which contains the cursor code
+from the top of this lesson — written correctly, with the column indices resolved once and the
+cursor closed. `AppDatabase` produces `AppDatabase_Impl`, holding the schema and the open helper.
+
+They are in `build/generated`, and reading them is the fastest way to understand a confusing Room
+error, because the error is usually about the code it was going to write. This is also why Room
+errors arrive at build time with a query in the message rather than at run time with a stack trace.
+
+`exportSchema = true` writes the schema as JSON into `app/schemas/`. Commit that directory. It is
+what lets Room verify a migration is correct, and it is the topic of the next lesson.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that show up as jank, leaks or lost data">
+**A loop of single inserts.** Hundreds of invalidations and hundreds of recompositions. Pass a list,
+or wrap it in `@Transaction`.
+
+**Expecting a `Flow` query to be `suspend`.** It returns the stream immediately; only the collection
+suspends.
+
+**Multi-step writes without `@Transaction`.** A failure halfway through leaves the database in a
+state your code never expects — the delete committed, the insert not.
+
+**An `Activity` context, or a new database per call.** A leak, and locking errors under concurrency.
+
+**Entities leaking upward.** A Room entity in a `ViewModel` makes a schema change a UI change, which
+is what the mapping functions in the repository lesson prevent.
+</Pitfall>
+
+## Practice
+
+1. Misspell a table name in a `@Query` and read the compile error. Do the same with a column.
+2. Insert 200 rows in a loop while collecting a `Flow`, count the emissions, then switch to a single
+   list insert and count again.
+3. Write a `@Transaction` method that clears and refills a table, then throw halfway and confirm
+   nothing was lost.
+4. Add an index to a column you filter on, and compare query plans with `EXPLAIN QUERY PLAN`.
+5. Open `build/generated` and read your DAO's generated implementation.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `@Entity` | A table; the class is the schema |
+| `@Dao` | The queries, checked at build time |
+| `@Database` | Entities plus version, and the DAO accessors |
+| `@PrimaryKey` | Identity; `autoGenerate` for a rowid |
+| `@ColumnInfo` | Column name differs from the property name |
+| `suspend fun` | One snapshot, off the main thread |
+| `Flow<T>` | Re-emits on any change to the tables it read — not `suspend` |
+| Invalidation | Per table, per transaction — so batch your writes |
+| `@Transaction` | Multi-step writes that are only correct as a unit |
+| One instance | `applicationContext`, singleton, for the app's lifetime |
+
+<Interview title="A question whose good answer mentions the invalidation granularity">
+"Why use Room rather than SQLite directly?"
+
+Because the queries are verified when I compile. A misspelled column or a query that does not match
+the entity is a build error naming the query, instead of a crash the first time a user opens that
+screen. It also removes the cursor handling, which is where the leaks were.
+
+The feature that changes how I design the data layer, though, is `Flow` queries: the DAO returns a
+stream that re-emits whenever the underlying tables change, so the database can be the single source
+of truth and the UI just observes it. The detail worth knowing is that invalidation is per table and
+per transaction, not per row — so a sync must write in one transaction, or a single-row query
+re-emits once per insert and the list rebuilds hundreds of times.
+</Interview>

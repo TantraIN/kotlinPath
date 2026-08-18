@@ -1,0 +1,222 @@
+---
+title: "Room: Entity, DAO और Database"
+description: SQLite शुरू से Android में है और उसे सीधे कोई नहीं छूता। Room की असली देन कम boilerplate नहीं है — यह है कि आपका SQL तब जाँचा जाता है जब आप compile करते हैं, तब नहीं जब कोई user screen खोलता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Room, SQLite के ऊपर तीन annotations है: `@Entity` एक table है, `@Dao` उसकी queries, और `@Database`
+दोनों को बाँधता है। जो चीज आपके काम करने का तरीका बदल देती है वह यह है कि **हर query build वक्त पढ़ी
+और जाँची जाती है** — SQL में की गई गलती compile की error है, किसी के phone पर होने वाला crash नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+सादा SQLite, एक चीज ढूँढ़ते हुए:
+
+```kotlin title="Raw.kt" numbered
+val cursor = db.rawQuery("SELECT * FROM ordres WHERE id = ?", arrayOf(id))   // गलती compile हो गई
+cursor.use {
+    if (it.moveToFirst()) {
+        Order(
+            id = it.getString(it.getColumnIndexOrThrow("id")),
+            total = it.getInt(it.getColumnIndexOrThrow("total")),   // columns हाथ से
+        )
+    } else null
+}
+```
+
+Table का नाम गलत लिखा है और तब तक कोई शिकायत नहीं करता जब तक कोई user उस screen पर tap न करे।
+Columns हाथ से बिठाए गए हैं, तो schema बदलते ही यह चुपचाप टूट जाता है। और `cursor.use` वैकल्पिक नहीं
+है — भूलिए तो हर call पर एक cursor leak होता है।
+
+वही चीज Room के साथ:
+
+```kotlin title="OrderDao.kt" numbered
+@Dao
+interface OrderDao {
+    @Query("SELECT * FROM orders WHERE id = :id")
+    suspend fun byId(id: String): OrderEntity?
+}
+```
+
+`orders` गलत लिखिए और build नाकाम होता है, उस query का नाम लेते हुए। ऐसा column जोड़िए जो entity में
+नहीं है, तो build नाकाम होता है। यहाँ leak होने को कोई cursor है ही नहीं।
+
+## तीनों हिस्से
+
+```kotlin title="OrderEntity.kt" numbered
+@Entity(
+    tableName = "orders",
+    indices = [Index("status"), Index(value = ["created_at"])],
+)
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val total: Int,
+    val status: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+```
+
+```kotlin title="OrderDao.kt" numbered
+@Dao
+interface OrderDao {
+
+    @Query("SELECT * FROM orders ORDER BY created_at DESC")
+    fun observeAll(): Flow<List<OrderEntity>>              // suspend नहीं — नीचे देखिए
+
+    @Query("SELECT * FROM orders WHERE status = :status")
+    suspend fun byStatus(status: String): List<OrderEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(orders: List<OrderEntity>)
+
+    @Delete
+    suspend fun delete(order: OrderEntity)
+
+    @Query("DELETE FROM orders")
+    suspend fun clear()
+
+    @Transaction
+    suspend fun replaceAll(orders: List<OrderEntity>) {    // दोनों, या कोई नहीं
+        clear()
+        upsert(orders)
+    }
+}
+```
+
+```kotlin title="AppDatabase.kt" numbered
+@Database(entities = [OrderEntity::class], version = 1, exportSchema = true)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun orderDao(): OrderDao
+}
+```
+
+<Note>
+`replaceAll` पर लगा `@Transaction` सच में काम कर रहा है। उसके बिना `clear()` commit हो जाता है और
+फिर भरी हुई disk पर `upsert()` नाकाम होता है — और user ऐसा ऐप खोलता है जिसने अपने सारे orders खो
+दिए। जो भी काम सिर्फ पूरी इकाई की तरह सही होता है उसे यह चाहिए।
+</Note>
+
+## Return type सब कुछ तय करता है
+
+DAO के बारे में समझने लायक सबसे काम की बात यही है।
+
+| Return type | बर्ताव |
+| --- | --- |
+| `suspend fun ...: List<T>` | एक बार चलती है, main thread से हटकर, एक झलक लौटाती है |
+| `fun ...: Flow<List<T>>` | अभी emit करती है, और जिन tables को पढ़ा उनमें **हर** बदलाव पर दोबारा |
+| `fun ...: PagingSource<Int, T>` | माँगने पर pages लाती है — दो पाठ बाद |
+| `fun ...: List<T>` | बुलाने वाले thread पर रुककर — main thread पर Room इससे मना कर देता है |
+
+`Flow` वाली query `suspend` **नहीं** होती, और लोग यहीं लगातार अटकते हैं: वह तुरंत लौटती है क्योंकि
+वह data नहीं, धारा लौटाती है। फिर Room उन tables पर नजर रखता है जिन्हें query ने छुआ, और उनमें से
+कुछ भी बदलने पर उसे दोबारा चलाता है।
+
+आखिरी हिस्सा ही अहम चेतावनी है। यह invalidation हर **table** पर है, हर row पर नहीं: एक order देखता
+`Flow` तब भी दोबारा emit करता है जब `orders` की *कोई भी* row बदले। आमतौर पर यह ठीक है और वही है जो
+आप चाहते हैं। पर जिस table में थोक में लिखा जाता है, वहाँ पाँच सौ rows की sync एक row वाली query को
+पाँच सौ बार दोबारा emit करा सकती है, जब तक वे लिखाइयाँ एक ही transaction में न हों।
+
+<Quiz
+  question="किसी screen पर `Flow<List<OrderEntity>>` वाली query collect हो रही है। पीछे चलती कोई sync 500 rows एक-एक करके, loop में लिखती है। Screen क्या करती है?"
+  options={[
+    "वह आखिर में एक बार बदलती है, क्योंकि Room emissions को इकट्ठा कर देता है",
+    "वह 500 बार तक दोबारा emit करती है, और हर emission एक पूरी query और list की एक recomposition है",
+    "जब तक sync database का ताला नहीं छोड़ती तब तक वह emit करना बंद कर देती है",
+  ]}
+  answer={1}
+  explanation="Room का invalidation tracker हर लिखने वाली transaction पर चलता है, और 500 अलग inserts 500 transactions हैं। हर एक orders table को मैला बता देता है, Flow पूरी query दोबारा चलाता है, और screen recompose होती है — तो जिस sync को दिखना ही नहीं चाहिए था वह सैकड़ों पूरी-list queries और सैकड़ों frames का काम बन जाती है, जो किसी बीच के दर्जे के phone पर साफ अटकती हुई list है। इलाज है उन लिखाइयों को एक transaction बना देना: List लेने वाला @Insert, या कई DAO calls को @Transaction वाले method में लपेट देना। तब tracker एक बार चलता है और screen को ठीक एक नई list दिखती है। थोक वाले DAO methods collections क्यों लेते हैं, इसकी व्यावहारिक वजह यही है — वह signature सुविधा नहीं, वही batching है।"
+/>
+
+## Instance ठीक से बनाना
+
+```kotlin title="DatabaseModule.kt" numbered
+val database: AppDatabase = Room.databaseBuilder(
+    context.applicationContext,          // Activity नहीं — database उससे ज्यादा जीता है
+    AppDatabase::class.java,
+    "app.db",
+).build()                                 // ऐप भर में एक, ऐप जितनी उम्र का
+```
+
+इन पाँच लाइनों में दो नियम रहते हैं, और दोनों एक ही गलती हैं, अलग कपड़ों में।
+
+`applicationContext`, क्योंकि `Activity` के context से बना database उस activity को तब तक पकड़े रहता
+है जब तक database जिंदा है — वही leak जो `Context` वाले पाठ में था, बस लंबी उम्र वाले मालिक के साथ।
+
+**एक instance, पूरे ऐप के लिए।** हर call पर बनाना महँगा है — Room हर बार file खोलता है, version
+देखता है और statements तैयार करता है — और उससे बुरी बात, एक ही SQLite file पर दो खुले हाथ ताले वाली
+errors बुलाते हैं जो सिर्फ साथ-साथ चलने पर दिखती हैं। उसे singleton की तरह रखिए, या अगले phase में
+किसी DI framework से बनवाइए।
+
+<Detail summary="Room सच में बनाता क्या है, और उसकी errors वैसी क्यों पढ़ी जाती हैं">
+Room एक annotation processor है। `OrderDao` से `OrderDao_Impl` बनता है, जिसमें इसी पाठ की शुरुआत
+वाला cursor code होता है — सही लिखा हुआ, columns के indices एक बार निकाले हुए और cursor बंद किया
+हुआ। `AppDatabase` से `AppDatabase_Impl` बनता है, जो schema और खोलने वाला helper रखता है।
+
+वे `build/generated` में हैं, और किसी उलझाने वाली Room error को समझने का सबसे तेज रास्ता उन्हें पढ़ना
+है, क्योंकि वह error आमतौर पर उसी code के बारे में होती है जो वह लिखने जा रहा था। इसीलिए Room की
+errors build वक्त, संदेश में query लिए हुए आती हैं, न कि चलते वक्त किसी stack trace के साथ।
+
+`exportSchema = true` schema को JSON बनाकर `app/schemas/` में लिखता है। उस directory को commit
+कीजिए। वही Room को यह जाँचने देता है कि कोई migration सही है, और वही अगले पाठ का विषय है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो अटकन, leak या खोए हुए data की शक्ल में दिखती हैं">
+**एक-एक insert का loop।** सैकड़ों invalidations और सैकड़ों recompositions. List भेजिए, या उसे
+`@Transaction` में लपेटिए।
+
+**`Flow` वाली query से `suspend` होने की उम्मीद।** वह धारा तुरंत लौटा देती है; रुकना सिर्फ collect
+करने में है।
+
+**बिना `@Transaction` के कई कदमों वाली लिखाई।** बीच में नाकामी database को ऐसी हालत में छोड़ जाती है
+जिसकी आपका code कभी उम्मीद नहीं करता — delete commit हो गया, insert नहीं।
+
+**`Activity` का context, या हर call पर नया database।** एक leak, और साथ-साथ चलने पर ताले वाली
+errors।
+
+**Entities का ऊपर पहुँच जाना।** `ViewModel` में कोई Room entity schema के बदलाव को UI का बदलाव बना
+देती है, और repository वाले पाठ की mapping functions इसी को रोकती हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी `@Query` में table का नाम गलत लिखिए और compile की error पढ़िए। वही column के साथ कीजिए।
+2. `Flow` collect करते हुए 200 rows loop में डालिए, emissions गिनिए, फिर एक ही list वाले insert पर
+   जाइए और दोबारा गिनिए।
+3. ऐसा `@Transaction` method लिखिए जो table खाली करके भरता है, फिर बीच में फेंकिए और पक्का कीजिए कि
+   कुछ खोया नहीं।
+4. जिस column पर आप छानते हैं उस पर एक index जोड़िए, और `EXPLAIN QUERY PLAN` से query के रास्ते
+   मिलाइए।
+5. `build/generated` खोलिए और अपने DAO का बना हुआ implementation पढ़िए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `@Entity` | एक table; class ही schema है |
+| `@Dao` | Queries, जो build वक्त जाँची जाती हैं |
+| `@Database` | Entities और version, तथा DAO तक पहुँच |
+| `@PrimaryKey` | पहचान; rowid के लिए `autoGenerate` |
+| `@ColumnInfo` | Column का नाम property के नाम से अलग |
+| `suspend fun` | एक झलक, main thread से हटकर |
+| `Flow<T>` | पढ़ी हुई tables में किसी भी बदलाव पर दोबारा emit — `suspend` नहीं |
+| Invalidation | हर table पर, हर transaction पर — तो लिखाई थोक में कीजिए |
+| `@Transaction` | कई कदमों वाली लिखाई, जो सिर्फ इकाई की तरह सही है |
+| एक instance | `applicationContext`, singleton, ऐप जितनी उम्र का |
+
+<Interview title="एक सवाल, जिसके अच्छे जवाब में invalidation की बारीकी आती है">
+"सीधे SQLite के बजाय Room क्यों?"
+
+क्योंकि queries तब जाँची जाती हैं जब मैं compile करता हूँ। गलत लिखा column या entity से मेल न खाती
+query build की error है, जो उस query का नाम लेती है — न कि वह crash जो पहली बार उस screen को खोलने
+वाले user को मिलता है। इससे cursor सँभालना भी हट जाता है, और leaks वहीं थे।
+
+पर जो चीज मेरी data परत का design बदल देती है वह है `Flow` वाली queries: DAO एक धारा लौटाता है जो
+नीचे की tables बदलते ही दोबारा emit करती है, तो database सच का इकलौता ठिकाना बन सकता है और UI बस
+उसे देखती रहती है। जानने लायक बारीकी यह है कि invalidation हर table और हर transaction पर है, हर row
+पर नहीं — तो sync को एक ही transaction में लिखना पड़ता है, वरना एक row वाली query हर insert पर एक
+बार दोबारा emit करती है और list सैकड़ों बार बनती है।
+</Interview>
