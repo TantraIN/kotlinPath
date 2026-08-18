@@ -1,0 +1,182 @@
+---
+title: MVVM and the ViewModel
+description: A state holder that outlives the screen showing it. The one rule that makes it work is also the one people break first.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A `ViewModel` holds the state one screen needs and **survives configuration changes**, because it
+is stored against the screen's identity rather than against the `Activity` instance. The rule that
+makes that safe: it must never hold a reference to a view, an `Activity`, or anything that does.
+</KeyIdea>
+
+## Why this matters
+
+The order screen from the last lesson loses everything on rotation, and reloads from the network
+every time the user turns the phone. Moving that state one layer out fixes both problems at once.
+
+```kotlin title="OrderViewModel.kt" numbered
+class OrderViewModel(
+    private val repository: OrderRepository,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(OrderUiState())
+    val state: StateFlow<OrderUiState> = _state.asStateFlow()
+
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            val orders = repository.openOrders()
+            _state.update { OrderUiState(orders = orders, isLoading = false) }
+        }
+    }
+}
+```
+
+```kotlin title="OrderScreen.kt"
+@Composable
+fun OrderScreen(viewModel: OrderViewModel = viewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    OrderContent(state = state, onRefresh = viewModel::refresh)
+}
+```
+
+Rotate now and `init` does not run again, because it is the same `ViewModel` instance.
+
+## What the three letters mean
+
+| Part | Is | Knows about |
+| --- | --- | --- |
+| **Model** | Repositories, domain rules, data | Nothing above it |
+| **View** | Composables or views | The `ViewModel` |
+| **ViewModel** | Screen state plus the events it accepts | The model — never the view |
+
+The definition is that last cell. A `ViewModel` that holds a `View` is not a `ViewModel`; it is a
+presenter with a leak.
+
+## The mistake that makes it worse than no ViewModel
+
+<Quiz
+  question="You pass the `Activity`'s `Context` into a `ViewModel` so it can read a string resource. What goes wrong?"
+  options={[
+    "Nothing, as long as you null it out in `onCleared`",
+    "The `ViewModel` outlives the `Activity` across a rotation, so it holds a destroyed one — a leak of the whole view tree",
+    "String resources cannot be read outside a composable at all",
+  ]}
+  answer={1}
+  explanation="The entire point of a ViewModel is that it survives when the Activity does not. Rotation destroys the Activity and creates a new one, while the same ViewModel instance carries on — now holding a reference to the dead one, and through it the whole view hierarchy. The leak grows with every rotation. It is also why nulling it in onCleared does not help: onCleared runs when the ViewModel finally goes, which is after the leak has already happened. If you genuinely need resources, either expose a string id and resolve it in the UI, or take the application context, which lives as long as the process anyway."
+/>
+
+## `viewModelScope` is the other half
+
+```kotlin title="Scope.kt"
+viewModelScope.launch { repository.refresh() }
+```
+
+Every coroutine started there is cancelled when `onCleared` runs, so leaving a screen stops its
+in-flight work automatically. Starting the same work from `GlobalScope`, or from a scope you
+created yourself, means it keeps running against a screen nobody is looking at.
+
+<Note>
+`collectAsStateWithLifecycle` is the matching half on the UI side: it stops collecting while the
+screen is in the background and resumes when it returns. Plain `collectAsState` keeps collecting
+behind a locked screen.
+</Note>
+
+## Surviving more than rotation
+
+```kotlin title="Saved.kt" numbered
+class SearchViewModel(
+    private val savedStateHandle: SavedStateHandle,
+) : ViewModel() {
+
+    var query by savedStateHandle.saveable { mutableStateOf("") }
+        private set
+}
+```
+
+| Survives | `remember` | `ViewModel` | `ViewModel` + `SavedStateHandle` |
+| --- | --- | --- | --- |
+| Recomposition | Yes | Yes | Yes |
+| Rotation | No | Yes | Yes |
+| The system killing the process | No | No | Yes |
+| Large data | Fine | Fine | No — it rides in a `Bundle` |
+
+So the layering is: `remember` for state only this piece of UI cares about, a `ViewModel` for the
+screen's state, and a `SavedStateHandle` for the small identifying values that must come back after
+the process is killed.
+
+<Detail summary="Where a ViewModel actually lives">
+A `ViewModel` is stored in a `ViewModelStore`, which belongs to a `ViewModelStoreOwner`. Which owner
+you ask decides the lifetime:
+
+```kotlin title="Owners.kt" numbered
+val screenVm: OrderViewModel = viewModel()                 // this screen
+val sharedVm: CheckoutViewModel = viewModel(parentEntry)   // a whole navigation graph
+val activityVm: AppViewModel = viewModel(requireActivity()) // the whole activity
+```
+
+The store is what actually survives a rotation — the framework hands it to the new `Activity`
+instance. `onCleared` runs when the store is cleared, which happens when the owner finishes for
+good rather than when it is merely recreated.
+
+Two fragments asking the same activity for the same `ViewModel` type get the same instance. That is
+the intended way for them to share state, and also the easiest way to accidentally couple two
+screens that had no business knowing about each other.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four, and the first is a real leak">
+**A `Context`, `Activity`, `View` or `NavController` in a `ViewModel`.** All of them outlive their
+usefulness and leak. Pass ids and lambdas instead.
+
+**Exposing `MutableStateFlow`.** Anything with a reference can write to your screen state. Expose
+`StateFlow` through `asStateFlow()` and keep the mutable one private.
+
+**Navigating from the `ViewModel`.** Navigation is a UI decision. Emit an event or a state, and let
+the screen act on it.
+
+**Work in `init` you cannot control.** It runs the moment the `ViewModel` is created, before the
+screen is visible and with no way to retry. Loading on a state the UI triggers is easier to reason
+about and to test.
+</Pitfall>
+
+## Practice
+
+1. Move the network call from an `Activity` into a `ViewModel` and rotate. Confirm it does not run
+   again.
+2. Pass an `Activity` context into a `ViewModel`, rotate twenty times, and watch the heap in the
+   profiler.
+3. Replace `GlobalScope.launch` with `viewModelScope.launch`, leave the screen mid-request, and
+   confirm the request is cancelled.
+4. Add a `SavedStateHandle` for a search query, kill the app from recents, and reopen it.
+5. Share one `ViewModel` between two fragments through the activity, then decide whether they should
+   really be coupled that way.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `ViewModel` | Screen state that survives configuration changes |
+| The rule | No view, `Activity` or `Context` reference — ever |
+| `viewModelScope` | Cancelled in `onCleared`, so leaving a screen stops its work |
+| `collectAsStateWithLifecycle` | The UI half; stops collecting in the background |
+| `SavedStateHandle` | Small values that survive process death |
+| `ViewModelStore` | What actually survives; owned by activity, fragment or nav entry |
+| Sharing | Same owner plus same type means the same instance |
+| Expose | `StateFlow`, never the `MutableStateFlow` |
+
+<Interview title="Asked in almost every Android interview, and usually answered halfway">
+"Why can a `ViewModel` not hold a `Context`?"
+
+Because it deliberately outlives the `Activity`. Rotation destroys the `Activity` and keeps the
+`ViewModel`, so a stored context points at a destroyed screen and leaks the whole view hierarchy
+with it. The half that completes the answer is what to do instead — expose a string resource id and
+resolve it in the UI, or take the application context if the need is genuinely process-wide — and
+noting that clearing it in `onCleared` does not help, because `onCleared` runs long after the leak.
+</Interview>

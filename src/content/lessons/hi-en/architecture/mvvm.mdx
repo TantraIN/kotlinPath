@@ -1,0 +1,186 @@
+---
+title: MVVM aur ViewModel
+description: Aisa state rakhne wala jo use dikhane wali screen se zyada jeeta hai. Jis ek niyam se ye chalta hai, log sabse pehle wahi todte hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`ViewModel` ek screen ko jo state chahiye wo rakhta hai aur **configuration badalne par bach jata
+hai**, kyunki wo `Activity` ki us bani hui cheez ke bajaye screen ki pehchan ke saath rakha jata
+hai. Jis niyam se ye surakshit rehta hai: uske paas kabhi kisi view, `Activity`, ya aisi kisi cheez
+ka pata nahi hona chahiye jiske paas ye hon.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Pichhle paath wali order screen rotation par sab kuch kho deti hai, aur user ke har baar phone
+ghumane par network se dobara lati hai. Us state ko ek parat bahar le jana dono dikkatein ek saath
+theek kar deta hai.
+
+```kotlin title="OrderViewModel.kt" numbered
+class OrderViewModel(
+    private val repository: OrderRepository,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(OrderUiState())
+    val state: StateFlow<OrderUiState> = _state.asStateFlow()
+
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            val orders = repository.openOrders()
+            _state.update { OrderUiState(orders = orders, isLoading = false) }
+        }
+    }
+}
+```
+
+```kotlin title="OrderScreen.kt"
+@Composable
+fun OrderScreen(viewModel: OrderViewModel = viewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    OrderContent(state = state, onRefresh = viewModel::refresh)
+}
+```
+
+Ab ghumaiye aur `init` dobara nahi chalta, kyunki wo wahi `ViewModel` hai.
+
+## Teenon aksharon ka matlab
+
+| Hissa | Hai | Kiska pata hai |
+| --- | --- | --- |
+| **Model** | Repositories, domain ke niyam, data | Apne upar kisi ka nahi |
+| **View** | Composables ya views | `ViewModel` ka |
+| **ViewModel** | Screen ki state aur wo ghatnayein jo wo leta hai | Model ka — view ka kabhi nahi |
+
+Paribhasha wahi aakhri khana hai. Jis `ViewModel` ke paas koi `View` hai wo `ViewModel` nahi; wo
+leak wala presenter hai.
+
+## Wo galti jo bina ViewModel wali haalat se bhi buri hai
+
+<Quiz
+  question="Aap `Activity` ka `Context` kisi `ViewModel` mein bhej dete hain taki wo koi string resource padh sake. Gadbad kya hoti hai?"
+  options={[
+    "Kuch nahi, basharte aap use `onCleared` mein null kar dein",
+    "`ViewModel` rotation ke aar-paar `Activity` se zyada jeeta hai, to wo ek khatam ho chuki Activity pakde rehta hai — poore view ped ka leak",
+    "String resources composable ke bahar padhi hi nahi ja saktin",
+  ]}
+  answer={1}
+  explanation="ViewModel ka poora maksad hi ye hai ki Activity na bache tab bhi wo bache. Rotation purani Activity khatam karke nai banata hai, jabki wahi ViewModel chalta rehta hai — ab mari hui Activity ko pakde hue, aur uske saath poore view ped ko. Har rotation par ye leak badhta hai. Isiliye onCleared mein null karne se bhi baat nahi banti: onCleared tab chalta hai jab ViewModel aakhirkar jata hai, yani leak ho chukne ke kaafi baad. Resources sach mein chahiye to ya to string ki id dijiye aur use UI mein hal kijiye, ya application ka context lijiye, jo waise bhi poore process jitna jeeta hai."
+/>
+
+## Doosra aadha hissa `viewModelScope` hai
+
+```kotlin title="Scope.kt"
+viewModelScope.launch { repository.refresh() }
+```
+
+Wahan shuru kiya gaya har coroutine `onCleared` chalte hi rok diya jata hai, to screen chhodte hi
+uska chalta hua kaam apne aap ruk jata hai. Wahi kaam `GlobalScope` se, ya apne banaye kisi scope
+se, shuru karne ka matlab hai ki wo us screen ke liye chalta rahega jise koi dekh bhi nahi raha.
+
+<Note>
+UI ki taraf ka jodidar `collectAsStateWithLifecycle` hai: screen ke peeche chale jane par wo collect
+karna rok deta hai aur lautne par phir shuru. Saada `collectAsState` band screen ke peeche bhi
+collect karta rehta hai.
+</Note>
+
+## Rotation se zyada jhelna
+
+```kotlin title="Saved.kt" numbered
+class SearchViewModel(
+    private val savedStateHandle: SavedStateHandle,
+) : ViewModel() {
+
+    var query by savedStateHandle.saveable { mutableStateOf("") }
+        private set
+}
+```
+
+| Kya jhelta hai | `remember` | `ViewModel` | `ViewModel` + `SavedStateHandle` |
+| --- | --- | --- | --- |
+| Recomposition | Haan | Haan | Haan |
+| Rotation | Nahi | Haan | Haan |
+| System ka process maar dena | Nahi | Nahi | Haan |
+| Bada data | Theek hai | Theek hai | Nahi — wo `Bundle` mein sawari karta hai |
+
+To paratein aisi banti hain: `remember` us state ke liye jiski parwah sirf UI ke isi tukde ko hai,
+`ViewModel` screen ki state ke liye, aur `SavedStateHandle` un chhoti pehchan wali values ke liye
+jinhe process marne ke baad wapas aana hi hai.
+
+<Detail summary="ViewModel asal mein rehta kahan hai">
+`ViewModel` ek `ViewModelStore` mein rakha jata hai, jo kisi `ViewModelStoreOwner` ka hota hai. Aap
+kis owner se maangte hain, usi se umar tay hoti hai:
+
+```kotlin title="Owners.kt" numbered
+val screenVm: OrderViewModel = viewModel()                 // yahi screen
+val sharedVm: CheckoutViewModel = viewModel(parentEntry)   // poora navigation graph
+val activityVm: AppViewModel = viewModel(requireActivity()) // poori activity
+```
+
+Rotation mein asal mein wahi store bachta hai — framework use nai `Activity` ko thama deta hai.
+`onCleared` tab chalta hai jab store khaali kiya jata hai, yani jab owner hamesha ke liye khatam
+hota hai, sirf dobara banne par nahi.
+
+Ek hi activity se ek hi tarah ka `ViewModel` maangne wale do fragments ko wahi ek cheez milti hai.
+Unke beech state share karne ka yahi tarika socha gaya tha, aur galti se do aisi screens ko aapas
+mein baandh dene ka bhi yahi sabse aasan raasta hai jinka ek-doosre se koi lena-dena nahi tha.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, aur pehli asli leak hai">
+**`ViewModel` mein `Context`, `Activity`, `View` ya `NavController`.** Ye sab apne kaam ke rehne ke
+baad bhi jeete hain aur leak karte hain. Inki jagah ids aur lambdas bhejiye.
+
+**`MutableStateFlow` bahar dena.** Jiske paas uska pata hai wo aapki screen ki state mein likh sakta
+hai. `asStateFlow()` se `StateFlow` dijiye aur badli ja sakne wali ko private rakhiye.
+
+**`ViewModel` se navigate karna.** Navigation UI ka faisla hai. Koi ghatna ya state bhejiye, aur
+screen ko us par kaam karne dijiye.
+
+**`init` mein aisa kaam jo aapke kaabu mein nahi.** Wo `ViewModel` bante hi chal padta hai, screen
+dikhne se pehle, aur dobara koshish karne ka koi raasta nahi. UI jis state se load karaye, wo
+samajhne aur parakhne dono mein aasan hai.
+</Pitfall>
+
+## Practice
+
+1. Network call `Activity` se hatakar `ViewModel` mein le jaiye aur ghumaiye. Dekhiye ki wo dobara
+   nahi chalta.
+2. `ViewModel` mein koi activity wala context bhejiye, bees baar ghumaiye, aur profiler mein heap
+   dekhiye.
+3. `GlobalScope.launch` ki jagah `viewModelScope.launch` rakhiye, request ke beech mein screen
+   chhodiye, aur dekhiye ki request ruk jati hai.
+4. Search wali query ke liye `SavedStateHandle` jodiye, app ko recents se hataiye, aur dobara
+   kholiye.
+5. Ek `ViewModel` ko activity ke zariye do fragments mein share kijiye, phir tay kijiye ki unhe sach
+   mein us tarah bandha hona chahiye ya nahi.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `ViewModel` | Screen ki state, jo configuration badalne par bach jati hai |
+| Niyam | Koi view, `Activity` ya `Context` kabhi nahi |
+| `viewModelScope` | `onCleared` mein ruk jata hai, to screen chhodte hi kaam rukta hai |
+| `collectAsStateWithLifecycle` | UI wala aadha hissa; peeche jate hi collect karna rok deta hai |
+| `SavedStateHandle` | Chhoti values, jo process marne par bhi bachti hain |
+| `ViewModelStore` | Asal mein yahi bachta hai; maalik activity, fragment ya nav entry |
+| Share karna | Wahi owner aur wahi type yani wahi ek cheez |
+| Bahar dijiye | `StateFlow`, `MutableStateFlow` kabhi nahi |
+
+<Interview title="Lagbhag har Android interview mein pucha jata hai, aur aam taur par aadha hi jawab milta hai">
+"`ViewModel` `Context` kyun nahi rakh sakta?"
+
+Kyunki wo jaanbujhkar `Activity` se zyada jeeta hai. Rotation `Activity` khatam karta hai aur
+`ViewModel` rakhta hai, to sambhala hua context ek khatam ho chuki screen ki taraf ishara karta hai
+aur uske saath poora view ped leak kar deta hai. Jawab poora karne wala aadha hissa ye hai ki badle
+mein kya karein — string resource ki id dijiye aur use UI mein hal kijiye, ya zarurat sach mein
+poore process ki ho to application ka context lijiye — aur ye batana ki `onCleared` mein saaf karne
+se baat nahi banti, kyunki `onCleared` leak ke bahut baad chalta hai.
+</Interview>
