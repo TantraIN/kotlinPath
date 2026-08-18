@@ -1,0 +1,169 @@
+---
+title: Espresso for the View system
+description: Espresso is the View-system counterpart to Compose testing, and the reason it is worth knowing is that most Android codebases still contain XML screens — usually the oldest and least covered ones.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Espresso's real contribution is **automatic synchronisation**: it waits for the main thread to be idle
+before every action, so you never write a sleep for the UI. What it cannot see is your background
+work, and that gap is where every flaky Espresso test comes from.
+</KeyIdea>
+
+## The three parts
+
+```kotlin title="OrderActivityTest.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class OrderActivityTest {
+
+    @get:Rule val scenario = ActivityScenarioRule(OrderActivity::class.java)
+
+    @Test
+    fun placing_an_order_shows_a_confirmation() {
+        onView(withId(R.id.quantity))            // find
+            .perform(typeText("2"), closeSoftKeyboard())   // act
+
+        onView(withId(R.id.place_order))
+            .perform(click())
+
+        onView(withText(R.string.order_placed))
+            .check(matches(isDisplayed()))       // assert
+    }
+}
+```
+
+Every Espresso statement is the same sentence: `onView(matcher).perform(action).check(assertion)`.
+Once you see that, the API is a vocabulary rather than a framework.
+
+| Matchers | Actions | Assertions |
+| --- | --- | --- |
+| `withId`, `withText`, `withHint` | `click`, `typeText`, `scrollTo` | `isDisplayed`, `isEnabled` |
+| `withContentDescription` | `swipeLeft`, `pressBack` | `withText`, `hasErrorText` |
+| `isDescendantOfA`, `allOf` | `closeSoftKeyboard`, `replaceText` | `doesNotExist`, `not(...)` |
+
+`closeSoftKeyboard()` after typing is not decoration — a keyboard covering the button makes the next
+click fail with "not displayed", which is a confusing message for what is actually an occlusion
+problem.
+
+## Lists
+
+```kotlin title="Lists.kt" numbered
+onView(withId(R.id.orders))
+    .perform(
+        RecyclerViewActions.actionOnItemAtPosition<OrderViewHolder>(3, click()),
+    )
+
+onView(withId(R.id.orders))
+    .perform(RecyclerViewActions.scrollTo<OrderViewHolder>(hasDescendant(withText("Coffee"))))
+```
+
+A `RecyclerView` only creates the views that are visible, so a plain `onView(withText("Coffee"))`
+fails for an item that has not been scrolled to yet — it does not exist in the hierarchy at all. That
+is why `RecyclerViewActions` exists, and why "the test passes on a tablet and fails on a phone" is
+almost always this.
+
+<Quiz
+  question="An Espresso test taps a button that loads data over the network and then asserts the list is shown. It passes most of the time and fails perhaps one run in ten. What is the correct fix?"
+  options={[
+    "Add `Thread.sleep(2000)` before the assertion",
+    "Espresso only waits for the main thread, not for background work — register an `IdlingResource` that is busy while the request is in flight, or replace the network with a fake so there is nothing to wait for",
+    "Wrap the assertion in a `try/catch` and retry it"
+  ]}
+  answer={1}
+  explanation="Espresso synchronises on the main thread's message queue, so it correctly waits for layout, animations and posted work — and knows nothing about a coroutine or an OkHttp call running elsewhere. So it proceeds to the assertion while the request is still in flight, and whether that passes depends on how fast the machine and the network are, which is exactly the one-in-ten failure. A sleep hides it by making the window wide enough most of the time, and stays flaky on a loaded CI runner while making every run slower. An IdlingResource tells Espresso to wait, which is the correct mechanism. But the better answer for most tests is to remove the wait entirely: point the app at a MockWebServer or inject a fake repository, so the data is there immediately and the test is deterministic. A UI test should be proving the journey works, not re-testing the network."
+/>
+
+## Intents and permissions
+
+```kotlin title="Intents.kt" numbered
+@get:Rule val intentsRule = IntentsRule()
+
+@Test
+fun sharing_an_order_fires_a_share_intent() {
+    onView(withId(R.id.share)).perform(click())
+
+    intended(allOf(hasAction(Intent.ACTION_SEND), hasType("text/plain")))
+}
+
+@get:Rule
+val permissionRule: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.CAMERA)
+```
+
+`GrantPermissionRule` grants a permission before the test so the system dialog never appears. That is
+right for a test about something else — but it means the permission flow itself is untested, so keep
+one test that exercises the denial path with `UiAutomator`, which can drive the system dialog Espresso
+cannot see.
+
+<Detail summary="Making these tests worth their cost">
+An instrumented test takes tens of seconds and needs a device. That cost is only worth paying for
+journeys, so the practical rules are about keeping the number small and the runs reliable.
+
+**Disable animations.** `testInstrumentationRunnerArguments["disableAnalytics"]` and the emulator's
+animator settings — otherwise Espresso waits on animations, and some looping animations mean it never
+becomes idle at all.
+
+**Use a test runner that clears state.** A `CustomTestRunner` with a Hilt test application, or
+`clearPackageData = true`, so a test never inherits the database another test wrote.
+
+**Fake the network.** MockWebServer with fixtures makes runs deterministic and removes most
+`IdlingResource` needs at once.
+
+**Keep them few.** Five journey tests that always pass are worth more than fifty that fail one run in
+ten — because a suite that cries wolf gets ignored, and then it is not a safety net at all.
+
+For a codebase with both XML and Compose screens, `createAndroidComposeRule` lets one test drive both:
+Espresso matchers for the View parts and Compose finders for the rest, in the same test.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second is the reason people distrust UI tests">
+**No `closeSoftKeyboard()`.** The keyboard covers the next target and the click fails.
+
+**Sleeping instead of idling.** Slow on every run and still flaky on a loaded machine.
+
+**`onView` into a `RecyclerView`.** Off-screen items do not exist; use `RecyclerViewActions`.
+
+**Animations left on.** Espresso waits on them, and a looping one never goes idle.
+
+**Testing logic through the UI.** Minutes on a device for something a unit test proves instantly.
+</Pitfall>
+
+## Practice
+
+1. Type into a field without `closeSoftKeyboard()` and read the failure.
+2. Assert on an item at position 40 with plain `onView`, then fix it with `RecyclerViewActions`.
+3. Add an `IdlingResource` around a network call and confirm the flakiness stops.
+4. Replace the network with MockWebServer and delete the `IdlingResource`.
+5. Leave animations on and find a screen where the test never becomes idle.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The sentence | `onView(matcher).perform(action).check(assertion)` |
+| Synchronisation | Automatic for the main thread, blind to background work |
+| `IdlingResource` | How you tell Espresso to wait for your own work |
+| Better still | Fake the network so there is nothing to wait for |
+| `closeSoftKeyboard` | Or the keyboard occludes the next target |
+| `RecyclerViewActions` | Off-screen items are not in the hierarchy |
+| `IntentsRule` | Assert on the intent your app fired |
+| `GrantPermissionRule` | Skips the dialog; keep one test for the denial path |
+| Animations | Turn them off, or idling never happens |
+| How many | Few journeys, always green |
+
+<Interview title="A question about the flaky test everyone has met">
+"An Espresso test fails one run in ten. What is happening?"
+
+Almost always that Espresso is synchronising on the main thread and the test is waiting on something
+that is not there. It knows about layout, animations and posted messages, and knows nothing about a
+coroutine or an HTTP call running in the background — so it proceeds to the assertion while the
+request is still in flight, and whether that passes depends on the machine.
+
+The mechanism for fixing it is an `IdlingResource` that reports busy while the work is in flight. But
+for most tests the better answer is to remove the wait: point the app at MockWebServer or inject a
+fake repository, so the data is there immediately and the run is deterministic. A UI test should be
+proving that the journey works, not re-testing the network — and a suite that fails one run in ten
+gets ignored, at which point it is not a safety net at all.
+</Interview>

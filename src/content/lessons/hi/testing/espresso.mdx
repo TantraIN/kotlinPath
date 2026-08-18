@@ -1,0 +1,170 @@
+---
+title: View वाली व्यवस्था के लिए Espresso
+description: Espresso, Compose वाली testing का View वाला जोड़ीदार है, और उसे जानने लायक इसलिए है कि ज्यादातर Android codebases में अब भी XML वाली screens हैं — आमतौर पर सबसे पुरानी और सबसे कम ढकी हुई।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Espresso का असली योगदान **अपने आप होता तालमेल** है: हर काम से पहले वह main thread के खाली होने का
+इंतजार करता है, तो आपको UI के लिए कभी नींद नहीं लिखनी पड़ती। जो वह देख नहीं सकता वह है आपका पीछे चलता
+काम, और गैर-भरोसेमंद हर Espresso test उसी छेद से आता है।
+</KeyIdea>
+
+## तीन हिस्से
+
+```kotlin title="OrderActivityTest.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class OrderActivityTest {
+
+    @get:Rule val scenario = ActivityScenarioRule(OrderActivity::class.java)
+
+    @Test
+    fun placing_an_order_shows_a_confirmation() {
+        onView(withId(R.id.quantity))            // ढूँढ़िए
+            .perform(typeText("2"), closeSoftKeyboard())   // कीजिए
+
+        onView(withId(R.id.place_order))
+            .perform(click())
+
+        onView(withText(R.string.order_placed))
+            .check(matches(isDisplayed()))       // दावा कीजिए
+    }
+}
+```
+
+Espresso का हर वाक्य वही एक वाक्य है: `onView(matcher).perform(action).check(assertion)`. यह दिख जाने
+के बाद वह API framework कम और शब्दावली ज्यादा है।
+
+| Matchers | Actions | Assertions |
+| --- | --- | --- |
+| `withId`, `withText`, `withHint` | `click`, `typeText`, `scrollTo` | `isDisplayed`, `isEnabled` |
+| `withContentDescription` | `swipeLeft`, `pressBack` | `withText`, `hasErrorText` |
+| `isDescendantOfA`, `allOf` | `closeSoftKeyboard`, `replaceText` | `doesNotExist`, `not(...)` |
+
+Type करने के बाद `closeSoftKeyboard()` सजावट नहीं है — button को ढकता keyboard अगली click को "not
+displayed" के साथ नाकाम कर देता है, और जो असल में ढके होने की दिक्कत है उसके लिए यह उलझाने वाला संदेश
+है।
+
+## Lists
+
+```kotlin title="Lists.kt" numbered
+onView(withId(R.id.orders))
+    .perform(
+        RecyclerViewActions.actionOnItemAtPosition<OrderViewHolder>(3, click()),
+    )
+
+onView(withId(R.id.orders))
+    .perform(RecyclerViewActions.scrollTo<OrderViewHolder>(hasDescendant(withText("Coffee"))))
+```
+
+`RecyclerView` सिर्फ दिखने वाले views बनाता है, तो सादा `onView(withText("Coffee"))` उस item के लिए
+नाकाम होता है जहाँ तक अभी scroll नहीं हुआ — वह hierarchy में है ही नहीं। इसीलिए `RecyclerViewActions`
+है, और इसीलिए "test tablet पर पास होता है और phone पर नाकाम" लगभग हमेशा यही होता है।
+
+<Quiz
+  question="कोई Espresso वाला test ऐसा button दबाता है जो network से data लाता है और फिर दावा करता है कि list दिख रही है। वह ज्यादातर बार पास होता है और शायद दस में से एक बार नाकाम। सही इलाज क्या है?"
+  options={[
+    "दावे से पहले `Thread.sleep(2000)` जोड़िए",
+    "Espresso सिर्फ main thread का इंतजार करता है, पीछे चलते काम का नहीं — ऐसा `IdlingResource` दर्ज कीजिए जो request चलते रहने तक व्यस्त रहे, या network की जगह नकली चीज रखिए ताकि इंतजार करने को कुछ बचे ही नहीं",
+    "उस दावे को `try/catch` में लपेटकर दोबारा चलाइए"
+  ]}
+  answer={1}
+  explanation="Espresso main thread की संदेश-कतार से तालमेल रखता है, तो वह layout, animations और भेजे गए कामों का ठीक-ठीक इंतजार करता है — और कहीं और चलते किसी coroutine या OkHttp की call के बारे में कुछ नहीं जानता। तो वह request के चलते रहते ही दावे तक पहुँच जाता है, और वह पास होगा या नहीं यह इस पर टिका है कि मशीन और network कितने तेज हैं, और ठीक यही दस में एक वाली नाकामी है। नींद उसे उस खिड़की को ज्यादातर बार काफी चौड़ा करके छिपा देती है, और बोझ में दबे CI पर गैर-भरोसेमंद बनी रहती है, साथ ही हर बार को धीमा भी कर देती है। IdlingResource Espresso को इंतजार करने को कहता है, और तरीका वही सही है। पर ज्यादातर tests के लिए बेहतर जवाब है उस इंतजार को हटा ही देना: ऐप को MockWebServer की तरफ मोड़िए या नकली repository inject कीजिए, ताकि data तुरंत मौजूद हो और test हर बार एक जैसा चले। UI वाले test को यह साबित करना चाहिए कि सफर चलता है, network को दोबारा जाँचना नहीं।"
+/>
+
+## Intents और permissions
+
+```kotlin title="Intents.kt" numbered
+@get:Rule val intentsRule = IntentsRule()
+
+@Test
+fun sharing_an_order_fires_a_share_intent() {
+    onView(withId(R.id.share)).perform(click())
+
+    intended(allOf(hasAction(Intent.ACTION_SEND), hasType("text/plain")))
+}
+
+@get:Rule
+val permissionRule: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.CAMERA)
+```
+
+`GrantPermissionRule` test से पहले permission दे देता है ताकि system का dialog आए ही नहीं। जो test
+किसी और चीज के बारे में है उसके लिए यह सही है — पर इसका मतलब है कि permission वाला बहाव खुद बिना जाँचे
+रह जाता है, तो एक test ऐसा रखिए जो `UiAutomator` से मना वाला रास्ता चलाए, क्योंकि वह उस system के
+dialog को चला सकता है जो Espresso को दिखता ही नहीं।
+
+<Detail summary="इन tests को उनकी कीमत के लायक बनाना">
+Instrumented test दसियों सेकंड लेता है और उसे device चाहिए। वह कीमत सिर्फ सफरों के लिए चुकाने लायक है,
+तो व्यावहारिक नियम गिनती छोटी और चलना भरोसेमंद रखने के बारे में हैं।
+
+**Animations बंद कीजिए।** `testInstrumentationRunnerArguments["disableAnalytics"]` और emulator की
+animator settings — वरना Espresso animations पर रुका रहता है, और कुछ घूमती रहने वाली animations का
+मतलब है कि वह कभी खाली होता ही नहीं।
+
+**ऐसा test runner लीजिए जो हालत साफ करे।** Hilt वाले test application के साथ कोई `CustomTestRunner`,
+या `clearPackageData = true`, ताकि कोई test उस database को विरासत में न पाए जो किसी और test ने लिखा।
+
+**Network नकली रखिए।** Fixtures वाला MockWebServer चलने को हर बार एक जैसा बना देता है और
+`IdlingResource` की ज्यादातर जरूरत एक साथ हटा देता है।
+
+**गिनती कम रखिए।** पाँच सफर वाले tests जो हमेशा पास होते हैं उन पचास से ज्यादा कीमती हैं जो दस में एक
+बार नाकाम होते हैं — क्योंकि जो suite बार-बार झूठा शोर मचाती है वह अनदेखी होने लगती है, और तब वह
+सुरक्षा जाल रह ही नहीं जाती।
+
+जिस codebase में XML और Compose दोनों की screens हैं, वहाँ `createAndroidComposeRule` एक ही test से
+दोनों चला देता है: View वाले हिस्सों के लिए Espresso के matchers और बाकी के लिए Compose वाले खोजी, उसी
+एक test में।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और दूसरी ही वजह है कि लोग UI tests पर भरोसा नहीं करते">
+**`closeSoftKeyboard()` न होना।** Keyboard अगले निशाने को ढक लेता है और click नाकाम होती है।
+
+**इंतजार के बजाय सोना।** हर बार धीमा और बोझ वाली मशीन पर फिर भी गैर-भरोसेमंद।
+
+**`RecyclerView` के अंदर `onView`।** Screen से बाहर के items होते ही नहीं; `RecyclerViewActions` लीजिए।
+
+**Animations चालू छोड़ना।** Espresso उन पर रुका रहता है, और घूमती रहने वाली कभी खाली नहीं होती।
+
+**UI से तर्क जाँचना।** जिसे unit test तुरंत साबित कर देता उसके लिए device पर मिनट।
+</Pitfall>
+
+## अभ्यास
+
+1. बिना `closeSoftKeyboard()` के किसी field में type कीजिए और नाकामी पढ़िए।
+2. सादे `onView` से 40वें item पर दावा कीजिए, फिर `RecyclerViewActions` से ठीक कीजिए।
+3. किसी network की call के इर्द-गिर्द `IdlingResource` जोड़िए और पक्का कीजिए कि गैर-भरोसेमंदी रुकी।
+4. Network की जगह MockWebServer रखिए और वह `IdlingResource` मिटा दीजिए।
+5. Animations चालू छोड़िए और ऐसी screen ढूँढ़िए जहाँ test कभी खाली नहीं होता।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| वह वाक्य | `onView(matcher).perform(action).check(assertion)` |
+| तालमेल | Main thread के लिए अपने आप, पीछे चलते काम के लिए अंधा |
+| `IdlingResource` | अपने काम का इंतजार Espresso से इसी से कराइए |
+| उससे बेहतर | Network नकली रखिए ताकि इंतजार को कुछ बचे ही नहीं |
+| `closeSoftKeyboard` | वरना keyboard अगले निशाने को ढक लेता है |
+| `RecyclerViewActions` | Screen से बाहर के items hierarchy में हैं ही नहीं |
+| `IntentsRule` | आपके ऐप के चलाए intent पर दावा कीजिए |
+| `GrantPermissionRule` | Dialog छोड़ देता है; मना वाले रास्ते के लिए एक test रखिए |
+| Animations | बंद कीजिए, वरना खाली होना कभी नहीं होता |
+| कितने | गिने-चुने सफर, हमेशा हरे |
+
+<Interview title="एक सवाल, उस गैर-भरोसेमंद test का जिससे सब मिल चुके हैं">
+"कोई Espresso वाला test दस में एक बार नाकाम होता है। हो क्या रहा है?"
+
+लगभग हमेशा यह कि Espresso main thread से तालमेल रख रहा है और test ऐसी चीज का इंतजार कर रहा है जो वहाँ
+है ही नहीं। वह layout, animations और भेजे गए संदेशों के बारे में जानता है, और पीछे चलते किसी coroutine
+या HTTP की call के बारे में कुछ नहीं — तो वह request के चलते रहते ही दावे तक पहुँच जाता है, और वह पास
+होगा या नहीं यह मशीन पर टिका है।
+
+ठीक करने का तरीका ऐसा `IdlingResource` है जो काम चलते रहने तक खुद को व्यस्त बताए। पर ज्यादातर tests के
+लिए बेहतर जवाब है उस इंतजार को हटा देना: ऐप को MockWebServer की तरफ मोड़िए या नकली repository inject
+कीजिए, ताकि data तुरंत मौजूद हो और हर बार एक जैसा चले। UI वाले test को यह साबित करना चाहिए कि सफर चलता
+है, network को दोबारा जाँचना नहीं — और जो suite दस में एक बार नाकाम होती है वह अनदेखी होने लगती है, और
+उस मोड़ पर वह सुरक्षा जाल रह ही नहीं जाती।
+</Interview>

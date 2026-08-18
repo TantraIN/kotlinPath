@@ -1,0 +1,174 @@
+---
+title: View wali vyavastha ke liye Espresso
+description: Espresso, Compose wali testing ka View wala jodidar hai, aur use janne layak isliye hai ki zyadatar Android codebases mein ab bhi XML wali screens hain — aam taur par sabse purani aur sabse kam dhaki hui.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Espresso ka asli yogdan **apne aap hota taalmel** hai: har kaam se pehle wo main thread ke khaali hone
+ka intezar karta hai, to aapko UI ke liye kabhi neend nahi likhni padti. Jo wo dekh nahi sakta wo hai
+aapka peeche chalta kaam, aur gair-bharosemand har Espresso test usi chhed se aata hai.
+</KeyIdea>
+
+## Teen hisse
+
+```kotlin title="OrderActivityTest.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class OrderActivityTest {
+
+    @get:Rule val scenario = ActivityScenarioRule(OrderActivity::class.java)
+
+    @Test
+    fun placing_an_order_shows_a_confirmation() {
+        onView(withId(R.id.quantity))            // dhoondhiye
+            .perform(typeText("2"), closeSoftKeyboard())   // kijiye
+
+        onView(withId(R.id.place_order))
+            .perform(click())
+
+        onView(withText(R.string.order_placed))
+            .check(matches(isDisplayed()))       // dawa kijiye
+    }
+}
+```
+
+Espresso ka har vakya wahi ek vakya hai: `onView(matcher).perform(action).check(assertion)`. Ye dikh
+jane ke baad wo API framework kam aur shabdavali zyada hai.
+
+| Matchers | Actions | Assertions |
+| --- | --- | --- |
+| `withId`, `withText`, `withHint` | `click`, `typeText`, `scrollTo` | `isDisplayed`, `isEnabled` |
+| `withContentDescription` | `swipeLeft`, `pressBack` | `withText`, `hasErrorText` |
+| `isDescendantOfA`, `allOf` | `closeSoftKeyboard`, `replaceText` | `doesNotExist`, `not(...)` |
+
+Type karne ke baad `closeSoftKeyboard()` sajawat nahi hai — button ko dhakta keyboard agli click ko
+"not displayed" ke saath nakaam kar deta hai, aur jo asal mein dhake hone ki mushkil hai uske liye ye
+uljhane wala sandesh hai.
+
+## Lists
+
+```kotlin title="Lists.kt" numbered
+onView(withId(R.id.orders))
+    .perform(
+        RecyclerViewActions.actionOnItemAtPosition<OrderViewHolder>(3, click()),
+    )
+
+onView(withId(R.id.orders))
+    .perform(RecyclerViewActions.scrollTo<OrderViewHolder>(hasDescendant(withText("Coffee"))))
+```
+
+`RecyclerView` sirf dikhne wale views banata hai, to saada `onView(withText("Coffee"))` us item ke liye
+nakaam hota hai jahan tak abhi scroll nahi hua — wo hierarchy mein hai hi nahi. Isiliye
+`RecyclerViewActions` hai, aur isiliye "test tablet par pass hota hai aur phone par nakaam" lagbhag
+hamesha yahi hota hai.
+
+<Quiz
+  question="Koi Espresso wala test aisa button dabata hai jo network se data lata hai aur phir dawa karta hai ki list dikh rahi hai. Wo zyadatar baar pass hota hai aur shayad das mein se ek baar nakaam. Sahi ilaaj kya hai?"
+  options={[
+    "Dawe se pehle `Thread.sleep(2000)` jodiye",
+    "Espresso sirf main thread ka intezar karta hai, peeche chalte kaam ka nahi — aisa `IdlingResource` darj kijiye jo request chalte rehne tak vyast rahe, ya network ki jagah nakli cheez rakhiye taki intezar karne ko kuch bache hi nahi",
+    "Us dawe ko `try/catch` mein lapetkar dobara chalaiye"
+  ]}
+  answer={1}
+  explanation="Espresso main thread ki sandesh-line se taalmel rakhta hai, to wo layout, animations aur bheje gaye kaamon ka theek-theek intezar karta hai — aur kahin aur chalte kisi coroutine ya OkHttp ki call ke baare mein kuch nahi janta. To wo request ke chalte rehte hi dawe tak pahunch jata hai, aur wo pass hoga ya nahi ye is par tika hai ki machine aur network kitne tez hain, aur theek yahi das mein ek wali nakami hai. Neend use us khidki ko zyadatar baar kaafi chauda karke chhupa deti hai, aur bojh mein dabe CI par gair-bharosemand bani rehti hai, saath hi har baar ko dheema bhi kar deti hai. IdlingResource Espresso ko intezar karne ko kehta hai, aur tarika wahi sahi hai. Par zyadatar tests ke liye behtar jawab hai us intezar ko hata hi dena: app ko MockWebServer ki taraf modiye ya nakli repository inject kijiye, taki data turant maujood ho aur test har baar ek jaisa chale. UI wale test ko ye sabit karna chahiye ki safar chalta hai, network ko dobara dekhna nahi."
+/>
+
+## Intents aur permissions
+
+```kotlin title="Intents.kt" numbered
+@get:Rule val intentsRule = IntentsRule()
+
+@Test
+fun sharing_an_order_fires_a_share_intent() {
+    onView(withId(R.id.share)).perform(click())
+
+    intended(allOf(hasAction(Intent.ACTION_SEND), hasType("text/plain")))
+}
+
+@get:Rule
+val permissionRule: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.CAMERA)
+```
+
+`GrantPermissionRule` test se pehle permission de deta hai taki system ka dialog aaye hi nahi. Jo test
+kisi aur cheez ke baare mein hai uske liye ye sahi hai — par iska matlab hai ki permission wala bahav
+khud bina dekhe reh jata hai, to ek test aisa rakhiye jo `UiAutomator` se mana wala raasta chalaye,
+kyunki wo us system ke dialog ko chala sakta hai jo Espresso ko dikhta hi nahi.
+
+<Detail summary="In tests ko unki keemat ke layak banana">
+Instrumented test dasiyon second leta hai aur use device chahiye. Wo keemat sirf safron ke liye chukane
+layak hai, to vyavharik niyam ginti chhoti aur chalna bharosemand rakhne ke baare mein hain.
+
+**Animations band kijiye.** `testInstrumentationRunnerArguments["disableAnalytics"]` aur emulator ki
+animator settings — warna Espresso animations par ruka rehta hai, aur kuch ghoomti rehne wali animations
+ka matlab hai ki wo kabhi khaali hota hi nahi.
+
+**Aisa test runner lijiye jo haalat saaf kare.** Hilt wale test application ke saath koi
+`CustomTestRunner`, ya `clearPackageData = true`, taki koi test us database ko virasat mein na paye jo
+kisi aur test ne likha.
+
+**Network nakli rakhiye.** Fixtures wala MockWebServer chalne ko har baar ek jaisa bana deta hai aur
+`IdlingResource` ki zyadatar zarurat ek saath hata deta hai.
+
+**Ginti kam rakhiye.** Paanch safar wale tests jo hamesha pass hote hain un pachaas se zyada keemti hain
+jo das mein ek baar nakaam hote hain — kyunki jo suite baar-baar jhootha shor machati hai wo andekhi hone
+lagti hai, aur tab wo suraksha jaal reh hi nahi jati.
+
+Jis codebase mein XML aur Compose dono ki screens hain, wahan `createAndroidComposeRule` ek hi test se
+dono chala deta hai: View wale hisson ke liye Espresso ke matchers aur baaki ke liye Compose wale khoji,
+usi ek test mein.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri hi wajah hai ki log UI tests par bharosa nahi karte">
+**`closeSoftKeyboard()` na hona.** Keyboard agle nishane ko dhak leta hai aur click nakaam hoti hai.
+
+**Intezar ke bajaye sona.** Har baar dheema aur bojh wali machine par phir bhi gair-bharosemand.
+
+**`RecyclerView` ke andar `onView`.** Screen se bahar ke items hote hi nahi; `RecyclerViewActions`
+lijiye.
+
+**Animations chalu chhodna.** Espresso un par ruka rehta hai, aur ghoomti rehne wali kabhi khaali nahi
+hoti.
+
+**UI se tark dekhna.** Jise unit test turant sabit kar deta uske liye device par minute.
+</Pitfall>
+
+## Abhyaas
+
+1. Bina `closeSoftKeyboard()` ke kisi field mein type kijiye aur nakami padhiye.
+2. Saade `onView` se 40wein item par dawa kijiye, phir `RecyclerViewActions` se theek kijiye.
+3. Kisi network ki call ke ird-gird `IdlingResource` jodiye aur pakka kijiye ki gair-bharosemandi ruki.
+4. Network ki jagah MockWebServer rakhiye aur wo `IdlingResource` mita dijiye.
+5. Animations chalu chhodiye aur aisi screen dhoondhiye jahan test kabhi khaali nahi hota.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Wo vakya | `onView(matcher).perform(action).check(assertion)` |
+| Taalmel | Main thread ke liye apne aap, peeche chalte kaam ke liye andha |
+| `IdlingResource` | Apne kaam ka intezar Espresso se isi se karaiye |
+| Usse behtar | Network nakli rakhiye taki intezar ko kuch bache hi nahi |
+| `closeSoftKeyboard` | Warna keyboard agle nishane ko dhak leta hai |
+| `RecyclerViewActions` | Screen se bahar ke items hierarchy mein hain hi nahi |
+| `IntentsRule` | Aapke app ke chalaye intent par dawa kijiye |
+| `GrantPermissionRule` | Dialog chhod deta hai; mana wale raaste ke liye ek test rakhiye |
+| Animations | Band kijiye, warna khaali hona kabhi nahi hota |
+| Kitne | Gine-chune safar, hamesha hare |
+
+<Interview title="Ek sawal, us gair-bharosemand test ka jisse sab mil chuke hain">
+"Koi Espresso wala test das mein ek baar nakaam hota hai. Ho kya raha hai?"
+
+Lagbhag hamesha ye ki Espresso main thread se taalmel rakh raha hai aur test aisi cheez ka intezar kar
+raha hai jo wahan hai hi nahi. Wo layout, animations aur bheje gaye sandeshon ke baare mein janta hai,
+aur peeche chalte kisi coroutine ya HTTP ki call ke baare mein kuch nahi — to wo request ke chalte rehte
+hi dawe tak pahunch jata hai, aur wo pass hoga ya nahi ye machine par tika hai.
+
+Theek karne ka tarika aisa `IdlingResource` hai jo kaam chalte rehne tak khud ko vyast bataye. Par
+zyadatar tests ke liye behtar jawab hai us intezar ko hata dena: app ko MockWebServer ki taraf modiye ya
+nakli repository inject kijiye, taki data turant maujood ho aur har baar ek jaisa chale. UI wale test ko
+ye sabit karna chahiye ki safar chalta hai, network ko dobara dekhna nahi — aur jo suite das mein ek baar
+nakaam hoti hai wo andekhi hone lagti hai, aur us mod par wo suraksha jaal reh hi nahi jati.
+</Interview>
