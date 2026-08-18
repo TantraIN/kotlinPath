@@ -1,0 +1,179 @@
+---
+title: Modifiers, aur kram kyun maayne rakhta hai
+description: Modifier ki kadi styles ki koi potli nahi hai. Wo lapeton ki ek kram wali list hai, aur unmein se do ko aapas mein badal dene se badal jata hai ki user ko dikhta kya hai aur wo tap kya kar sakta hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Modifier.a().b()` ka matlab hai **`a` `b` ko lapetta hai**. Kadi ka pehla modifier sabse bahar
+wala hai, isliye kram sajawat nahi hai — wo naap, background aur chhoone ki jagah tay karta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Order.kt" numbered
+// Background padding par ruk jata hai: laal dibba, charon taraf khaali jagah
+Text("Sale", Modifier.padding(16.dp).background(Color.Red))
+
+// Background padding ko bhi dhakta hai: laal dibba, andar dhansa hua text
+Text("Sale", Modifier.background(Color.Red).padding(16.dp))
+```
+
+Wahi do modifiers, do alag screens. Badge ya chip ko asal mein doosra wala chahiye, aur pehla utha
+lena Compose ki sabse aam galti hai.
+
+## Wo roop jo ek bug report ki keemat maangta hai
+
+<Quiz
+  question="Kis kadi se kisi row ke charon taraf ka padding bhi tap hone layak banta hai, taki chhoone ki jagah poore 48dp ki ho?"
+  options={[
+    "`Modifier.padding(16.dp).clickable { }`",
+    "`Modifier.clickable { }.padding(16.dp)`",
+    "Dono — padding kabhi chhoone ki jagah ka hissa hota hi nahi",
+  ]}
+  answer={1}
+  explanation="Kadi ka pehla modifier sabse bahar hota hai, to pehle likha clickable apne baad ki har cheez ko lapetta hai, padding samet, aur poora padding wala ilaka chhoone par jawab deta hai. Padding pehle rakhiye to clickable uske andar baith jata hai, aur ek aise control ke charon taraf 16dp ki mari hui patti chhoot jati hai jo dekhne mein tap hone layak lagta hai. Theek isi tarah koi row dekhne mein bilkul sahi naap ki hoti hai aur chhoone ki jagah 48dp ki accessibility wali had se neeche reh jati hai. Ripple ke liye bhi yahi tark ulta chalta hai: clickable sabse bahar ho to ripple poore padding wale ilake mein bharta hai, aur list ki row aam taur par waisi hi dikhni chahiye."
+/>
+
+## Naap aur padding, dono kramon mein
+
+```kotlin title="Sizes.kt" numbered
+Modifier.size(100.dp).padding(10.dp)    // 100dp ka dibba; content ko 80dp
+Modifier.padding(10.dp).size(100.dp)    // 100dp ka dibba; kul 120dp jagah lagti hai
+```
+
+`size` apne baad ki har cheez ke liye had tay kar deta hai. `padding` apne baad wali cheez ko
+chhota karta hai aur apne pehle wali mein jud jata hai.
+
+<Tip>
+`size` ek maang hai jise parent kaat sakta hai. `requiredSize` parent ki had manne se mana kar
+deta hai aur naap waise hi le leta hai, jisse bachcha apne parent ke bahar tak ban jata hai —
+kabhi-kabhi kaam ka, chaunkata hamesha hai.
+</Tip>
+
+## Wo chalan jo har composable nibhata hai
+
+```kotlin title="Convention.kt" numbered
+@Composable
+fun PriceTag(
+    price: String,
+    modifier: Modifier = Modifier,      // pehla optional parameter
+) {
+    Text(
+        text = price,
+        modifier = modifier             // sabse bahari cheez par, bina badle
+            .background(Color.Yellow)   // aapke apne modifiers baad mein
+            .padding(8.dp),
+    )
+}
+```
+
+Teen hisse hain, aur teenon maayne rakhte hain. Parameter ka naam `modifier` hai, uska default
+`Modifier` hai, aur wo sabse pehle **sabse bahari** cheez par lagta hai taki bulane wale ke faisle
+aapke faislon ko lapetein.
+
+<Warning>
+Jis composable mein `modifier` parameter nahi hai use bulane wala na jagah de sakta hai, na
+padding, na naap. Compose wale code par sabse aam review comment yahi hai, aur isse component us
+ek jagah ke alawa kahin kaam ka nahi rehta jahan wo likha gaya tha.
+</Warning>
+
+## Kuch modifiers sirf kisi layout ke andar hote hain
+
+| Modifier | Kahan milta hai | Kya karta hai |
+| --- | --- | --- |
+| `weight` | `RowScope`, `ColumnScope` | Mukhya disha ki bachi jagah baantta hai |
+| `align` | `BoxScope`, `RowScope`, `ColumnScope` | Bachche ko disha ke aar-paar rakhta hai |
+| `matchParentSize` | `BoxScope` | `Box` jitna naap, uske naap par asar dale bina |
+| `animateItem` | `LazyItemScope` | List ke item ka jagah badalna animate karta hai |
+
+Ye us scope par extension functions hain, isiliye uske bahar compile hi nahi hote. Ye type system
+ka aapko sach batana hai: jab row hai hi nahi, to weight se baantne ko koi bachi hui jagah bhi
+nahi hai.
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Kadi ek linked list hai" meta="Modifier.Element">
+    `Modifier.padding(8.dp).background(Red)` `then` se jude do elements banata hai. List kram se
+    chali jati hai, sabse bahar wale se shuru.
+  </TimelineItem>
+  <TimelineItem title="Har element agle ko lapetta hai" meta="layout, draw, input">
+    Layout wala modifier had leta hai, badalta hai, aur aage bhej deta hai. Draw wala apni lapeti
+    hui cheez se pehle ya baad mein banata hai. Input wala isharon ke liye ek ilaka maang leta hai.
+  </TimelineItem>
+  <TimelineItem title="Modifier.Node ise sasta rakhta hai" meta="aaj ka tarika">
+    Modifiers har recomposition par dobara banne ke bajaye lambe chalne wale nodes par tike hain,
+    to kadi jitni dikhti hai usse kahin kam jagah gherti hai.
+  </TimelineItem>
+  <TimelineItem title="Factories bas functions hain" meta="apna banaiye">
+    `fun Modifier.card() = this.background(surface).padding(12.dp)` ek aam extension hai, aur isi
+    se koi design system har jagah chaar modifiers doharana band karta hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Kadi ko bolkar padhna">
+Baayein se daayein, ek ke baad ek lapeton ki tarah padhiye:
+
+```kotlin title="Chain.kt"
+Modifier
+    .fillMaxWidth()         // parent jitni width de utni lo
+    .padding(horizontal = 16.dp)   // phir dono taraf se andar aao
+    .clip(RoundedCornerShape(12.dp))  // phir jo bacha uske kone gol karo
+    .background(surface)    // phir us gol ilake ko bhar do
+    .clickable { open() }   // phir us ilake ko tap hone layak banao
+    .padding(12.dp)         // phir uske andar content ko dhansa do
+```
+
+Ek hi kadi mein do `padding` galti nahi hai — pehla card ke bahar ki jagah hai, doosra uske andar
+ki. Kisi aur tarah likhne ke liye do composables ek ke andar ek rakhne padte.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo har review mein nikalti hain">
+**`modifier` parameter ka na hona.** Bulane wala us component ko kabhi jagah nahi de sakta.
+
+**Bulane wale ka modifier andar ki kisi cheez par lagana.** Phir uska `padding` aapke layout ke
+charon taraf ke bajaye andar ja padta hai, aur uska `clickable` galat ilaka dhak leta hai.
+
+**`clip` se pehle `background`.** Bharne ke baad kaatne se kone gol nahi hote, kyunki bharna pehle
+hi ho chuka. Pehle `clip`, phir `background`.
+
+**`clickable` se pehle `padding`.** Dekhne mein tap hone layak control ke charon taraf ek mara hua
+ilaka, aur chhoone ki jagah accessibility ki had se neeche.
+</Pitfall>
+
+## Practice
+
+1. `padding` aur `background` ke dono kram agal-bagal likhiye aur unhe dekhiye.
+2. `clickable` se pehle `padding` rakhkar list ki row banaiye, phir dono badliye, aur ripple ki
+   shakal badalte dekhiye.
+3. Jis component mein `modifier` parameter nahi hai usmein jodiye, phir uske do namune bulane wali
+   jagah se alag-alag rakhiye.
+4. Kisi gol kono wale card par `clip` aur `background` dono kramon mein lagaiye.
+5. Apna `Modifier.card()` extension likhiye aur jo chaar modifiers usne badle unhe mita dijiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Kram | Kadi mein pehla hi sabse bahar hai |
+| `padding` phir `background` | Background padding par ruk jata hai |
+| `background` phir `padding` | Background padding ko bhi dhakta hai |
+| Pehle `clickable` | Padding wala ilaka bhi tap hota hai |
+| `size` | Apne baad ki har cheez ke liye had tay karta hai |
+| `requiredSize` | Parent ki had andekhi kar deta hai |
+| `modifier` parameter | Pehla optional parameter, default `Modifier`, sabse bahari cheez par |
+| Scope wale modifiers | `weight`, `align`, `matchParentSize` sirf apne layout ke andar |
+| Apne modifiers | `Modifier` par saade extension functions |
+
+<Interview title="Ye sab puchte hain, aur doosra aadha hissa jawabon ko alag kar deta hai">
+"Kya modifier ka kram maayne rakhta hai?"
+
+Haan — kadi kram wali hai aur pehla modifier sabse bahar ka lapeta hai. Jo jawab asli istemal
+dikhata hai wo padding-background wala namuna nahi, uska result hai: `padding` se pehle
+`clickable` rakhne par padding bhi chhoone ki jagah mein aa jata hai, aur baad mein rakhne par
+charon taraf ek mari hui patti chhoot jati hai — isi tarah koi row dekhne mein bilkul theek rehkar
+48dp ki accessibility wali had se neeche chali jati hai.
+</Interview>

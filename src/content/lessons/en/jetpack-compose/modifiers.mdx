@@ -1,0 +1,177 @@
+---
+title: Modifiers, and why order matters
+description: A modifier chain is not a bag of styles. It is an ordered list of wrappers, and swapping two of them changes what the user can see and tap.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Modifier.a().b()` means **`a` wraps `b`**. The first modifier in the chain is the outermost one,
+so order is not formatting — it decides sizes, backgrounds and touch targets.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Order.kt" numbered
+// Background stops at the padding: a red box with a gap around it
+Text("Sale", Modifier.padding(16.dp).background(Color.Red))
+
+// Background covers the padding: a red box with the text inset
+Text("Sale", Modifier.background(Color.Red).padding(16.dp))
+```
+
+Same two modifiers, two different screens. The second one is what a badge or a chip actually
+wants, and reaching for the first is the most common Compose mistake there is.
+
+## The version that costs you a bug report
+
+<Quiz
+  question="Which chain makes the padding around a row tappable, so the touch target is the full 48dp?"
+  options={[
+    "`Modifier.padding(16.dp).clickable { }`",
+    "`Modifier.clickable { }.padding(16.dp)`",
+    "Both — padding is never part of a touch target",
+  ]}
+  answer={1}
+  explanation="The first modifier in the chain is the outermost, so clickable listed first wraps everything after it, padding included, and the whole padded area responds to touch. Put padding first and the clickable sits inside it, leaving a 16dp dead border around a control that looks tappable. This is exactly how a row ends up with a touch target below the 48dp accessibility minimum while looking perfectly sized. The same logic runs the other way for a ripple: with clickable outermost the ripple fills the padded area, which is usually what a list row should look like."
+/>
+
+## Size and padding, in both orders
+
+```kotlin title="Sizes.kt" numbered
+Modifier.size(100.dp).padding(10.dp)    // 100dp box; content gets 80dp
+Modifier.padding(10.dp).size(100.dp)    // 100dp box; 120dp of space used in total
+```
+
+`size` sets the constraints for everything after it. `padding` shrinks whatever comes next and
+adds to what came before.
+
+<Tip>
+`size` is a request the parent may override. `requiredSize` refuses the parent's constraints and
+takes the size regardless, which is how a child ends up drawing outside its parent — useful
+occasionally, surprising always.
+</Tip>
+
+## The convention every composable follows
+
+```kotlin title="Convention.kt" numbered
+@Composable
+fun PriceTag(
+    price: String,
+    modifier: Modifier = Modifier,      // first optional parameter
+) {
+    Text(
+        text = price,
+        modifier = modifier             // applied to the root, unchanged
+            .background(Color.Yellow)   // your own modifiers go after
+            .padding(8.dp),
+    )
+}
+```
+
+Three parts, and all three matter. The parameter is named `modifier`, it defaults to `Modifier`,
+and it is applied to the **root** element first so the caller's decisions wrap yours.
+
+<Warning>
+A composable without a `modifier` parameter cannot be positioned, padded or sized by its caller.
+It is the single most common review comment on Compose code, and it makes a component unusable
+anywhere but where it was written.
+</Warning>
+
+## Some modifiers only exist inside a layout
+
+| Modifier | Available in | What it does |
+| --- | --- | --- |
+| `weight` | `RowScope`, `ColumnScope` | Divides the leftover main-axis space |
+| `align` | `BoxScope`, `RowScope`, `ColumnScope` | Positions this child across the axis |
+| `matchParentSize` | `BoxScope` | Sizes to the `Box` without influencing it |
+| `animateItem` | `LazyItemScope` | Animates a list item moving position |
+
+These are extension functions on the scope, which is why they simply do not compile outside it.
+That is the type system telling you the truth: there is no leftover space to weight when there is
+no row.
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="A chain is a linked list" meta="Modifier.Element">
+    `Modifier.padding(8.dp).background(Red)` builds two elements joined by `then`. The list is
+    walked in order, outermost first.
+  </TimelineItem>
+  <TimelineItem title="Each element wraps the next" meta="layout, draw, input">
+    A layout modifier receives the constraints, changes them, and passes them on. A draw modifier
+    draws before or after the content it wraps. An input modifier claims a region for gestures.
+  </TimelineItem>
+  <TimelineItem title="Modifier.Node keeps it cheap" meta="the current implementation">
+    Modifiers are backed by long-lived nodes rather than being rebuilt on every recomposition, so
+    a chain is far less allocation than it looks.
+  </TimelineItem>
+  <TimelineItem title="Factories are just functions" meta="compose your own">
+    `fun Modifier.card() = this.background(surface).padding(12.dp)` is a normal extension, and it
+    is how a design system stops repeating four modifiers everywhere.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Reading a chain out loud">
+Read left to right as a series of wrappers:
+
+```kotlin title="Chain.kt"
+Modifier
+    .fillMaxWidth()         // be as wide as the parent allows
+    .padding(horizontal = 16.dp)   // then inset both sides
+    .clip(RoundedCornerShape(12.dp))  // then round what is left
+    .background(surface)    // then fill that rounded area
+    .clickable { open() }   // then make that area tappable
+    .padding(12.dp)         // then inset the content inside it
+```
+
+Two `padding` calls in one chain is not a mistake — the first is the gap outside the card, the
+second is the gap inside it. Written any other way you would need two nested composables.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that turn up in every review">
+**No `modifier` parameter.** The component can never be placed by its caller.
+
+**Applying the caller's modifier to an inner element.** The caller's `padding` then lands inside
+your layout instead of around it, and their `clickable` covers the wrong region.
+
+**`background` before `clip`.** Clipping after filling rounds nothing, because the fill already
+happened. `clip` first, then `background`.
+
+**`padding` before `clickable`.** A dead zone around a control that looks tappable, and a touch
+target under the accessibility minimum.
+</Pitfall>
+
+## Practice
+
+1. Write both orders of `padding` and `background` side by side and look at them.
+2. Build a list row with `padding` before `clickable`, then swap them, and watch the ripple change
+   shape.
+3. Add a `modifier` parameter to a component that lacks one, then place two of them differently
+   from the caller.
+4. Chain `clip` and `background` in both orders on a rounded card.
+5. Write your own `Modifier.card()` extension and delete the four modifiers it replaces.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Order | First in the chain is outermost |
+| `padding` then `background` | The background stops at the padding |
+| `background` then `padding` | The background covers the padding |
+| `clickable` first | The padded area is tappable |
+| `size` | Sets constraints for everything after it |
+| `requiredSize` | Ignores the parent's constraints |
+| `modifier` parameter | First optional parameter, default `Modifier`, applied to the root |
+| Scoped modifiers | `weight`, `align`, `matchParentSize` exist only inside their layout |
+| Custom modifiers | Plain extension functions on `Modifier` |
+
+<Interview title="Everyone asks this, and the second half separates the answers">
+"Does modifier order matter?"
+
+Yes — the chain is ordered and the first modifier is the outermost wrapper. The answer that shows
+real use is a consequence rather than the padding-and-background demo: `clickable` before
+`padding` makes the padding part of the touch target, and after it leaves a dead border, which is
+how a row ends up below the 48dp accessibility minimum while looking exactly right.
+</Interview>

@@ -1,0 +1,176 @@
+---
+title: Modifiers, और क्रम क्यों मायने रखता है
+description: Modifier की कड़ी styles की कोई पोटली नहीं है। वह लपेटों की एक क्रम वाली सूची है, और उनमें से दो को आपस में बदल देने से बदल जाता है कि user को दिखता क्या है और वह tap क्या कर सकता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Modifier.a().b()` का मतलब है **`a` `b` को लपेटता है**। कड़ी का पहला modifier सबसे बाहर वाला है,
+इसलिए क्रम सजावट नहीं है — वह नाप, background और छूने की जगह तय करता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Order.kt" numbered
+// Background padding पर रुक जाता है: लाल डिब्बा, चारों तरफ खाली जगह
+Text("Sale", Modifier.padding(16.dp).background(Color.Red))
+
+// Background padding को भी ढकता है: लाल डिब्बा, अंदर धँसा हुआ text
+Text("Sale", Modifier.background(Color.Red).padding(16.dp))
+```
+
+वही दो modifiers, दो अलग screens। Badge या chip को असल में दूसरा वाला चाहिए, और पहला उठा लेना
+Compose की सबसे आम गलती है।
+
+## वह रूप जो एक bug report की कीमत माँगता है
+
+<Quiz
+  question="किस कड़ी से किसी row के चारों तरफ का padding भी tap होने लायक बनता है, ताकि छूने की जगह पूरे 48dp की हो?"
+  options={[
+    "`Modifier.padding(16.dp).clickable { }`",
+    "`Modifier.clickable { }.padding(16.dp)`",
+    "दोनों — padding कभी छूने की जगह का हिस्सा होता ही नहीं",
+  ]}
+  answer={1}
+  explanation="कड़ी का पहला modifier सबसे बाहर होता है, तो पहले लिखा clickable अपने बाद की हर चीज को लपेटता है, padding समेत, और पूरा padding वाला इलाका छूने पर जवाब देता है। Padding पहले रखिए तो clickable उसके अंदर बैठ जाता है, और एक ऐसे control के चारों तरफ 16dp की मरी हुई पट्टी छूट जाती है जो देखने में tap होने लायक लगता है। ठीक इसी तरह कोई row देखने में बिलकुल सही नाप की होती है और छूने की जगह 48dp की accessibility वाली हद से नीचे रह जाती है। Ripple के लिए भी यही तर्क उल्टा चलता है: clickable सबसे बाहर हो तो ripple पूरे padding वाले इलाके में भरता है, और list की row आमतौर पर वैसी ही दिखनी चाहिए।"
+/>
+
+## नाप और padding, दोनों क्रमों में
+
+```kotlin title="Sizes.kt" numbered
+Modifier.size(100.dp).padding(10.dp)    // 100dp का डिब्बा; content को 80dp
+Modifier.padding(10.dp).size(100.dp)    // 100dp का डिब्बा; कुल 120dp जगह लगती है
+```
+
+`size` अपने बाद की हर चीज के लिए हद तय कर देता है। `padding` अपने बाद वाली चीज को छोटा करता है और
+अपने पहले वाली में जुड़ जाता है।
+
+<Tip>
+`size` एक माँग है जिसे parent काट सकता है। `requiredSize` parent की हद मानने से मना कर देता है और
+नाप वैसे ही ले लेता है, जिससे बच्चा अपने parent के बाहर तक बन जाता है — कभी-कभी काम का, चौंकाता
+हमेशा है।
+</Tip>
+
+## वह चलन जो हर composable निभाता है
+
+```kotlin title="Convention.kt" numbered
+@Composable
+fun PriceTag(
+    price: String,
+    modifier: Modifier = Modifier,      // पहला वैकल्पिक parameter
+) {
+    Text(
+        text = price,
+        modifier = modifier             // सबसे बाहरी चीज पर, बिना बदले
+            .background(Color.Yellow)   // आपके अपने modifiers बाद में
+            .padding(8.dp),
+    )
+}
+```
+
+तीन हिस्से हैं, और तीनों मायने रखते हैं। Parameter का नाम `modifier` है, उसका default `Modifier`
+है, और वह सबसे पहले **सबसे बाहरी** चीज पर लगता है ताकि बुलाने वाले के फैसले आपके फैसलों को लपेटें।
+
+<Warning>
+जिस composable में `modifier` parameter नहीं है उसे बुलाने वाला न जगह दे सकता है, न padding, न
+नाप। Compose वाले code पर सबसे आम review comment यही है, और इससे component उस एक जगह के अलावा कहीं
+काम का नहीं रहता जहाँ वह लिखा गया था।
+</Warning>
+
+## कुछ modifiers सिर्फ किसी layout के अंदर होते हैं
+
+| Modifier | कहाँ मिलता है | क्या करता है |
+| --- | --- | --- |
+| `weight` | `RowScope`, `ColumnScope` | मुख्य दिशा की बची जगह बाँटता है |
+| `align` | `BoxScope`, `RowScope`, `ColumnScope` | बच्चे को दिशा के आर-पार रखता है |
+| `matchParentSize` | `BoxScope` | `Box` जितना नाप, उसके नाप पर असर डाले बिना |
+| `animateItem` | `LazyItemScope` | List के item का जगह बदलना animate करता है |
+
+ये उस scope पर extension functions हैं, इसीलिए उसके बाहर compile ही नहीं होते। यह type system का
+आपको सच बताना है: जब row है ही नहीं, तो weight से बाँटने को कोई बची हुई जगह भी नहीं है।
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="कड़ी एक linked list है" meta="Modifier.Element">
+    `Modifier.padding(8.dp).background(Red)` `then` से जुड़े दो elements बनाता है। सूची क्रम से
+    चली जाती है, सबसे बाहर वाले से शुरू।
+  </TimelineItem>
+  <TimelineItem title="हर element अगले को लपेटता है" meta="layout, draw, input">
+    Layout वाला modifier हद लेता है, बदलता है, और आगे भेज देता है। Draw वाला अपनी लपेटी हुई चीज
+    से पहले या बाद में बनाता है। Input वाला इशारों के लिए एक इलाका माँग लेता है।
+  </TimelineItem>
+  <TimelineItem title="Modifier.Node इसे सस्ता रखता है" meta="आज का तरीका">
+    Modifiers हर recomposition पर दोबारा बनने के बजाय लंबे चलने वाले nodes पर टिके हैं, तो कड़ी
+    जितनी दिखती है उससे कहीं कम जगह घेरती है।
+  </TimelineItem>
+  <TimelineItem title="Factories बस functions हैं" meta="अपना बनाइए">
+    `fun Modifier.card() = this.background(surface).padding(12.dp)` एक आम extension है, और इसी से
+    कोई design system हर जगह चार modifiers दोहराना बंद करता है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="कड़ी को बोलकर पढ़ना">
+बाएँ से दाएँ, एक के बाद एक लपेटों की तरह पढ़िए:
+
+```kotlin title="Chain.kt"
+Modifier
+    .fillMaxWidth()         // parent जितनी चौड़ाई दे उतनी लो
+    .padding(horizontal = 16.dp)   // फिर दोनों तरफ से अंदर आओ
+    .clip(RoundedCornerShape(12.dp))  // फिर जो बचा उसके कोने गोल करो
+    .background(surface)    // फिर उस गोल इलाके को भर दो
+    .clickable { open() }   // फिर उस इलाके को tap होने लायक बनाओ
+    .padding(12.dp)         // फिर उसके अंदर content को धँसा दो
+```
+
+एक ही कड़ी में दो `padding` गलती नहीं है — पहला card के बाहर की जगह है, दूसरा उसके अंदर की। किसी
+और तरह लिखने के लिए दो composables एक के अंदर एक रखने पड़ते।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो हर review में निकलती हैं">
+**`modifier` parameter का न होना।** बुलाने वाला उस component को कभी जगह नहीं दे सकता।
+
+**बुलाने वाले का modifier अंदर की किसी चीज पर लगाना।** फिर उसका `padding` आपके layout के चारों तरफ
+के बजाय अंदर जा पड़ता है, और उसका `clickable` गलत इलाका ढक लेता है।
+
+**`clip` से पहले `background`।** भरने के बाद काटने से कोने गोल नहीं होते, क्योंकि भरना पहले ही हो
+चुका। पहले `clip`, फिर `background`।
+
+**`clickable` से पहले `padding`।** देखने में tap होने लायक control के चारों तरफ एक मरा हुआ इलाका,
+और छूने की जगह accessibility की हद से नीचे।
+</Pitfall>
+
+## अभ्यास
+
+1. `padding` और `background` के दोनों क्रम अगल-बगल लिखिए और उन्हें देखिए।
+2. `clickable` से पहले `padding` रखकर list की row बनाइए, फिर दोनों बदलिए, और ripple की शक्ल बदलते
+   देखिए।
+3. जिस component में `modifier` parameter नहीं है उसमें जोड़िए, फिर उसके दो नमूने बुलाने वाली जगह
+   से अलग-अलग रखिए।
+4. किसी गोल कोनों वाले card पर `clip` और `background` दोनों क्रमों में लगाइए।
+5. अपना `Modifier.card()` extension लिखिए और जो चार modifiers उसने बदले उन्हें मिटा दीजिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| क्रम | कड़ी में पहला ही सबसे बाहर है |
+| `padding` फिर `background` | Background padding पर रुक जाता है |
+| `background` फिर `padding` | Background padding को भी ढकता है |
+| पहले `clickable` | Padding वाला इलाका भी tap होता है |
+| `size` | अपने बाद की हर चीज के लिए हद तय करता है |
+| `requiredSize` | Parent की हद अनदेखी कर देता है |
+| `modifier` parameter | पहला वैकल्पिक parameter, default `Modifier`, सबसे बाहरी चीज पर |
+| Scope वाले modifiers | `weight`, `align`, `matchParentSize` सिर्फ अपने layout के अंदर |
+| अपने modifiers | `Modifier` पर सादे extension functions |
+
+<Interview title="यह सब पूछते हैं, और दूसरा आधा हिस्सा जवाबों को अलग कर देता है">
+"क्या modifier का क्रम मायने रखता है?"
+
+हाँ — कड़ी क्रम वाली है और पहला modifier सबसे बाहर का लपेटा है। जो जवाब असली इस्तेमाल दिखाता है वह
+padding-background वाला नमूना नहीं, उसका नतीजा है: `padding` से पहले `clickable` रखने पर padding
+भी छूने की जगह में आ जाता है, और बाद में रखने पर चारों तरफ एक मरी हुई पट्टी छूट जाती है — इसी तरह
+कोई row देखने में बिलकुल ठीक रहकर 48dp की accessibility वाली हद से नीचे चली जाती है।
+</Interview>
