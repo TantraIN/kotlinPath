@@ -1,0 +1,205 @@
+---
+title: Ishare aur pointer input
+description: API ki teen paratein, ek shabd wale modifier se lekar kachche pointer events tak. Isharon ka lagbhag har bug yahi hai ki kisi ne kaam ki zarurat se neeche wali parat utha li.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Ishare sambhalne ki **paratein** hain: sabse upar `clickable` aur `draggable` jaise modifiers, beech
+mein `pointerInput` ke andar ke detectors, aur sabse neeche kachche pointer events. Hamesha wo sabse
+upari parat lijiye jisse kaam chal jaye — har ek kadam neeche utarne par kuch bartaav chhin jata
+hai, jise phir haath se banana padta hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Two.kt"
+Modifier.clickable { open() }
+
+Modifier.pointerInput(Unit) { detectTapGestures { open() } }
+```
+
+Dono tap par jawab dete hain. Sirf pehle wale mein ripple hai, TalkBack use bolkar batata hai aur
+chala bhi sakta hai, wo Enter key par jawab deta hai, focus ki lakeer dikhata hai, aur accessibility
+ki sewaon ko khud ko button batata hai.
+
+## Har parat ki keemat
+
+<Quiz
+  question="Aapko long press bhi chahiye, to aap `Modifier.clickable { }` ki jagah `Modifier.pointerInput(Unit) { detectTapGestures { } }` rakh dete hain. Tootta kya hai?"
+  options={[
+    "Kuch nahi — `detectTapGestures` wahi modifier hai, bas zyada callbacks ke saath",
+    "Ripple, accessibility wala kaam, keyboard se chalana aur focus ki lakeer, sab chale jate hain",
+    "Sirf ripple, jise `Modifier.indication` se wapas joda ja sakta hai",
+  ]}
+  answer={1}
+  explanation="clickable sirf tap sunne wala nahi hai. Wo ripple ke liye indication lagata hai, semantics lagata hai taki TalkBack use button batakar chala sake, focus sambhalta hai taki keyboard ya D-pad se chale, aur jin devices mein pointer hai wahan hover wala bartaav bhi deta hai. detectTapGestures aapko chhoone ki ghatna deta hai aur kuch nahi, to jo app ek ki jagah doosra rakh deti hai wo screen reader ke saath bekar ho jati hai aur dekhne mein bilkul theek lagti hai. Yahan sahi cheez combinedClickable hai, jo ye sab rakhte hue onLongClick jod deti hai. pointerInput tabhi uthaiye jab koi modifier us ishare ko keh hi nahi pata, aur tab semantics khud wapas jodiye."
+/>
+
+## Upari parat zyadatar kaam sambhal leti hai
+
+| Modifier | Ishara |
+| --- | --- |
+| `clickable` | Tap, saath mein indication, semantics aur focus |
+| `combinedClickable` | Tap, long press aur double tap, wo sab rakhte hue |
+| `toggleable` / `selectable` | Aisa tap jo apni haalat accessibility ko batata hai |
+| `draggable` | Ek disha mein kheenchna, ek state wali cheez ke saath |
+| `scrollable` | Aisa kheenchna jo scroll banata hai, aur nested scrolling mein shamil hota hai |
+| `transformable` | Pinch, pan aur ghumana, teenon saath |
+| `swipeable` / `AnchoredDraggable` | Aisa kheenchna jo tay thikanon par jakar baithta hai |
+
+```kotlin title="Drag.kt" numbered
+val state = rememberDraggableState { delta -> offsetX += delta }
+
+Box(
+    Modifier
+        .offset { IntOffset(offsetX.roundToInt(), 0) }
+        .draggable(state = state, orientation = Orientation.Horizontal),
+)
+```
+
+## `pointerInput` tak utarna
+
+```kotlin title="Pointer.kt" numbered
+Modifier.pointerInput(itemId) {                 // key maayne rakhti hai, neeche dekhiye
+    detectDragGesturesAfterLongPress(
+        onDragStart = { onReorderStart(itemId) },
+        onDrag = { change, drag ->
+            change.consume()                     // upar wali list ka scroll rok dijiye
+            onMove(drag)
+        },
+        onDragEnd = { onReorderEnd() },
+    )
+}
+```
+
+<Warning>
+`pointerInput(Unit)` mein theek wahi jaal hai jo `LaunchedEffect(Unit)` mein hai. Wo block ek
+coroutine hai jo ek baar shuru hota hai aur apni pakdi hui values liye rehta hai, to baad mein
+badalne wali koi lambda ya id andekhi reh jati hai — ishara hamesha ke liye pehle wale item par hi
+kaam karta rehta hai. Use usi cheez par key kijiye jis par wo tika hai, ya sabse nai lambda
+`rememberUpdatedState` se padhiye.
+</Warning>
+
+## Consume karna, aur wo ghatna aur kaun dekhta hai
+
+```kotlin title="Consume.kt"
+onDrag = { change, _ ->
+    change.consume()      // ye ghatna sambhal li gayi; upar wale ise andekha karein
+}
+```
+
+Pointer ki ghatna sabse gehre chhue hue composable tak neeche jati hai aur phir wapas upar aati
+hai. Use consume karna us par "sambhal li" ka nishan lagata hai, taki scroll hota koi parent bhi us
+par kaam na kare. Consume karna bhoolna hi wo wajah hai ki khadi list ke andar aade mein khinchne
+wali row khinchti *bhi* hai aur scroll *bhi* karti hai.
+
+<Detail summary="Sabse neeche wali parat, aur teen daur">
+```kotlin title="Raw.kt" numbered
+Modifier.pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown()
+        do {
+            val event = awaitPointerEvent()
+            // event.changes mein abhi dabi hui har ungli hoti hai
+        } while (event.changes.any { it.pressed })
+    }
+}
+```
+
+Har ghatna teen daur mein pahunchti hai. `Initial` mein pehle parents chalte hain, to koi upar wala
+apne bachchon ke dekhne se pehle hi ghatna par dawa kar sakta hai — scroll karne wala dibba apne
+andar ke button se khinchav isi tarah jeetta hai. `Main` aam daur hai, jismein pehle bachche.
+`Final` uske baad chalta hai taki parent dekh sake ki kya-kya consume hua.
+
+Ye parat sach mein apni tarah ke isharon ke liye chahiye — koi drawing canvas, koi kai ungliyon wala
+chart. Baaki har cheez ko upar wala koi na koi modifier pehle hi keh deta hai.
+</Detail>
+
+## Jo chhoda, use wapas lana
+
+```kotlin title="Semantics.kt" numbered
+Modifier
+    .pointerInput(Unit) { detectTapGestures(onDoubleTap = { like() }) }
+    .semantics {
+        onClick(label = "Like") { like(); true }
+    }
+```
+
+Jis cheez ko user ko chalana hai us par agar ishara haath se hi sambhalna pade, to semantics wapas
+jodiye. Screen reader ke liye double tap jaisa kuch hota hi nahi, isliye use saaf-saaf ek aisa kaam
+chahiye jise wo bol bhi sake aur kar bhi sake.
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Hit testing sabse gehra nishana dhundhta hai" meta="phir wapas upar chalta hai">
+    Ghatna pehle ungli ke neeche wale sabse andaruni composable ko di jati hai aur phir uske upar
+    walon ko, isiliye consume karna maayne rakhta hai.
+  </TimelineItem>
+  <TimelineItem title="`pointerInput` ek coroutine hai" meta="keys ke saath, effect ki tarah">
+    Wo block ghatnaon ke intezar mein ruka rehta hai. Key badalne par wo rokkar naya shuru hota hai,
+    aur nai pakdi hui values use sirf isi tarah milti hain.
+  </TimelineItem>
+  <TimelineItem title="Khinchav se pehle touch slop" meta="taki tap khinchav na ban jaye">
+    Kheenchne wale detectors tab tak khabar nahi dete jab tak ungli ek had se zyada na sarak jaye,
+    aur isi se har tap ek pixel ka khinchav banne se bachta hai.
+  </TimelineItem>
+  <TimelineItem title="Nested scroll ka apna tarika hai" meta="sirf consume karna nahi">
+    `NestedScrollConnection` se parent bachche se pehle ya baad mein scroll le sakta hai — list ke
+    upar sikudne wala toolbar isi tarah chalta hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, aur pehli users tak pahunch jati hai">
+**`clickable` ki jagah `pointerInput` rakhna.** Ripple, focus aur accessibility sab chale jate hain,
+aur koi chetata bhi nahi.
+
+**Badalte data par `pointerInput(Unit)`.** Ishara usi par kaam karta rehta hai jise usne pehle
+pakda tha.
+
+**Consume na karna.** Upar wala scroller usi khinchav par kaam karta hai, aur dono aapas mein
+bhidte hain.
+
+**Content ke upar poore naap ka transparent `Box`.** Wo hit test mein aata hai, to neeche ka har tap
+chupchap nigal jata hai — aam taur par wo kisi gradient ya scrim ke liye rakha gaya hota hai.
+</Pitfall>
+
+## Practice
+
+1. Ek `clickable` row aur ek `detectTapGestures` row agal-bagal rakhiye aur TalkBack chalu karke
+   dono aazmaiye.
+2. Doosri ko `combinedClickable` se badliye aur dekhiye ki long press aur accessibility dono chalte
+   hain.
+3. `LazyColumn` ke andar bina consume kiye aade mein khinchne wali row banaiye, phir consume
+   kijiye, aur milaiye.
+4. Item ki id badalte hue `pointerInput` ko `Unit` par key kijiye, use galat item par kaam karte
+   dekhiye, phir key theek kijiye.
+5. `transformable` se do ungliyon wala pinch-to-zoom likhiye, phir wahi kachche pointer events se,
+   aur lines giniye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Paratein | Modifier, phir detector, phir kachche events — jo sabse upari chal jaye wahi |
+| `clickable` | Tap ke saath ripple, semantics, focus aur keyboard |
+| `combinedClickable` | Wo sab rakhte hue long press aur double tap jodta hai |
+| `draggable` / `scrollable` | Ek disha ka khinchav, aur wo khinchav jo scroll banta hai |
+| `transformable` | Pinch, pan aur ghumana |
+| `pointerInput(key)` | Ek coroutine; key theek waise hi chalti hai jaise kisi effect ki |
+| `change.consume()` | Ghatna par "sambhal li" ka nishan, taki upar wale chhod dein |
+| Daur | `Initial` mein pehle parent, `Main` mein pehle bachche, `Final` uske baad |
+| `semantics` | Haath se sambhale ishare ne jo accessibility chheeni, use wapas laiye |
+
+<Interview title="Wo sawal jo bata deta hai ki kisi ne screen reader se parkha hai ya nahi">
+"`clickable` ki jagah `pointerInput` se tap sambhalne par kya khote hain?"
+
+Ripple, wo accessibility semantics jinse wo TalkBack ke bolne aur chalane layak button banta hai,
+keyboard aur D-pad se chalna, aur focus ki lakeer. Asar karne wala jawab uska result hai: screen
+aapko bilkul waisi hi dikhti aur chalti hai, aur screen reader ke saath bekar hoti hai — isiliye
+long press wale us mamle ke liye `combinedClickable` hai jo aam taur par logon ko ek parat neeche
+kheench le jata hai.
+</Interview>

@@ -1,0 +1,200 @@
+---
+title: इशारे और pointer input
+description: API की तीन परतें, एक शब्द वाले modifier से लेकर कच्चे pointer events तक। इशारों का लगभग हर bug यही है कि किसी ने काम की जरूरत से नीचे वाली परत उठा ली।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+इशारे सँभालने की **परतें** हैं: सबसे ऊपर `clickable` और `draggable` जैसे modifiers, बीच में
+`pointerInput` के अंदर के detectors, और सबसे नीचे कच्चे pointer events। हमेशा वह सबसे ऊपरी परत
+लीजिए जिससे काम चल जाए — हर एक कदम नीचे उतरने पर कुछ बरताव छिन जाता है, जिसे फिर हाथ से बनाना पड़ता
+है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Two.kt"
+Modifier.clickable { open() }
+
+Modifier.pointerInput(Unit) { detectTapGestures { open() } }
+```
+
+दोनों tap पर जवाब देते हैं। सिर्फ पहले वाले में ripple है, TalkBack उसे बोलकर बताता है और चला भी
+सकता है, वह Enter key पर जवाब देता है, focus की लकीर दिखाता है, और accessibility की सेवाओं को खुद
+को button बताता है।
+
+## हर परत की कीमत
+
+<Quiz
+  question="आपको long press भी चाहिए, तो आप `Modifier.clickable { }` की जगह `Modifier.pointerInput(Unit) { detectTapGestures { } }` रख देते हैं। टूटता क्या है?"
+  options={[
+    "कुछ नहीं — `detectTapGestures` वही modifier है, बस ज्यादा callbacks के साथ",
+    "Ripple, accessibility वाला काम, keyboard से चलाना और focus की लकीर, सब चले जाते हैं",
+    "सिर्फ ripple, जिसे `Modifier.indication` से वापस जोड़ा जा सकता है",
+  ]}
+  answer={1}
+  explanation="clickable सिर्फ tap सुनने वाला नहीं है। वह ripple के लिए indication लगाता है, semantics लगाता है ताकि TalkBack उसे button बताकर चला सके, focus सँभालता है ताकि keyboard या D-pad से चले, और जिन devices में pointer है वहाँ hover वाला बरताव भी देता है। detectTapGestures आपको छूने की घटना देता है और कुछ नहीं, तो जो app एक की जगह दूसरा रख देती है वह screen reader के साथ बेकार हो जाती है और देखने में बिलकुल ठीक लगती है। यहाँ सही चीज combinedClickable है, जो यह सब रखते हुए onLongClick जोड़ देती है। pointerInput तभी उठाइए जब कोई modifier उस इशारे को कह ही नहीं पाता, और तब semantics खुद वापस जोड़िए।"
+/>
+
+## ऊपरी परत ज्यादातर काम सँभाल लेती है
+
+| Modifier | इशारा |
+| --- | --- |
+| `clickable` | Tap, साथ में indication, semantics और focus |
+| `combinedClickable` | Tap, long press और double tap, वह सब रखते हुए |
+| `toggleable` / `selectable` | ऐसा tap जो अपनी हालत accessibility को बताता है |
+| `draggable` | एक दिशा में खींचना, एक state वाली चीज के साथ |
+| `scrollable` | ऐसा खींचना जो scroll बनाता है, और nested scrolling में शामिल होता है |
+| `transformable` | Pinch, pan और घुमाना, तीनों साथ |
+| `swipeable` / `AnchoredDraggable` | ऐसा खींचना जो तय ठिकानों पर जाकर बैठता है |
+
+```kotlin title="Drag.kt" numbered
+val state = rememberDraggableState { delta -> offsetX += delta }
+
+Box(
+    Modifier
+        .offset { IntOffset(offsetX.roundToInt(), 0) }
+        .draggable(state = state, orientation = Orientation.Horizontal),
+)
+```
+
+## `pointerInput` तक उतरना
+
+```kotlin title="Pointer.kt" numbered
+Modifier.pointerInput(itemId) {                 // key मायने रखती है, नीचे देखिए
+    detectDragGesturesAfterLongPress(
+        onDragStart = { onReorderStart(itemId) },
+        onDrag = { change, drag ->
+            change.consume()                     // ऊपर वाली list का scroll रोक दीजिए
+            onMove(drag)
+        },
+        onDragEnd = { onReorderEnd() },
+    )
+}
+```
+
+<Warning>
+`pointerInput(Unit)` में ठीक वही जाल है जो `LaunchedEffect(Unit)` में है। वह block एक coroutine है
+जो एक बार शुरू होता है और अपनी पकड़ी हुई values लिए रहता है, तो बाद में बदलने वाली कोई lambda या id
+अनदेखी रह जाती है — इशारा हमेशा के लिए पहले वाले item पर ही काम करता रहता है। उसे उसी चीज पर key
+कीजिए जिस पर वह टिका है, या सबसे नई lambda `rememberUpdatedState` से पढ़िए।
+</Warning>
+
+## Consume करना, और वह घटना और कौन देखता है
+
+```kotlin title="Consume.kt"
+onDrag = { change, _ ->
+    change.consume()      // यह घटना सँभाल ली गई; ऊपर वाले इसे अनदेखा करें
+}
+```
+
+Pointer की घटना सबसे गहरे छुए हुए composable तक नीचे जाती है और फिर वापस ऊपर आती है। उसे consume
+करना उस पर "सँभाल ली" का निशान लगाता है, ताकि scroll होता कोई parent भी उस पर काम न करे। Consume
+करना भूलना ही वह वजह है कि खड़ी list के अंदर आड़े में खिंचने वाली row खिंचती *भी* है और scroll *भी*
+करती है।
+
+<Detail summary="सबसे नीचे वाली परत, और तीन दौर">
+```kotlin title="Raw.kt" numbered
+Modifier.pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown()
+        do {
+            val event = awaitPointerEvent()
+            // event.changes में अभी दबी हुई हर उँगली होती है
+        } while (event.changes.any { it.pressed })
+    }
+}
+```
+
+हर घटना तीन दौर में पहुँचती है। `Initial` में पहले parents चलते हैं, तो कोई ऊपर वाला अपने बच्चों के
+देखने से पहले ही घटना पर दावा कर सकता है — scroll करने वाला डिब्बा अपने अंदर के button से खिंचाव
+इसी तरह जीतता है। `Main` आम दौर है, जिसमें पहले बच्चे। `Final` उसके बाद चलता है ताकि parent देख सके
+कि क्या-क्या consume हुआ।
+
+यह परत सच में अपनी तरह के इशारों के लिए चाहिए — कोई drawing canvas, कोई कई उँगलियों वाला chart।
+बाकी हर चीज को ऊपर वाला कोई न कोई modifier पहले ही कह देता है।
+</Detail>
+
+## जो छोड़ा, उसे वापस लाना
+
+```kotlin title="Semantics.kt" numbered
+Modifier
+    .pointerInput(Unit) { detectTapGestures(onDoubleTap = { like() }) }
+    .semantics {
+        onClick(label = "Like") { like(); true }
+    }
+```
+
+जिस चीज को user को चलाना है उस पर अगर इशारा हाथ से ही सँभालना पड़े, तो semantics वापस जोड़िए। Screen
+reader के लिए double tap जैसा कुछ होता ही नहीं, इसलिए उसे साफ-साफ एक ऐसा काम चाहिए जिसे वह बोल भी
+सके और कर भी सके।
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="Hit testing सबसे गहरा निशाना ढूँढ़ता है" meta="फिर वापस ऊपर चलता है">
+    घटना पहले उँगली के नीचे वाले सबसे अंदरूनी composable को दी जाती है और फिर उसके ऊपर वालों को,
+    इसीलिए consume करना मायने रखता है।
+  </TimelineItem>
+  <TimelineItem title="`pointerInput` एक coroutine है" meta="keys के साथ, effect की तरह">
+    वह block घटनाओं के इंतजार में रुका रहता है। Key बदलने पर वह रोककर नया शुरू होता है, और नई पकड़ी
+    हुई values उसे सिर्फ इसी तरह मिलती हैं।
+  </TimelineItem>
+  <TimelineItem title="खिंचाव से पहले touch slop" meta="ताकि tap खिंचाव न बन जाए">
+    खींचने वाले detectors तब तक खबर नहीं देते जब तक उँगली एक हद से ज्यादा न सरक जाए, और इसी से हर
+    tap एक pixel का खिंचाव बनने से बचता है।
+  </TimelineItem>
+  <TimelineItem title="Nested scroll का अपना तरीका है" meta="सिर्फ consume करना नहीं">
+    `NestedScrollConnection` से parent बच्चे से पहले या बाद में scroll ले सकता है — list के ऊपर
+    सिकुड़ने वाला toolbar इसी तरह चलता है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, और पहली users तक पहुँच जाती है">
+**`clickable` की जगह `pointerInput` रखना।** Ripple, focus और accessibility सब चले जाते हैं, और कोई
+चेताता भी नहीं।
+
+**बदलते data पर `pointerInput(Unit)`।** इशारा उसी पर काम करता रहता है जिसे उसने पहले पकड़ा था।
+
+**Consume न करना।** ऊपर वाला scroller उसी खिंचाव पर काम करता है, और दोनों आपस में भिड़ते हैं।
+
+**Content के ऊपर पूरे नाप का पारदर्शी `Box`।** वह hit test में आता है, तो नीचे का हर tap चुपचाप निगल
+जाता है — आमतौर पर वह किसी gradient या scrim के लिए रखा गया होता है।
+</Pitfall>
+
+## अभ्यास
+
+1. एक `clickable` row और एक `detectTapGestures` row अगल-बगल रखिए और TalkBack चालू करके दोनों
+   आजमाइए।
+2. दूसरी को `combinedClickable` से बदलिए और देखिए कि long press और accessibility दोनों चलते हैं।
+3. `LazyColumn` के अंदर बिना consume किए आड़े में खिंचने वाली row बनाइए, फिर consume कीजिए, और
+   मिलाइए।
+4. Item की id बदलते हुए `pointerInput` को `Unit` पर key कीजिए, उसे गलत item पर काम करते देखिए, फिर
+   key ठीक कीजिए।
+5. `transformable` से दो उँगलियों वाला pinch-to-zoom लिखिए, फिर वही कच्चे pointer events से, और
+   lines गिनिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| परतें | Modifier, फिर detector, फिर कच्चे events — जो सबसे ऊपरी चल जाए वही |
+| `clickable` | Tap के साथ ripple, semantics, focus और keyboard |
+| `combinedClickable` | वह सब रखते हुए long press और double tap जोड़ता है |
+| `draggable` / `scrollable` | एक दिशा का खिंचाव, और वह खिंचाव जो scroll बनता है |
+| `transformable` | Pinch, pan और घुमाना |
+| `pointerInput(key)` | एक coroutine; key ठीक वैसे ही चलती है जैसे किसी effect की |
+| `change.consume()` | घटना पर "सँभाल ली" का निशान, ताकि ऊपर वाले छोड़ दें |
+| दौर | `Initial` में पहले parent, `Main` में पहले बच्चे, `Final` उसके बाद |
+| `semantics` | हाथ से सँभाले इशारे ने जो accessibility छीनी, उसे वापस लाइए |
+
+<Interview title="वह सवाल जो बता देता है कि किसी ने screen reader से जाँचा है या नहीं">
+"`clickable` की जगह `pointerInput` से tap सँभालने पर क्या खोते हैं?"
+
+Ripple, वे accessibility semantics जिनसे वह TalkBack के बोलने और चलाने लायक button बनता है,
+keyboard और D-pad से चलना, और focus की लकीर। असर करने वाला जवाब उसका नतीजा है: screen आपको बिलकुल
+वैसी ही दिखती और चलती है, और screen reader के साथ बेकार होती है — इसीलिए long press वाले उस मामले
+के लिए `combinedClickable` है जो आमतौर पर लोगों को एक परत नीचे खींच ले जाता है।
+</Interview>

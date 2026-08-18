@@ -1,0 +1,200 @@
+---
+title: Gestures and pointer input
+description: Three layers of API, from a one-word modifier to raw pointer events. Almost every gesture bug is somebody reaching for a lower layer than the job needed.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Gesture handling comes in **layers**: high-level modifiers like `clickable` and `draggable`,
+mid-level detectors inside `pointerInput`, and raw pointer events underneath. Always use the
+highest layer that does the job — each step down costs you behaviour you then have to rebuild by
+hand.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Two.kt"
+Modifier.clickable { open() }
+
+Modifier.pointerInput(Unit) { detectTapGestures { open() } }
+```
+
+Both react to a tap. Only the first one has a ripple, is announced and activatable by TalkBack,
+responds to the Enter key, shows a focus ring, and reports itself as a button to accessibility
+services.
+
+## What the layers cost you
+
+<Quiz
+  question="You replace `Modifier.clickable { }` with `Modifier.pointerInput(Unit) { detectTapGestures { } }` because you also need a long press. What breaks?"
+  options={[
+    "Nothing — `detectTapGestures` is the same modifier with more callbacks",
+    "The ripple, the accessibility action, keyboard activation and the focus indicator all disappear",
+    "Only the ripple, which you can add back with `Modifier.indication`",
+  ]}
+  answer={1}
+  explanation="clickable is not just a tap listener. It attaches indication for the ripple, semantics so TalkBack announces the element as a button and can activate it, focus handling so it works with a keyboard or a D-pad, and hover behaviour on devices that have a pointer. detectTapGestures gives you the touch event and nothing else, so an app that swaps one for the other becomes unusable with a screen reader while looking completely normal. The right move here is combinedClickable, which keeps all of that and adds onLongClick. Reach for pointerInput only when no modifier expresses the gesture, and then add the semantics back yourself."
+/>
+
+## The high layer covers most of it
+
+| Modifier | Gesture |
+| --- | --- |
+| `clickable` | Tap, with indication, semantics and focus |
+| `combinedClickable` | Tap, long press and double tap, keeping all of that |
+| `toggleable` / `selectable` | Tap that reports its state to accessibility |
+| `draggable` | One-axis drag, with a state object |
+| `scrollable` | A drag that produces scroll, and joins nested scrolling |
+| `transformable` | Pinch, pan and rotate together |
+| `swipeable` / `AnchoredDraggable` | A drag that settles to fixed anchor points |
+
+```kotlin title="Drag.kt" numbered
+val state = rememberDraggableState { delta -> offsetX += delta }
+
+Box(
+    Modifier
+        .offset { IntOffset(offsetX.roundToInt(), 0) }
+        .draggable(state = state, orientation = Orientation.Horizontal),
+)
+```
+
+## Dropping to `pointerInput`
+
+```kotlin title="Pointer.kt" numbered
+Modifier.pointerInput(itemId) {                 // the key matters, see below
+    detectDragGesturesAfterLongPress(
+        onDragStart = { onReorderStart(itemId) },
+        onDrag = { change, drag ->
+            change.consume()                     // stop the parent list scrolling
+            onMove(drag)
+        },
+        onDragEnd = { onReorderEnd() },
+    )
+}
+```
+
+<Warning>
+`pointerInput(Unit)` has exactly the same trap as `LaunchedEffect(Unit)`. The block is a coroutine
+that starts once and keeps the values it captured, so a lambda or an id that changes later is
+ignored — the gesture keeps acting on the first item forever. Key it on what it depends on, or
+read the newest lambda through `rememberUpdatedState`.
+</Warning>
+
+## Consuming, and who else sees the event
+
+```kotlin title="Consume.kt"
+onDrag = { change, _ ->
+    change.consume()      // this event is handled; ancestors should ignore it
+}
+```
+
+A pointer event travels down to the deepest hit composable and then back up. Consuming it marks it
+as handled so a scrolling parent does not also act on it. Forgetting to consume is why a
+horizontally draggable row inside a vertical list drags *and* scrolls at once.
+
+<Detail summary="The lowest layer, and the three passes">
+```kotlin title="Raw.kt" numbered
+Modifier.pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown()
+        do {
+            val event = awaitPointerEvent()
+            // event.changes carries every pointer currently down
+        } while (event.changes.any { it.pressed })
+    }
+}
+```
+
+Each event is delivered in three passes. `Initial` runs parents first, so an ancestor can claim an
+event before its children see it — this is how a scrolling container can win a drag from a button
+inside it. `Main` is the normal pass, children first. `Final` runs afterwards so a parent can react
+to what was consumed.
+
+You need this layer for genuinely custom interactions — a drawing canvas, a multi-touch chart. For
+anything else, one of the modifiers above already expresses it.
+</Detail>
+
+## Restoring what you gave up
+
+```kotlin title="Semantics.kt" numbered
+Modifier
+    .pointerInput(Unit) { detectTapGestures(onDoubleTap = { like() }) }
+    .semantics {
+        onClick(label = "Like") { like(); true }
+    }
+```
+
+If you must handle a gesture manually on something the user is meant to activate, add the
+semantics back. A double tap has no equivalent for a screen reader, so it needs an explicit action
+it can announce and perform.
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Hit testing finds the deepest target" meta="then walks back up">
+    The event is offered to the innermost composable under the finger and then to its ancestors,
+    which is why consuming matters.
+  </TimelineItem>
+  <TimelineItem title="`pointerInput` is a coroutine" meta="with keys, like an effect">
+    The block suspends waiting for events. Changing a key cancels it and starts a new one, which is
+    the only way it picks up new captured values.
+  </TimelineItem>
+  <TimelineItem title="Touch slop before a drag" meta="so a tap is not a drag">
+    The drag detectors wait until the finger has moved past a threshold before reporting, which is
+    what stops every tap becoming a one-pixel drag.
+  </TimelineItem>
+  <TimelineItem title="Nested scroll is its own protocol" meta="not just consumption">
+    `NestedScrollConnection` lets a parent take scroll before or after a child — that is how a
+    collapsing toolbar works above a list.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four, and the first one ships to users">
+**Replacing `clickable` with `pointerInput`.** Ripple, focus and accessibility all disappear, and
+nothing warns you.
+
+**`pointerInput(Unit)` over changing data.** The gesture keeps acting on whatever it captured first.
+
+**Not consuming.** A parent scroller reacts to the same drag, and the two fight.
+
+**A full-size transparent `Box` over content.** It hit-tests, so it silently swallows every tap
+underneath it — usually added for a gradient or a scrim.
+</Pitfall>
+
+## Practice
+
+1. Put a `clickable` row and a `detectTapGestures` row side by side and try both with TalkBack on.
+2. Replace the second with `combinedClickable` and confirm the long press and accessibility both
+   work.
+3. Build a horizontally draggable row inside a `LazyColumn` without consuming, then consume, and
+   compare.
+4. Key a `pointerInput` on `Unit` while the item id changes, watch it act on the wrong item, then
+   fix the key.
+5. Write a two-finger pinch-to-zoom with `transformable`, then again with raw pointer events, and
+   count the lines.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Layers | Modifier, then detector, then raw events — use the highest that works |
+| `clickable` | Tap plus ripple, semantics, focus and keyboard |
+| `combinedClickable` | Adds long press and double tap, keeping all of it |
+| `draggable` / `scrollable` | One-axis drag, and drag that scrolls |
+| `transformable` | Pinch, pan and rotate |
+| `pointerInput(key)` | A coroutine; the key works exactly like an effect's |
+| `change.consume()` | Marks the event handled so ancestors ignore it |
+| Passes | `Initial` parent-first, `Main` child-first, `Final` afterwards |
+| `semantics` | Put back the accessibility a manual gesture removed |
+
+<Interview title="A question that reveals whether someone has tested with a screen reader">
+"What do you lose by handling a tap with `pointerInput` instead of `clickable`?"
+
+The ripple, the accessibility semantics that make it a button TalkBack can announce and activate,
+keyboard and D-pad activation, and the focus indicator. The answer that lands is the practical
+consequence: the screen looks identical and works identically to you, and is unusable with a screen
+reader — which is why `combinedClickable` exists for the long-press case that usually tempts people
+down a layer.
+</Interview>
