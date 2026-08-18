@@ -1,0 +1,215 @@
+---
+title: Modelling UI state with sealed classes
+description: Four booleans give a screen sixteen states, of which four are real. The job is to make the other twelve impossible to write down.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Model the states a screen can **actually be in**, so the impossible ones do not compile. A sealed
+type turns "what should we show if loading and error are both true" from a bug report into a
+question the compiler will not let you ask.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Booleans.kt"
+data class OrderUiState(
+    val isLoading: Boolean = false,
+    val orders: List<Order> = emptyList(),
+    val error: String? = null,
+    val isEmpty: Boolean = false,
+)
+```
+
+Four fields, sixteen combinations, and about four of them mean anything. The rest are reachable by
+accident — an error arriving while a retry is in flight, a stale `isEmpty` after data loads — and
+what the screen does in those cases is decided by the order of your `if` statements.
+
+<Quiz
+  question="With the state above, `isLoading` is true and `error` is not null at the same time. What does the user see?"
+  options={[
+    "An error, because errors always take priority",
+    "Whatever the first branch of the rendering code happens to check — it is undefined by the model",
+    "Both, since the state allows both",
+  ]}
+  answer={1}
+  explanation="Nothing in that data class says which wins, so the answer lives in whichever if statement the UI code happens to write first — and a second screen rendering the same state will pick a different order. That is the real cost of modelling with booleans: the meaning of the state is not in the type, it is scattered across every place that reads it. A sealed type moves the decision into the model, where there is exactly one copy of it, and makes the compiler check that every reader handles every case."
+/>
+
+## The exclusive shape
+
+```kotlin title="Sealed.kt" numbered
+sealed interface OrderUiState {
+    data object Loading : OrderUiState
+    data object Empty : OrderUiState
+    data class Content(val orders: List<Order>) : OrderUiState
+    data class Failed(val message: UiText, val canRetry: Boolean) : OrderUiState
+}
+```
+
+```kotlin title="Render.kt" numbered
+when (state) {
+    OrderUiState.Loading -> Spinner()
+    OrderUiState.Empty -> EmptyMessage()
+    is OrderUiState.Content -> OrderList(state.orders)
+    is OrderUiState.Failed -> ErrorMessage(state.message, state.canRetry)
+}
+```
+
+No `else`, on purpose. Adding a fifth state breaks compilation in every place that renders it, which
+is exactly the list of files you needed to visit.
+
+<Note>
+`data object` rather than `object` gives you a sensible `toString` and `equals`, which matters
+because `StateFlow` compares states by equality to decide whether to emit.
+</Note>
+
+## Where the exclusive shape stops working
+
+Now add pull-to-refresh. The user has orders on screen and pulls down: the state is *content* and
+*loading* at the same time, and it was never a bug.
+
+```kotlin title="Combined.kt" numbered
+data class OrderUiState(
+    val content: Content = Content.Loading,
+    val isRefreshing: Boolean = false,
+    val message: UiMessage? = null,
+) {
+    sealed interface Content {
+        data object Loading : Content
+        data object Empty : Content
+        data class Orders(val items: List<Order>) : Content
+    }
+}
+```
+
+<Compare
+  left={{
+    title: "One sealed hierarchy",
+    subtitle: "States are exclusive",
+    accent: "violet",
+    points: [
+      "+ Impossible states cannot be written",
+      "+ `when` is exhaustive, so nothing is forgotten",
+      "- Cannot show old data while refreshing",
+      "~ Right for a screen that is one thing at a time",
+    ],
+  }}
+  right={{
+    title: "A data class with a sealed field",
+    subtitle: "Some things overlap on purpose",
+    accent: "emerald",
+    points: [
+      "+ Refreshing over existing content is expressible",
+      "+ A message can sit alongside any content",
+      "- Some invalid combinations become possible again",
+      "~ Right for real screens with refresh and banners",
+    ],
+  }}
+/>
+
+The rule is not "always use a sealed hierarchy". It is: make exclusive things exclusive, and let
+genuinely independent things be independent fields.
+
+## Events that must not repeat
+
+```kotlin title="Message.kt" numbered
+data class UiMessage(val id: Long, val text: UiText)
+
+// ViewModel
+fun onMessageShown(id: Long) {
+    _state.update { if (it.message?.id == id) it.copy(message = null) else it }
+}
+```
+
+A message carried in state would otherwise reappear after every rotation, because the state is
+replayed to the new screen. Giving it an id and having the UI acknowledge it removes that without
+needing a separate event channel — and unlike a bare string, two identical errors are two different
+messages, so `StateFlow` will not conflate them away.
+
+<Detail summary="Keeping strings out of the state">
+Putting a formatted string in state means the `ViewModel` needs a `Context` — the leak from the
+MVVM lesson — and the message will not follow a language change.
+
+```kotlin title="UiText.kt" numbered
+sealed interface UiText {
+    data class Raw(val value: String) : UiText                       // from the server
+    data class Resource(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
+
+    @Composable
+    fun asString(): String = when (this) {
+        is Raw -> value
+        is Resource -> stringResource(id, *args.toTypedArray())
+    }
+}
+```
+
+The `ViewModel` names a message; the UI resolves it. That keeps the state testable with plain
+assertions and keeps resource lookup where a `Context` already exists.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="`sealed` means the compiler knows every subtype" meta="within the module">
+    That is what makes `when` exhaustive without an `else`, and what turns adding a state into a
+    compile error rather than a silent gap.
+  </TimelineItem>
+  <TimelineItem title="`when` as an expression is checked" meta="as a statement it is not">
+    Assigning the result, or returning it, forces exhaustiveness. A bare `when` statement will
+    happily ignore a missing branch.
+  </TimelineItem>
+  <TimelineItem title="Equality decides emission" meta="StateFlow conflates">
+    Two states that are `equals` emit once. That is why `data class` and `data object` matter here,
+    and why an event needs an id to stay distinct.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four that reintroduce impossible states">
+**A bag of booleans.** Sixteen combinations, four meanings, and the priority order living in the UI.
+
+**`else` in the `when`.** It silences the compiler exactly when you most wanted it to speak — a new
+state now falls through to whatever the `else` does.
+
+**Formatted strings in state.** The `ViewModel` needs a `Context`, and the text ignores a language
+change.
+
+**Domain models straight to the UI.** The composable ends up doing formatting and filtering, which
+puts screen logic somewhere it cannot be tested.
+</Pitfall>
+
+## Practice
+
+1. Take a screen with three or four booleans and write down all the combinations. Mark the ones that
+   are real.
+2. Convert it to a sealed hierarchy and delete the branches that can no longer happen.
+3. Add pull-to-refresh and notice where the exclusive shape stops fitting. Restructure it.
+4. Add a fifth state and count how many compile errors you get. That count is the value of no
+   `else`.
+5. Trigger the same error twice with a plain `String` in state, then with a `UiMessage` carrying an
+   id, and compare what the user sees.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The goal | Impossible states should not compile |
+| Booleans | Sixteen combinations, four meanings, priority scattered across the UI |
+| Sealed hierarchy | Exclusive states; `when` is exhaustive |
+| No `else` | Adding a state becomes a compile error in exactly the right files |
+| `data object` | Sensible equality, which `StateFlow` relies on |
+| Refresh | Genuinely overlapping — use a data class with a sealed content field |
+| Messages | Carry an id and have the UI acknowledge them |
+| `UiText` | Name the string in state, resolve it in the UI |
+
+<Interview title="A question that separates a pattern from a habit">
+"How do you model UI state?"
+
+With a type that only permits states the screen can really be in — usually a sealed hierarchy so
+`when` is exhaustive and adding a state is a compile error rather than a silent gap. The half that
+shows real screens is knowing where it stops: refreshing over existing content is not exclusive, so
+that becomes a data class with a sealed content field plus an `isRefreshing` flag. Making everything
+sealed is as much a mistake as making everything booleans.
+</Interview>

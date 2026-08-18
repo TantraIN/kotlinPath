@@ -1,0 +1,215 @@
+---
+title: Sealed classes से UI state बनाना
+description: चार booleans किसी screen को सोलह हालतें देते हैं, जिनमें से चार असली होती हैं। काम यह है कि बाकी बारह लिखी ही न जा सकें।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+वे हालतें बनाइए जिनमें screen **सच में हो सकती है**, ताकि नामुमकिन वाली compile ही न हों। Sealed
+type "loading और error दोनों सही हों तो दिखाएँ क्या" को एक bug report से उस सवाल में बदल देता है
+जिसे compiler आपको पूछने ही नहीं देता।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Booleans.kt"
+data class OrderUiState(
+    val isLoading: Boolean = false,
+    val orders: List<Order> = emptyList(),
+    val error: String? = null,
+    val isEmpty: Boolean = false,
+)
+```
+
+चार fields, सोलह जोड़, और उनमें से करीब चार का ही कोई मतलब है। बाकी गलती से पहुँच में हैं — किसी
+दोबारा कोशिश के बीच आ गई कोई error, data आने के बाद भी बासी पड़ा `isEmpty` — और उन हालतों में screen
+क्या करती है यह आपके `if` के क्रम से तय होता है।
+
+<Quiz
+  question="ऊपर वाली state में `isLoading` सही है और `error` भी null नहीं है, एक ही वक्त पर। User को दिखता क्या है?"
+  options={[
+    "Error, क्योंकि errors को हमेशा पहले रखा जाता है",
+    "जो भी शाखा render वाले code में पहले जाँची गई हो — model में यह तय है ही नहीं",
+    "दोनों, क्योंकि state दोनों की इजाजत देती है",
+  ]}
+  answer={1}
+  explanation="उस data class में कहीं नहीं लिखा कि कौन जीतेगा, तो जवाब उसी if में रहता है जो UI का code पहले लिख देता है — और वही state दिखाने वाली दूसरी screen कोई और क्रम चुन लेगी। Booleans से बनाने की असली कीमत यही है: state का मतलब उसके type में नहीं होता, वह हर उस जगह बिखरा रहता है जो उसे पढ़ती है। Sealed type उस फैसले को model में ले आता है, जहाँ उसकी ठीक एक ही copy होती है, और compiler से जँचवाता है कि हर पढ़ने वाला हर हालत सँभाल रहा है।"
+/>
+
+## अलग-अलग हालतों वाली शक्ल
+
+```kotlin title="Sealed.kt" numbered
+sealed interface OrderUiState {
+    data object Loading : OrderUiState
+    data object Empty : OrderUiState
+    data class Content(val orders: List<Order>) : OrderUiState
+    data class Failed(val message: UiText, val canRetry: Boolean) : OrderUiState
+}
+```
+
+```kotlin title="Render.kt" numbered
+when (state) {
+    OrderUiState.Loading -> Spinner()
+    OrderUiState.Empty -> EmptyMessage()
+    is OrderUiState.Content -> OrderList(state.orders)
+    is OrderUiState.Failed -> ErrorMessage(state.message, state.canRetry)
+}
+```
+
+कोई `else` नहीं, जानबूझकर। पाँचवीं हालत जोड़ने पर हर उस जगह compile टूटता है जो उसे दिखाती है — और
+वही उन files की सूची है जहाँ आपको जाना था।
+
+<Note>
+`object` के बजाय `data object` आपको काम का `toString` और `equals` देता है, और यह मायने रखता है
+क्योंकि `StateFlow` states को बराबरी से मिलाकर तय करता है कि भेजनी है या नहीं।
+</Note>
+
+## यह शक्ल कहाँ जाकर काम करना बंद कर देती है
+
+अब pull-to-refresh जोड़िए। User के सामने orders हैं और वह नीचे खींचता है: state एक ही वक्त पर
+*content* भी है और *loading* भी, और यह कभी bug था ही नहीं।
+
+```kotlin title="Combined.kt" numbered
+data class OrderUiState(
+    val content: Content = Content.Loading,
+    val isRefreshing: Boolean = false,
+    val message: UiMessage? = null,
+) {
+    sealed interface Content {
+        data object Loading : Content
+        data object Empty : Content
+        data class Orders(val items: List<Order>) : Content
+    }
+}
+```
+
+<Compare
+  left={{
+    title: "एक sealed पदानुक्रम",
+    subtitle: "हालतें आपस में अलग हैं",
+    accent: "violet",
+    points: [
+      "+ नामुमकिन हालतें लिखी ही नहीं जा सकतीं",
+      "+ `when` पूरा होता है, तो कुछ छूटता नहीं",
+      "- Refresh के दौरान पुराना data नहीं दिखाया जा सकता",
+      "~ उस screen के लिए सही जो एक बार में एक ही चीज है",
+    ],
+  }}
+  right={{
+    title: "Sealed field वाला data class",
+    subtitle: "कुछ चीजें जानबूझकर एक साथ",
+    accent: "emerald",
+    points: [
+      "+ मौजूदा content के ऊपर refresh कहा जा सकता है",
+      "+ कोई संदेश किसी भी content के साथ रह सकता है",
+      "- कुछ गलत जोड़ फिर से मुमकिन हो जाते हैं",
+      "~ Refresh और banners वाली असली screens के लिए सही",
+    ],
+  }}
+/>
+
+नियम "हमेशा sealed पदानुक्रम लीजिए" नहीं है। यह है: जो चीजें आपस में अलग हैं उन्हें अलग रखिए, और जो
+सच में एक-दूसरे से स्वतंत्र हैं उन्हें अलग fields रहने दीजिए।
+
+## वे घटनाएँ जो दोहरानी नहीं चाहिए
+
+```kotlin title="Message.kt" numbered
+data class UiMessage(val id: Long, val text: UiText)
+
+// ViewModel
+fun onMessageShown(id: Long) {
+    _state.update { if (it.message?.id == id) it.copy(message = null) else it }
+}
+```
+
+State में रखा कोई संदेश वरना हर rotation के बाद लौट आता, क्योंकि नई screen को state दोबारा भेजी जाती
+है। उसे एक id देना और UI से उसकी पावती लेना इसे बिना किसी अलग event वाले रास्ते के हटा देता है — और
+सादी string के उलट, दो एक जैसी errors दो अलग संदेश हैं, तो `StateFlow` उन्हें दबाकर एक नहीं करेगा।
+
+<Detail summary="Strings को state से बाहर रखना">
+State में बना-बनाया string रखने का मतलब है कि `ViewModel` को `Context` चाहिए — MVVM वाले पाठ का वही
+leak — और वह संदेश भाषा बदलने पर नहीं बदलेगा।
+
+```kotlin title="UiText.kt" numbered
+sealed interface UiText {
+    data class Raw(val value: String) : UiText                       // server से आया हुआ
+    data class Resource(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
+
+    @Composable
+    fun asString(): String = when (this) {
+        is Raw -> value
+        is Resource -> stringResource(id, *args.toTypedArray())
+    }
+}
+```
+
+`ViewModel` संदेश का नाम बताता है; UI उसे हल करता है। इससे state सादे दावों के साथ जाँचने लायक रहती
+है और resource ढूँढ़ना वहीं होता है जहाँ `Context` पहले से है।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="`sealed` यानी compiler को हर उपप्रकार पता है" meta="module के अंदर">
+    इसी से `when` बिना `else` के पूरा होता है, और इसी से कोई हालत जोड़ना चुपचाप छूटने के बजाय compile
+    error बन जाता है।
+  </TimelineItem>
+  <TimelineItem title="`when` expression की तरह जाँचा जाता है" meta="statement की तरह नहीं">
+    नतीजा किसी को देना, या लौटाना, पूरा होना जरूरी बना देता है। सादा `when` statement छूटी हुई शाखा
+    खुशी-खुशी अनदेखी कर देता है।
+  </TimelineItem>
+  <TimelineItem title="भेजना बराबरी से तय होता है" meta="StateFlow दबा देता है">
+    जो दो states `equals` हैं वे एक ही बार जाती हैं। इसीलिए यहाँ `data class` और `data object` मायने
+    रखते हैं, और इसीलिए किसी घटना को अलग बने रहने के लिए एक id चाहिए।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो नामुमकिन हालतें वापस ले आती हैं">
+**Booleans की पोटली।** सोलह जोड़, चार मतलब, और प्राथमिकता का क्रम UI में बिखरा हुआ।
+
+**`when` में `else`।** वह compiler को ठीक तब चुप कर देता है जब आप उससे सबसे ज्यादा बुलवाना चाहते थे
+— अब नई हालत सीधे `else` में जा गिरती है।
+
+**State में बने-बनाए strings।** `ViewModel` को `Context` चाहिए हो जाता है, और text भाषा बदलने पर
+नहीं बदलता।
+
+**Domain के models सीधे UI तक।** फिर composable ही format और छाँटने का काम करने लगता है, और screen
+की logic ऐसी जगह चली जाती है जहाँ उसे जाँचा नहीं जा सकता।
+</Pitfall>
+
+## अभ्यास
+
+1. तीन-चार booleans वाली कोई screen लीजिए और उनके सारे जोड़ लिख डालिए। जो असली हैं उन पर निशान
+   लगाइए।
+2. उसे sealed पदानुक्रम में बदलिए और वे शाखाएँ मिटा दीजिए जो अब हो ही नहीं सकतीं।
+3. Pull-to-refresh जोड़िए और देखिए कि अलग-अलग हालतों वाली शक्ल कहाँ जाकर बैठनी बंद हो जाती है। ढाँचा
+   दोबारा बनाइए।
+4. पाँचवीं हालत जोड़िए और गिनिए कि कितनी compile errors मिलती हैं। वही गिनती `else` न होने की कीमत
+   है।
+5. वही error दो बार लाइए — एक बार state में सादी `String` के साथ, फिर id वाले `UiMessage` के साथ —
+   और मिलाइए कि user को क्या दिखता है।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| मकसद | नामुमकिन हालतें compile ही न हों |
+| Booleans | सोलह जोड़, चार मतलब, प्राथमिकता UI में बिखरी हुई |
+| Sealed पदानुक्रम | आपस में अलग हालतें; `when` पूरा होता है |
+| कोई `else` नहीं | हालत जोड़ना ठीक सही files में compile error बन जाता है |
+| `data object` | काम की बराबरी, जिस पर `StateFlow` टिका है |
+| Refresh | सच में एक साथ होती है — sealed content वाला data class लीजिए |
+| संदेश | एक id रखिए और UI से पावती लीजिए |
+| `UiText` | State में string का नाम, UI में उसका हल |
+
+<Interview title="वह सवाल जो किसी तरीके और किसी आदत को अलग करता है">
+"UI की state आप कैसे बनाते हैं?"
+
+ऐसे type से जो सिर्फ वे हालतें होने देता है जिनमें screen सच में हो सकती है — आमतौर पर एक sealed
+पदानुक्रम, ताकि `when` पूरा हो और कोई हालत जोड़ना चुपचाप छूटने के बजाय compile error बने। असली
+screens की समझ दिखाने वाला आधा हिस्सा यह जानना है कि यह कहाँ रुकता है: मौजूदा content के ऊपर refresh
+आपस में अलग हालतें नहीं हैं, तो वहाँ sealed content वाला data class और साथ में एक `isRefreshing`
+आता है। हर चीज को sealed बना देना उतनी ही बड़ी गलती है जितनी हर चीज को boolean।
+</Interview>

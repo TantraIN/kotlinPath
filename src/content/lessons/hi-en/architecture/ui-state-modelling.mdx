@@ -1,0 +1,217 @@
+---
+title: Sealed classes se UI state banana
+description: Chaar booleans kisi screen ko solah haalatein dete hain, jinmein se chaar asli hoti hain. Kaam ye hai ki baaki barah likhi hi na ja sakein.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Wo haalatein banaiye jinmein screen **sach mein ho sakti hai**, taki namumkin wali compile hi na
+hon. Sealed type "loading aur error dono sahi hon to dikhayein kya" ko ek bug report se us sawal
+mein badal deta hai jise compiler aapko puchne hi nahi deta.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Booleans.kt"
+data class OrderUiState(
+    val isLoading: Boolean = false,
+    val orders: List<Order> = emptyList(),
+    val error: String? = null,
+    val isEmpty: Boolean = false,
+)
+```
+
+Chaar fields, solah jod, aur unmein se kareeb chaar ka hi koi matlab hai. Baaki galti se pahunch
+mein hain — kisi dobara koshish ke beech aa gayi koi error, data aane ke baad bhi baasi pada
+`isEmpty` — aur un haalaton mein screen kya karti hai ye aapke `if` ke kram se tay hota hai.
+
+<Quiz
+  question="Upar wali state mein `isLoading` sahi hai aur `error` bhi null nahi hai, ek hi waqt par. User ko dikhta kya hai?"
+  options={[
+    "Error, kyunki errors ko hamesha pehle rakha jata hai",
+    "Jo bhi shakha render wale code mein pehle jaanchi gayi ho — model mein ye tay hai hi nahi",
+    "Dono, kyunki state dono ki ijazat deti hai",
+  ]}
+  answer={1}
+  explanation="Us data class mein kahin nahi likha ki kaun jeetega, to jawab usi if mein rehta hai jo UI ka code pehle likh deta hai — aur wahi state dikhane wali doosri screen koi aur kram chun legi. Booleans se banane ki asli keemat yahi hai: state ka matlab uske type mein nahi hota, wo har us jagah bikhra rehta hai jo use padhti hai. Sealed type us faisle ko model mein le aata hai, jahan uski theek ek hi copy hoti hai, aur compiler se janchwata hai ki har padhne wala har haalat sambhal raha hai."
+/>
+
+## Alag-alag haalaton wali shakal
+
+```kotlin title="Sealed.kt" numbered
+sealed interface OrderUiState {
+    data object Loading : OrderUiState
+    data object Empty : OrderUiState
+    data class Content(val orders: List<Order>) : OrderUiState
+    data class Failed(val message: UiText, val canRetry: Boolean) : OrderUiState
+}
+```
+
+```kotlin title="Render.kt" numbered
+when (state) {
+    OrderUiState.Loading -> Spinner()
+    OrderUiState.Empty -> EmptyMessage()
+    is OrderUiState.Content -> OrderList(state.orders)
+    is OrderUiState.Failed -> ErrorMessage(state.message, state.canRetry)
+}
+```
+
+Koi `else` nahi, jaanbujhkar. Paanchvin haalat jodne par har us jagah compile tootta hai jo use
+dikhati hai — aur wahi un files ki list hai jahan aapko jana tha.
+
+<Note>
+`object` ke bajaye `data object` aapko kaam ka `toString` aur `equals` deta hai, aur ye maayne rakhta
+hai kyunki `StateFlow` states ko barabari se milakar tay karta hai ki bhejni hai ya nahi.
+</Note>
+
+## Ye shakal kahan jakar kaam karna band kar deti hai
+
+Ab pull-to-refresh jodiye. User ke saamne orders hain aur wo neeche kheenchta hai: state ek hi waqt
+par *content* bhi hai aur *loading* bhi, aur ye kabhi bug tha hi nahi.
+
+```kotlin title="Combined.kt" numbered
+data class OrderUiState(
+    val content: Content = Content.Loading,
+    val isRefreshing: Boolean = false,
+    val message: UiMessage? = null,
+) {
+    sealed interface Content {
+        data object Loading : Content
+        data object Empty : Content
+        data class Orders(val items: List<Order>) : Content
+    }
+}
+```
+
+<Compare
+  left={{
+    title: "Ek sealed padanukram",
+    subtitle: "Haalatein aapas mein alag hain",
+    accent: "violet",
+    points: [
+      "+ Namumkin haalatein likhi hi nahi ja saktin",
+      "+ `when` poora hota hai, to kuch chhootta nahi",
+      "- Refresh ke dauran purana data nahi dikhaya ja sakta",
+      "~ Us screen ke liye sahi jo ek baar mein ek hi cheez hai",
+    ],
+  }}
+  right={{
+    title: "Sealed field wala data class",
+    subtitle: "Kuch cheezein jaanbujhkar ek saath",
+    accent: "emerald",
+    points: [
+      "+ Maujooda content ke upar refresh kaha ja sakta hai",
+      "+ Koi message kisi bhi content ke saath reh sakta hai",
+      "- Kuch galat jod phir se mumkin ho jate hain",
+      "~ Refresh aur banners wali asli screens ke liye sahi",
+    ],
+  }}
+/>
+
+Niyam "hamesha sealed padanukram lijiye" nahi hai. Ye hai: jo cheezein aapas mein alag hain unhe alag
+rakhiye, aur jo sach mein ek-doosre se swatantra hain unhe alag fields rehne dijiye.
+
+## Wo ghatnayein jo doharani nahi chahiye
+
+```kotlin title="Message.kt" numbered
+data class UiMessage(val id: Long, val text: UiText)
+
+// ViewModel
+fun onMessageShown(id: Long) {
+    _state.update { if (it.message?.id == id) it.copy(message = null) else it }
+}
+```
+
+State mein rakha koi message warna har rotation ke baad laut aata, kyunki nai screen ko state dobara
+bheji jati hai. Use ek id dena aur UI se uski pawti lena ise bina kisi alag event wale raaste ke hata
+deta hai — aur saadi string ke ulat, do ek jaisi errors do alag message hain, to `StateFlow` unhe
+dabakar ek nahi karega.
+
+<Detail summary="Strings ko state se bahar rakhna">
+State mein bana-banaya string rakhne ka matlab hai ki `ViewModel` ko `Context` chahiye — MVVM wale
+paath ka wahi leak — aur wo message bhasha badalne par nahi badlega.
+
+```kotlin title="UiText.kt" numbered
+sealed interface UiText {
+    data class Raw(val value: String) : UiText                       // server se aaya hua
+    data class Resource(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
+
+    @Composable
+    fun asString(): String = when (this) {
+        is Raw -> value
+        is Resource -> stringResource(id, *args.toTypedArray())
+    }
+}
+```
+
+`ViewModel` message ka naam batata hai; UI use hal karta hai. Isse state saade dawon ke saath
+parakhne layak rehti hai aur resource dhundhna wahin hota hai jahan `Context` pehle se hai.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="`sealed` yani compiler ko har upprakar pata hai" meta="module ke andar">
+    Isi se `when` bina `else` ke poora hota hai, aur isi se koi haalat jodna chupchap chhootne ke
+    bajaye compile error ban jata hai.
+  </TimelineItem>
+  <TimelineItem title="`when` expression ki tarah jaancha jata hai" meta="statement ki tarah nahi">
+    Result kisi ko dena, ya lautana, poora hona zaruri bana deta hai. Saada `when` statement chhooti
+    hui shakha khushi-khushi andekhi kar deta hai.
+  </TimelineItem>
+  <TimelineItem title="Bhejna barabari se tay hota hai" meta="StateFlow daba deta hai">
+    Jo do states `equals` hain wo ek hi baar jati hain. Isiliye yahan `data class` aur `data object`
+    maayne rakhte hain, aur isiliye kisi ghatna ko alag bane rehne ke liye ek id chahiye.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Chaar jo namumkin haalatein wapas le aati hain">
+**Booleans ki potli.** Solah jod, chaar matlab, aur priority ka kram UI mein bikhra hua.
+
+**`when` mein `else`.** Wo compiler ko theek tab chup kar deta hai jab aap usse sabse zyada bulwana
+chahte the — ab nai haalat seedhe `else` mein ja girti hai.
+
+**State mein bane-banaye strings.** `ViewModel` ko `Context` chahiye ho jata hai, aur text bhasha
+badalne par nahi badalta.
+
+**Domain ke models seedhe UI tak.** Phir composable hi format aur chhaantne ka kaam karne lagta hai,
+aur screen ki logic aisi jagah chali jati hai jahan use parkha nahi ja sakta.
+</Pitfall>
+
+## Practice
+
+1. Teen-chaar booleans wali koi screen lijiye aur unke saare jod likh daliye. Jo asli hain un par
+   nishan lagaiye.
+2. Use sealed padanukram mein badliye aur wo shakhayein mita dijiye jo ab ho hi nahi saktin.
+3. Pull-to-refresh jodiye aur dekhiye ki alag-alag haalaton wali shakal kahan jakar baithni band ho
+   jati hai. Dhancha dobara banaiye.
+4. Paanchvin haalat jodiye aur giniye ki kitni compile errors milti hain. Wahi ginti `else` na hone
+   ki keemat hai.
+5. Wahi error do baar laiye — ek baar state mein saadi `String` ke saath, phir id wale `UiMessage` ke
+   saath — aur milaiye ki user ko kya dikhta hai.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Maksad | Namumkin haalatein compile hi na hon |
+| Booleans | Solah jod, chaar matlab, priority UI mein bikhri hui |
+| Sealed padanukram | Aapas mein alag haalatein; `when` poora hota hai |
+| Koi `else` nahi | Haalat jodna theek sahi files mein compile error ban jata hai |
+| `data object` | Kaam ki barabari, jis par `StateFlow` tika hai |
+| Refresh | Sach mein ek saath hoti hai — sealed content wala data class lijiye |
+| Message | Ek id rakhiye aur UI se pawti lijiye |
+| `UiText` | State mein string ka naam, UI mein uska hal |
+
+<Interview title="Wo sawal jo kisi tarike aur kisi aadat ko alag karta hai">
+"UI ki state aap kaise banate hain?"
+
+Aise type se jo sirf wo haalatein hone deta hai jinmein screen sach mein ho sakti hai — aam taur par
+ek sealed padanukram, taki `when` poora ho aur koi haalat jodna chupchap chhootne ke bajaye compile
+error bane. Asli screens ki samajh dikhane wala aadha hissa ye jaanna hai ki ye kahan rukta hai:
+maujooda content ke upar refresh aapas mein alag haalatein nahi hain, to wahan sealed content wala
+data class aur saath mein ek `isRefreshing` aata hai. Har cheez ko sealed bana dena utni hi badi
+galti hai jitni har cheez ko boolean.
+</Interview>
