@@ -1,0 +1,169 @@
+---
+title: "@Composable functions और recomposition"
+description: यह annotation सजावट नहीं है। यह आपके function को दोबारा लिखकर उसमें एक छिपा हुआ Composer डाल देता है, और Compose का हर बरताव उसी एक parameter से निकलता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`@Composable` किसी function को **वह याददाश्त देता है जो इस बात से बँधी है कि उसे बुलाया कहाँ से
+गया**। Compiler एक छिपा हुआ `Composer` parameter जोड़ता है, और उसी से runtime को पता रहता है कि
+इस call ने पिछली बार क्या बनाया था और इस बार चलाने की जरूरत भी है या नहीं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+शुरू में तीन बातें सबको उलझाती हैं: composables सिर्फ दूसरे composables से बुलाए जा सकते हैं,
+`remember` बिना कोई नाम दिए काम कर जाता है, और जिस function को आपने छुआ तक नहीं वह चुपचाप चलना
+बंद कर देता है। तीनों एक ही बात के तीन कोने हैं।
+
+## Compiler लिखता क्या है
+
+```kotlin title="YouWrite.kt"
+@Composable
+fun Greeting(name: String) {
+    Text("Hello, $name")
+}
+```
+
+```kotlin title="RoughlyWhatItBecomes.kt"
+fun Greeting(name: String, $composer: Composer, $changed: Int) {
+    $composer.startRestartGroup(0x7f0a01)
+    // ... Text छोड़ता है ...
+    $composer.endRestartGroup()?.updateScope { c, _ -> Greeting(name, c, $changed or 1) }
+}
+```
+
+इस फेरबदल से दो चीजें आती हैं। `$composer` इस call वाली जगह के लिए runtime की copy है। `$changed`
+एक bitmask है जो बताता है कि पिछली बार से असल में कौन से parameters अलग हैं — और इसी से function
+तय कर पाता है कि उसे अपनी body चलानी भी है या नहीं।
+
+<Note>
+इसीलिए composable को `onClick` से या किसी `ViewModel` से नहीं बुलाया जा सकता। वहाँ भेजने को कोई
+`Composer` है ही नहीं, तो न call से जोड़ने को कोई याददाश्त है और न दोबारा चलाने को कोई scope।
+</Note>
+
+## Recomposition का दायरा होता है, और वह दायरा चौंकाता है
+
+<Quiz
+  question="कोई composable `Column { Text(title); Text(count.toString()) }` दिखाता है और सिर्फ `count` बदलता है। दोबारा चलता क्या है?"
+  options={[
+    "सिर्फ दूसरा `Text` — Compose हर call पर अलग से नजर रखता है",
+    "बाहर वाला पूरा function दोबारा चलता है, पर पहला `Text` छोड़ दिया जाता है",
+    "कुछ नहीं चलता; Compose वहीं की वहीं string बदल देता है",
+  ]}
+  answer={1}
+  explanation="दोबारा चलने की इकाई सबसे पास वाला restartable composable है, अलग-अलग call नहीं। Column एक inline function है, इसलिए उसका content lambda अपना कोई दायरा नहीं बनाता — दोबारा बाहर वाला function ही चलता है। उसके अंदर हर call पिछली बार से मिलाई जाती है: Text(title) को वही stable String मिलता है और वह छोड़ दिया जाता है, जबकि Text(count.toString()) को नई value मिलती है और वह चलता है। तो जवाब न 'सब कुछ' है और न 'सिर्फ वह एक line': function दोबारा चलता है, और छोड़ने का फैसला उसके अंदर हर call पर अलग होता है। ठीक इसीलिए composable की body में यूँ ही पड़ा भारी हिसाब असली कीमत है — आस-पास की calls के छूटने से उसे कोई बचाव नहीं मिलता।"
+/>
+
+## छोड़ना, और वह किससे मुमकिन होता है
+
+Composable की कोई call तभी छोड़ी जाती है जब उसका हर argument **stable** हो और **पिछली बार जैसा
+ही** हो।
+
+| Parameter का type | Stable? | क्यों |
+| --- | --- | --- |
+| `String`, `Int`, `Boolean` | हाँ | बदले नहीं जा सकते, और `equals` का मतलब है |
+| Stable types वाला `data class` | हाँ | Compiler खुद समझ लेता है |
+| `List<Order>` | नहीं | Interface के पीछे बदला जा सकने वाला रूप हो सकता है |
+| `ImmutableList<Order>` | हाँ | `kotlinx.collections.immutable` से |
+| आपका वहीं लिखा lambda | हाँ, अगर पकड़ी चीजें stable हों | Compiler उसे आपके लिए याद रख लेता है |
+| `var` field वाली कोई class | नहीं | उसके अंदर की चीज बिना खबर बदल सकती है |
+
+<Tip>
+किसी type पर `@Immutable` या `@Stable` लगाना compiler से किया गया वादा है, कोई गुजारिश नहीं। वादा
+करके फिर बदलेंगे तो Compose वह recomposition छोड़ देगा जो सच में जरूरी थी, और screen पर बासी data
+दिखेगा।
+</Tip>
+
+## जगह ही पहचान है
+
+```kotlin title="Positional.kt" numbered
+@Composable
+fun Panel(expanded: Boolean) {
+    if (expanded) {
+        Text("Open")          // slot A
+    } else {
+        Text("Closed")        // slot B
+    }
+}
+```
+
+ये दोनों `Text` अलग-अलग जगहों से बुलाए गए हैं, तो runtime की table में उन्हें अलग slots मिलते
+हैं। एक में `remember` की गई कोई चीज दूसरे को दिखती नहीं, और शाखा बदलते ही पहली शाखा की याददाश्त
+फेंक दी जाती है।
+
+<Detail summary="Slot table, एक पैराग्राफ में">
+Runtime एक सपाट array रखता है — slot table — जिसमें हर call वाली जगह का एक group होता है, उसी
+क्रम में जिसमें composition वहाँ गया था। Group में वहाँ `remember` की गई values और छोड़े गए nodes
+रहते हैं। Recomposition पर runtime उसी array पर चलता है, साथ-साथ मिलाता जाता है, और सिर्फ वे
+groups दोबारा बनते हैं जिनका input बदला है। पहचान *जगह* से होती है, इसलिए source में call को
+हिलाना, या किसी loop में `key` दिए बिना items का क्रम बदलना, runtime को लगता है कि वह किसी और चीज
+को देख रहा है और वह याददाश्त फेंक देता है।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="Composition" meta="पहली बार">
+    हर composable चलता है, groups slot table में लिखे जाते हैं, और nodes छूटते हैं।
+  </TimelineItem>
+  <TimelineItem title="State पढ़ना दर्ज होता है" meta="जुड़ाव">
+    Composable के अंदर किसी `State` को पढ़ना उस दायरे को उसका पाठक बना देता है। और कुछ नहीं जुड़ता
+    — बाद में चलने वाले किसी lambda में पढ़ना नहीं जोड़ता।
+  </TimelineItem>
+  <TimelineItem title="लिखना दायरों को बेकार करता है" meta="पूरा पेड़ नहीं">
+    उस state में लिखने पर ठीक वही दायरे बेकार निशान पाते हैं जिन्होंने उसे पढ़ा था, और वे अगले
+    frame के लिए कतार में लग जाते हैं।
+  </TimelineItem>
+  <TimelineItem title="Recomposition" meta="दोबारा चलाओ और मिलाओ">
+    बेकार निशान वाले दायरे दोबारा चलते हैं। उनके अंदर जिन calls के stable arguments नहीं बदले वे
+    छोड़ दी जाती हैं, तो काम उतना ही रहता है जितना सच में बदला है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो performance या सच्चाई की कीमत माँगती हैं">
+**Body में हिसाब कर देना।** Composable की body में `val sorted = orders.sortedBy { it.date }` हर
+recomposition पर दोबारा चलता है। इसे लपेटिए: `remember(orders) { orders.sortedBy { it.date } }`।
+
+**State बहुत ऊपर पढ़ना।** तेजी से बदलती value किसी parent में पढ़ने से वह parent और उसके नीचे सब
+बेकार हो जाता है। उसे पेड़ में जितना नीचे हो सके उतना नीचे पढ़िए — सबसे अच्छा, उसी composable में
+जो उसे दिखाता है।
+
+**वही state लिखना जिसे वही composable पढ़ता है।** इससे अभी-अभी चला दायरा बेकार हो जाता है, तो वह
+फिर से तय होता है, और यह चलता रहता है। इनमें से कुछ Compose पकड़कर फेंक देता है; बाकी अंतहीन
+recomposition का फंदा बन जाते हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी parent और child दोनों में `println` रखिए, सिर्फ child के पढ़े हुए state को बदलिए, और
+   देखिए किसका छपता है।
+2. उस state को parent से हटाकर child में पढ़िए और parent का recompose होना बंद होते देखिए।
+3. एक `List` parameter भेजिए, फिर वही data `ImmutableList` की तरह, और Layout Inspector की
+   recomposition गिनती से मिलाइए कि क्या छूटता है।
+4. Composable की body में सीधे एक भारी loop लिखिए, फिर उसे `remember` में लपेटिए, और frame का
+   समय मिलाइए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `@Composable` | छिपा हुआ `Composer` और `$changed` bitmask जोड़ता है |
+| बुलाने की जगह | सिर्फ कोई दूसरा composable ही बुला सकता है |
+| Restart का दायरा | सबसे पास वाला restartable composable, अकेली call नहीं |
+| छोड़ना | हर argument stable हो और पिछली बार जैसा हो |
+| Stability | खुद समझी जाती है, या `@Stable` / `@Immutable` से वादा किया जाता है |
+| पहचान | Source में call की जगह |
+| State पढ़ना | मौजूदा दायरे को उससे जोड़ देता है |
+| `remember(key)` | Key बदलने तक निकाली हुई value रखता है |
+
+<Interview title="वह सवाल जिसका गलत जवाब बहुत आम है">
+"एक value बदलने पर recompose होता असल में क्या है?"
+
+सबसे पास वाला restartable composable दोबारा चलता है, और उसके अंदर हर call तब छोड़ दी जाती है जब
+उसके arguments stable और पहले जैसे हों। आम गलत जवाब हैं 'पूरी screen' और 'सिर्फ वह एक `Text`',
+और असली जवाब का मतलब काम का है: composable की body में यूँ ही पड़ा भारी हिसाब उसी दायरे के अंदर
+है जो दोबारा चलता है, तो उसे कोई छोड़कर नहीं जाता।
+</Interview>

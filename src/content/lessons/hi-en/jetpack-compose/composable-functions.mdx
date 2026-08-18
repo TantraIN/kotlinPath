@@ -1,0 +1,174 @@
+---
+title: "@Composable functions aur recomposition"
+description: Ye annotation sajawat nahi hai. Ye aapke function ko dobara likhkar usmein ek chhipa hua Composer daal deta hai, aur Compose ka har bartaav usi ek parameter se nikalta hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`@Composable` kisi function ko **wo yaaddasht deta hai jo is baat se bandhi hai ki use bulaya
+kahan se gaya**. Compiler ek chhipa hua `Composer` parameter jodta hai, aur usi se runtime ko pata
+rehta hai ki is call ne pichhli baar kya banaya tha aur is baar chalane ki zarurat bhi hai ya
+nahi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Shuru mein teen baatein sabko uljhati hain: composables sirf doosre composables se bulaye ja
+sakte hain, `remember` bina koi naam diye kaam kar jata hai, aur jis function ko aapne chhua tak
+nahi wo chupchap chalna band kar deta hai. Teenon ek hi baat ke teen kone hain.
+
+## Compiler likhta kya hai
+
+```kotlin title="YouWrite.kt"
+@Composable
+fun Greeting(name: String) {
+    Text("Hello, $name")
+}
+```
+
+```kotlin title="RoughlyWhatItBecomes.kt"
+fun Greeting(name: String, $composer: Composer, $changed: Int) {
+    $composer.startRestartGroup(0x7f0a01)
+    // ... Text chhodta hai ...
+    $composer.endRestartGroup()?.updateScope { c, _ -> Greeting(name, c, $changed or 1) }
+}
+```
+
+Is pherbadal se do cheezein aati hain. `$composer` is call wali jagah ke liye runtime ki copy hai.
+`$changed` ek bitmask hai jo batata hai ki pichhli baar se asal mein kaun se parameters alag hain
+— aur isi se function tay kar pata hai ki use apni body chalani bhi hai ya nahi.
+
+<Note>
+Isiliye composable ko `onClick` se ya kisi `ViewModel` se nahi bulaya ja sakta. Wahan bhejne ko
+koi `Composer` hai hi nahi, to na call se jodne ko koi yaaddasht hai aur na dobara chalane ko koi
+scope.
+</Note>
+
+## Recomposition ka dayra hota hai, aur wo dayra chaunkata hai
+
+<Quiz
+  question="Koi composable `Column { Text(title); Text(count.toString()) }` dikhata hai aur sirf `count` badalta hai. Dobara chalta kya hai?"
+  options={[
+    "Sirf doosra `Text` — Compose har call par alag se nazar rakhta hai",
+    "Bahar wala poora function dobara chalta hai, par pehla `Text` chhod diya jata hai",
+    "Kuch nahi chalta; Compose wahin ki wahin string badal deta hai",
+  ]}
+  answer={1}
+  explanation="Dobara chalne ki ikai sabse paas wala restartable composable hai, alag-alag call nahi. Column ek inline function hai, isliye uska content lambda apna koi dayra nahi banata — dobara bahar wala function hi chalta hai. Uske andar har call pichhli baar se milai jati hai: Text(title) ko wahi stable String milta hai aur wo chhod diya jata hai, jabki Text(count.toString()) ko nai value milti hai aur wo chalta hai. To jawab na 'sab kuch' hai aur na 'sirf wo ek line': function dobara chalta hai, aur chhodne ka faisla uske andar har call par alag hota hai. Theek isiliye composable ki body mein yun hi pada bhaari hisab asli keemat hai — aas-paas ki calls ke chhootne se use koi bachaav nahi milta."
+/>
+
+## Chhodna, aur wo kisse mumkin hota hai
+
+Composable ki koi call tabhi chhodi jati hai jab uska har argument **stable** ho aur **pichhli
+baar jaisa hi** ho.
+
+| Parameter ka type | Stable? | Kyun |
+| --- | --- | --- |
+| `String`, `Int`, `Boolean` | Haan | Badle nahi ja sakte, aur `equals` ka matlab hai |
+| Stable types wala `data class` | Haan | Compiler khud samajh leta hai |
+| `List<Order>` | Nahi | Interface ke peeche badla ja sakne wala roop ho sakta hai |
+| `ImmutableList<Order>` | Haan | `kotlinx.collections.immutable` se |
+| Aapka wahin likha lambda | Haan, agar pakdi cheezein stable hon | Compiler use aapke liye yaad rakh leta hai |
+| `var` field wali koi class | Nahi | Uske andar ki cheez bina khabar badal sakti hai |
+
+<Tip>
+Kisi type par `@Immutable` ya `@Stable` lagana compiler se kiya gaya wada hai, koi guzarish nahi.
+Wada karke phir badlenge to Compose wo recomposition chhod dega jo sach mein zaruri thi, aur
+screen par baasi data dikhega.
+</Tip>
+
+## Jagah hi pehchan hai
+
+```kotlin title="Positional.kt" numbered
+@Composable
+fun Panel(expanded: Boolean) {
+    if (expanded) {
+        Text("Open")          // slot A
+    } else {
+        Text("Closed")        // slot B
+    }
+}
+```
+
+Ye dono `Text` alag-alag jagahon se bulaye gaye hain, to runtime ki table mein unhe alag slots
+milte hain. Ek mein `remember` ki gayi koi cheez doosre ko dikhti nahi, aur shakha badalte hi
+pehli shakha ki yaaddasht phenk di jati hai.
+
+<Detail summary="Slot table, ek paragraph mein">
+Runtime ek sapaat array rakhta hai — slot table — jismein har call wali jagah ka ek group hota
+hai, usi kram mein jismein composition wahan gaya tha. Group mein wahan `remember` ki gayi values
+aur chhode gaye nodes rehte hain. Recomposition par runtime usi array par chalta hai, saath-saath
+milata jata hai, aur sirf wo groups dobara bante hain jinka input badla hai. Pehchan *jagah* se
+hoti hai, isliye source mein call ko hilana, ya kisi loop mein `key` diye bina items ka kram
+badalna, runtime ko lagta hai ki wo kisi aur cheez ko dekh raha hai aur wo yaaddasht phenk deta
+hai.
+</Detail>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Composition" meta="pehli baar">
+    Har composable chalta hai, groups slot table mein likhe jate hain, aur nodes chhootte hain.
+  </TimelineItem>
+  <TimelineItem title="State padhna darj hota hai" meta="judaav">
+    Composable ke andar kisi `State` ko padhna us dayre ko uska paathak bana deta hai. Aur kuch
+    nahi judta — baad mein chalne wale kisi lambda mein padhna nahi jodta.
+  </TimelineItem>
+  <TimelineItem title="Likhna dayron ko bekar karta hai" meta="poora ped nahi">
+    Us state mein likhne par theek wahi dayre bekar nishan pate hain jinhone use padha tha, aur wo
+    agle frame ke liye line mein lag jate hain.
+  </TimelineItem>
+  <TimelineItem title="Recomposition" meta="dobara chalao aur milao">
+    Bekar nishan wale dayre dobara chalte hain. Unke andar jin calls ke stable arguments nahi
+    badle wo chhod di jati hain, to kaam utna hi rehta hai jitna sach mein badla hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo performance ya sachai ki keemat maangti hain">
+**Body mein hisab kar dena.** Composable ki body mein `val sorted = orders.sortedBy { it.date }`
+har recomposition par dobara chalta hai. Ise lapetiye:
+`remember(orders) { orders.sortedBy { it.date } }`.
+
+**State bahut upar padhna.** Tezi se badalti value kisi parent mein padhne se wo parent aur uske
+neeche sab bekar ho jata hai. Use ped mein jitna neeche ho sake utna neeche padhiye — sabse achha,
+usi composable mein jo use dikhata hai.
+
+**Wahi state likhna jise wahi composable padhta hai.** Isse abhi-abhi chala dayra bekar ho jata
+hai, to wo phir se tay hota hai, aur ye chalta rehta hai. Inmein se kuch Compose pakadkar phenk
+deta hai; baaki antheen recomposition ka phanda ban jate hain.
+</Pitfall>
+
+## Practice
+
+1. Kisi parent aur child dono mein `println` rakhiye, sirf child ke padhe hue state ko badliye,
+   aur dekhiye kiska chhapta hai.
+2. Us state ko parent se hatakar child mein padhiye aur parent ka recompose hona band hote
+   dekhiye.
+3. Ek `List` parameter bhejiye, phir wahi data `ImmutableList` ki tarah, aur Layout Inspector ki
+   recomposition ginti se milaiye ki kya chhootta hai.
+4. Composable ki body mein seedhe ek bhaari loop likhiye, phir use `remember` mein lapetiye, aur
+   frame ka samay milaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| `@Composable` | Chhipa hua `Composer` aur `$changed` bitmask jodta hai |
+| Bulane ki jagah | Sirf koi doosra composable hi bula sakta hai |
+| Restart ka dayra | Sabse paas wala restartable composable, akeli call nahi |
+| Chhodna | Har argument stable ho aur pichhli baar jaisa ho |
+| Stability | Khud samjhi jati hai, ya `@Stable` / `@Immutable` se wada kiya jata hai |
+| Pehchan | Source mein call ki jagah |
+| State padhna | Maujooda dayre ko usse jod deta hai |
+| `remember(key)` | Key badalne tak nikali hui value rakhta hai |
+
+<Interview title="Wo sawal jiska galat jawab bahut aam hai">
+"Ek value badalne par recompose hota asal mein kya hai?"
+
+Sabse paas wala restartable composable dobara chalta hai, aur uske andar har call tab chhod di
+jati hai jab uske arguments stable aur pehle jaise hon. Aam galat jawab hain 'poori screen' aur
+'sirf wo ek `Text`', aur asli jawab ka matlab kaam ka hai: composable ki body mein yun hi pada
+bhaari hisab usi dayre ke andar hai jo dobara chalta hai, to use koi chhodkar nahi jata.
+</Interview>

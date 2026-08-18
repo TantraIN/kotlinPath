@@ -1,0 +1,168 @@
+---
+title: "@Composable functions and recomposition"
+description: The annotation is not decoration. It rewrites your function to take a hidden Composer, and that one parameter is where every Compose behaviour comes from.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`@Composable` gives a function a **memory tied to where it is called from**. The compiler adds a
+hidden `Composer` parameter, and that parameter is how the runtime knows what this call produced
+last time and whether it needs to run at all.
+</KeyIdea>
+
+## Why this matters
+
+Three rules puzzle everyone at first: composables can only be called from other composables,
+`remember` works without you giving it a name, and a function you did not touch quietly stops
+running. All three are the same fact seen from different angles.
+
+## What the compiler writes
+
+```kotlin title="YouWrite.kt"
+@Composable
+fun Greeting(name: String) {
+    Text("Hello, $name")
+}
+```
+
+```kotlin title="RoughlyWhatItBecomes.kt"
+fun Greeting(name: String, $composer: Composer, $changed: Int) {
+    $composer.startRestartGroup(0x7f0a01)
+    // ... emit Text ...
+    $composer.endRestartGroup()?.updateScope { c, _ -> Greeting(name, c, $changed or 1) }
+}
+```
+
+Two things arrive with that rewrite. `$composer` is the runtime's notebook for this call site.
+`$changed` is a bitmask saying which parameters actually differ from last time — which is how
+the function can decide to skip its own body.
+
+<Note>
+This is why a composable cannot be called from `onClick` or from a `ViewModel`. Those places have
+no `Composer` to pass, so there is no memory to attach the call to and no scope to restart.
+</Note>
+
+## Recomposition is scoped, and the scope surprises people
+
+<Quiz
+  question="A composable shows `Column { Text(title); Text(count.toString()) }` and only `count` changes. What runs again?"
+  options={[
+    "Only the second `Text` — Compose tracks each call individually",
+    "The whole enclosing function runs again, but the first `Text` is skipped",
+    "Nothing runs; Compose patches the string in place",
+  ]}
+  answer={1}
+  explanation="The unit of restart is the nearest enclosing restartable composable, not the individual call. Column is an inline function, so its content lambda does not create a scope of its own — the enclosing function is what re-runs. Inside it, each call is checked against last time: Text(title) gets the same stable String and is skipped, while Text(count.toString()) gets a new value and runs. So the answer is neither 'everything' nor 'just the one line': the function re-runs, and skipping happens per call inside it. This is exactly why a heavy computation sitting loose in a composable body is a real cost — it is not protected by the skipping of the calls around it."
+/>
+
+## Skipping, and what makes it possible
+
+A composable call is skipped when every argument is **stable** and **equal to last time**.
+
+| Parameter type | Stable? | Why |
+| --- | --- | --- |
+| `String`, `Int`, `Boolean` | Yes | Immutable, and `equals` is meaningful |
+| A `data class` of stable types | Yes | The compiler can infer it |
+| `List<Order>` | No | The interface allows a mutable implementation |
+| `ImmutableList<Order>` | Yes | From `kotlinx.collections.immutable` |
+| A lambda you write inline | Yes, if it captures stable things | The compiler remembers it for you |
+| A class with a `var` field | No | Its contents can change without notice |
+
+<Tip>
+Marking a type `@Immutable` or `@Stable` is a promise to the compiler, not a request. If you
+promise stability and then mutate, Compose will skip a recomposition that was genuinely needed
+and the screen will show stale data.
+</Tip>
+
+## Position is identity
+
+```kotlin title="Positional.kt" numbered
+@Composable
+fun Panel(expanded: Boolean) {
+    if (expanded) {
+        Text("Open")          // slot A
+    } else {
+        Text("Closed")        // slot B
+    }
+}
+```
+
+Those two `Text` calls are different call sites, so they get different slots in the runtime's
+table. Anything `remember`ed in one is not visible to the other, and switching branches discards
+the first branch's memory.
+
+<Detail summary="The slot table, in one paragraph">
+The runtime keeps a flat array — the slot table — of groups, one per call site, in the order the
+composition visited them. A group holds the values `remember`ed there and the nodes emitted. On
+recomposition the runtime walks the same array, comparing as it goes, and only the groups whose
+inputs changed are rebuilt. Because identity is *position*, moving a call in the source, or
+reordering items in a loop without a `key`, makes the runtime think it is looking at a different
+thing and throw the remembered state away.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Composition" meta="first run">
+    Every composable runs, groups are written into the slot table, and nodes are emitted.
+  </TimelineItem>
+  <TimelineItem title="A state read is recorded" meta="subscription">
+    Reading a `State` inside a composable registers that scope as a reader of it. Nothing else
+    subscribes — reading it in a lambda that runs later does not.
+  </TimelineItem>
+  <TimelineItem title="A write invalidates scopes" meta="not the whole tree">
+    Writing that state marks exactly the scopes that read it as invalid, and they are queued for
+    the next frame.
+  </TimelineItem>
+  <TimelineItem title="Recomposition" meta="re-run and compare">
+    Invalid scopes re-run. Calls inside them with unchanged stable arguments are skipped, so the
+    work stays proportional to what actually changed.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Three that cost performance or correctness">
+**Computing in the body.** `val sorted = orders.sortedBy { it.date }` in a composable body re-runs
+on every recomposition. Wrap it: `remember(orders) { orders.sortedBy { it.date } }`.
+
+**Reading state too high up.** Reading a fast-changing value in a parent invalidates the parent
+and everything under it. Read it as low in the tree as you can — ideally inside the composable
+that displays it.
+
+**Writing state that the same composable reads.** That invalidates the scope that just ran, which
+schedules it again, forever. Compose detects some of these and throws; the rest are an infinite
+recomposition loop.
+</Pitfall>
+
+## Practice
+
+1. Put a `println` in a parent and a child, change state read only by the child, and see which
+   one prints.
+2. Move that state read from the parent into the child and watch the parent stop recomposing.
+3. Pass a `List` parameter, then the same data as an `ImmutableList`, and compare what gets
+   skipped using the Layout Inspector's recomposition counts.
+4. Write a heavy loop directly in a composable body, then wrap it in `remember`, and compare the
+   frame times.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `@Composable` | Adds a hidden `Composer` and a `$changed` bitmask |
+| Calling context | Only another composable may call one |
+| Restart scope | The nearest enclosing restartable composable, not the call |
+| Skipping | All arguments stable and equal to last time |
+| Stability | Inferred, or promised with `@Stable` / `@Immutable` |
+| Identity | The call's position in the source |
+| Reading state | Subscribes the current scope to it |
+| `remember(key)` | Keeps a computed value until the key changes |
+
+<Interview title="A question where the wrong answer is very common">
+"What exactly recomposes when one value changes?"
+
+The nearest enclosing restartable composable re-runs, and within it each call is skipped if its
+arguments are stable and unchanged. The common wrong answers are 'the whole screen' and 'just
+that one `Text`', and the reason the real answer matters is practical: a heavy computation sitting
+loose in a composable body is inside the scope that restarts, so nothing skips it for you.
+</Interview>
