@@ -1,0 +1,176 @@
+---
+title: WebSockets aur bina Firebase ke realtime
+description: Socket aisa connection hai jo aapka hai, yani dobara judna, jitni der aap kate rahe us khai ko bharna, aur ye tay karna ki socket chahiye bhi tha ya nahi — sab aapka hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+WebSocket aapko tika hua dotarfa connection deta hai. Jo wo nahi deta wo us cheez ko sambhalna hai jo
+mobile par sach mein hoti hai — connection ka tootna — to **dobara judna aur chhooti hui cheezein paana**
+hi poori engineering ki mushkil hai.
+</KeyIdea>
+
+## Aapko chahiye bhi?
+
+| Zarurat | Lijiye |
+| --- | --- |
+| Server se shuru, kabhi-kabhaar, secondon ki der chal jaye | FCM ka push |
+| Samay-samay par taza karna, minton ki der chal jaye | WorkManager |
+| Screen khuli rehte lagatar dhara | WebSocket |
+| Sirf server se client tak, HTTP ke anukool | Server-Sent Events |
+
+Socket zinda match ke score, chat ki screen, saath milkar likhne wale editor ke liye sahi hai — jahan
+secondon ki der dikhti hai. "Kuch badle to list taza ho jaye" ke liye wo galat jawab hai, jise push aur
+ek fetch behtar karte hain, bina koi connection zinda rakhe.
+
+Keemat asli hai: socket radio ko jagaye rakhta hai, to jis screen par khaali socket khula hai wo battery
+aise gholti hai jaise samay-samay par hoti fetch nahi gholti.
+
+## OkHttp
+
+```kotlin title="Socket.kt" numbered
+fun messages(): Flow<Message> = callbackFlow {
+    val request = Request.Builder().url("wss://api.example.com/ws").build()
+
+    val socket = client.newWebSocket(request, object : WebSocketListener() {
+        override fun onMessage(ws: WebSocket, text: String) {
+            trySend(json.decodeFromString<Message>(text))
+        }
+        override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+            close(t)                                     // collect karne wala tay kare
+        }
+        override fun onClosed(ws: WebSocket, code: Int, reason: String) { close() }
+    })
+
+    awaitClose { socket.close(1000, "screen closed") }   // 1000 = samanya band hona
+}
+```
+
+Yahan `awaitClose` aam se zyada maayne rakhta hai: jis socket ko kisi ne band nahi kiya wo radio jagaye
+rakhta hai aur aapke server par har user ka ek connection hamesha khula rakhta hai.
+
+`onFailure` aur `onClosed` alag karne layak hain. `onClosed` saaf-suthra band hona hai — kisi ek taraf ne
+vida kaha. `onFailure` connection ka marna hai, jo mobile par aam baat hai, apwad nahi.
+
+## Dobara judna
+
+```kotlin title="Reconnect.kt" numbered
+fun messagesWithRetry(): Flow<Message> = messages()
+    .retryWhen { cause, attempt ->
+        if (cause is CancellationException) return@retryWhen false
+        val backoff = minOf(2.0.pow(attempt.toInt()).toLong() * 1_000, 60_000)
+        delay(backoff + Random.nextLong(1_000))          // bikhrav
+        true
+    }
+```
+
+Badhta hua backoff kisi client ko us server par hathoda barsane se rokta hai jo pehle hi joojh raha hai.
+**Bikhrav** wo hissa hai jise log chhod dete hain aur nahi chhodna chahiye: uske bina, aapke server ke
+dobara chalu hone par jo bhi clients kate the wo sab theek ek hi pal judne aate hain, aur wo toofan server
+ko phir gira deta hai.
+
+Screen jane par dobara koshish karna bhi band kijiye. Chunki ye `Flow` hai, `repeatOnLifecycle(STARTED)`
+ke saath collect karna ye pehle se karta hai — screen rukne par socket band hota hai aur lautne par phir
+khulta hai, aur aam taur par aap theek yahi chahte ho.
+
+<Quiz
+  question="Koi chat ki screen WebSocket leti hai. User do minute surang se gujarta hai; uske baad socket dobara jud jata hai. Un do minton mein bheje sandesh app dobara shuru karne tak kabhi nahi dikhte. Kya chhoota hai?"
+  options={[
+    "Dobara judne ko lamba timeout chahiye taki pehla socket surang jhel jaye",
+    "Dobara judna sirf zinda dhara phir shuru karta hai — wo chhooti hui cheezein pahunchata nahi. Judne ke baad client ko apne aakhri jane hue sandesh ke baad ka sab kuch lana padta hai, kisi cursor ya samay ke nishan se, aur uske baad hi zinda ghatnayein lagani hoti hain",
+    "Server ko bina pahunche sandesh jama karke dobara judne par bhejne chahiye"
+  ]}
+  answer={1}
+  explanation="Socket uski dhara hai jo abhi ho raha hai, aur dobara juda socket abhi se shuru hota hai — wo khai use dikhti hi nahi, to connection wali parat ki koi cheez use bhar nahi sakti. Isiliye realtime ki banawat hamesha ek nahi, do vyavasthayein hoti hain: ek REST wali fetch jo client ke pakde cursor ke baad ka sab kuch lautati hai, aur ek socket jo us bindu se aage ki ghatnayein dhota hai. Dobara judne par client pehle wo khai lata hai, phir zinda ghatnayein lagata hai, aur aam taur par sandesh ki id se naklein hatata hai kyunki dono mein overlap ho sakta hai. Server ki taraf jama karna ilaaj jaisa lagta hai aur wo usi ilaaj ka kahin mushkil roop hai — uske liye server par har client ki pahunchne wali haalat rakhni padti hai, aur cursor theek wahi uljhan bachata hai, client se ye kehlwakar ki wo kahan tak pahuncha tha. Lamba timeout kuch nahi badalta: surang ke do minute kisi bhi socket ko gira dete hain."
+/>
+
+## Doosre raaste
+
+```kotlin title="SSE.kt" numbered
+// Server-Sent Events: ektarfa, saada HTTP, khud dobara judta hai
+val events = EventSources.createFactory(client)
+    .newEventSource(request, object : EventSourceListener() {
+        override fun onEvent(id: String?, type: String?, data: String) { handle(data) }
+    })
+```
+
+SSE janne layak hai kyunki wo aksar zyada fit baithta hai: agar client sirf pata hai, to SSE aam HTTP hai,
+un proxies se bhi gujarta hai jo WebSocket ke upgrade rokte hain, aur `Last-Event-ID` wale header ke saath
+khud dobara judta hai — jo quiz wala cursor hai, bana-banaya.
+
+Ktor ka client coroutine wali socket ki API deta hai, jo listener se zyada sehaj padhi jati hai. Aur
+Supabase Realtime, Ably ya Pusher aapko wo dobara judna, maujoodgi ki ginti aur khai bharna de dete hain jo
+warna aap likhte aur galat karte — wahi sauda jo Firebase ka hai, bas doosre vikreta ke saath.
+
+<Detail summary="Connection zinda rakhna, aur mobile kahan ladta hai">
+Teen cheezein lambi umar wale socket ko todti hain jo kisi desktop par theek chalta.
+
+**Khaalipan ke timeouts.** Mobile wali companiyan aur load balancers un connections ko band kar dete hain
+jo chup pad jayein, aksar kareeb ek minute baad. `OkHttpClient` par `pingInterval` samay-samay par ping
+wala frame bhejta hai taki wo connection itna khaali rahe hi nahi ki kaata jaye.
+
+**Doze.** Platform wale phase se: khaali pada device network rok deta hai, to jo socket screen band hone
+par bach gaya tha wo phir bhi kuch paana band kar deta hai. Screen rukne par socket band karne aur jo kuch
+app ke peeche rehte pahunchna hi chahiye uske liye FCM lene ki sabse mazboot daleel yahi hai.
+
+**Process ka marna.** Peeche gaya app kabhi bhi maara ja sakta hai, aur koi socket usmein nahi bachta.
+
+Teenon se vyavharik shakal nikalti hai: socket saamne rehte ki behtari hai, push peeche ki vyavastha hai,
+aur REST wala endpoint sach ka thikana hai jo un dono ko vaikalpik bana deta hai. Is tarah bana app ghatta
+hai — socket ke bina wo dheema hota hai, tootta nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri chupchap sandesh ganwa deti hai">
+**Kabhi-kabhaar ke updates ke liye socket.** Push aur ek fetch wahi karte hain, bina radio jagaye rakhe.
+
+**Khai bhare bina dobara judna.** Wo khai socket ko dikhti hi nahi; use saaf-saaf laiye.
+
+**Bina bikhrav wala backoff.** Har client ek saath judta hai aur server phir gira deta hai.
+
+**Koi `awaitClose` na hona.** Radio jaga rehta hai aur server har user ka ek connection pakde rehta hai.
+
+**Socket se peeche rehte bache rehne ki ummid.** Doze aur process ka marna, dono use khatam karte hain.
+</Pitfall>
+
+## Abhyaas
+
+1. Socket kholiye, do minute Wi-Fi band kijiye, aur dobara judne ke baad dekhiye kya aata hai.
+2. Cursor wali khai bharne ki fetch jodiye aur pakka kijiye ki khai bharti hai.
+3. Bees clients se ek saath bina bikhrav ke dobara koshish kijiye aur judne ka uchhal dekhiye.
+4. Socket ka flow bina `repeatOnLifecycle` ke collect kijiye aur dekhiye ki peeche jane par wo band hota
+   hai ya nahi.
+5. Sirf pane wale socket ki jagah SSE rakhiye aur milaiye ki dobara judne ka kitna code ab nahi likhna
+   pada.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Socket lijiye | Screen khuli rehte lagatar dhara |
+| Push lijiye | Server se shuru aur kabhi-kabhaar |
+| `callbackFlow` | Listener ko lapetta hai; `awaitClose` socket band karta hai |
+| `onFailure` | Mobile par aam baat, apwad nahi |
+| Backoff | Bikhrav ke saath, warna har client ek saath judta hai |
+| Dobara judna | Dhara phir shuru karta hai; khai nahi bharta |
+| Khai bharna | Cursor ke baad ka laiye, phir zinda ghatnayein lagaiye |
+| SSE | Ektarfa, saada HTTP, `Last-Event-ID` se dobara judta hai |
+| `pingInterval` | Khaali connection ko kat-ne se bachata hai |
+| Peeche rehte | Doze aur process ka marna use khatam karte hain; push isi ke liye hai |
+
+<Interview title="Ek sawal, realtime ke us aadhe ka jo socket nahi hai">
+"Do minute kate rehne ke baad aap WebSocket dobara jodte ho. Kya aapke paas poora data hai?"
+
+Nahi. Socket wo dhota hai jo abhi ho raha hai, to dobara juda socket abhi se shuru hota hai — jo do minute
+ke sandesh aap chooke wo use dikhte hi nahi, aur dobara judne ka kitna bhi tark unhe wapas nahi lata.
+Isiliye realtime hamesha do vyavasthayein hain: ek REST wala endpoint jo client ke pakde cursor ke baad ka
+sab kuch lautata hai, aur ek socket jo us bindu se aage ki ghatnayein dhota hai.
+
+To dobara judne ka order hai pehle khai lana, phir zinda ghatnayein lagana, aur id se naklein hatana kyunki
+dono mein overlap hota hai. Main backoff mein bikhrav bhi jodunga, kyunki uske bina jo clients saath kate
+wo saath hi judte hain aur wo toofan server ko phir gira deta hai. Aur main socket ko saamne rehte ki
+behtari manunga — Doze aur process ka marna dono use khatam karte hain, to jo kuch app ke peeche rehte
+pahunchna hi chahiye wo push hai, aur REST wala endpoint hi app ko tootne ke bajaye ghatne layak banata
+hai.
+</Interview>

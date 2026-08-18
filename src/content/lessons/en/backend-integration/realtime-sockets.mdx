@@ -1,0 +1,174 @@
+---
+title: WebSockets and realtime without Firebase
+description: A socket is a connection you own, which means you also own reconnecting, the gap while you were disconnected, and deciding whether a socket was needed at all.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A WebSocket gives you a persistent two-way connection. What it does not give you is any handling of the
+thing that actually happens on mobile — the connection dropping — so **reconnection and catching up on
+what you missed** are the whole engineering problem.
+</KeyIdea>
+
+## Do you need one?
+
+| Need | Use |
+| --- | --- |
+| Server-initiated, occasional, can be seconds late | FCM push |
+| Periodic refresh, can be minutes late | WorkManager |
+| Continuous stream while a screen is open | WebSocket |
+| Server-to-client only, HTTP-friendly | Server-Sent Events |
+
+A socket is right for a live match score, a chat screen, a collaborative editor — things where a delay
+of seconds is visible. It is the wrong answer for "the list should update when something changes",
+which a push plus a fetch does better, without a connection to keep alive.
+
+The cost is real: a socket holds the radio awake, so a screen with an idle socket open drains battery
+in a way a periodic fetch does not.
+
+## OkHttp
+
+```kotlin title="Socket.kt" numbered
+fun messages(): Flow<Message> = callbackFlow {
+    val request = Request.Builder().url("wss://api.example.com/ws").build()
+
+    val socket = client.newWebSocket(request, object : WebSocketListener() {
+        override fun onMessage(ws: WebSocket, text: String) {
+            trySend(json.decodeFromString<Message>(text))
+        }
+        override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+            close(t)                                     // let the collector decide
+        }
+        override fun onClosed(ws: WebSocket, code: Int, reason: String) { close() }
+    })
+
+    awaitClose { socket.close(1000, "screen closed") }   // 1000 = normal closure
+}
+```
+
+`awaitClose` matters more here than usual: a socket nobody closed keeps the radio awake and keeps a
+connection open on your server, per user, indefinitely.
+
+`onFailure` versus `onClosed` is worth separating. `onClosed` is a clean shutdown — either side said
+goodbye. `onFailure` is the connection dying, which on mobile is the normal case, not an exception.
+
+## Reconnecting
+
+```kotlin title="Reconnect.kt" numbered
+fun messagesWithRetry(): Flow<Message> = messages()
+    .retryWhen { cause, attempt ->
+        if (cause is CancellationException) return@retryWhen false
+        val backoff = minOf(2.0.pow(attempt.toInt()).toLong() * 1_000, 60_000)
+        delay(backoff + Random.nextLong(1_000))          // jitter
+        true
+    }
+```
+
+Exponential backoff stops a client hammering a server that is already struggling. The **jitter** is the
+part people leave out and should not: without it, every client that dropped when your server restarted
+reconnects at exactly the same moment, and the retry storm takes the server down again.
+
+Also stop retrying when the screen is gone. Because this is a `Flow`, collecting it with
+`repeatOnLifecycle(STARTED)` already does that — the socket closes when the screen stops and reopens
+when it returns, which is usually exactly the behaviour you want.
+
+<Quiz
+  question="A chat screen uses a WebSocket. A user goes through a tunnel for two minutes; the socket reconnects afterwards. Messages sent during those two minutes never appear until the app is restarted. What is missing?"
+  options={[
+    "The reconnection needs a longer timeout so the original socket survives the tunnel",
+    "Reconnecting only resumes the live stream — it does not deliver what was missed. After reconnecting, the client must fetch everything since its last known message, using a cursor or timestamp, and only then apply live events",
+    "The server should buffer undelivered messages and replay them on reconnect"
+  ]}
+  answer={1}
+  explanation="A socket is a stream of what is happening now, and a reconnected socket starts from now — the gap is invisible to it, so nothing about the connection layer can close it. That is why realtime designs are always two mechanisms rather than one: a REST fetch that returns everything since a cursor the client holds, and a socket that carries events from that point forward. On reconnect the client fetches the gap first, then applies live events, and usually de-duplicates by message id because the two can overlap. Server-side buffering sounds like a fix and is a much harder version of the same one — it requires per-client delivery state on the server, which is exactly the complexity a cursor avoids by making the client say where it got to. A longer timeout changes nothing: two minutes in a tunnel drops any socket.
+"
+/>
+
+## The alternatives
+
+```kotlin title="SSE.kt" numbered
+// Server-Sent Events: one-way, plain HTTP, reconnects itself
+val events = EventSources.createFactory(client)
+    .newEventSource(request, object : EventSourceListener() {
+        override fun onEvent(id: String?, type: String?, data: String) { handle(data) }
+    })
+```
+
+SSE is worth knowing because it is often the better fit: if the client only receives, SSE is ordinary
+HTTP, works through proxies that block WebSocket upgrades, and has automatic reconnection with a
+`Last-Event-ID` header — which is the cursor from the quiz, built in.
+
+Ktor's client offers a coroutine-native socket API, which reads more naturally than a listener. And
+Supabase Realtime, Ably or Pusher give you the reconnection, the presence tracking and the catch-up
+that you would otherwise write and get wrong — the same trade as Firebase, with a different vendor.
+
+<Detail summary="Keeping a connection alive, and where mobile fights you">
+Three things break a long-lived socket that would be fine on a desktop.
+
+**Idle timeouts.** Mobile carriers and load balancers close connections that go quiet, often after
+about a minute. `pingInterval` on the `OkHttpClient` sends a periodic ping frame so the connection is
+never idle enough to be reaped.
+
+**Doze.** From the platform phase: an idle device suspends network access, so a socket that survived
+the screen turning off stops receiving anyway. This is the strongest argument for closing the socket
+when the screen stops and using FCM for anything that must arrive while the app is backgrounded.
+
+**Process death.** A backgrounded app can be killed at any time, and no socket survives that.
+
+The practical shape follows from all three: the socket is a foreground optimisation, push is the
+background mechanism, and the REST endpoint is the source of truth that makes both of them optional.
+An app built that way degrades — it gets slower without a socket, not broken.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second loses messages silently">
+**A socket for occasional updates.** A push plus a fetch does it without holding the radio awake.
+
+**Reconnecting without catching up.** The gap is invisible to the socket; fetch it explicitly.
+
+**Backoff with no jitter.** Every client reconnects at once and takes the server down again.
+
+**No `awaitClose`.** The radio stays awake and the server holds a connection per user.
+
+**Expecting a socket to survive the background.** Doze and process death both end it.
+</Pitfall>
+
+## Practice
+
+1. Open a socket, turn off Wi-Fi for two minutes, and see what arrives after reconnecting.
+2. Add a cursor-based catch-up fetch and confirm the gap fills.
+3. Retry without jitter from twenty clients at once and watch the reconnect spike.
+4. Collect the socket flow without `repeatOnLifecycle` and check whether it closes on background.
+5. Replace a receive-only socket with SSE and compare the reconnection code you no longer write.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Use a socket | Continuous stream while a screen is open |
+| Use a push | Server-initiated and occasional |
+| `callbackFlow` | Wraps the listener; `awaitClose` closes the socket |
+| `onFailure` | The normal case on mobile, not an exception |
+| Backoff | With jitter, or every client reconnects together |
+| Reconnection | Resumes the stream; it does not fill the gap |
+| Catch-up | Fetch since a cursor, then apply live events |
+| SSE | One-way, plain HTTP, reconnects with `Last-Event-ID` |
+| `pingInterval` | Stops carriers reaping an idle connection |
+| Background | Doze and process death end it; that is what push is for |
+
+<Interview title="A question about the half of realtime that is not the socket">
+"You reconnect a WebSocket after a two-minute outage. Do you have all the data?"
+
+No. A socket carries what is happening now, so a reconnected one starts from now — the two minutes of
+messages you missed are invisible to it, and no amount of reconnection logic recovers them. That is why
+realtime is always two mechanisms: a REST endpoint that returns everything since a cursor the client
+holds, and a socket for events from that point on.
+
+So the reconnect sequence is fetch the gap first, then apply live events, and de-duplicate by id
+because the two overlap. I would also add jitter to the backoff, since without it every client that
+dropped together reconnects together and the retry storm takes the server down again. And I would treat
+the socket as a foreground optimisation — Doze and process death both end it, so anything that must
+arrive while the app is backgrounded is a push, and the REST endpoint is what makes the app degrade
+rather than break.
+</Interview>

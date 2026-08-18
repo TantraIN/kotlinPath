@@ -1,0 +1,174 @@
+---
+title: WebSockets और बिना Firebase के realtime
+description: Socket ऐसा connection है जो आपका है, यानी दोबारा जुड़ना, जितनी देर आप कटे रहे उस खाई को भरना, और यह तय करना कि socket चाहिए भी था या नहीं — सब आपका है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+WebSocket आपको टिका हुआ दोतरफा connection देता है। जो वह नहीं देता वह उस चीज को सँभालना है जो mobile
+पर सच में होती है — connection का टूटना — तो **दोबारा जुड़ना और छूटी हुई चीजें पाना** ही पूरी इंजीनियरी
+की दिक्कत है।
+</KeyIdea>
+
+## आपको चाहिए भी?
+
+| जरूरत | लीजिए |
+| --- | --- |
+| Server से शुरू, कभी-कभार, सेकंडों की देर चल जाए | FCM का push |
+| समय-समय पर ताजा करना, मिनटों की देर चल जाए | WorkManager |
+| Screen खुली रहते लगातार धारा | WebSocket |
+| सिर्फ server से client तक, HTTP के अनुकूल | Server-Sent Events |
+
+Socket जिंदा match के score, chat की screen, साथ मिलकर लिखने वाले editor के लिए सही है — जहाँ सेकंडों
+की देर दिखती है। "कुछ बदले तो list ताजा हो जाए" के लिए वह गलत जवाब है, जिसे push और एक fetch बेहतर
+करते हैं, बिना कोई connection जिंदा रखे।
+
+कीमत असली है: socket radio को जगाए रखता है, तो जिस screen पर खाली socket खुला है वह battery ऐसे घोलती
+है जैसे समय-समय पर होती fetch नहीं घोलती।
+
+## OkHttp
+
+```kotlin title="Socket.kt" numbered
+fun messages(): Flow<Message> = callbackFlow {
+    val request = Request.Builder().url("wss://api.example.com/ws").build()
+
+    val socket = client.newWebSocket(request, object : WebSocketListener() {
+        override fun onMessage(ws: WebSocket, text: String) {
+            trySend(json.decodeFromString<Message>(text))
+        }
+        override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+            close(t)                                     // collect करने वाला तय करे
+        }
+        override fun onClosed(ws: WebSocket, code: Int, reason: String) { close() }
+    })
+
+    awaitClose { socket.close(1000, "screen closed") }   // 1000 = सामान्य बंद होना
+}
+```
+
+यहाँ `awaitClose` आम से ज्यादा मायने रखता है: जिस socket को किसी ने बंद नहीं किया वह radio जगाए रखता है
+और आपके server पर हर user का एक connection हमेशा खुला रखता है।
+
+`onFailure` और `onClosed` अलग करने लायक हैं। `onClosed` साफ-सुथरा बंद होना है — किसी एक तरफ ने विदा
+कहा। `onFailure` connection का मरना है, जो mobile पर आम बात है, अपवाद नहीं।
+
+## दोबारा जुड़ना
+
+```kotlin title="Reconnect.kt" numbered
+fun messagesWithRetry(): Flow<Message> = messages()
+    .retryWhen { cause, attempt ->
+        if (cause is CancellationException) return@retryWhen false
+        val backoff = minOf(2.0.pow(attempt.toInt()).toLong() * 1_000, 60_000)
+        delay(backoff + Random.nextLong(1_000))          // बिखराव
+        true
+    }
+```
+
+बढ़ता हुआ backoff किसी client को उस server पर हथौड़े बरसाने से रोकता है जो पहले ही जूझ रहा है।
+**बिखराव** वह हिस्सा है जिसे लोग छोड़ देते हैं और नहीं छोड़ना चाहिए: उसके बिना, आपके server के दोबारा
+चालू होने पर जो भी clients कटे थे वे सब ठीक एक ही पल जुड़ने आते हैं, और वह तूफान server को फिर गिरा
+देता है।
+
+Screen जाने पर दोबारा कोशिश करना भी बंद कीजिए। चूँकि यह `Flow` है, `repeatOnLifecycle(STARTED)` के साथ
+collect करना यह पहले से करता है — screen रुकने पर socket बंद होता है और लौटने पर फिर खुलता है, और
+आमतौर पर आप ठीक यही चाहते हैं।
+
+<Quiz
+  question="कोई chat की screen WebSocket लेती है। User दो मिनट सुरंग से गुजरता है; उसके बाद socket दोबारा जुड़ जाता है। उन दो मिनटों में भेजे संदेश ऐप दोबारा शुरू करने तक कभी नहीं दिखते। क्या छूटा है?"
+  options={[
+    "दोबारा जुड़ने को लंबा timeout चाहिए ताकि पहला socket सुरंग झेल जाए",
+    "दोबारा जुड़ना सिर्फ जिंदा धारा फिर शुरू करता है — वह छूटी हुई चीजें पहुँचाता नहीं। जुड़ने के बाद client को अपने आखिरी जाने हुए संदेश के बाद का सब कुछ लाना पड़ता है, किसी cursor या समय के निशान से, और उसके बाद ही जिंदा घटनाएँ लगानी होती हैं",
+    "Server को बिना पहुँचे संदेश जमा करके दोबारा जुड़ने पर भेजने चाहिए"
+  ]}
+  answer={1}
+  explanation="Socket उसकी धारा है जो अभी हो रहा है, और दोबारा जुड़ा socket अभी से शुरू होता है — वह खाई उसे दिखती ही नहीं, तो connection वाली परत की कोई चीज उसे भर नहीं सकती। इसीलिए realtime की बनावट हमेशा एक नहीं, दो व्यवस्थाएँ होती हैं: एक REST वाली fetch जो client के पकड़े cursor के बाद का सब कुछ लौटाती है, और एक socket जो उस बिंदु से आगे की घटनाएँ ढोता है। दोबारा जुड़ने पर client पहले वह खाई लाता है, फिर जिंदा घटनाएँ लगाता है, और आमतौर पर संदेश की id से नकलें हटाता है क्योंकि दोनों में ओवरलैप हो सकता है। Server की तरफ जमा करना इलाज जैसा लगता है और वह उसी इलाज का कहीं मुश्किल रूप है — उसके लिए server पर हर client की पहुँचने वाली हालत रखनी पड़ती है, और cursor ठीक वही उलझन बचाता है, client से यह कहलवाकर कि वह कहाँ तक पहुँचा था। लंबा timeout कुछ नहीं बदलता: सुरंग के दो मिनट किसी भी socket को गिरा देते हैं।"
+/>
+
+## दूसरे रास्ते
+
+```kotlin title="SSE.kt" numbered
+// Server-Sent Events: एकतरफा, सादा HTTP, खुद दोबारा जुड़ता है
+val events = EventSources.createFactory(client)
+    .newEventSource(request, object : EventSourceListener() {
+        override fun onEvent(id: String?, type: String?, data: String) { handle(data) }
+    })
+```
+
+SSE जानने लायक है क्योंकि वह अक्सर ज्यादा फिट बैठता है: अगर client सिर्फ पाता है, तो SSE आम HTTP है, उन
+proxies से भी गुजरता है जो WebSocket के upgrade रोकते हैं, और `Last-Event-ID` वाले header के साथ खुद
+दोबारा जुड़ता है — जो quiz वाला cursor है, बना-बनाया।
+
+Ktor का client coroutine वाली socket की API देता है, जो listener से ज्यादा सहज पढ़ी जाती है। और
+Supabase Realtime, Ably या Pusher आपको वह दोबारा जुड़ना, मौजूदगी की गिनती और खाई भरना दे देते हैं जो
+वरना आप लिखते और गलत करते — वही सौदा जो Firebase का है, बस दूसरे विक्रेता के साथ।
+
+<Detail summary="Connection जिंदा रखना, और mobile कहाँ लड़ता है">
+तीन चीजें लंबी उम्र वाले socket को तोड़ती हैं जो किसी desktop पर ठीक चलता।
+
+**खालीपन के timeouts।** Mobile वाली कंपनियाँ और load balancers उन connections को बंद कर देते हैं जो चुप
+पड़ जाएँ, अक्सर करीब एक मिनट बाद। `OkHttpClient` पर `pingInterval` समय-समय पर ping वाला frame भेजता है
+ताकि वह connection इतना खाली रहे ही नहीं कि काटा जाए।
+
+**Doze।** Platform वाले phase से: खाली पड़ा device network रोक देता है, तो जो socket screen बंद होने पर
+बच गया था वह फिर भी कुछ पाना बंद कर देता है। Screen रुकने पर socket बंद करने और जो कुछ ऐप के पीछे रहते
+पहुँचना ही चाहिए उसके लिए FCM लेने की सबसे मजबूत दलील यही है।
+
+**Process का मरना।** पीछे गया ऐप कभी भी मारा जा सकता है, और कोई socket उसमें नहीं बचता।
+
+तीनों से व्यावहारिक शक्ल निकलती है: socket सामने रहते की बेहतरी है, push पीछे की व्यवस्था है, और REST
+वाला endpoint सच का ठिकाना है जो उन दोनों को वैकल्पिक बना देता है। इस तरह बना ऐप घटता है — socket के
+बिना वह धीमा होता है, टूटता नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और दूसरी चुपचाप संदेश गँवा देती है">
+**कभी-कभार के updates के लिए socket।** Push और एक fetch वही करते हैं, बिना radio जगाए रखे।
+
+**खाई भरे बिना दोबारा जुड़ना।** वह खाई socket को दिखती ही नहीं; उसे साफ-साफ लाइए।
+
+**बिना बिखराव वाला backoff।** हर client एक साथ जुड़ता है और server फिर गिरा देता है।
+
+**कोई `awaitClose` न होना।** Radio जगा रहता है और server हर user का एक connection पकड़े रहता है।
+
+**Socket से पीछे रहते बचे रहने की उम्मीद।** Doze और process का मरना, दोनों उसे खत्म करते हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. Socket खोलिए, दो मिनट Wi-Fi बंद कीजिए, और दोबारा जुड़ने के बाद देखिए क्या आता है।
+2. Cursor वाली खाई भरने की fetch जोड़िए और पक्का कीजिए कि खाई भरती है।
+3. बीस clients से एक साथ बिना बिखराव के दोबारा कोशिश कीजिए और जुड़ने का उछाल देखिए।
+4. Socket का flow बिना `repeatOnLifecycle` के collect कीजिए और देखिए कि पीछे जाने पर वह बंद होता है या
+   नहीं।
+5. सिर्फ पाने वाले socket की जगह SSE रखिए और मिलाइए कि दोबारा जुड़ने का कितना code अब नहीं लिखना पड़ा।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Socket लीजिए | Screen खुली रहते लगातार धारा |
+| Push लीजिए | Server से शुरू और कभी-कभार |
+| `callbackFlow` | Listener को लपेटता है; `awaitClose` socket बंद करता है |
+| `onFailure` | Mobile पर आम बात, अपवाद नहीं |
+| Backoff | बिखराव के साथ, वरना हर client एक साथ जुड़ता है |
+| दोबारा जुड़ना | धारा फिर शुरू करता है; खाई नहीं भरता |
+| खाई भरना | Cursor के बाद का लाइए, फिर जिंदा घटनाएँ लगाइए |
+| SSE | एकतरफा, सादा HTTP, `Last-Event-ID` से दोबारा जुड़ता है |
+| `pingInterval` | खाली connection को कटने से बचाता है |
+| पीछे रहते | Doze और process का मरना उसे खत्म करते हैं; push इसी के लिए है |
+
+<Interview title="एक सवाल, realtime के उस आधे का जो socket नहीं है">
+"दो मिनट कटे रहने के बाद आप WebSocket दोबारा जोड़ते हैं। क्या आपके पास पूरा data है?"
+
+नहीं। Socket वह ढोता है जो अभी हो रहा है, तो दोबारा जुड़ा socket अभी से शुरू होता है — जो दो मिनट के
+संदेश आप चूके वे उसे दिखते ही नहीं, और दोबारा जुड़ने का कितना भी तर्क उन्हें वापस नहीं लाता। इसीलिए
+realtime हमेशा दो व्यवस्थाएँ हैं: एक REST वाला endpoint जो client के पकड़े cursor के बाद का सब कुछ
+लौटाता है, और एक socket जो उस बिंदु से आगे की घटनाएँ ढोता है।
+
+तो दोबारा जुड़ने का क्रम है पहले खाई लाना, फिर जिंदा घटनाएँ लगाना, और id से नकलें हटाना क्योंकि दोनों
+में ओवरलैप होता है। मैं backoff में बिखराव भी जोड़ूँगा, क्योंकि उसके बिना जो clients साथ कटे वे साथ ही
+जुड़ते हैं और वह तूफान server को फिर गिरा देता है। और मैं socket को सामने रहते की बेहतरी मानूँगा —
+Doze और process का मरना दोनों उसे खत्म करते हैं, तो जो कुछ ऐप के पीछे रहते पहुँचना ही चाहिए वह push है,
+और REST वाला endpoint ही ऐप को टूटने के बजाय घटने लायक बनाता है।
+</Interview>
