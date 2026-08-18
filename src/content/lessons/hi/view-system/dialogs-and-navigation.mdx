@@ -1,0 +1,220 @@
+---
+title: Dialogs, bottom sheets, toolbars और menus
+description: आपकी screen के ऊपर तैरने वाली हर चीज किसी window की है, और हर window किसी lifecycle की। यह मालिकाना गलत समझ लेना ही यहाँ के bugs की पूरी जमात है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`Dialog` अपनी अलग window है, जो उस `Activity` के token से जुड़ी होती है जिसने उसे दिखाया। वह
+`Activity` गई तो token भी गया। `DialogFragment` इसीलिए है कि उम्र का जिम्मा आपके बजाय fragment
+manager उठाए।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+`AlertDialog` सीधे दिखाइए, phone घुमाइए, और वह गायब हो जाता है — साथ में user का आधा किया हुआ
+फैसला भी। किसी ऐसे network callback से दिखाइए जो user के जाने के बाद आता है, तो dialog गायब नहीं
+होता, crash होता है।
+
+दोनों दिक्कतों की वजह एक है और इलाज भी एक।
+
+## सादा dialog
+
+```kotlin title="Confirm.kt" numbered
+MaterialAlertDialogBuilder(requireContext())
+    .setTitle(R.string.cancel_order_title)
+    .setMessage(R.string.cancel_order_body)
+    .setNegativeButton(R.string.keep, null)
+    .setPositiveButton(R.string.cancel_order) { _, _ -> viewModel.cancelOrder() }
+    .show()
+```
+
+उस चीज के लिए ठीक है जो user ने खुद चलाई और तुरंत जवाब दे रहा है। उस चीज के लिए ठीक नहीं जिसे
+rotation से बचना है, और callback से तो बिलकुल नहीं।
+
+## वह नाकामी जो लोगों को production में मिलती है
+
+<Quiz
+  question="User के screen घुमाने के एक सेकंड बाद network का जवाब आता है, और आपका callback एक `AlertDialog` दिखाता है। App `WindowManager$BadTokenException` के साथ crash हो जाती है। क्यों?"
+  options={[
+    "Dialogs background thread से दिखाए ही नहीं जा सकते",
+    "Dialog उस खत्म हो चुकी activity के context से बना, जिसका window token अब है ही नहीं",
+    "एक साथ दो dialogs दिखे और दूसरा नामंजूर हो गया",
+  ]}
+  answer={1}
+  explanation="Dialog एक window है, और window को जुड़ने के लिए किसी जिंदा activity का सही token चाहिए। Rotation पुरानी activity खत्म कर देता है, इसलिए आपके callback ने जो context पकड़ रखा है वह ऐसी चीज की तरफ इशारा करता है जो अब कोई window नहीं रख सकती, और WindowManager मना कर देता है। इलाज try-catch नहीं है — इलाज यह है कि dialog का मालिकाना आप अपने पास रखना बंद कर दें। DialogFragment को fragment manager नई activity के साथ दोबारा बना देता है, और lifecycle से पढ़ी हुई state कभी बासी नहीं होती। सादा dialog रखना ही है तो दिखाने से पहले lifecycle की हालत जाँच लीजिए।"
+/>
+
+## `DialogFragment` मालिकाना बदल देता है
+
+```kotlin title="CancelOrderDialog.kt" numbered
+class CancelOrderDialog : DialogFragment() {
+
+    override fun onCreateDialog(savedInstanceState: Bundle?): Dialog =
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.cancel_order_title)
+            .setNegativeButton(R.string.keep, null)
+            .setPositiveButton(R.string.cancel_order) { _, _ ->
+                setFragmentResult("cancel_order", bundleOf("confirmed" to true))
+            }
+            .create()
+}
+```
+
+```kotlin title="OrderFragment.kt"
+CancelOrderDialog().show(childFragmentManager, "cancel_order")
+
+setFragmentResultListener("cancel_order") { _, bundle ->
+    if (bundle.getBoolean("confirmed")) viewModel.cancelOrder()
+}
+```
+
+<Note>
+जवाब fragment manager से होकर लौटता है, आपके थमाए हुए किसी listener से नहीं। Rotation के बाद यही
+बात मायने रखती है: पकड़ा हुआ lambda पुराने fragment की तरफ इशारा करता है, जबकि fragment result उस
+instance तक पहुँचता है जो अभी जिंदा है।
+</Note>
+
+## Bottom sheets अलग window वाले dialogs हैं
+
+```kotlin title="FiltersSheet.kt" numbered
+class FiltersSheet : BottomSheetDialogFragment(R.layout.sheet_filters) {
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        val binding = SheetFiltersBinding.bind(view)
+        binding.apply.setOnClickListener { dismiss() }
+    }
+}
+```
+
+<Compare
+  left={{
+    title: "Dialog या bottom sheet",
+    subtitle: "जानबूझकर टोकता है",
+    accent: "violet",
+    points: [
+      "+ उस फैसले के लिए जो अभी लेना ही है",
+      "+ नीचे की screen रोक देता है",
+      "- इनमें से हर एक टोकना है; गिनकर इस्तेमाल कीजिए",
+      "~ Sheet हल्की लगती है, पर है window ही",
+    ],
+  }}
+  right={{
+    title: "Snackbar",
+    subtitle: "रोके बिना बता देता है",
+    accent: "emerald",
+    points: [
+      "+ उस चीज के लिए जो हो चुकी है",
+      "+ एक वैकल्पिक काम साथ रखता है, आमतौर पर Undo",
+      "+ आपके layout में टिकता है, तो FAB खिसक जाता है",
+      "- अभी की hierarchy की कोई view चाहिए",
+    ],
+  }}
+/>
+
+```kotlin title="Snackbar.kt"
+Snackbar.make(binding.root, R.string.order_cancelled, Snackbar.LENGTH_LONG)
+    .setAction(R.string.undo) { viewModel.undoCancel() }
+    .show()
+```
+
+अपनी app के अंदर `Toast` से `Snackbar` बेहतर है। `Toast` कोई काम साथ नहीं रख सकता, हटाया नहीं जा
+सकता, और Android 12 से ऊपर background से उस पर कड़ी रोक है।
+
+## Toolbar और menus, आज का तरीका
+
+```kotlin title="OrderFragment.kt" numbered
+requireActivity().addMenuProvider(
+    object : MenuProvider {
+        override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
+            inflater.inflate(R.menu.order, menu)
+        }
+
+        override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+            R.id.action_share -> { share(); true }
+            else -> false
+        }
+    },
+    viewLifecycleOwner,
+    Lifecycle.State.RESUMED,
+)
+```
+
+`viewLifecycleOwner` देना ही पूरी बात है: view खत्म होते ही provider अपने आप हट जाता है, तो किसी
+fragment के menu items अगली screen पर मँडराते नहीं रह सकते।
+
+<Detail summary="`onCreateOptionsMenu` की जगह क्यों ली गई">
+पुराने callbacks `Activity` और `Fragment` पर रहते थे, यानी activity को पता होना पड़ता कि कौन सा
+fragment कौन सा menu चाहता है, और जो fragment अब दिख भी नहीं रहा उससे भी पूछा जा सकता था।
+`MenuProvider` वाला तरीका menu को इसके बजाय एक lifecycle owner से जोड़ता है, तो दिखना और menu की
+हालत आपस में उलट नहीं सकते। पुरानी methods `Fragment` पर compile आज भी होती हैं पर deprecated
+हैं।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="Dialog एक अलग window है" meta="अपना token, अपनी hierarchy">
+    वह आपके layout के अंदर की कोई view नहीं है। इसीलिए उसे activity का token चाहिए, और इसीलिए
+    वह अपने बल पर कुछ भी नहीं झेलता।
+  </TimelineItem>
+  <TimelineItem title="`DialogFragment` पहले fragment है" meta="dialog उसका डिब्बा है">
+    Fragment manager उसे बाकी fragments की तरह ही सँभालता और लौटाता है, और configuration बदलने
+    के बाद `onCreateDialog` दोबारा बुलाता है।
+  </TimelineItem>
+  <TimelineItem title="Bottom sheet एक behaviour है" meta="खींचने का काम CoordinatorLayout करता है">
+    `BottomSheetBehavior` खींचना, हालतें और peek height सँभालता है। Dialog वाला रूप बस उसी
+    behaviour को एक dialog window के अंदर रख देता है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो users तक पहुँचती हैं">
+**`onSaveInstanceState` के बाद dialog दिखाना।** State सँभल जाने के बाद किया गया fragment
+transaction `IllegalStateException` फेंकता है। Dialogs उस state के जवाब में दिखाइए जो आप
+lifecycle से देख रहे हैं, उस callback के जवाब में नहीं जो किसी भी पल आ सकता है।
+
+**Dialog के callback में activity पकड़े रखना।** Lambda rotation के बाद भी जिंदा रहता है, मरी हुई
+activity की तरफ इशारा करता है, और या तो उसे leak करता है या इस्तेमाल पर crash हो जाता है।
+Fragment result इस्तेमाल कीजिए।
+
+**ऐसी चीज के लिए `Toast` जिस पर user को कुछ करना है।** उस पर tap नहीं हो सकता, उसे वापस नहीं
+लिया जा सकता, और नए Android पर वह दिखे ही न, यह भी हो सकता है। कोई काम करना है तो वह `Snackbar`
+है।
+</Pitfall>
+
+## अभ्यास
+
+1. सादा `AlertDialog` दिखाइए, घुमाइए, और उसे गायब होते देखिए। उसे `DialogFragment` में बदलिए और
+   दोबारा घुमाइए।
+2. Callback को तीन सेकंड देर से चलाइए, उसी बीच घुमाइए, और `BadTokenException` दोबारा पैदा
+   कीजिए।
+3. Dialog में भेजे गए listener की जगह `setFragmentResult` रखिए और देखिए कि rotation के बाद भी
+   चलता है।
+4. `viewLifecycleOwner` से बँधे `MenuProvider` वाला menu जोड़िए, आगे navigate कीजिए, और देखिए कि
+   item गायब हो जाता है।
+5. Delete की खबर देने वाले `Toast` को Undo वाले `Snackbar` में बदलिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `Dialog` | अपनी window, activity के token से बँधी |
+| `DialogFragment` | उम्र का जिम्मा fragment manager का; rotation झेल जाता है |
+| `BadTokenException` | आपने मरी हुई activity पर window दिखाई |
+| Fragment result | जवाब लौटाने का rotation से बचा हुआ तरीका |
+| Bottom sheet | `BottomSheetBehavior` चलाता हुआ एक dialog |
+| `Snackbar` | रोकता नहीं, एक काम, आपके layout में टिका |
+| `Toast` | कोई काम नहीं, background से रोक; app के अंदर टालिए |
+| Menus | `viewLifecycleOwner` के साथ `addMenuProvider` |
+
+<Interview title="यह सवाल असल में lifecycles के बारे में है">
+"`AlertDialog` दिखाने के बजाय `DialogFragment` क्यों?"
+
+क्योंकि dialog एक window है जो activity के token से जुड़ी है, और आपका खुद दिखाया `AlertDialog`
+यह जानता ही नहीं कि वह activity खत्म हो सकती है। `DialogFragment` उम्र का जिम्मा fragment
+manager को दे देता है, जो configuration बदलने के बाद उसे नई activity के साथ दोबारा बना देता है।
+जो बात असर करती है वह नाकामी वाला मामला है: rotation के बाद चलने वाला callback पहले तरीके में
+`BadTokenException` के साथ crash होता है और दूसरे में बस चल जाता है।
+</Interview>
