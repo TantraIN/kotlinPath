@@ -1,0 +1,217 @@
+---
+title: Error handling aur Resource wrapper
+description: UI ke neeche ki har parat janti hai ki wo kaise nakaam hui. Screen ko sirf ye janna hai ki dikhana kya hai. Wrapper wo jagah hai jahan ek doosra banta hai, aur iklauti jagah jahan Retrofit ke kisi type ko marne ki ijazat hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Exception batata hai ki *library mein kya galat hua*. Screen ko janna hai ki *user se kya kehna hai*.
+Data parat ka kaam hai ek ko doosre mein badalna — **ek baar, apni hi sarhad par** — taki uske upar
+koi kabhi `HttpException` na pakde, aur uske upar koi use pakadna bhool bhi na sake.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Ye raha wo roop jo phailta hai:
+
+```kotlin title="Spread.kt" numbered
+viewModelScope.launch {
+    try {
+        _state.value = UiState.Success(api.orders())
+    } catch (e: IOException) {
+        _state.value = UiState.Error("No internet")           // ViewModel mein
+    } catch (e: HttpException) {
+        _state.value = UiState.Error("Server error ${e.code()}")   // Retrofit, ViewModel mein
+    }
+}
+```
+
+Teen mushkilein, badhti keemat ke hisab se. Ab `ViewModel` Retrofit par nirbhar hai. Wo strings
+resources ke bajaye state rakhne wale mein hain, to unka anuvaad ho hi nahi sakta. Aur orders load
+karne wali agli screen isi ka thoda alag roop khud likhegi — to ek hi nakami par, aap kahan khade the
+uske hisab se, do alag message dikhenge.
+
+## Nakami lautai jane wali cheez hai, bhaagne ka raasta nahi
+
+Call jin-jin tarikon se nakaam ho sakti hai, unhe ek band list ki tarah likhiye:
+
+```kotlin title="DataError.kt" numbered
+sealed interface DataError {
+    data object Offline : DataError            // connectivity nahi, ya request gayi hi nahi
+    data object Timeout : DataError            // gayi, aur waqt par kuch lauta nahi
+    data object Unauthorised : DataError       // 401 — pehchan, refresh pehle hi aazmaya ja chuka
+    data object Forbidden : DataError          // 403 — ijazat, refresh se kuch nahi badlega
+    data object NotFound : DataError           // 404
+    data class Server(val code: Int) : DataError    // 5xx
+    data class Unknown(val cause: Throwable) : DataError
+}
+```
+
+Phir aisa result type jo ya to value lekar chale ya unmein se koi ek:
+
+```kotlin title="Outcome.kt" numbered
+sealed interface Outcome<out T> {
+    data class Success<T>(val data: T) : Outcome<T>
+    data class Failure(val error: DataError) : Outcome<Nothing>
+}
+```
+
+`Failure` mein `Nothing` hi wo cheez hai jisse ek nakami `Outcome<Order>` aur `Outcome<List<Order>>`
+dono mein rakhi ja sakti hai — wo har type ke neeche aane wala type hai, to nakami wali ek hi haalat
+har success type ke kaam aati hai.
+
+<Note>
+Kotlin ka apna `Result<T>` ismein se bahut kuch karta hai, aur jab nakami sach mein koi `Throwable`
+hi ho tab wo theek chunaav hai. Sealed error type apna badha hua code tab wasool karta hai jab UI ko
+wajah ke hisab se *raasta badalna* pade, kyunki sealed interface par `when` poora hota hai aur tab
+koi nai error wali haalat har us jagah compile tod deti hai jahan use sambhala jana chahiye.
+</Note>
+
+## Anuvaad, theek ek hi jagah
+
+```kotlin title="OrderRepository.kt" numbered
+class OfflineFirstOrderRepository(private val api: OrderApi) : OrderRepository {
+
+    override suspend fun refresh(): Outcome<Unit> = safeCall {
+        api.orders()
+    }.map { }
+
+    private inline fun <T> safeCall(block: () -> T): Outcome<T> = try {
+        Outcome.Success(block())
+    } catch (e: CancellationException) {
+        throw e                                        // cancellation kabhi mat nigliye
+    } catch (e: UnknownHostException) {
+        Outcome.Failure(DataError.Offline)
+    } catch (e: SocketTimeoutException) {
+        Outcome.Failure(DataError.Timeout)
+    } catch (e: IOException) {
+        Outcome.Failure(DataError.Offline)
+    } catch (e: HttpException) {
+        Outcome.Failure(
+            when (e.code()) {
+                401 -> DataError.Unauthorised
+                403 -> DataError.Forbidden
+                404 -> DataError.NotFound
+                in 500..599 -> DataError.Server(e.code())
+                else -> DataError.Unknown(e)
+            }
+        )
+    }
+}
+```
+
+Un catches ka order padhiye. `UnknownHostException` aur `SocketTimeoutException` dono `IOException`
+hain, to khaas wale pehle aane hi chahiye — `IOException` ko upar rakhiye aur har network wali nakami
+simatkar "offline" ban jati hai, wo timeout bhi jisme connectivity bilkul theek thi.
+
+<Quiz
+  question="Koi repository har call ko `runCatching` mein lapetta hai. Screens chalti hain, tests pass hote hain. Tootta kya hai, aur kab?"
+  options={[
+    "Kuch nahi — likhne ka yahi muhavredar tarika hai",
+    "Wo CancellationException bhi pakad leta hai, to roka gaya coroutine rukne ke bajaye nakami batata hai, aur uska scope us screen ke liye kaam chalata rehta hai jo ja chuki hai",
+    "runCatching Java ki libraries se aane wale checked exceptions nahi pakad sakta",
+  ]}
+  answer={1}
+  explanation="runCatching Throwable pakadta hai, aur coroutines mein roka jana CancellationException ki shakal mein aata hai. To jab user kisi screen se nikalta hai aur viewModelScope rukta hai, tab chalti hui call chupchap rukti nahi — wo pakdi jati hai, Result.failure ban jati hai, aur aise code ko wapas milti hai jo aise aage badhta hai mano network nakaam hua ho. Isse do baatein nikalti hain. Screen us request ki error dikha sakti hai jiska koi intezar hi nahi kar raha tha, aur usse buri baat — structured concurrency toot jati hai: parent samajhta hai bachcha ruk gaya, bachcha samajhta hai wo bas nakaam hua, aur khatam ho chuki screen ke liye kaam chalta rehta hai. Niyam ye hai ki kisi bhi chaude catch se pehle CancellationException dobara phenkiye, jo upar wala safeCall apni pehli hi shakha mein karta hai. Isiliye coroutine ke andar haath se likha try/catch aam taur par runCatching se behtar hai."
+/>
+
+## UI uska karta kya hai
+
+`ViewModel` kisi `DataError` ko us cheez par bithata hai jo screen dikha sake, aur shabd chunne ka
+faisla sirf usi jagah rehta hai:
+
+```kotlin title="OrderViewModel.kt" numbered
+private fun DataError.toMessage(): UiText = when (this) {
+    DataError.Offline      -> UiText.Res(R.string.error_offline)
+    DataError.Timeout      -> UiText.Res(R.string.error_timeout)
+    DataError.Unauthorised -> UiText.Res(R.string.error_signed_out)
+    DataError.Forbidden    -> UiText.Res(R.string.error_no_permission)
+    DataError.NotFound     -> UiText.Res(R.string.error_not_found)
+    is DataError.Server    -> UiText.Res(R.string.error_server)
+    is DataError.Unknown   -> UiText.Res(R.string.error_generic)
+}
+```
+
+Ye shakal do cheezein deti hai. Wo `when` poora hai, to agle mahine `DataError.RateLimited` jodne par
+build yahin tootta hai, na ki chupchap aise aam message par phisal jata hai jis par kisi ki nazar
+nahi padti. Aur result ek `UiText` hai — resource ki id, `String` nahi — to message anuvaad hota hai
+aur bhasha badalne par bhi bacha rehta hai, jo laate waqt state mein jadi hui string nahi karti.
+
+<Detail summary="Har nakami ek jaise behaviour ki haqdar nahi hai">
+Ek hi error wali haalat sahi default hai, aur teen maamle sach mein alag hain.
+
+**`Unauthorised` aam taur par message nahi hota.** Jab tak wo UI tak pahunchta hai, OkHttp ka
+`Authenticator` refresh aazmakar nakaam ho chuka hota hai, to sahi jawab hai user ko sign out karke
+kahin aur le jana — yani ek effect, na ki koi error wali string.
+
+**Rakhe hue data ke saath offline hona to error hai hi nahi.** Agar database mein orders hain, to
+nakaam refresh chalti hui screen ke upar "ye data purana hai" wali patti hai, error wali screen nahi.
+Database se padhne ki poori daleel yahi hai, aur wo agle se agla lesson hai.
+
+**`Unknown` ek report ka haqdar hai.** Jo kuch aapne saaf-saaf bithaya wo samjha hua hai; `Unknown`
+ka matlab hai ki app ko kuch aisa mila jiske baare mein aapne socha hi nahi. Use uski wajah samet
+apne crash reporter tak bhejiye, kyunki yahi wo haalat hai jiska baar-baar hona tay karega ki agla
+kya bithana hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo nakamiyon ko andekha ya bekaar bana deti hain">
+**`CancellationException` nigal jana.** Coroutine mein koi chauda `catch` ya `runCatching` structured
+concurrency tod deta hai. Use pehle dobara phenkiye.
+
+**`IOException` ko uski upshakhaon se pehle pakadna.** Har network nakami "offline" ban jati hai,
+bilkul theek connection par hue timeouts bhi.
+
+**State rakhne wale mein strings.** Unka anuvaad nahi hota aur bhasha badalne par wo nahi badaltin.
+Resource ki id par bithaiye.
+
+**`HttpException` ko upar jane dena.** Ab `ViewModel` Retrofit par nirbhar hai, yani wahi judaav jise
+rokne ke liye poori data parat thi.
+
+**Har cheez ke liye ek aam message.** "Kuch gadbad ho gayi" wo hai jo user ko "aap offline ho" ki
+jagah dikhta hai — jankari maujood thi aur ek parat neeche phenk di gayi.
+</Pitfall>
+
+## Abhyaas
+
+1. Request ke beech mein network band kijiye aur pakka kijiye ki aapko `Unknown` nahi, `Offline`
+   milta hai.
+2. Catches ka order aise badliye ki `IOException` pehle aaye, phir koi timeout karaiye aur use galat
+   naam milte dekhiye.
+3. `DataError` mein ek `RateLimited` wali haalat jodiye aur giniye ki kitni compile errors aati hain
+   — wahi jagahein thin jinhe janna zaruri tha.
+4. Kisi call ko `runCatching` mein lapetiye, request ke beech mein screen se nikliye, aur dekhiye ki
+   repository kya batata hai.
+5. Screen par error rehte hue device ki bhasha badliye. Agar message nahi badla, to wahan `String`
+   tha jahan resource ki id honi chahiye thi.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Sarhad | Repository, aur iklauti jagah jahan Retrofit ka koi type dikh sakta hai |
+| `DataError` | Call jin-jin tarikon se nakaam ho sakti hai, unki band list |
+| `Outcome<T>` | Value ke saath safalta, ya wajah ke saath nakami |
+| `Nothing` | Jisse nakami wali ek haalat har success type ke kaam aati hai |
+| Catch ka order | `IOException` ki khaas upshakhayein usse pehle |
+| `CancellationException` | Kisi bhi chaude catch se pehle dobara phenkiye |
+| `runCatching` | `Throwable` pakadta hai, to cancellation nigal jata hai |
+| Poora `when` | Nai error wali haalat wahin build todti hai jahan maayne rakhta hai |
+| `UiText` | Resource ki id, to message bhasha badalne par bhi bacha rehta hai |
+| `Unknown` | Wo khana jiska aakaar batata hai ki agla kya bithana hai |
+
+<Interview title="Ek sawal, jiska galat jawab exception types ki list hai">
+"Kisi Android app mein network ki errors aap kaise sambhaloge?"
+
+Unhe data parat ki sarhad par badalkar, aur uske upar kabhi nahi. Repository `IOException` aur
+`HttpException` pakadkar unhe sealed `DataError` par bithata hai, aur safalta ya nakami ko ek value
+ki tarah lautata hai — to `ViewModel` ye tay karta hai ki "offline" kaisa dikhega, bina ye jane ki
+Retrofit naam ki koi cheez hai, aur network library badalne par ek hi file hilti hai.
+
+Do baatein main bina puche bataunga. Kisi bhi chaude catch se pehle `CancellationException` dobara
+phenkna padta hai, warna screen se nikalna network ki nakami jaisa dikhta hai aur structured
+concurrency chupchap toot jati hai — isiliye main coroutines ke andar `runCatching` se bachta hoon.
+Aur error kisi string ke bajaye resource ki id par baithti hai, to uska anuvaad hota hai aur bhasha
+badalne par wo bachi rehti hai.
+</Interview>
