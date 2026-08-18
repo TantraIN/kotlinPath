@@ -1,0 +1,164 @@
+---
+title: HTTPS, certificate pinning और network config
+description: HTTPS पहले से चालू है और certificates पहले से जाँचता है। Pinning उस भरोसे को उन keys तक सीमित कर देती है जो आपने चुनीं — जो असली बचाव भी है और ऐप को दूर से ठप करने का असली तरीका भी।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+TLS यह जाँचता है कि कोई certificate ऐसी CA तक जाता है जिस पर **device** भरोसा करता है। Pinning उसे उस
+certificate या key तक सीमित कर देती है जिस पर **आप** भरोसा करते हैं। यह किसी उजागर हुई या दबाव में आई
+CA से बचाती है — और इसका मतलब यह भी है कि आपके server पर certificate का आम फेरबदल हर लगे हुए ऐप को
+आपकी API से बाहर कर सकता है।
+</KeyIdea>
+
+## जो आपके पास पहले से है
+
+Android 9 से सादा HTTP डिफॉल्ट से बंद है। `http://` बस नाकाम हो जाता है, जो सही डिफॉल्ट है और
+कभी-कभी चौंकाता है:
+
+```xml title="res/xml/network_security_config.xml" numbered
+<network-security-config>
+    <!-- सादा HTTP सिर्फ स्थानीय dev server के लिए, और सिर्फ debug में -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+
+    <!-- debug में user वाले CA भंडार पर भरोसा, ताकि Charles या mitmproxy traffic देख सकें -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>
+```
+
+`<debug-overrides>` ही अहम है: Android 7 से ऐप्स user के लगाए CAs पर भरोसा नहीं करते, और इसीलिए जो
+proxy पहले चलता था वह चलना बंद हो गया। उस छूट को `debug-overrides` में रखने का मतलब है कि वह सिर्फ
+debuggable builds पर लागू है और production तक पहुँच ही नहीं सकती, और आपको ठीक यही चाहिए।
+
+इसका भोंडा रूप `<application>` पर `android:usesCleartextTraffic="true"` है, जो हर domain के लिए वह
+हिफाजत बंद कर देता है। लगभग किसी को उसकी जरूरत नहीं होती।
+
+## Pinning
+
+```kotlin title="Pinning.kt" numbered
+val pinner = CertificatePinner.Builder()
+    .add("api.example.com", "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")  // मौजूदा
+    .add("api.example.com", "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")  // बदली में
+    .build()
+
+val client = OkHttpClient.Builder().certificatePinner(pinner).build()
+```
+
+**सार्वजनिक key** का hash pin कीजिए, certificate का नहीं। Certificate की मियाद खत्म होती है और वह
+दोबारा जारी होता है; अगर server अपनी key वाली जोड़ी रखे रहे, तो वह pin नवीनीकरण के बाद भी बची रहती है।
+Certificate pin करने का मतलब है कि हर नवीनीकरण हर लगे हुए ऐप को तोड़ देता है।
+
+ऐसी key के लिए हमेशा एक बदली वाली pin रखिए जो आपके अख्तियार में है और अभी लगाई नहीं गई। उसके बिना, key
+के उजागर होने पर आपके पास उजागर बने रहने और उन सबको बाहर करने के बीच चुनाव बचता है जिन्होंने अभी update
+नहीं किया।
+
+<Quiz
+  question="कोई ऐप अपनी API का certificate pin करता है। Server का certificate तय समय पर दोबारा जारी होता है और ऐप की हर लगी हुई नकल की सारी requests तुरंत नाकाम होने लगती हैं। गलत क्या हुआ, और क्या करना चाहिए था?"
+  options={[
+    "उस pin में leaf के साथ बीच वाली CA भी होनी चाहिए थी",
+    "Certificate pin किया गया, सार्वजनिक key नहीं, और कोई बदली वाली pin भी नहीं थी — key का hash pin कीजिए ताकि वह नवीनीकरण झेल जाए, बिना इस्तेमाल की किसी key की दूसरी pin हमेशा भेजिए, और मियाद तय कीजिए ताकि pin ऐप ठप करने के बजाय खुलकर नाकाम हो",
+    "Pinning को `network_security_config` में entry चाहिए और अकेला OkHttp का pinner काफी नहीं"
+  ]}
+  answer={1}
+  explanation="यही वह नाकामी है जिसकी वजह से teams pinning छोड़ देती हैं, और यह पूरी तरह टाली जा सकती है। Certificate एक मियाद वाला दस्तावेज है; key वाली जोड़ी आमतौर पर कई certificates से ज्यादा जीती है। Certificate का hash pin करने का मतलब है कि आम नवीनीकरण उस pin को बेकार कर देता है, और चूँकि वह pin APK के अंदर जाती है, जिन users ने update नहीं किया उनके लिए उसे ठीक करने का कोई रास्ता नहीं — ऐप उनके update करने तक आपकी ही API के सामने ठप है। तीन चीजें इसे रोकती हैं: SubjectPublicKeyInfo का hash pin कीजिए, कम से कम एक बदली वाली pin ऐसी key के लिए भेजिए जो आपने बचाकर रखी है, और उस settings पर मियाद लगाइए ताकि चुनी हुई तारीख के बाद वह pin मनवाई ही न जाए, बंद होकर नाकाम होने के बजाय। आखिरी वाली कम हिफाजत की एक खिड़की के बदले यह देती है कि आप अपना ही ऐप दूर से बंद न करें, और ज्यादातर उत्पादों के लिए सौदा यही सही है।"
+/>
+
+## Pins को config में लिखना
+
+```xml title="network_security_config.xml" numbered
+<domain-config>
+    <domain includeSubdomains="true">api.example.com</domain>
+    <pin-set expiration="2027-01-01">
+        <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+        <pin digest="SHA-256">BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=</pin>
+    </pin-set>
+</domain-config>
+```
+
+Platform वाला रूप process के हर HTTP client पर लागू होता है, WebViews और बाहरी SDKs समेत, जो OkHttp का
+pinner नहीं करता। और `expiration` वह सुरक्षा वाल्व है: उस तारीख के बाद pinning मनवाई नहीं जाती, तो भूला
+हुआ फेरबदल ऐसे ऐप के बजाय आम TLS पर उतर आता है जो अपने ही server से बात नहीं कर सकता।
+
+| | OkHttp का `CertificatePinner` | `network_security_config` |
+| --- | --- | --- |
+| दायरा | सिर्फ वही client | पूरा process |
+| मियाद | कोई नहीं | `expiration` वाला attribute |
+| हर build पर अलग | Code में आसान | Resources से हर build type पर |
+| नाकामी की शक्ल | हमेशा बंद होकर नाकाम | मियाद के बाद खुलकर नाकाम |
+
+<Detail summary="Pinning करनी भी चाहिए?">
+Pinning एक ही खास खतरे से बचाती है: ऐसा हमलावर जो आपके domain के लिए ऐसी CA से जायज certificate ले सके
+जिस पर device भरोसा करता है। यानी कोई उजागर हुई CA, कोई दबाव में आई CA, या ऐसा device जिस पर दफ्तर की
+MITM वाली जड़ लगी है।
+
+किसी बैंकिंग या सेहत वाले ऐप के लिए वह खतरा उस चलाने की कीमत के लायक है। ज्यादातर ऐप्स के लिए नहीं, और
+ईमानदार हिसाब यह है कि pinning ने जितनी सेंध रोकी है उससे कहीं ज्यादा बार ऐप बंद कराए हैं।
+
+दो चीजें pinning न करने का खतरा घटाती हैं। **Certificate Transparency** गलत जारी होने को सार्वजनिक रूप
+से दिखा देती है, तो आपके domain का कोई फर्जी certificate चुपचाप नहीं, पकड़ में आने लायक होता है। और
+Android 7 से ऐप्स user के लगाए CAs डिफॉल्ट से अनदेखा करते हैं, जो आम proxy वाला मामला पहले ही रोक देता
+है।
+
+अगर आप pinning करते हैं, तो चलाने की शर्तें वैकल्पिक नहीं हैं: एक बदली वाली pin, एक मियाद, फेरबदल की
+लिखी हुई विधि, और ऐसी निगरानी जो आपको pin की नाकामियों के बारे में आपकी समीक्षाओं से पहले बता दे। जो
+team इन्हें नहीं निभा सकती उसके लिए pinning न करना ज्यादा सुरक्षित है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली ऐप को दूर से ठप कर देती है">
+**Key के बजाय certificate pin करना।** आम नवीनीकरण हर लगी हुई नकल को बाहर कर देता है।
+
+**कोई बदली वाली pin न होना।** Key उजागर होने पर कोई सुरक्षित चाल नहीं बचती।
+
+**कोई मियाद न होना।** भूला हुआ फेरबदल ऐसा ठप होना है जिसका दूर से कोई इलाज नहीं।
+
+**एक endpoint ठीक करने को `usesCleartextTraffic="true"`।** वह हर जगह हिफाजत बंद कर देता है।
+
+**Debug वाले proxy की छूट `debug-overrides` के बाहर।** वह production तक पहुँचती है और हर user को कमजोर
+करती है।
+</Pitfall>
+
+## अभ्यास
+
+1. Android 9+ पर कोई `http://` URL आजमाइए और exception पढ़िए।
+2. `debug-overrides` जोड़िए और किसी proxy से traffic देखिए; पक्का कीजिए कि release अब भी मना करता है।
+3. `openssl` से सार्वजनिक key का hash निकालिए और उसे pin कीजिए, फिर जानबूझकर तोड़िए।
+4. `pin-set` की मियाद बीती हुई तारीख पर रखिए और पक्का कीजिए कि requests फिर चलने लगती हैं।
+5. WebView लेकर मिलाइए कि OkHttp का pinner क्या ढकता है और platform की config क्या।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| सादा HTTP | Android 9 से डिफॉल्ट से बंद |
+| User वाले CAs | Android 7 से अनदेखे; proxy के लिए `debug-overrides` लीजिए |
+| Pinning | भरोसे को किसी भी CA से घटाकर आपकी चुनी keys तक लाती है |
+| Key pin कीजिए | Certificate नहीं, ताकि नवीनीकरण से न टूटे |
+| बदली वाली pin | बचाकर रखी किसी key के लिए |
+| `expiration` | ऐप ठप करने के बजाय खुलकर नाकाम |
+| Platform की config | पूरा process ढकती है, WebViews समेत |
+| OkHttp का pinner | सिर्फ वही client, और कोई मियाद नहीं |
+| Certificate Transparency | बिना pinning के गलत जारी होना दिखा देती है |
+| Pinning करें या नहीं | सिर्फ तब, जब फेरबदल, निगरानी और बदली वाली pin तैयार हों |
+
+<Interview title="एक सवाल, जो असल में चलाने के बारे में है">
+"क्या आप certificate pinning जोड़ेंगे?"
+
+सिर्फ तब जब खतरा उसे सही ठहराए और team उसे चला सके। Pinning उस जायज certificate से बचाती है जो आपके
+domain के लिए ऐसी CA ने जारी किया हो जिस पर device भरोसा करता है — कोई उजागर या दबाव में आई CA, या
+दफ्तर की MITM वाली जड़। बैंकिंग वाले ऐप के लिए वह कीमत के लायक है; ज्यादातर ऐप्स के लिए नहीं, और
+व्यवहार में pinning ने जितनी सेंध रोकी है उससे ज्यादा बार ऐप बंद कराए हैं।
+
+अगर मैं जोड़ूँ, तो तीन चीजों पर कोई समझौता नहीं होगा। Certificate के बजाय सार्वजनिक key का hash pin
+कीजिए, ताकि आम नवीनीकरण उसे बेकार न करे। बचाकर रखी किसी key के लिए बदली वाली pin भेजिए, ताकि उजागर होने
+पर कोई सुरक्षित चाल बची रहे। और मियाद तय कीजिए, ताकि भूला हुआ फेरबदल हर लगे हुए ऐप को मेरी ही API के
+सामने ठप करने के बजाय आम TLS पर उतर आए — क्योंकि वह pin APK में जाती है और जिन users ने update नहीं
+किया उनके लिए दूर से कोई इलाज है ही नहीं।
+</Interview>

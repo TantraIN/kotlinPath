@@ -1,0 +1,162 @@
+---
+title: HTTPS, certificate pinning and network config
+description: HTTPS is already on by default and already checks certificates. Pinning narrows that trust to keys you chose — which is a real defence and a real way to brick your app remotely.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+TLS verifies that a certificate chains to a CA the **device** trusts. Pinning narrows that to a
+certificate or key **you** trust. It defends against a compromised or coerced CA — and it means a
+routine certificate rotation on your server can lock every installed app out of your API.
+</KeyIdea>
+
+## What you already have
+
+Since Android 9, cleartext HTTP is blocked by default. `http://` simply fails, which is the right
+default and occasionally surprising:
+
+```xml title="res/xml/network_security_config.xml" numbered
+<network-security-config>
+    <!-- allow cleartext for a local dev server only, and only in debug -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+
+    <!-- trust the user CA store in debug, so Charles or mitmproxy can inspect traffic -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>
+```
+
+`<debug-overrides>` is the important one: since Android 7, apps do not trust user-installed CAs, which
+is why a proxy that used to work stopped. Putting the override in `debug-overrides` means it applies
+to debuggable builds only and cannot reach production, which is exactly what you want.
+
+The blunt version of this is `android:usesCleartextTraffic="true"` on `<application>`, which turns off
+the protection for every domain. Almost nobody needs that.
+
+## Pinning
+
+```kotlin title="Pinning.kt" numbered
+val pinner = CertificatePinner.Builder()
+    .add("api.example.com", "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")  // current
+    .add("api.example.com", "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")  // backup
+    .build()
+
+val client = OkHttpClient.Builder().certificatePinner(pinner).build()
+```
+
+Pin the **public key** hash, not the certificate. A certificate expires and is reissued; if the server
+keeps its key pair, the pin survives the renewal. Pinning the certificate means every renewal breaks
+every installed app.
+
+Always include a backup pin for a key you control and have not deployed yet. Without one, a key
+compromise leaves you choosing between staying compromised and locking out everyone who has not
+updated.
+
+<Quiz
+  question="An app pins its API certificate. The server's certificate is renewed on schedule and every installed copy of the app immediately fails all requests. What went wrong, and what should have been done?"
+  options={[
+    "The pin should have included the intermediate CA as well as the leaf",
+    "The certificate was pinned rather than the public key, and there was no backup pin — pin the key hash so it survives renewal, always ship a second pin for an unused key, and set an expiry so the pin fails open rather than bricking the app",
+    "Pinning requires a `network_security_config` entry and OkHttp's pinner alone is not enough"
+  ]}
+  answer={1}
+  explanation="This is the failure mode that makes teams abandon pinning, and it is entirely avoidable. A certificate is a time-limited document; a key pair usually outlives many certificates. Pinning the certificate hash means the pin is invalidated by an ordinary renewal, and because the pin ships inside the APK there is no way to fix it for users who do not update — the app is bricked against your own API until they do. Three things prevent it: pin the SubjectPublicKeyInfo hash, ship at least one backup pin for a key you hold in reserve, and set an expiry on the configuration so that after a chosen date the pin stops being enforced rather than failing closed. That last one trades a window of reduced protection for not remotely disabling your own app, which is the right trade for most products."
+/>
+
+## Declaring pins in config instead
+
+```xml title="network_security_config.xml" numbered
+<domain-config>
+    <domain includeSubdomains="true">api.example.com</domain>
+    <pin-set expiration="2027-01-01">
+        <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+        <pin digest="SHA-256">BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=</pin>
+    </pin-set>
+</domain-config>
+```
+
+The platform version applies to every HTTP client in the process, including WebViews and third-party
+SDKs, which OkHttp's pinner does not. And `expiration` is the safety valve: after that date pinning
+stops being enforced, so a forgotten rotation degrades to normal TLS rather than to an app that cannot
+talk to its own server.
+
+| | OkHttp `CertificatePinner` | `network_security_config` |
+| --- | --- | --- |
+| Scope | That client only | The whole process |
+| Expiry | None | `expiration` attribute |
+| Per-build variation | Easy in code | Per build type via resources |
+| Failure mode | Fails closed forever | Fails open after expiry |
+
+<Detail summary="Should you pin at all?">
+Pinning defends against one specific threat: an attacker who can obtain a valid certificate for your
+domain from a CA the device trusts. That means a compromised CA, a coerced one, or a device with a
+corporate MITM root installed.
+
+For a banking or health app, that threat is worth the operational cost. For most apps it is not, and
+the honest accounting is that pinning has caused far more outages than it has prevented breaches.
+
+Two things reduce the risk of not pinning. **Certificate Transparency** makes mis-issuance publicly
+visible, so a rogue certificate for your domain is detectable rather than silent. And since Android 7
+apps ignore user-installed CAs by default, which already blocks the casual proxy case.
+
+If you do pin, the operational requirements are not optional: a backup pin, an expiry, a documented
+rotation procedure, and monitoring that tells you pin failures are happening before your reviews do.
+A team that cannot commit to those is safer not pinning.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one bricks the app remotely">
+**Pinning the certificate instead of the key.** An ordinary renewal locks out every install.
+
+**No backup pin.** A key compromise leaves no safe move.
+
+**No expiry.** A forgotten rotation is an outage with no remote fix.
+
+**`usesCleartextTraffic="true"` to fix one endpoint.** It disables the protection everywhere.
+
+**A debug proxy override outside `debug-overrides`.** It reaches production and weakens every user.
+</Pitfall>
+
+## Practice
+
+1. Try an `http://` URL on Android 9+ and read the exception.
+2. Add `debug-overrides` and inspect traffic with a proxy; confirm release still refuses.
+3. Compute a public key hash with `openssl` and pin it, then break it deliberately.
+4. Set a `pin-set` expiry in the past and confirm requests succeed again.
+5. Compare what OkHttp's pinner covers with what the platform config covers, using a WebView.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Cleartext | Blocked by default since Android 9 |
+| User CAs | Ignored since Android 7; use `debug-overrides` for a proxy |
+| Pinning | Narrows trust from any CA to keys you chose |
+| Pin the key | Not the certificate, so renewal does not break it |
+| Backup pin | For a key you hold in reserve |
+| `expiration` | Fails open instead of bricking the app |
+| Platform config | Covers the whole process, WebViews included |
+| OkHttp pinner | That client only, and no expiry |
+| Certificate Transparency | Makes mis-issuance visible without pinning |
+| Should you pin | Only with rotation, monitoring and a backup pin in place |
+
+<Interview title="A question that is really about operations">
+"Would you add certificate pinning?"
+
+Only if the threat justifies it and the team can operate it. Pinning defends against a valid
+certificate issued for your domain by a CA the device trusts — a compromised or coerced CA, or a
+corporate MITM root. For a banking app that is worth the cost; for most apps it is not, and in practice
+pinning has caused more outages than it has prevented breaches.
+
+If I did add it, three things would be non-negotiable. Pin the public key hash rather than the
+certificate, so an ordinary renewal does not invalidate it. Ship a backup pin for a key held in
+reserve, so a compromise leaves a safe move. And set an expiry, so a forgotten rotation degrades to
+normal TLS instead of bricking every installed app against my own API — because the pin ships in the
+APK and there is no remote fix for users who have not updated.
+</Interview>

@@ -1,0 +1,168 @@
+---
+title: HTTPS, certificate pinning aur network config
+description: HTTPS pehle se chalu hai aur certificates pehle se check karta hai. Pinning us bharose ko un keys tak seemit kar deti hai jo aapne chunin — jo asli bachav bhi hai aur app ko door se thap karne ka asli tarika bhi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+TLS ye dekhta hai ki koi certificate aisi CA tak jata hai jis par **device** bharosa karta hai. Pinning
+use us certificate ya key tak seemit kar deti hai jis par **aap** bharosa karte ho. Ye kisi ujagar hui
+ya dabav mein aayi CA se bachati hai — aur iska matlab ye bhi hai ki aapke server par certificate ka aam
+pherbadal har lage hue app ko aapki API se bahar kar sakta hai.
+</KeyIdea>
+
+## Jo aapke paas pehle se hai
+
+Android 9 se saada HTTP default se band hai. `http://` bas nakaam ho jata hai, jo sahi default hai aur
+kabhi-kabhi chaunkata hai:
+
+```xml title="res/xml/network_security_config.xml" numbered
+<network-security-config>
+    <!-- saada HTTP sirf sthaniya dev server ke liye, aur sirf debug mein -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+
+    <!-- debug mein user wale CA bhandar par bharosa, taki Charles ya mitmproxy traffic dekh sakein -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>
+```
+
+`<debug-overrides>` hi ahem hai: Android 7 se apps user ke lagaye CAs par bharosa nahi karte, aur isiliye
+jo proxy pehle chalta tha wo chalna band ho gaya. Us chhoot ko `debug-overrides` mein rakhne ka matlab
+hai ki wo sirf debuggable builds par lagu hai aur production tak pahunch hi nahi sakti, aur aapko theek
+yahi chahiye.
+
+Iska bhonda roop `<application>` par `android:usesCleartextTraffic="true"` hai, jo har domain ke liye wo
+hifazat band kar deta hai. Lagbhag kisi ko uski zarurat nahi hoti.
+
+## Pinning
+
+```kotlin title="Pinning.kt" numbered
+val pinner = CertificatePinner.Builder()
+    .add("api.example.com", "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")  // maujooda
+    .add("api.example.com", "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")  // badli mein
+    .build()
+
+val client = OkHttpClient.Builder().certificatePinner(pinner).build()
+```
+
+**Sarvajanik key** ka hash pin kijiye, certificate ka nahi. Certificate ki miyad khatam hoti hai aur wo
+dobara jari hota hai; agar server apni key wali jodi rakhe rahe, to wo pin navinikaran ke baad bhi bachi
+rehti hai. Certificate pin karne ka matlab hai ki har navinikaran har lage hue app ko tod deta hai.
+
+Aisi key ke liye hamesha ek badli wali pin rakhiye jo aapke akhtiyaar mein hai aur abhi lagai nahi gayi.
+Uske bina, key ke ujagar hone par aapke paas ujagar bane rehne aur un sabko bahar karne ke beech chunaav
+bachta hai jinhone abhi update nahi kiya.
+
+<Quiz
+  question="Koi app apni API ka certificate pin karta hai. Server ka certificate tay samay par dobara jari hota hai aur app ki har lagi hui nakal ki saari requests turant nakaam hone lagti hain. Galat kya hua, aur kya karna chahiye tha?"
+  options={[
+    "Us pin mein leaf ke saath beech wali CA bhi honi chahiye thi",
+    "Certificate pin kiya gaya, sarvajanik key nahi, aur koi badli wali pin bhi nahi thi — key ka hash pin kijiye taki wo navinikaran jhel jaye, bina istemal ki kisi key ki doosri pin hamesha bhejiye, aur miyad tay kijiye taki pin app thap karne ke bajaye khulkar nakaam ho",
+    "Pinning ko `network_security_config` mein entry chahiye aur akela OkHttp ka pinner kaafi nahi"
+  ]}
+  answer={1}
+  explanation="Yahi wo nakami hai jiski wajah se teams pinning chhod deti hain, aur ye poori tarah taali ja sakti hai. Certificate ek miyad wala dastavez hai; key wali jodi aam taur par kai certificates se zyada jeeti hai. Certificate ka hash pin karne ka matlab hai ki aam navinikaran us pin ko bekaar kar deta hai, aur chunki wo pin APK ke andar jati hai, jin users ne update nahi kiya unke liye use theek karne ka koi raasta nahi — app unke update karne tak aapki hi API ke saamne thap hai. Teen cheezein ise rokti hain: SubjectPublicKeyInfo ka hash pin kijiye, kam se kam ek badli wali pin aisi key ke liye bhejiye jo aapne bachakar rakhi hai, aur us settings par miyad lagaiye taki chuni hui tareekh ke baad wo pin manwai hi na jaye, band hokar nakaam hone ke bajaye. Aakhri wali kam hifazat ki ek khidki ke badle ye deti hai ki aap apna hi app door se band na karo, aur zyadatar utpadon ke liye sauda yahi sahi hai."
+/>
+
+## Pins ko config mein likhna
+
+```xml title="network_security_config.xml" numbered
+<domain-config>
+    <domain includeSubdomains="true">api.example.com</domain>
+    <pin-set expiration="2027-01-01">
+        <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+        <pin digest="SHA-256">BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=</pin>
+    </pin-set>
+</domain-config>
+```
+
+Platform wala roop process ke har HTTP client par lagu hota hai, WebViews aur bahari SDKs samet, jo
+OkHttp ka pinner nahi karta. Aur `expiration` wo suraksha valve hai: us tareekh ke baad pinning manwai
+nahi jati, to bhoola hua pherbadal aise app ke bajaye aam TLS par utar aata hai jo apne hi server se
+baat nahi kar sakta.
+
+| | OkHttp ka `CertificatePinner` | `network_security_config` |
+| --- | --- | --- |
+| Daayra | Sirf wahi client | Poora process |
+| Miyad | Koi nahi | `expiration` wala attribute |
+| Har build par alag | Code mein aasan | Resources se har build type par |
+| Nakami ki shakal | Hamesha band hokar nakaam | Miyad ke baad khulkar nakaam |
+
+<Detail summary="Pinning karni bhi chahiye?">
+Pinning ek hi khaas khatre se bachati hai: aisa hamlawar jo aapke domain ke liye aisi CA se jayaz
+certificate le sake jis par device bharosa karta hai. Yani koi ujagar hui CA, koi dabav mein aayi CA, ya
+aisa device jis par daftar ki MITM wali jad lagi hai.
+
+Kisi banking ya sehat wale app ke liye wo khatra us chalane ki keemat ke layak hai. Zyadatar apps ke liye
+nahi, aur imandaar hisab ye hai ki pinning ne jitni sendh roki hai usse kahin zyada baar app band karaye
+hain.
+
+Do cheezein pinning na karne ka khatra ghatati hain. **Certificate Transparency** galat jari hone ko
+sarvajanik roop se dikha deti hai, to aapke domain ka koi farzi certificate chupchap nahi, pakad mein
+aane layak hota hai. Aur Android 7 se apps user ke lagaye CAs default se andekha karte hain, jo aam proxy
+wala maamla pehle hi rok deta hai.
+
+Agar aap pinning karte ho, to chalane ki sharten vaikalpik nahi hain: ek badli wali pin, ek miyad,
+pherbadal ki likhi hui vidhi, aur aisi nigrani jo aapko pin ki nakamiyon ke baare mein aapki sameekshaon
+se pehle bata de. Jo team inhe nahi nibha sakti uske liye pinning na karna zyada safe hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli app ko door se thap kar deti hai">
+**Key ke bajaye certificate pin karna.** Aam navinikaran har lagi hui nakal ko bahar kar deta hai.
+
+**Koi badli wali pin na hona.** Key ujagar hone par koi safe chaal nahi bachti.
+
+**Koi miyad na hona.** Bhoola hua pherbadal aisa thap hona hai jiska door se koi ilaaj nahi.
+
+**Ek endpoint theek karne ko `usesCleartextTraffic="true"`.** Wo har jagah hifazat band kar deta hai.
+
+**Debug wale proxy ki chhoot `debug-overrides` ke bahar.** Wo production tak pahunchti hai aur har user
+ko kamzor karti hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Android 9+ par koi `http://` URL aazmaiye aur exception padhiye.
+2. `debug-overrides` jodiye aur kisi proxy se traffic dekhiye; pakka kijiye ki release ab bhi mana karta
+   hai.
+3. `openssl` se sarvajanik key ka hash nikaliye aur use pin kijiye, phir jaanbujhkar todiye.
+4. `pin-set` ki miyad beeti hui tareekh par rakhiye aur pakka kijiye ki requests phir chalne lagti hain.
+5. WebView lekar milaiye ki OkHttp ka pinner kya dhakta hai aur platform ki config kya.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Saada HTTP | Android 9 se default se band |
+| User wale CAs | Android 7 se andekhe; proxy ke liye `debug-overrides` lijiye |
+| Pinning | Bharose ko kisi bhi CA se ghatakar aapki chuni keys tak lati hai |
+| Key pin kijiye | Certificate nahi, taki navinikaran se na toote |
+| Badli wali pin | Bachakar rakhi kisi key ke liye |
+| `expiration` | App thap karne ke bajaye khulkar nakaam |
+| Platform ki config | Poora process dhakti hai, WebViews samet |
+| OkHttp ka pinner | Sirf wahi client, aur koi miyad nahi |
+| Certificate Transparency | Bina pinning ke galat jari hona dikha deti hai |
+| Pinning karein ya nahi | Sirf tab, jab pherbadal, nigrani aur badli wali pin taiyar hon |
+
+<Interview title="Ek sawal, jo asal mein chalane ke baare mein hai">
+"Kya aap certificate pinning jodoge?"
+
+Sirf tab jab khatra use sahi thehraye aur team use chala sake. Pinning us jayaz certificate se bachati hai
+jo aapke domain ke liye aisi CA ne jari kiya ho jis par device bharosa karta hai — koi ujagar ya dabav
+mein aayi CA, ya daftar ki MITM wali jad. Banking wale app ke liye wo keemat ke layak hai; zyadatar apps
+ke liye nahi, aur vyavhar mein pinning ne jitni sendh roki hai usse zyada baar app band karaye hain.
+
+Agar main jodun, to teen cheezon par koi samjhauta nahi hoga. Certificate ke bajaye sarvajanik key ka hash
+pin kijiye, taki aam navinikaran use bekaar na kare. Bachakar rakhi kisi key ke liye badli wali pin
+bhejiye, taki ujagar hone par koi safe chaal bachi rahe. Aur miyad tay kijiye, taki bhoola hua pherbadal
+har lage hue app ko meri hi API ke saamne thap karne ke bajaye aam TLS par utar aaye — kyunki wo pin APK
+mein jati hai aur jin users ne update nahi kiya unke liye door se koi ilaaj hai hi nahi.
+</Interview>
