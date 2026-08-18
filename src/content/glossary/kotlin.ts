@@ -525,4 +525,117 @@ export const KOTLIN_GLOSSARY: Glossary = {
     docs: "https://kotlinlang.org/docs/properties.html#compile-time-constants",
     related: ["val", "companion"],
   },
+
+  interface: {
+    term: "interface",
+    kind: { en: "Keyword", hi: "Keyword", "hi-en": "Keyword" },
+    source: "kotlin-lang",
+    importLine: null,
+    does: {
+      en: "Declares a contract of members a class promises to provide, with no state of its own.",
+      hi: "उन members का करार घोषित करता है जो कोई class देने का वादा करती है, और उसका अपना कोई state नहीं होता।",
+      "hi-en": "Un members ka karaar ghoshit karta hai jo koi class dene ka wada karti hai, aur uska apna koi state nahi hota.",
+    },
+    affects: {
+      en: "A class may implement many interfaces but extend one class. In architecture it is what lets the domain layer declare a repository the data layer implements, so the dependency arrow points inward.",
+      hi: "कोई class कई interfaces लागू कर सकती है पर extend एक ही class को करती है। Architecture में इसी से domain परत वह repository घोषित करती है जिसे data परत लागू करती है, और निर्भरता का तीर अंदर की तरफ जाता है।",
+      "hi-en": "Koi class kai interfaces lagu kar sakti hai par extend ek hi class ko karti hai. Architecture mein isi se domain parat wo repository ghoshit karti hai jise data parat lagu karti hai, aur nirbharta ka teer andar ki taraf jata hai.",
+    },
+    related: ["abstract", "sealed", "override"],
+  },
+
+  enum: {
+    term: "enum",
+    kind: { en: "Keyword", hi: "Keyword", "hi-en": "Keyword" },
+    source: "kotlin-lang",
+    importLine: null,
+    does: {
+      en: "Declares a type with a fixed, named set of instances.",
+      hi: "ऐसा type घोषित करता है जिसकी गिनी-चुनी, नाम वाली चीजें होती हैं।",
+      "hi-en": "Aisa type ghoshit karta hai jiski gini-chuni, naam wali cheezein hoti hain.",
+    },
+    affects: {
+      en: "`when` over an enum is exhaustive without an `else`, so adding a value breaks compilation everywhere it is handled. Use `sealed` instead when the cases need to carry different data.",
+      hi: "किसी enum पर `when` बिना `else` के पूरा होता है, तो नई value जोड़ने पर हर उस जगह compile टूटता है जहाँ उसे सँभाला जाता है। जब हर हालत को अलग data ढोना हो तो इसकी जगह `sealed` लीजिए।",
+      "hi-en": "Kisi enum par `when` bina `else` ke poora hota hai, to nai value jodne par har us jagah compile tootta hai jahan use sambhala jata hai. Jab har haalat ko alag data dhona ho to iski jagah `sealed` lijiye.",
+    },
+    related: ["sealed", "when", "object"],
+  },
+
+  final: {
+    term: "final",
+    kind: { en: "Keyword", hi: "Keyword", "hi-en": "Keyword" },
+    source: "kotlin-lang",
+    importLine: null,
+    does: {
+      en: "Marks a class or member as impossible to override — which is the Kotlin default.",
+      hi: "किसी class या member को override न किए जा सकने वाला बताता है — और Kotlin में यही default है।",
+      "hi-en": "Kisi class ya member ko override na kiye ja sakne wala batata hai — aur Kotlin mein yahi default hai.",
+    },
+    affects: {
+      en: "You rarely write it, because everything is final unless marked `open`. It appears when you want to stop further overriding of a member that was already overridden.",
+      hi: "इसे शायद ही कभी लिखते हैं, क्योंकि जब तक `open` न लिखा हो हर चीज final है। यह तब दिखता है जब पहले से override हो चुके किसी member का आगे override रोकना हो।",
+      "hi-en": "Ise shayad hi kabhi likhte hain, kyunki jab tak `open` na likha ho har cheez final hai. Ye tab dikhta hai jab pehle se override ho chuke kisi member ka aage override rokna ho.",
+    },
+    related: ["open", "override", "abstract"],
+  },
+
+  run: {
+    term: "run",
+    kind: { en: "Scope function", hi: "Scope function", "hi-en": "Scope function" },
+    source: "kotlin-stdlib",
+    importLine: null,
+    does: {
+      en: "Runs a block with the object as `this` and returns whatever the block returns.",
+      hi: "किसी block को उस चीज के `this` बनकर चलाता है और block जो लौटाए वही लौटा देता है।",
+      "hi-en": "Kisi block ko us cheez ke `this` bankar chalata hai aur block jo lautaye wahi lauta deta hai.",
+    },
+    affects: {
+      en: "It is `let` with `this` instead of `it`, and `apply` that returns the block's result instead of the object. Pick by two questions: how you want to refer to the receiver, and what you want back.",
+      hi: "यह `it` के बजाय `this` वाला `let` है, और वह `apply` है जो चीज के बजाय block का नतीजा लौटाता है। दो सवालों से चुनिए: receiver को कैसे बुलाना है, और वापस क्या चाहिए।",
+      "hi-en": "Ye `it` ke bajaye `this` wala `let` hai, aur wo `apply` hai jo cheez ke bajaye block ka result lautata hai. Do sawalon se chuniye: receiver ko kaise bulana hai, aur wapas kya chahiye.",
+    },
+    related: ["let", "apply", "also"],
+  },
+
+  super: {
+    term: "super",
+    kind: { en: "Keyword", hi: "Keyword", "hi-en": "Keyword" },
+    source: "kotlin-lang",
+    importLine: null,
+    does: {
+      en: "Calls the implementation in the parent class rather than the overriding one.",
+      hi: "Override करने वाले के बजाय parent class वाला implementation बुलाता है।",
+      "hi-en": "Override karne wale ke bajaye parent class wala implementation bulata hai.",
+    },
+    affects: {
+      en: "In Android lifecycle callbacks the framework does real work in the parent, so forgetting `super.onCreate(savedInstanceState)` throws `SuperNotCalledException`. Its position matters too — setup before your own code, teardown after.",
+      hi: "Android के lifecycle callbacks में असली काम framework parent में करता है, तो `super.onCreate(savedInstanceState)` भूलने पर `SuperNotCalledException` आता है। उसकी जगह भी मायने रखती है — तैयारी अपने code से पहले, समेटना बाद में।",
+      "hi-en": "Android ke lifecycle callbacks mein asli kaam framework parent mein karta hai, to `super.onCreate(savedInstanceState)` bhoolne par `SuperNotCalledException` aata hai. Uski jagah bhi maayne rakhti hai — taiyari apne code se pehle, sametna baad mein.",
+    },
+    related: ["override", "open", "onCreate"],
+  },
+
+  operator: {
+    term: "operator",
+    kind: { en: "Modifier", hi: "Modifier", "hi-en": "Modifier" },
+    source: "kotlin-lang",
+    importLine: null,
+    does: {
+      en: "Marks a function as the implementation of an operator or a call convention.",
+      hi: "किसी function को किसी operator या बुलाने के तरीके का implementation बताता है।",
+      "hi-en": "Kisi function ko kisi operator ya bulane ke tarike ka implementation batata hai.",
+    },
+    values: {
+      en: "`plus` for `+`, `get` for `[]`, `contains` for `in`, `compareTo` for `<`, and `invoke` so an object can be called like a function.",
+      hi: "`+` के लिए `plus`, `[]` के लिए `get`, `in` के लिए `contains`, `<` के लिए `compareTo`, और `invoke`, ताकि किसी चीज को function की तरह बुलाया जा सके।",
+      "hi-en": "`+` ke liye `plus`, `[]` ke liye `get`, `in` ke liye `contains`, `<` ke liye `compareTo`, aur `invoke`, taki kisi cheez ko function ki tarah bulaya ja sake.",
+    },
+    affects: {
+      en: "`operator fun invoke` is why a use case reads as `placeOrder(cart)` rather than `placeOrder.execute(cart)` — a naming convention held up by one keyword rather than by agreement.",
+      hi: "`operator fun invoke` की वजह से ही कोई use case `placeOrder.execute(cart)` नहीं बल्कि `placeOrder(cart)` की तरह पढ़ा जाता है — एक नाम रखने का चलन, जो आपसी सहमति नहीं बल्कि एक keyword से टिका है।",
+      "hi-en": "`operator fun invoke` ki wajah se hi koi use case `placeOrder.execute(cart)` nahi balki `placeOrder(cart)` ki tarah padha jata hai — ek naam rakhne ka chalan, jo aapsi sehmati nahi balki ek keyword se tika hai.",
+    },
+    related: ["fun", "inline"],
+  },
 };

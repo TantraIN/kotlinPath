@@ -240,4 +240,40 @@ export const COROUTINES_GLOSSARY: Glossary = {
     docs: "https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-mutable-state-flow.html",
     related: ["StateFlow", "Flow", "collect"],
   },
+
+  Job: {
+    term: "Job",
+    kind: { en: "Interface", hi: "Interface", "hi-en": "Interface" },
+    source: "coroutines",
+    importLine: "import kotlinx.coroutines.Job",
+    does: {
+      en: "A handle on a running coroutine, which can be joined, cancelled, or asked about its state.",
+      hi: "चल रहे किसी coroutine की पकड़, जिसे join किया जा सकता है, रोका जा सकता है, या जिसकी हालत पूछी जा सकती है।",
+      "hi-en": "Chal rahe kisi coroutine ki pakad, jise join kiya ja sakta hai, roka ja sakta hai, ya jiski haalat puchi ja sakti hai.",
+    },
+    affects: {
+      en: "Jobs form a tree: cancelling a parent cancels every child, and that is exactly how `viewModelScope` stops all of a screen's work at once. A failing child normally cancels its parent too, unless the scope uses a `SupervisorJob`.",
+      hi: "Jobs एक पेड़ बनाते हैं: parent को रोकने से हर बच्चा रुक जाता है, और `viewModelScope` इसी तरह किसी screen का सारा काम एक साथ रोकता है। नाकाम हुआ बच्चा आमतौर पर अपने parent को भी रोक देता है, जब तक scope `SupervisorJob` न ले।",
+      "hi-en": "Jobs ek ped banate hain: parent ko rokne se har bachcha ruk jata hai, aur `viewModelScope` isi tarah kisi screen ka saara kaam ek saath rokta hai. Nakaam hua bachcha aam taur par apne parent ko bhi rok deta hai, jab tak scope `SupervisorJob` na le.",
+    },
+    related: ["launch", "CoroutineScope", "viewModelScope"],
+  },
+
+  await: {
+    term: "await",
+    kind: { en: "Suspending function", hi: "Suspending function", "hi-en": "Suspending function" },
+    source: "coroutines",
+    importLine: null,
+    does: {
+      en: "Waits for an `async` coroutine to finish and returns its result.",
+      hi: "किसी `async` coroutine के खत्म होने का इंतजार करता है और उसका नतीजा लौटाता है।",
+      "hi-en": "Kisi `async` coroutine ke khatam hone ka intezar karta hai aur uska result lautata hai.",
+    },
+    affects: {
+      en: "Calling it immediately after `async` makes the work sequential again and wastes the point. Start every `async` first, then await them, and two independent calls take as long as the slower one instead of both added together.",
+      hi: "`async` के तुरंत बाद इसे बुलाने से काम फिर से एक-एक करके होता है और मकसद ही चला जाता है। पहले हर `async` शुरू कीजिए, फिर उनका इंतजार — तब दो अलग calls में उतना ही वक्त लगता है जितना धीमी वाली में, दोनों जोड़कर नहीं।",
+      "hi-en": "`async` ke turant baad ise bulane se kaam phir se ek-ek karke hota hai aur maksad hi chala jata hai. Pehle har `async` shuru kijiye, phir unka intezar — tab do alag calls mein utna hi waqt lagta hai jitna dheemi wali mein, dono jodkar nahi.",
+    },
+    related: ["async", "launch", "suspend"],
+  },
 };

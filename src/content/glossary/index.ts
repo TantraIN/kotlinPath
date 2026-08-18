@@ -1,4 +1,6 @@
 import { ANDROID_GLOSSARY } from "./android";
+import { ARCHITECTURE_GLOSSARY } from "./architecture";
+import { COMPOSE_GLOSSARY } from "./compose";
 import { COROUTINES_GLOSSARY } from "./coroutines";
 import { GRADLE_GLOSSARY } from "./gradle";
 import { KOTLIN_GLOSSARY } from "./kotlin";
@@ -22,6 +24,8 @@ export const GLOSSARY: Glossary = {
   ...KOTLIN_GLOSSARY,
   ...COROUTINES_GLOSSARY,
   ...ANDROID_GLOSSARY,
+  ...COMPOSE_GLOSSARY,
+  ...ARCHITECTURE_GLOSSARY,
   ...GRADLE_GLOSSARY,
   ...MANIFEST_GLOSSARY,
   ...LAYOUT_GLOSSARY,
@@ -37,6 +41,8 @@ const CODE_TERMS = new Set(
     ...KOTLIN_GLOSSARY,
     ...COROUTINES_GLOSSARY,
     ...ANDROID_GLOSSARY,
+    ...COMPOSE_GLOSSARY,
+    ...ARCHITECTURE_GLOSSARY,
     ...GRADLE_GLOSSARY,
   }),
 );
