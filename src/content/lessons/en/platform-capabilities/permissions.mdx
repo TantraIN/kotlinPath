@@ -1,0 +1,200 @@
+---
+title: Runtime permissions and rationale
+description: A permission is not a boolean. It is a state with history, and the API only tells you which state you are in through a combination that is easy to read wrongly.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+There are three states, not two: **granted**, **denied but you may ask again**, and **denied
+permanently**. Android never reports the third directly — you infer it — and almost every permission
+bug is code that treated the question as a boolean.
+</KeyIdea>
+
+## Why this matters
+
+The version that gets written first:
+
+```kotlin title="OnLaunch.kt" numbered
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    requestPermissions(arrayOf(ACCESS_FINE_LOCATION, CAMERA, READ_CONTACTS), 0)
+}
+```
+
+Three dialogs before the user has seen a single screen, for features they have not asked for. A large
+share of people decline on reflex, and on the second decline the system stops showing the dialog at
+all — so the app has permanently lost a permission it never explained.
+
+Ask **at the moment the feature is used**, and the request makes its own case: a camera prompt that
+appears after tapping a camera button needs no explanation, because the user just asked for it.
+
+## The three states, and how you tell them apart
+
+```kotlin title="Permission.kt" numbered
+val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+    PackageManager.PERMISSION_GRANTED
+
+val shouldExplain = ActivityCompat.shouldShowRequestPermissionRationale(
+    activity, Manifest.permission.CAMERA,
+)
+```
+
+| `granted` | `shouldExplain` | Means |
+| --- | --- | --- |
+| `true` | — | Granted; just use the feature |
+| `false` | `true` | Denied once — explain, then ask again |
+| `false` | `false` | Either never asked, **or** denied permanently |
+
+That last row is the whole problem. `shouldShowRequestPermissionRationale` returns `false` in two
+opposite situations, and Android gives you nothing else to separate them.
+
+The fix is to remember whether you have asked:
+
+```kotlin title="PermissionState.kt" numbered
+// stored in DataStore, so it survives process death
+suspend fun onDenied(permission: String) = store.markAsked(permission)
+
+fun state(permission: String, activity: Activity): PermissionState = when {
+    isGranted(permission) -> Granted
+    shouldShowRationale(activity, permission) -> DeniedExplain
+    store.hasAsked(permission) -> DeniedPermanently     // asked before, no rationale => blocked
+    else -> NeverAsked
+}
+```
+
+Only with that flag can the app distinguish "ask now" from "the dialog will not appear, so send them
+to Settings".
+
+<Quiz
+  question="An app requests the camera permission. The callback reports denied, so the app shows its own dialog: \"Please allow camera access\" with a Retry button. On some devices Retry does nothing at all. Why?"
+  options={[
+    "The permission request must be made from an Activity, not a Fragment",
+    "The user had already denied twice, so the system dialog no longer appears — `launch()` returns denied immediately, and the only route left is the app's Settings page",
+    "`registerForActivityResult` can only be launched once per screen",
+  ]}
+  answer={1}
+  explanation="After two denials Android marks the permission as permanently denied, and from then on requesting it does not show a dialog at all — the callback fires immediately with denied. So a Retry button that calls launch() again is a button that visibly does nothing, which is worse than no button. Distinguishing the two cases needs the remembered has-asked flag, because shouldShowRequestPermissionRationale returns false both before the first request and after a permanent denial. Once you know it is permanent, the honest UI is not Retry but a link that opens Intent(ACTION_APPLICATION_DETAILS_SETTINGS) with your package URI, plus a sentence saying what stops working without it. Worth knowing: the counter resets if the user grants and later revokes in Settings, so permanent is permanent for this install, not forever."
+/>
+
+## Asking, with the result API
+
+```kotlin title="Request.kt" numbered
+private val requestCamera = registerForActivityResult(
+    ActivityResultContracts.RequestPermission(),
+) { granted ->
+    if (granted) openCamera() else viewModel.onCameraDenied()
+}
+
+private val requestMany = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions(),
+) { results ->
+    results.forEach { (permission, granted) -> /* each one, separately */ }
+}
+```
+
+`RequestMultiplePermissions` returns a map because a user can grant some and refuse others. Treating
+the result as all-or-nothing is how a feature that needed only one of two permissions breaks for
+someone who granted exactly that one.
+
+<Note>
+Register the launcher during initialisation — as a property or in `onCreate` — never inside a click
+handler. Registration attaches to the activity's lifecycle, and doing it after `onStart` throws. The
+same rule as `registerForActivityResult` anywhere else.
+</Note>
+
+## The permission you now need for notifications
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Since Android 13 notifications are a runtime permission. An app that posts notifications without
+requesting it simply shows nothing — no crash, no log line, no dialog. It is the most common reason a
+notification feature "works on my device" and not on a newer one.
+
+Ask for it at a moment where the value is obvious — after the user enables reminders, not on first
+launch.
+
+## Permissions you can often avoid entirely
+
+This is the part that is easy to miss: several capabilities have permission-free routes, and they
+are usually better UX as well.
+
+| Instead of | Use |
+| --- | --- |
+| `READ_MEDIA_IMAGES` | The photo picker — the user chooses, no permission |
+| `READ_EXTERNAL_STORAGE` | The document picker; the choice *is* the grant |
+| `CAMERA` for one photo | `ACTION_IMAGE_CAPTURE` — the camera app takes it |
+| `ACCESS_FINE_LOCATION` | `ACCESS_COARSE_LOCATION`, if a city is precise enough |
+| Contacts | The contact picker intent |
+
+Each of these replaces a scary dialog with a choice the user was making anyway. Requesting broad
+access when a picker would do is also something Play Console review flags.
+
+<Detail summary="Two things that change permissions behind your back">
+**Auto-reset.** Since Android 11, a permission is revoked automatically if the app is unused for a
+few months. The app is not notified. Code that checks a permission once at startup and caches the
+answer will be wrong for a returning user — so check at the point of use, every time.
+
+**Revocation kills the process.** When a user revokes a permission from Settings, Android restarts
+your process. That is deliberate: it means you can never be running with a stale grant. It also
+means a permission change looks exactly like process death to your code, so the state that has to
+survive it is the state that already survives process death.
+
+Both point the same way. Permission state is not something to hold; it is something to ask about
+when you need it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that cost you the permission permanently">
+**Asking on launch.** Reflex denials, and after two the dialog never appears again.
+
+**Treating the check as a boolean.** Without a remembered has-asked flag, permanent denial is
+indistinguishable from never having asked.
+
+**A Retry button after permanent denial.** It calls `launch()`, nothing appears, and the user is
+stuck. Link to Settings instead.
+
+**All-or-nothing multi-permission results.** The result is a map because partial grants are normal.
+
+**Caching the answer at startup.** Auto-reset and revocation both change it underneath you.
+</Pitfall>
+
+## Practice
+
+1. Deny a permission twice, then call `launch()` again and confirm no dialog appears.
+2. Add a has-asked flag in DataStore and use it to tell permanent denial from never-asked.
+3. Revoke a permission from Settings while the app is open and watch the process restart.
+4. Replace a `READ_MEDIA_IMAGES` request with the photo picker and delete the permission.
+5. Post a notification on an Android 13+ device without `POST_NOTIFICATIONS` and observe the silence.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Three states | Granted, denied-may-ask, denied-permanently |
+| `checkSelfPermission` | Granted or not, right now |
+| `shouldShowRequestPermissionRationale` | `false` both before the first ask and after permanent denial |
+| Has-asked flag | What separates those two, stored so it survives process death |
+| Ask when | The feature is used, not at launch |
+| Permanent denial | Send them to Settings; `launch()` does nothing |
+| `RequestMultiplePermissions` | Returns a map — partial grants are normal |
+| `POST_NOTIFICATIONS` | Required since Android 13, or notifications silently do not show |
+| Pickers | The user's choice replaces the permission entirely |
+| Auto-reset | Months of disuse revokes it, with no notification |
+
+<Interview title="A question where the good answer names the ambiguity">
+"How do you handle runtime permissions?"
+
+By asking at the moment the feature is used rather than at launch, because a prompt that follows a
+tap explains itself and a prompt on a splash screen gets a reflex denial — and after two denials the
+system stops showing the dialog at all.
+
+The detail I would raise is that there are three states, not two. `shouldShowRequestPermissionRationale`
+returns `false` both before the first request and after a permanent denial, so on its own it cannot
+distinguish them. I store a has-asked flag that survives process death, and use it to decide between
+showing the system dialog and sending the user to the app's Settings page — because calling `launch()`
+after permanent denial shows nothing, which makes a Retry button worse than no button. And where
+there is a picker — photos, documents, contacts — I would rather have no permission at all.
+</Interview>

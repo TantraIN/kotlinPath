@@ -1,0 +1,203 @@
+---
+title: Runtime permissions और rationale
+description: Permission कोई boolean नहीं है। वह इतिहास वाली एक हालत है, और आप किस हालत में हैं यह API सिर्फ ऐसे जोड़ से बताती है जिसे गलत पढ़ना आसान है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+हालतें दो नहीं, तीन हैं: **मिली हुई**, **मना कर दी गई पर दोबारा पूछ सकते हैं**, और **हमेशा के लिए
+मना**। तीसरी को Android कभी सीधे नहीं बताता — आप अंदाजा लगाते हैं — और permission का लगभग हर bug वह
+code है जिसने इस सवाल को boolean मान लिया।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+जो रूप सबसे पहले लिखा जाता है:
+
+```kotlin title="OnLaunch.kt" numbered
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    requestPermissions(arrayOf(ACCESS_FINE_LOCATION, CAMERA, READ_CONTACTS), 0)
+}
+```
+
+User के एक भी screen देखने से पहले तीन dialogs, उन सुविधाओं के लिए जो उसने माँगी ही नहीं। बड़ा हिस्सा
+आदतन मना कर देता है, और दूसरी बार मना करने पर system वह dialog दिखाना ही बंद कर देता है — तो ऐप ने
+वह permission हमेशा के लिए खो दी जिसे उसने कभी समझाया ही नहीं।
+
+**उस पल पूछिए जब वह सुविधा इस्तेमाल हो**, और तब माँग अपनी दलील खुद बन जाती है: camera के button पर
+tap करने के बाद आया camera का prompt किसी सफाई का मोहताज नहीं, क्योंकि user ने अभी-अभी वही माँगा था।
+
+## तीनों हालतें, और उन्हें अलग कैसे पहचानें
+
+```kotlin title="Permission.kt" numbered
+val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+    PackageManager.PERMISSION_GRANTED
+
+val shouldExplain = ActivityCompat.shouldShowRequestPermissionRationale(
+    activity, Manifest.permission.CAMERA,
+)
+```
+
+| `granted` | `shouldExplain` | मतलब |
+| --- | --- | --- |
+| `true` | — | मिली हुई; सुविधा बस इस्तेमाल कीजिए |
+| `false` | `true` | एक बार मना — समझाइए, फिर दोबारा पूछिए |
+| `false` | `false` | या तो कभी पूछा ही नहीं, **या** हमेशा के लिए मना |
+
+आखिरी पंक्ति ही पूरी दिक्कत है। `shouldShowRequestPermissionRationale` दो बिलकुल उलटी हालतों में
+`false` लौटाता है, और उन्हें अलग करने को Android आपको और कुछ देता नहीं।
+
+इलाज है यह याद रखना कि आपने पूछा था या नहीं:
+
+```kotlin title="PermissionState.kt" numbered
+// DataStore में रखा, ताकि process मरने पर भी बचे
+suspend fun onDenied(permission: String) = store.markAsked(permission)
+
+fun state(permission: String, activity: Activity): PermissionState = when {
+    isGranted(permission) -> Granted
+    shouldShowRationale(activity, permission) -> DeniedExplain
+    store.hasAsked(permission) -> DeniedPermanently     // पहले पूछा, अब rationale नहीं => रुका हुआ
+    else -> NeverAsked
+}
+```
+
+उस निशान के बिना ही ऐप "अभी पूछिए" और "dialog आएगा ही नहीं, तो उन्हें Settings भेजिए" में फर्क नहीं
+कर सकता।
+
+<Quiz
+  question="कोई ऐप camera की permission माँगता है। Callback मना बताता है, तो ऐप अपना dialog दिखाता है: \"कृपया camera की इजाजत दीजिए\", साथ में Retry का button। कुछ devices पर Retry से कुछ होता ही नहीं। क्यों?"
+  options={[
+    "Permission की माँग Fragment नहीं, किसी Activity से होनी चाहिए",
+    "User पहले ही दो बार मना कर चुका था, तो system का dialog अब आता ही नहीं — `launch()` तुरंत मना लौटाता है, और बचा हुआ इकलौता रास्ता ऐप का Settings वाला पन्ना है",
+    "`registerForActivityResult` हर screen पर सिर्फ एक बार launch हो सकता है",
+  ]}
+  answer={1}
+  explanation="दो बार मना करने के बाद Android उस permission को हमेशा के लिए मना मान लेता है, और उसके बाद उसे माँगने पर कोई dialog आता ही नहीं — callback तुरंत मना के साथ चल पड़ता है। तो जो Retry का button दोबारा launch() बुलाता है वह ऐसा button है जो साफ-साफ कुछ नहीं करता, और वह न होने से भी बुरा है। दोनों हालतों में फर्क करने के लिए वही याद रखा हुआ पूछ-चुके वाला निशान चाहिए, क्योंकि shouldShowRequestPermissionRationale पहली माँग से पहले भी false लौटाता है और हमेशा के लिए मना होने के बाद भी। एक बार पता चल जाए कि यह पक्का मना है, तो ईमानदार UI Retry नहीं बल्कि ऐसा link है जो आपके package के URI के साथ Intent(ACTION_APPLICATION_DETAILS_SETTINGS) खोले, और साथ में एक वाक्य कि उसके बिना क्या नहीं चलेगा। जानने लायक: अगर user इजाजत देकर बाद में Settings से वापस ले ले तो वह गिनती फिर से शुरू हो जाती है, यानी 'हमेशा' इस install भर के लिए है, हमेशा के लिए नहीं।"
+/>
+
+## माँगना, result वाली API से
+
+```kotlin title="Request.kt" numbered
+private val requestCamera = registerForActivityResult(
+    ActivityResultContracts.RequestPermission(),
+) { granted ->
+    if (granted) openCamera() else viewModel.onCameraDenied()
+}
+
+private val requestMany = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions(),
+) { results ->
+    results.forEach { (permission, granted) -> /* हर एक, अलग-अलग */ }
+}
+```
+
+`RequestMultiplePermissions` एक map लौटाता है क्योंकि user कुछ दे सकता है और कुछ से मना कर सकता है।
+नतीजे को सब-या-कुछ-नहीं मानना ही वह तरीका है जिससे दो में से सिर्फ एक permission माँगती सुविधा उस
+इंसान के लिए टूट जाती है जिसने ठीक वही एक दी थी।
+
+<Note>
+Launcher को शुरुआत में दर्ज कीजिए — किसी property की तरह या `onCreate` में — किसी click वाले handler
+के अंदर कभी नहीं। दर्ज होना activity के lifecycle से जुड़ता है, और `onStart` के बाद ऐसा करने पर वह
+फेंकता है। वही नियम जो `registerForActivityResult` पर हर जगह है।
+</Note>
+
+## वह permission जो अब notifications के लिए चाहिए
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Android 13 से notifications runtime वाली permission हैं। जो ऐप इसे माँगे बिना notification भेजता है
+उसे कुछ दिखता ही नहीं — न crash, न log की कोई लाइन, न कोई dialog। "मेरे device पर तो चलता है" और नए
+device पर न चलने की सबसे आम वजह यही है।
+
+इसे उस पल माँगिए जहाँ उसका फायदा साफ हो — जब user reminders चालू करे, पहली बार ऐप खोलने पर नहीं।
+
+## वे permissions जिनसे अक्सर बचा जा सकता है
+
+यह हिस्सा आसानी से छूट जाता है: कई क्षमताओं के ऐसे रास्ते हैं जिनमें permission लगती ही नहीं, और वे
+आमतौर पर user के लिए बेहतर भी होते हैं।
+
+| इसके बजाय | यह लीजिए |
+| --- | --- |
+| `READ_MEDIA_IMAGES` | Photo picker — user चुनता है, कोई permission नहीं |
+| `READ_EXTERNAL_STORAGE` | Document picker; चुनना *ही* इजाजत है |
+| एक तस्वीर के लिए `CAMERA` | `ACTION_IMAGE_CAPTURE` — तस्वीर camera वाला ऐप लेता है |
+| `ACCESS_FINE_LOCATION` | `ACCESS_COARSE_LOCATION`, अगर शहर भर की जगह काफी है |
+| Contacts | Contact चुनने वाला intent |
+
+इनमें से हर एक डरावने dialog की जगह वह चुनाव रख देता है जो user वैसे भी कर रहा था। जहाँ picker से
+काम चल जाए वहाँ चौड़ी पहुँच माँगना Play Console की समीक्षा में भी पकड़ा जाता है।
+
+<Detail summary="दो चीजें जो permissions आपकी पीठ पीछे बदल देती हैं">
+**अपने आप वापस लेना।** Android 11 से, कुछ महीने ऐप इस्तेमाल न हो तो permission अपने आप वापस ले ली
+जाती है। ऐप को कोई खबर नहीं मिलती। जो code शुरू में एक बार permission देखकर जवाब रख लेता है वह लौटते
+user के लिए गलत होगा — तो हर बार, इस्तेमाल के वक्त ही देखिए।
+
+**वापस लेने पर process मर जाता है।** जब user Settings से permission वापस लेता है, Android आपका
+process दोबारा शुरू करता है। यह जानबूझकर है: इसका मतलब है कि आप कभी पुरानी इजाजत के साथ चल ही नहीं
+सकते। इसका यह भी मतलब है कि permission का बदलना आपके code को ठीक process मरने जैसा दिखता है, तो जिस
+state को उसमें बचना है वह वही है जो process मरने पर पहले से बचती है।
+
+दोनों एक ही तरफ इशारा करते हैं। Permission की हालत पकड़कर रखने की चीज नहीं है; वह जरूरत पड़ने पर पूछने
+की चीज है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो permission हमेशा के लिए गँवा देती हैं">
+**खुलते ही पूछना।** आदतन मना, और दो बार के बाद dialog कभी नहीं आता।
+
+**जाँच को boolean मानना।** याद रखे हुए पूछ-चुके वाले निशान के बिना, पक्का मना और कभी न पूछा एक जैसे
+दिखते हैं।
+
+**पक्के मना के बाद Retry का button।** वह `launch()` बुलाता है, कुछ नहीं आता, और user अटक जाता है।
+उसकी जगह Settings का link दीजिए।
+
+**कई permissions के नतीजे को सब-या-कुछ-नहीं मानना।** नतीजा map इसीलिए है कि कुछ मिलना और कुछ न मिलना
+आम बात है।
+
+**शुरू में जवाब रख लेना।** अपने आप वापस लेना और user का वापस लेना, दोनों उसे आपके नीचे बदल देते हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी permission से दो बार मना कीजिए, फिर दोबारा `launch()` बुलाइए और पक्का कीजिए कि कोई dialog
+   नहीं आता।
+2. DataStore में पूछ-चुके वाला निशान जोड़िए और उससे पक्के मना तथा कभी न पूछे में फर्क कीजिए।
+3. ऐप खुला रहते हुए Settings से permission वापस लीजिए और process को दोबारा शुरू होते देखिए।
+4. किसी `READ_MEDIA_IMAGES` की माँग को photo picker से बदलिए और वह permission मिटा दीजिए।
+5. Android 13 या उससे नए device पर बिना `POST_NOTIFICATIONS` के notification भेजिए और वह चुप्पी
+   देखिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| तीन हालतें | मिली, मना-पर-पूछ सकते हैं, हमेशा के लिए मना |
+| `checkSelfPermission` | अभी मिली हुई है या नहीं |
+| `shouldShowRequestPermissionRationale` | पहली माँग से पहले भी `false`, पक्के मना के बाद भी |
+| पूछ-चुके वाला निशान | जो इन दोनों को अलग करता है, और process मरने पर बचता है |
+| कब पूछें | जब सुविधा इस्तेमाल हो, ऐप खुलते ही नहीं |
+| पक्का मना | उन्हें Settings भेजिए; `launch()` कुछ नहीं करता |
+| `RequestMultiplePermissions` | Map लौटाता है — कुछ मिलना आम बात है |
+| `POST_NOTIFICATIONS` | Android 13 से जरूरी, वरना notifications चुपचाप नहीं दिखते |
+| Pickers | User का चुनाव permission की जगह ही ले लेता है |
+| अपने आप वापस | महीनों इस्तेमाल न हो तो चली जाती है, बिना किसी खबर के |
+
+<Interview title="एक सवाल, जिसके अच्छे जवाब में उस दुविधा का नाम आता है">
+"Runtime permissions आप कैसे सँभालेंगे?"
+
+ऐप खुलते ही नहीं, बल्कि उस पल पूछकर जब वह सुविधा इस्तेमाल हो, क्योंकि tap के बाद आया prompt अपनी
+सफाई खुद है और splash screen पर आया prompt आदतन मना पाता है — और दो बार मना करने के बाद system वह
+dialog दिखाना ही बंद कर देता है।
+
+जिस बारीकी को मैं उठाऊँगा वह यह है कि हालतें दो नहीं, तीन हैं।
+`shouldShowRequestPermissionRationale` पहली माँग से पहले भी `false` लौटाता है और पक्के मना के बाद
+भी, तो अकेला वह उन्हें अलग नहीं कर सकता। मैं ऐसा पूछ-चुके वाला निशान रखता हूँ जो process मरने पर बचे,
+और उससे तय करता हूँ कि system का dialog दिखाना है या user को ऐप के Settings वाले पन्ने पर भेजना है —
+क्योंकि पक्के मना के बाद `launch()` कुछ नहीं दिखाता, जिससे Retry का button न होने से भी बुरा हो जाता
+है। और जहाँ picker मौजूद है — तस्वीरें, दस्तावेज, contacts — वहाँ मैं कोई permission ही नहीं रखना
+चाहूँगा।
+</Interview>

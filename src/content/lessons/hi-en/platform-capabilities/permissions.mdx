@@ -1,0 +1,209 @@
+---
+title: Runtime permissions aur rationale
+description: Permission koi boolean nahi hai. Wo itihas wali ek haalat hai, aur aap kis haalat mein ho ye API sirf aise jod se batati hai jise galat padhna aasan hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Haalatein do nahi, teen hain: **mili hui**, **mana kar di gayi par dobara puch sakte hain**, aur
+**hamesha ke liye mana**. Teesri ko Android kabhi seedhe nahi batata — aap andaza lagate ho — aur
+permission ka lagbhag har bug wo code hai jisne is sawal ko boolean maan liya.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Jo roop sabse pehle likha jata hai:
+
+```kotlin title="OnLaunch.kt" numbered
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    requestPermissions(arrayOf(ACCESS_FINE_LOCATION, CAMERA, READ_CONTACTS), 0)
+}
+```
+
+User ke ek bhi screen dekhne se pehle teen dialogs, un suvidhaon ke liye jo usne maangi hi nahi. Bada
+hissa aadatan mana kar deta hai, aur doosri baar mana karne par system wo dialog dikhana hi band kar
+deta hai — to app ne wo permission hamesha ke liye kho di jise usne kabhi samjhaya hi nahi.
+
+**Us pal puchiye jab wo suvidha istemal ho**, aur tab maang apni daleel khud ban jati hai: camera ke
+button par tap karne ke baad aaya camera ka prompt kisi safai ka mohtaj nahi, kyunki user ne
+abhi-abhi wahi maanga tha.
+
+## Teenon haalatein, aur unhe alag kaise pehchanein
+
+```kotlin title="Permission.kt" numbered
+val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+    PackageManager.PERMISSION_GRANTED
+
+val shouldExplain = ActivityCompat.shouldShowRequestPermissionRationale(
+    activity, Manifest.permission.CAMERA,
+)
+```
+
+| `granted` | `shouldExplain` | Matlab |
+| --- | --- | --- |
+| `true` | — | Mili hui; suvidha bas istemal kijiye |
+| `false` | `true` | Ek baar mana — samjhaiye, phir dobara puchiye |
+| `false` | `false` | Ya to kabhi pucha hi nahi, **ya** hamesha ke liye mana |
+
+Aakhri pankti hi poori mushkil hai. `shouldShowRequestPermissionRationale` do bilkul ulti haalaton
+mein `false` lautata hai, aur unhe alag karne ko Android aapko aur kuch deta nahi.
+
+Ilaaj hai ye yaad rakhna ki aapne pucha tha ya nahi:
+
+```kotlin title="PermissionState.kt" numbered
+// DataStore mein rakha, taki process marne par bhi bache
+suspend fun onDenied(permission: String) = store.markAsked(permission)
+
+fun state(permission: String, activity: Activity): PermissionState = when {
+    isGranted(permission) -> Granted
+    shouldShowRationale(activity, permission) -> DeniedExplain
+    store.hasAsked(permission) -> DeniedPermanently     // pehle pucha, ab rationale nahi => ruka hua
+    else -> NeverAsked
+}
+```
+
+Us nishan ke bina hi app "abhi puchiye" aur "dialog aayega hi nahi, to unhe Settings bhejiye" mein
+farak nahi kar sakta.
+
+<Quiz
+  question="Koi app camera ki permission maangta hai. Callback mana batata hai, to app apna dialog dikhata hai: \"Kripya camera ki ijazat dijiye\", saath mein Retry ka button. Kuch devices par Retry se kuch hota hi nahi. Kyun?"
+  options={[
+    "Permission ki maang Fragment nahi, kisi Activity se honi chahiye",
+    "User pehle hi do baar mana kar chuka tha, to system ka dialog ab aata hi nahi — `launch()` turant mana lautata hai, aur bacha hua iklauta raasta app ka Settings wala panna hai",
+    "`registerForActivityResult` har screen par sirf ek baar launch ho sakta hai",
+  ]}
+  answer={1}
+  explanation="Do baar mana karne ke baad Android us permission ko hamesha ke liye mana maan leta hai, aur uske baad use maangne par koi dialog aata hi nahi — callback turant mana ke saath chal padta hai. To jo Retry ka button dobara launch() bulata hai wo aisa button hai jo saaf-saaf kuch nahi karta, aur wo na hone se bhi bura hai. Dono haalaton mein farak karne ke liye wahi yaad rakha hua puch-chuke wala nishan chahiye, kyunki shouldShowRequestPermissionRationale pehli maang se pehle bhi false lautata hai aur hamesha ke liye mana hone ke baad bhi. Ek baar pata chal jaye ki ye pakka mana hai, to imandaar UI Retry nahi balki aisa link hai jo aapke package ke URI ke saath Intent(ACTION_APPLICATION_DETAILS_SETTINGS) khole, aur saath mein ek vakya ki uske bina kya nahi chalega. Janne layak: agar user ijazat dekar baad mein Settings se wapas le le to wo ginti phir se shuru ho jati hai, yani 'hamesha' is install bhar ke liye hai, hamesha ke liye nahi."
+/>
+
+## Maangna, result wali API se
+
+```kotlin title="Request.kt" numbered
+private val requestCamera = registerForActivityResult(
+    ActivityResultContracts.RequestPermission(),
+) { granted ->
+    if (granted) openCamera() else viewModel.onCameraDenied()
+}
+
+private val requestMany = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions(),
+) { results ->
+    results.forEach { (permission, granted) -> /* har ek, alag-alag */ }
+}
+```
+
+`RequestMultiplePermissions` ek map lautata hai kyunki user kuch de sakta hai aur kuch se mana kar
+sakta hai. Result ko sab-ya-kuch-nahi manna hi wo tarika hai jisse do mein se sirf ek permission
+maangti suvidha us insaan ke liye toot jati hai jisne theek wahi ek di thi.
+
+<Note>
+Launcher ko shuruat mein darj kijiye — kisi property ki tarah ya `onCreate` mein — kisi click wale
+handler ke andar kabhi nahi. Darj hona activity ke lifecycle se judta hai, aur `onStart` ke baad aisa
+karne par wo phenkta hai. Wahi niyam jo `registerForActivityResult` par har jagah hai.
+</Note>
+
+## Wo permission jo ab notifications ke liye chahiye
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Android 13 se notifications runtime wali permission hain. Jo app ise maange bina notification bhejta
+hai use kuch dikhta hi nahi — na crash, na log ki koi line, na koi dialog. "Mere device par to chalta
+hai" aur naye device par na chalne ki sabse aam wajah yahi hai.
+
+Ise us pal maangiye jahan uska faayda saaf ho — jab user reminders chalu kare, pehli baar app kholne
+par nahi.
+
+## Wo permissions jinse aksar bacha ja sakta hai
+
+Ye hissa aasani se chhoot jata hai: kai kshamtaon ke aise raaste hain jinmein permission lagti hi
+nahi, aur wo aam taur par user ke liye behtar bhi hote hain.
+
+| Iske bajaye | Ye lijiye |
+| --- | --- |
+| `READ_MEDIA_IMAGES` | Photo picker — user chunta hai, koi permission nahi |
+| `READ_EXTERNAL_STORAGE` | Document picker; chunna *hi* ijazat hai |
+| Ek tasveer ke liye `CAMERA` | `ACTION_IMAGE_CAPTURE` — tasveer camera wala app leta hai |
+| `ACCESS_FINE_LOCATION` | `ACCESS_COARSE_LOCATION`, agar shehar bhar ki jagah kaafi hai |
+| Contacts | Contact chunne wala intent |
+
+Inmein se har ek darawne dialog ki jagah wo chunaav rakh deta hai jo user waise bhi kar raha tha.
+Jahan picker se kaam chal jaye wahan chaudi pahunch maangna Play Console ki sameeksha mein bhi pakda
+jata hai.
+
+<Detail summary="Do cheezein jo permissions aapki peeth peeche badal deti hain">
+**Apne aap wapas lena.** Android 11 se, kuch mahine app istemal na ho to permission apne aap wapas le
+li jati hai. App ko koi khabar nahi milti. Jo code shuru mein ek baar permission dekhkar jawab rakh
+leta hai wo lautte user ke liye galat hoga — to har baar, istemal ke waqt hi dekhiye.
+
+**Wapas lene par process mar jata hai.** Jab user Settings se permission wapas leta hai, Android aapka
+process dobara shuru karta hai. Ye jaanbujhkar hai: iska matlab hai ki aap kabhi purani ijazat ke
+saath chal hi nahi sakte. Iska ye bhi matlab hai ki permission ka badalna aapke code ko theek process
+marne jaisa dikhta hai, to jis state ko usmein bachna hai wo wahi hai jo process marne par pehle se
+bachti hai.
+
+Dono ek hi taraf ishara karte hain. Permission ki haalat pakadkar rakhne ki cheez nahi hai; wo zarurat
+padne par puchne ki cheez hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo permission hamesha ke liye ganwa deti hain">
+**Khulte hi puchna.** Aadatan mana, aur do baar ke baad dialog kabhi nahi aata.
+
+**Check ko boolean manna.** Yaad rakhe hue puch-chuke wale nishan ke bina, pakka mana aur kabhi na
+pucha ek jaise dikhte hain.
+
+**Pakke mana ke baad Retry ka button.** Wo `launch()` bulata hai, kuch nahi aata, aur user atak jata
+hai. Uski jagah Settings ka link dijiye.
+
+**Kai permissions ke result ko sab-ya-kuch-nahi manna.** Result map isiliye hai ki kuch milna aur kuch
+na milna aam baat hai.
+
+**Shuru mein jawab rakh lena.** Apne aap wapas lena aur user ka wapas lena, dono use aapke neeche
+badal dete hain.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi permission se do baar mana kijiye, phir dobara `launch()` bulaiye aur pakka kijiye ki koi
+   dialog nahi aata.
+2. DataStore mein puch-chuke wala nishan jodiye aur usse pakke mana tatha kabhi na puche mein farak
+   kijiye.
+3. App khula rehte hue Settings se permission wapas lijiye aur process ko dobara shuru hote dekhiye.
+4. Kisi `READ_MEDIA_IMAGES` ki maang ko photo picker se badliye aur wo permission mita dijiye.
+5. Android 13 ya usse naye device par bina `POST_NOTIFICATIONS` ke notification bhejiye aur wo chuppi
+   dekhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Teen haalatein | Mili, mana-par-puch sakte hain, hamesha ke liye mana |
+| `checkSelfPermission` | Abhi mili hui hai ya nahi |
+| `shouldShowRequestPermissionRationale` | Pehli maang se pehle bhi `false`, pakke mana ke baad bhi |
+| Puch-chuke wala nishan | Jo in dono ko alag karta hai, aur process marne par bachta hai |
+| Kab puchein | Jab suvidha istemal ho, app khulte hi nahi |
+| Pakka mana | Unhe Settings bhejiye; `launch()` kuch nahi karta |
+| `RequestMultiplePermissions` | Map lautata hai — kuch milna aam baat hai |
+| `POST_NOTIFICATIONS` | Android 13 se zaruri, warna notifications chupchap nahi dikhte |
+| Pickers | User ka chunaav permission ki jagah hi le leta hai |
+| Apne aap wapas | Mahinon istemal na ho to chali jati hai, bina kisi khabar ke |
+
+<Interview title="Ek sawal, jiske achhe jawab mein us duvidha ka naam aata hai">
+"Runtime permissions aap kaise sambhaloge?"
+
+App khulte hi nahi, balki us pal puchkar jab wo suvidha istemal ho, kyunki tap ke baad aaya prompt
+apni safai khud hai aur splash screen par aaya prompt aadatan mana pata hai — aur do baar mana karne
+ke baad system wo dialog dikhana hi band kar deta hai.
+
+Jis bareeki ko main uthaunga wo ye hai ki haalatein do nahi, teen hain.
+`shouldShowRequestPermissionRationale` pehli maang se pehle bhi `false` lautata hai aur pakke mana ke
+baad bhi, to akela wo unhe alag nahi kar sakta. Main aisa puch-chuke wala nishan rakhta hoon jo
+process marne par bache, aur usse tay karta hoon ki system ka dialog dikhana hai ya user ko app ke
+Settings wale panne par bhejna hai — kyunki pakke mana ke baad `launch()` kuch nahi dikhata, jisse
+Retry ka button na hone se bhi bura ho jata hai. Aur jahan picker maujood hai — tasveerein, dastavez,
+contacts — wahan main koi permission hi nahi rakhna chahunga.
+</Interview>
