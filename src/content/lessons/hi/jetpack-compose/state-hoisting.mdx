@@ -1,0 +1,200 @@
+---
+title: State hoisting और एक तरफा data flow
+description: State को तब तक ऊपर ले जाइए जब तक जिन्हें चाहिए वे सब उसे देख न लें, फिर values नीचे भेजिए और events ऊपर। छोटा सा नियम है, पर इसके नतीजे असामान्य रूप से बड़े हैं।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+**Hoisting** का मतलब है state को composable से निकालकर उसे बुलाने वाले के पास रख देना, और
+composable के पास दो parameters छोड़ देना: दिखाने वाली value और event के लिए एक callback। बदले में
+जो function मिलता है उसे preview करना, test करना और दोबारा इस्तेमाल करना बेहद आसान होता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Stateful.kt"
+@Composable
+fun NameField() {
+    var name by remember { mutableStateOf("") }
+    TextField(value = name, onValueChange = { name = it })
+}
+```
+
+यह चलता तो है, पर यह एक बंद गली है। बुलाने वाला न नाम पढ़ सकता है, न खाली कर सकता है, न किसी
+सँभाले हुए draft से भर सकता है, और न बिना उसमें लिखे screen test कर सकता है। State अंदर ही बंद
+है।
+
+```kotlin title="Stateless.kt" numbered
+@Composable
+fun NameField(
+    name: String,
+    onNameChange: (String) -> Unit,
+) {
+    TextField(value = name, onValueChange = onNameChange)
+}
+```
+
+वही UI। अब सब कुछ बुलाने वाला तय करता है, और composable अपने arguments का साफ-सुथरा function बन
+गया है।
+
+## इससे बनती क्या शक्ल है
+
+<Figure caption="State values बनकर नीचे बहता है; events callbacks बनकर ऊपर। कुछ भी बगल में नहीं बहता, और कोई बच्चा खुद ऊपर हाथ बढ़ाकर कुछ बदलता नहीं।">
+  <PipelineDiagram
+    title="एक तरफा data flow"
+    description="State मालिक से नीचे composables में parameters बनकर जाता है, और events composables से ऊपर मालिक तक callbacks बनकर, जिससे state फिर बदलता है।"
+    stages={[
+      { label: "State का मालिक", sub: "ViewModel", accent: "violet" },
+      { label: "State नीचे", sub: "parameters", accent: "sky" },
+      { label: "UI", sub: "stateless", accent: "emerald" },
+      { label: "Events ऊपर", sub: "callbacks", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+चक्कर सिर्फ एक तरफ घूमता है, इसलिए value बदलने की ठीक एक ही जगह होती है। Screen गलत दिखे तो आप
+मालिक को देखते हैं, और देखने के लिए और कोई जगह होती ही नहीं।
+
+## State जाएगी कहाँ
+
+| नियम | मतलब |
+| --- | --- |
+| सबसे नजदीकी साझा पूर्वज | वह सबसे पास वाला composable जिसके नीचे सारे पढ़ने वाले हों |
+| जो सबसे ऊपर बदलता है वहाँ तक | ऊपर किसी को उसे बदलना है तो वह वहीं की है |
+| साथ ऊपर ले जाइए | एक ही event पर बदलने वाली दो values एक ही स्तर पर रहेंगी |
+| इससे आगे मत ले जाइए | जिस state की ऊपर किसी को परवाह नहीं वह जहाँ है वहीं रहे |
+
+## Hoisting के बाद मिलने वाली नाकामी
+
+<Quiz
+  question="आप एक `TextField` को ऊपर `ViewModel` तक ले जाते हैं, जो `StateFlow` देता है और composable में collect होता है। अब तेजी से लिखने पर अक्षर छूटते या आगे-पीछे हो जाते हैं। क्यों?"
+  options={[
+    "`TextField` को `ViewModel` के साथ इस्तेमाल किया ही नहीं जा सकता",
+    "Value का चक्कर अलग समय पर पूरा होता है, तो field उससे पुरानी state दिखा सकती है जो लिखी जा चुकी है",
+    "Keyboard उतनी तेजी से events भेजता है जितनी तेजी से Compose recompose नहीं कर सकता"
+  ]}
+  answer={1}
+  explanation="TextField उतना ही सही रहता है जितनी सही value उसे थमाई जाती है। जब वह value flow से होकर ऊपर जाती है और किसी बाद वाले frame पर लौटती है, तो field थोड़ी देर के लिए पुरानी string दिखा रही होती है जबकि user उसी में लिखता जा रहा है, और cursor और बदलाव आपस में भिड़ जाते हैं। इलाज hoisting छोड़ना नहीं है — इलाज यह है कि text खुद ऐसी state में रहे जिसे composable उसी वक्त बदल सके, rememberTextFieldState से या field के पास ही रखे किसी सादे mutableStateOf से, और तय हो चुकी value ऊपर भेजी जाए। मतलब ऊपर ले जाइए, हर keystroke नहीं।"
+/>
+
+## एक ही component के दो रूप
+
+चलन यह है कि एक stateless composable हो और उसके ऊपर एक पतला stateful लपेटा:
+
+```kotlin title="Both.kt" numbered
+// Stateless: यही preview, test और दोबारा इस्तेमाल होता है
+@Composable
+fun Counter(count: Int, onIncrement: () -> Unit) {
+    Button(onClick = onIncrement) { Text("Count: $count") }
+}
+
+// Stateful: उन बुलाने वालों की सुविधा के लिए जिन्हें परवाह नहीं
+@Composable
+fun Counter() {
+    var count by rememberSaveable { mutableStateOf(0) }
+    Counter(count = count, onIncrement = { count++ })
+}
+```
+
+<Tip>
+हर वह `@Preview` जो आप बिना नकली `ViewModel` के लिख पाते हैं, इस बात का सबूत है कि component ठीक
+से hoist हुआ है। अगर एक button दिखाने के लिए preview को पूरा dependency का जाल चाहिए, तो state
+गलत जगह है।
+</Tip>
+
+## इससे मिलता क्या है
+
+<Compare
+  left={{
+    title: "Stateful component",
+    subtitle: "जो दिखाता है उसका मालिक भी है",
+    accent: "amber",
+    points: [
+      "+ बुलाने वाली जगह पर कम parameters",
+      "- बाहर से न चलाया जा सकता है, न खाली, न पहले से भरा",
+      "- Preview या test के लिए पूरा असली माहौल चाहिए",
+      "- दो एक जैसे component कोई value साझा नहीं कर सकते",
+    ],
+  }}
+  right={{
+    title: "Hoisted component",
+    subtitle: "जो दिया जाता है वही दिखाता है",
+    accent: "violet",
+    points: [
+      "+ सादी values से preview और test कीजिए",
+      "+ सच का एक ही ठिकाना, तो कुछ बिगड़ ही नहीं सकता",
+      "+ जहाँ भी वैसा ही data है वहाँ दोबारा इस्तेमाल",
+      "- State रखना और भेजना बुलाने वाले के जिम्मे आ जाता है",
+    ],
+  }}
+/>
+
+<Detail summary="ViewModel को नीचे भेज देने में क्या हर्ज है">
+Compile तो हो जाता है, और hoisting से जो मिलना था वह चुपचाप सब चला जाता है। जो composable
+`ViewModel` लेता है वह बिना एक बनाए preview नहीं हो सकता, दूसरी logic वाली किसी और screen पर
+दोबारा इस्तेमाल नहीं हो सकता, और उसके signature से उसके बारे में कुछ समझा नहीं जा सकता — वह किस-किस
+को छूता है यह जानने के लिए उसकी body पढ़नी पड़ती है।
+
+जो values वह दिखाता है और जो callbacks वह चलाता है, बस वही भेजिए। `ViewModel` को screen के स्तर
+पर रखिए, जहाँ ठीक एक composable जानता हो कि वह है भी:
+
+```kotlin title="Screen.kt" numbered
+@Composable
+fun OrderScreen(viewModel: OrderViewModel = viewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    OrderContent(
+        state = state,
+        onRefresh = viewModel::refresh,
+    )
+}
+```
+
+`collectAsStateWithLifecycle` किसी `Flow` को Compose `State` में बदलता है और screen के पीछे चले
+जाने पर collect करना रोक देता है। Coroutines पूरे होने के बाद इस पर अपना एक पाठ है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="तीन जो फायदा वापस छीन लेती हैं">
+**Hoist करने के बाद भी एक copy रखना।** बच्चा value ऊपर तो भेज देता है पर "सुविधा के लिए" उसका एक
+`remember` भी रखे रहता है। अब सच के दो ठिकाने हैं, और वे आपस में उलटेंगे ही।
+
+**हर चीज hoist कर देना।** कोई dropdown खुला है या नहीं, इससे किसी और को मतलब नहीं। उसे ऊपर ले
+जाने से एक parameter, एक callback और दोनों के बीच बिगड़ने का एक मौका बढ़ता है, बदले में कुछ नहीं।
+
+**`ViewModel` को नीचे भेजना।** दिखता कम parameters जैसा है और असल में पूरी screen पर छिपी हुई
+निर्भरता है।
+</Pitfall>
+
+## अभ्यास
+
+1. ऊपर वाली stateful `NameField` लीजिए और उसे hoist कीजिए। फिर उसका एक `@Preview` लिखिए जिसमें
+   कहीं कोई `ViewModel` न हो।
+2. Parent में एक Clear button जोड़िए। गौर कीजिए कि hoisting से पहले यह मुमकिन ही नहीं था।
+3. Hoisted field के दो नमूने एक ही screen पर, एक ही state से चलाकर रखिए, और उन्हें साथ-साथ चलते
+   देखिए।
+4. ऐसी value hoist कीजिए जिसकी ऊपर किसी को जरूरत नहीं, एक दिन उस अतिरिक्त parameter के साथ काम
+   कीजिए, और तय कीजिए कि उसने अपनी जगह कमाई या नहीं।
+5. Stateless रूप को तय values के साथ बुलाकर उसका test लिखिए और जो दिखता है उस पर दावा कीजिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Hoisting | State बुलाने वाले के पास ले जाइए; value और callback लीजिए |
+| Stateless composable | अपने parameters का साफ-सुथरा function |
+| एक तरफा flow | State नीचे values बनकर, events ऊपर callbacks बनकर |
+| कहाँ तक ले जाएँ | जो सब पढ़ते हैं उन सबका सबसे नजदीकी साझा पूर्वज |
+| साथ ले जाइए | वे values जो एक ही event पर बदलती हैं |
+| Stateful लपेटा | उन बुलाने वालों के लिए पतला रूप जिन्हें परवाह नहीं |
+| Text fields | Keystrokes वहीं रखिए; तय हो चुकी value ऊपर भेजिए |
+| `ViewModel` | Screen के स्तर पर ही रहे, नीचे कभी नहीं |
+
+<Interview title="आसान सवाल, जिसका दूसरा आधा हिस्सा मुश्किल है">
+"State hoisting क्या है?"
+
+State को composable से निकालकर उसे बुलाने वाले के पास ले जाना, ताकि composable एक value ले और
+events भेजे। जो आधा हिस्सा तजुर्बा दिखाता है वह है कहाँ रुकना: उन सबका सबसे नजदीकी साझा पूर्वज जो
+उसे पढ़ते हैं, और उससे ऊपर नहीं — कोई menu खुला है या नहीं जैसी बिलकुल स्थानीय state ऊपर ले जाने
+से parameters और दो copies के उलटने का रास्ता ही बढ़ता है, मिलता कुछ नहीं।
+</Interview>

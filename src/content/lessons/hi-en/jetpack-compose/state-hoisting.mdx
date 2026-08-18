@@ -1,0 +1,204 @@
+---
+title: State hoisting aur ek tarfa data flow
+description: State ko tab tak upar le jaiye jab tak jinhe chahiye wo sab use dekh na lein, phir values neeche bhejiye aur events upar. Chhota sa niyam hai, par iske result asamanya roop se bade hain.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+**Hoisting** ka matlab hai state ko composable se nikalkar use bulane wale ke paas rakh dena, aur
+composable ke paas do parameters chhod dena: dikhane wali value aur event ke liye ek callback.
+Badle mein jo function milta hai use preview karna, test karna aur dobara istemal karna behad
+aasan hota hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Stateful.kt"
+@Composable
+fun NameField() {
+    var name by remember { mutableStateOf("") }
+    TextField(value = name, onValueChange = { name = it })
+}
+```
+
+Ye chalta to hai, par ye ek band gali hai. Bulane wala na naam padh sakta hai, na khaali kar
+sakta hai, na kisi sambhale hue draft se bhar sakta hai, aur na bina usmein likhe screen test kar
+sakta hai. State andar hi band hai.
+
+```kotlin title="Stateless.kt" numbered
+@Composable
+fun NameField(
+    name: String,
+    onNameChange: (String) -> Unit,
+) {
+    TextField(value = name, onValueChange = onNameChange)
+}
+```
+
+Wahi UI. Ab sab kuch bulane wala tay karta hai, aur composable apne arguments ka saaf-suthra
+function ban gaya hai.
+
+## Isse banti kya shakal hai
+
+<Figure caption="State values bankar neeche behta hai; events callbacks bankar upar. Kuch bhi bagal mein nahi behta, aur koi bachcha khud upar haath badhakar kuch badalta nahi.">
+  <PipelineDiagram
+    title="Ek tarfa data flow"
+    description="State maalik se neeche composables mein parameters bankar jata hai, aur events composables se upar maalik tak callbacks bankar, jisse state phir badalta hai."
+    stages={[
+      { label: "State ka maalik", sub: "ViewModel", accent: "violet" },
+      { label: "State neeche", sub: "parameters", accent: "sky" },
+      { label: "UI", sub: "stateless", accent: "emerald" },
+      { label: "Events upar", sub: "callbacks", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+Chakkar sirf ek taraf ghoomta hai, isliye value badalne ki theek ek hi jagah hoti hai. Screen
+galat dikhe to aap maalik ko dekhte hain, aur dekhne ke liye aur koi jagah hoti hi nahi.
+
+## State jayegi kahan
+
+| Niyam | Matlab |
+| --- | --- |
+| Sabse nazdiki shared purvaj | Wo sabse paas wala composable jiske neeche saare padhne wale hon |
+| Jo sabse upar badalta hai wahan tak | Upar kisi ko use badalna hai to wo wahin ki hai |
+| Saath upar le jaiye | Ek hi event par badalne wali do values ek hi level par rahengi |
+| Isse aage mat le jaiye | Jis state ki upar kisi ko parwah nahi wo jahan hai wahin rahe |
+
+## Hoisting ke baad milne wali nakami
+
+<Quiz
+  question="Aap ek `TextField` ko upar `ViewModel` tak le jate hain, jo `StateFlow` deta hai aur composable mein collect hota hai. Ab tezi se likhne par akshar chhootte ya aage-peeche ho jate hain. Kyun?"
+  options={[
+    "`TextField` ko `ViewModel` ke saath istemal kiya hi nahi ja sakta",
+    "Value ka chakkar alag samay par poora hota hai, to field usse purani state dikha sakti hai jo likhi ja chuki hai",
+    "Keyboard utni tezi se events bhejta hai jitni tezi se Compose recompose nahi kar sakta"
+  ]}
+  answer={1}
+  explanation="TextField utna hi sahi rehta hai jitni sahi value use thamai jati hai. Jab wo value flow se hokar upar jati hai aur kisi baad wale frame par lautti hai, to field thodi der ke liye purani string dikha rahi hoti hai jabki user usi mein likhta ja raha hai, aur cursor aur badlaav aapas mein bhid jate hain. Ilaaj hoisting chhodna nahi hai — ilaaj ye hai ki text khud aisi state mein rahe jise composable usi waqt badal sake, rememberTextFieldState se ya field ke paas hi rakhe kisi saade mutableStateOf se, aur tay ho chuki value upar bheji jaye. Matlab upar le jaiye, har keystroke nahi."
+/>
+
+## Ek hi component ke do roop
+
+Chalan ye hai ki ek stateless composable ho aur uske upar ek patla stateful lapeta:
+
+```kotlin title="Both.kt" numbered
+// Stateless: yahi preview, test aur dobara istemal hota hai
+@Composable
+fun Counter(count: Int, onIncrement: () -> Unit) {
+    Button(onClick = onIncrement) { Text("Count: $count") }
+}
+
+// Stateful: un bulane walon ki suvidha ke liye jinhe parwah nahi
+@Composable
+fun Counter() {
+    var count by rememberSaveable { mutableStateOf(0) }
+    Counter(count = count, onIncrement = { count++ })
+}
+```
+
+<Tip>
+Har wo `@Preview` jo aap bina nakli `ViewModel` ke likh paate hain, is baat ka saboot hai ki
+component theek se hoist hua hai. Agar ek button dikhane ke liye preview ko poora dependency ka
+jaal chahiye, to state galat jagah hai.
+</Tip>
+
+## Isse milta kya hai
+
+<Compare
+  left={{
+    title: "Stateful component",
+    subtitle: "Jo dikhata hai uska maalik bhi hai",
+    accent: "amber",
+    points: [
+      "+ Bulane wali jagah par kam parameters",
+      "- Bahar se na chalaya ja sakta hai, na khaali, na pehle se bhara",
+      "- Preview ya test ke liye poora asli mahaul chahiye",
+      "- Do ek jaise component koi value share nahi kar sakte",
+    ],
+  }}
+  right={{
+    title: "Hoisted component",
+    subtitle: "Jo diya jata hai wahi dikhata hai",
+    accent: "violet",
+    points: [
+      "+ Saadi values se preview aur test kijiye",
+      "+ Sach ka ek hi thikana, to kuch bigad hi nahi sakta",
+      "+ Jahan bhi waisa hi data hai wahan dobara istemal",
+      "- State rakhna aur bhejna bulane wale ke zimme aa jata hai",
+    ],
+  }}
+/>
+
+<Detail summary="ViewModel ko neeche bhej dene mein kya harj hai">
+Compile to ho jata hai, aur hoisting se jo milna tha wo chupchap sab chala jata hai. Jo composable
+`ViewModel` leta hai wo bina ek banaye preview nahi ho sakta, doosri logic wali kisi aur screen par
+dobara istemal nahi ho sakta, aur uske signature se uske baare mein kuch samjha nahi ja sakta — wo
+kis-kis ko chhuta hai ye jaanne ke liye uski body padhni padti hai.
+
+Jo values wo dikhata hai aur jo callbacks wo chalata hai, bas wahi bhejiye. `ViewModel` ko screen
+ke level par rakhiye, jahan theek ek composable jaanta ho ki wo hai bhi:
+
+```kotlin title="Screen.kt" numbered
+@Composable
+fun OrderScreen(viewModel: OrderViewModel = viewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    OrderContent(
+        state = state,
+        onRefresh = viewModel::refresh,
+    )
+}
+```
+
+`collectAsStateWithLifecycle` kisi `Flow` ko Compose `State` mein badalta hai aur screen ke peeche
+chale jane par collect karna rok deta hai. Coroutines poore hone ke baad is par apna ek paath hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Teen jo faayda wapas chheen leti hain">
+**Hoist karne ke baad bhi ek copy rakhna.** Bachcha value upar to bhej deta hai par "suvidha ke
+liye" uska ek `remember` bhi rakhe rehta hai. Ab sach ke do thikane hain, aur wo aapas mein
+ultenge hi.
+
+**Har cheez hoist kar dena.** Koi dropdown khula hai ya nahi, isse kisi aur ko matlab nahi. Use
+upar le jane se ek parameter, ek callback aur dono ke beech bigadne ka ek mauka badhta hai, badle
+mein kuch nahi.
+
+**`ViewModel` ko neeche bhejna.** Dikhta kam parameters jaisa hai aur asal mein poori screen par
+chhipi hui nirbharta hai.
+</Pitfall>
+
+## Practice
+
+1. Upar wali stateful `NameField` lijiye aur use hoist kijiye. Phir uska ek `@Preview` likhiye
+   jismein kahin koi `ViewModel` na ho.
+2. Parent mein ek Clear button jodiye. Gaur kijiye ki hoisting se pehle ye mumkin hi nahi tha.
+3. Hoisted field ke do namune ek hi screen par, ek hi state se chalakar rakhiye, aur unhe
+   saath-saath chalte dekhiye.
+4. Aisi value hoist kijiye jiski upar kisi ko zarurat nahi, ek din us extra parameter ke saath
+   kaam kijiye, aur tay kijiye ki usne apni jagah kamai ya nahi.
+5. Stateless roop ko tay values ke saath bulakar uska test likhiye aur jo dikhta hai us par dawa
+   kijiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Hoisting | State bulane wale ke paas le jaiye; value aur callback lijiye |
+| Stateless composable | Apne parameters ka saaf-suthra function |
+| Ek tarfa flow | State neeche values bankar, events upar callbacks bankar |
+| Kahan tak le jayein | Jo sab padhte hain un sabka sabse nazdiki shared purvaj |
+| Saath le jaiye | Wo values jo ek hi event par badalti hain |
+| Stateful lapeta | Un bulane walon ke liye patla roop jinhe parwah nahi |
+| Text fields | Keystrokes wahin rakhiye; tay ho chuki value upar bhejiye |
+| `ViewModel` | Screen ke level par hi rahe, neeche kabhi nahi |
+
+<Interview title="Aasan sawal, jiska doosra aadha hissa mushkil hai">
+"State hoisting kya hai?"
+
+State ko composable se nikalkar use bulane wale ke paas le jana, taki composable ek value le aur
+events bheje. Jo aadha hissa tajurba dikhata hai wo hai kahan rukna: un sabka sabse nazdiki shared
+purvaj jo use padhte hain, aur usse upar nahi — koi menu khula hai ya nahi jaisi bilkul local
+state upar le jane se parameters aur do copies ke ultne ka raasta hi badhta hai, milta kuch nahi.
+</Interview>

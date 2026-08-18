@@ -1,0 +1,201 @@
+---
+title: State hoisting and unidirectional data flow
+description: Move state up until everyone who needs it can see it, then pass values down and events up. It is a small rule with unusually large consequences.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+**Hoisting** means moving state out of a composable and into its caller, leaving the composable
+with two parameters: the value to show and a callback for the event. What comes back is a function
+that is trivial to preview, to test, and to reuse.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Stateful.kt"
+@Composable
+fun NameField() {
+    var name by remember { mutableStateOf("") }
+    TextField(value = name, onValueChange = { name = it })
+}
+```
+
+This works, and it is a dead end. The caller cannot read the name, cannot clear it, cannot prefill
+it from a saved draft, and cannot test the screen without typing into it. The state is locked
+inside.
+
+```kotlin title="Stateless.kt" numbered
+@Composable
+fun NameField(
+    name: String,
+    onNameChange: (String) -> Unit,
+) {
+    TextField(value = name, onValueChange = onNameChange)
+}
+```
+
+Same UI. Now the caller decides everything, and the composable has become a pure function of its
+arguments.
+
+## The shape it produces
+
+<Figure caption="State flows down as values; events flow up as callbacks. Nothing flows sideways, and no child reaches back up to change something itself.">
+  <PipelineDiagram
+    title="Unidirectional data flow"
+    description="State moves downward from the owner into composables as parameters, and events move upward from composables to the owner as callbacks, which updates the state again."
+    stages={[
+      { label: "State owner", sub: "ViewModel", accent: "violet" },
+      { label: "State down", sub: "parameters", accent: "sky" },
+      { label: "UI", sub: "stateless", accent: "emerald" },
+      { label: "Events up", sub: "callbacks", accent: "amber" },
+    ]}
+  />
+</Figure>
+
+Because the loop only turns one way, there is exactly one place a value can change. When the
+screen is wrong you look at the owner, and there is nowhere else to look.
+
+## Where does the state go?
+
+| Rule | Meaning |
+| --- | --- |
+| Lowest common ancestor | The nearest composable that all readers sit under |
+| Hoist to the highest changer | If anything above needs to change it, it belongs there |
+| Hoist together | Two values that change on the same event belong at the same level |
+| Do not hoist further | State nobody above cares about stays where it is |
+
+## The failure people meet after hoisting
+
+<Quiz
+  question="You hoist a `TextField` all the way into a `ViewModel` exposing a `StateFlow`, collected in the composable. Typing quickly now drops or reorders characters. Why?"
+  options={[
+    "`TextField` cannot be used with a `ViewModel` at all",
+    "The value round-trips asynchronously, so the field can render a state older than what was typed",
+    "The keyboard sends events faster than Compose can recompose"
+  ]}
+  answer={1}
+  explanation="A TextField is only ever as correct as the value it is handed. When that value goes up through a flow and comes back on a later frame, the field is briefly displaying an older string while the user keeps typing into it, and the cursor and the edits fight. The fix is not to abandon hoisting — it is to keep the text itself in state the composable can update synchronously, using rememberTextFieldState or a plain mutableStateOf held next to the field, and send the committed value upward. Hoist the meaning, not every keystroke."
+/>
+
+## Two versions of the same component
+
+The convention is a stateless composable plus a thin stateful wrapper:
+
+```kotlin title="Both.kt" numbered
+// Stateless: the one you preview, test and reuse
+@Composable
+fun Counter(count: Int, onIncrement: () -> Unit) {
+    Button(onClick = onIncrement) { Text("Count: $count") }
+}
+
+// Stateful: convenience for callers who do not care
+@Composable
+fun Counter() {
+    var count by rememberSaveable { mutableStateOf(0) }
+    Counter(count = count, onIncrement = { count++ })
+}
+```
+
+<Tip>
+Every `@Preview` you can write without a fake `ViewModel` is a sign the component is hoisted
+properly. If a preview needs a whole dependency graph to render a button, the state is in the
+wrong place.
+</Tip>
+
+## What this buys you
+
+<Compare
+  left={{
+    title: "Stateful component",
+    subtitle: "Owns what it shows",
+    accent: "amber",
+    points: [
+      "+ Fewer parameters at the call site",
+      "- Cannot be controlled, cleared or prefilled from outside",
+      "- Needs the real environment to preview or test",
+      "- Two of them cannot share a value",
+    ],
+  }}
+  right={{
+    title: "Hoisted component",
+    subtitle: "Shows what it is given",
+    accent: "violet",
+    points: [
+      "+ Preview and test it with plain values",
+      "+ One source of truth, so nothing can drift",
+      "+ Reusable anywhere the same shape of data exists",
+      "- The caller has to hold the state and pass it",
+    ],
+  }}
+/>
+
+<Detail summary="Why not just pass the ViewModel down?">
+It compiles, and it quietly costs you everything hoisting was for. A composable that takes a
+`ViewModel` cannot be previewed without constructing one, cannot be reused on another screen with
+different logic, and can no longer be reasoned about from its signature — you have to read its
+body to know what it touches.
+
+Pass the values it displays and the callbacks it fires. Keep the `ViewModel` at the screen level,
+where exactly one composable knows it exists:
+
+```kotlin title="Screen.kt" numbered
+@Composable
+fun OrderScreen(viewModel: OrderViewModel = viewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    OrderContent(
+        state = state,
+        onRefresh = viewModel::refresh,
+    )
+}
+```
+
+`collectAsStateWithLifecycle` turns a `Flow` into Compose `State` and stops collecting while the
+screen is in the background. It gets a lesson of its own once coroutines are covered.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Three that undo the benefit">
+**Keeping a copy after hoisting.** The child hoists its value but also keeps a `remember` of it
+"for convenience". Now there are two sources of truth, and they will disagree.
+
+**Hoisting everything.** Whether a dropdown is open is nobody else's business. Hoisting it adds a
+parameter, a callback and a chance to get them out of step, for nothing.
+
+**Passing the `ViewModel` down.** It looks like fewer parameters and is actually a hidden
+dependency on the entire screen.
+</Pitfall>
+
+## Practice
+
+1. Take the stateful `NameField` above and hoist it. Then write a `@Preview` for the result with
+   no `ViewModel` in sight.
+2. Add a Clear button in the parent. Notice this was impossible before hoisting.
+3. Put two instances of the hoisted field on one screen, driven by the same state, and watch them
+   stay in step.
+4. Hoist a value that nothing above needs, live with the extra parameter for a day, and decide
+   whether it earned its place.
+5. Write a test for the stateless version by calling it with fixed values and asserting on what
+   is shown.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Hoisting | Move state to the caller; take value plus callback |
+| Stateless composable | A pure function of its parameters |
+| UDF | State down as values, events up as callbacks |
+| Where to hoist | Lowest common ancestor of everyone who reads it |
+| Hoist together | Values that change on the same event |
+| Stateful wrapper | A thin overload for callers who do not care |
+| Text fields | Keep the keystrokes local; hoist the committed value |
+| `ViewModel` | Stays at the screen level, never passed down |
+
+<Interview title="An easy question with a hard second half">
+"What is state hoisting?"
+
+Moving state from a composable into its caller so the composable takes a value and emits events.
+The half that shows experience is where to stop: the lowest common ancestor of everything that
+reads it, and no higher — hoisting purely local state such as whether a menu is open adds
+parameters and a way for two copies to disagree, without buying anything.
+</Interview>
