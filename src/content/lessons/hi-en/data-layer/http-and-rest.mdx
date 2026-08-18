@@ -1,0 +1,240 @@
+---
+title: HTTP aur REST, client ki taraf se
+description: Retrofit HTTP ko us din tak chhupaye rakhta hai jis din wo tootta hai, aur tab aap ek kaccha exchange padh rahe hote ho bina ye jane ki galti kis taraf hai. Yahi wo protocol hai jo koi Android app sach mein bolta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+HTTP ek request hai, phir ek response. Is parat par app jo kuch galat karta hai wo in chaar mein se
+ek hota hai: usne kaunsa **method** chuna, kaunsa **status** andekha kiya, kaunse **headers** kabhi
+set hi nahi kiye, ya body ko kya maan baitha. Exchange padhna aa jaye to network ke bugs atkal reh
+hi nahi jate.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Retrofit das minute mein kisi interface ko chalta hua network code bana deta hai, aur mushkil theek
+yahi hai. Jis din koi request ek device par 401 aur doosre par 200 lautaye, ya Wi-Fi par chale aur
+mobile data par na chale, us din Retrofit ka kitna bhi gyan kaam nahi aata — jawab us exchange ke
+andar hota hai.
+
+HTTP request ek shakal wala text hai:
+
+```http title="Request" numbered
+GET /v1/orders?status=open&limit=20 HTTP/1.1
+Host: api.example.com
+Authorization: Bearer eyJhbGciOi...
+Accept: application/json
+```
+
+Aur response ki shakal bhi wahi hai, bas aage ek number laga hota hai:
+
+```http title="Response" numbered
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: max-age=60
+ETag: "a4f1c9"
+
+{"orders":[{"id":"o_18","total":499}]}
+```
+
+Wo number, wo headers aur wo body — aap jo bhi network parat likhoge wo inhin teen cheezon ko
+sambhal rahi hogi. Retrofit inhe hatata nahi; annotations ke andar sarka deta hai.
+
+## Methods, aur phone par jo baat asal mein maayne rakhti hai
+
+REST kaamon par verbs chadhata hai, par phone par jo farak apni keemat wasool karta hai wo create
+banam update nahi hai. Wo ye hai ki ek hi request do baar bhejna safe hai ya nahi.
+
+| Method | Kis liye | Safe | Idempotent |
+| --- | --- | --- | --- |
+| `GET` | Padhna | Haan | Haan |
+| `HEAD` | Sirf headers padhna | Haan | Haan |
+| `PUT` | Jaani-pehchani id par poora badal dena | Nahi | Haan |
+| `DELETE` | Hatana | Nahi | Haan |
+| `PATCH` | Thoda-sa badalna | Nahi | Aam taur par nahi |
+| `POST` | Banana, ya aur kuch bhi | Nahi | Nahi |
+
+**Safe** ka matlab hai ki server par kuch badalta hi nahi. **Idempotent** ka matlab hai ki do baar
+karne par wahi haalat bachti hai jo ek baar karne par.
+
+Ye isliye maayne rakhta hai ki mobile networks sabse bure tarike se nakaam hote hain: request
+pahunch jati hai, server apna kaam kar deta hai, aur response lautte waqt kho jata hai. Client ko
+timeout dikhta hai, aur wo ise request ke kabhi na pahunchne se alag nahi bata sakta. `GET` dobara
+bhejne ki koi keemat nahi. Kisi card se paise kaatne wala `POST` dobara bhejne par paise do baar
+kat-te hain.
+
+<Quiz
+  question="Payment ki request timeout ho jati hai. App apne aap use dobara bhej deta hai. Sahi ilaaj kya hai?"
+  options={[
+    "Timeout bada dijiye taki aisa ho hi nahi",
+    "Kabhi dobara mat bhejiye — user ko error dikhaiye aur use tay karne dijiye",
+    "Request ke saath ek idempotency key bhejiye, taki server dobara aayi request ko wahi kaam pehchan le",
+  ]}
+  answer={2}
+  explanation="Timeout badane se aisa kam baar hota hai, hota kya hai wo nahi badalta, aur nakami ka result hai do baar paise kat-na — to 'kam baar' koi ilaaj nahi. Dobara na bhejna zyada safe hai par network ki mushkil user par daal deta hai, jiske paas ye janne ka koi raasta nahi ki pehli koshish pahunchi bhi thi ya nahi. Asli jawab hai us kaam ko idempotent bana dena: client ek anokhi key banata hai, use header mein bhejta hai, aur server use result ke saath rakh leta hai. Pehli request kaam karti hai; usi key wali har agli koshish dobara paise kaatne ke bajaye rakha hua result lauta deti hai. Key tab banaiye jab user tap kare, har koshish par nahi — retry ki loop ke andar bani key har baar nai hoti hai aur usse kuch hasil nahi hota."
+/>
+
+## Status codes, aur wo batwara jo aapki error handling tay karta hai
+
+Pehla ank bata deta hai ki mushkil kiske paas hai — aur aapki error handling ko bhi yahi sawal hal
+karna hai.
+
+<Figure caption="Pehla ank iska jawab hai: kaam hua, kahin aur dekhun, galti meri hai, ya unki?">
+  <PipelineDiagram
+    title="Status code ke parivar"
+    description="Do sau wale safal, teen sau wale kahin aur bhejte hain, chaar sau wale client par dosh daalte hain, paanch sau wale server par."
+    stages={[
+      { label: "2xx", sub: "kaam ho gaya", accent: "emerald" },
+      { label: "3xx", sub: "kahin aur dekhiye", accent: "sky" },
+      { label: "4xx", sub: "aapki request", accent: "amber" },
+      { label: "5xx", sub: "unka server", accent: "rose" },
+    ]}
+  />
+</Figure>
+
+Jinhe naam se janna chahiye:
+
+| Code | Matlab | App ko kya karna chahiye |
+| --- | --- | --- |
+| `200` | OK | Body padhiye |
+| `201` | Created | Nai id padhiye, aksar `Location` header se |
+| `204` | No content | Kaam ho gaya, aur body hai hi nahi — use padhne mat jaiye |
+| `304` | Not modified | Aapki rakhi hui copy ab bhi theek hai |
+| `400` | Bad request | Galti aapki; dobara bhejne par wahi nakami |
+| `401` | Unauthenticated | Koi sahi pehchan nahi — token refresh kijiye |
+| `403` | Forbidden | Pehchan theek hai, ijazat nahi — refresh karne se kuch nahi badlega |
+| `404` | Not found | Ya to wo cheez nahi hai, ya path galat hai |
+| `409` | Conflict | Aapke neeche kuch badal gaya |
+| `429` | Too many requests | Rukiye, aur `Retry-After` padhiye |
+| `500` | Server error | Galti aapki nahi; dobara bhejne se chal sakta hai |
+| `503` | Unavailable | Kuch der ki baat hai; rukkar bhejiye |
+
+`401` aur `403` ka farak wahi hai jo asli bugs paida karta hai. Dono ko ek jaisa manne par aisa app
+banta hai jo ijazat wali har error par token refresh karne chalta hai, nakaam hota hai, phir refresh
+karta hai, aur user ko us screen se log out kar deta hai jise kholne ki use bas ijazat nahi thi.
+
+<Note>
+`4xx` ka matlab hai ki jab tak kuch badle nahi, dobara bhejna bekaar hai; `5xx` aur `429` ka matlab
+hai ki rukkar dobara bhejna theek hai. Poori retry policy bas yahi ek vakya hai, aur isiliye har
+nakami par dobara bhejne wala interceptor us interceptor se bura hai jo kabhi dobara nahi bhejta.
+</Note>
+
+## Wo headers jo app sach mein set karta hai
+
+```kotlin title="Headers.kt" numbered
+// Retrofit aur OkHttp dono inhe keh sakte hain; matlab dono jagah wahi hai
+"Content-Type: application/json"          // main kya bhej raha hoon
+"Accept: application/json"                // main wapas kya padh sakta hoon
+"Authorization: Bearer $token"            // main hoon kaun
+"Accept-Language: hi-IN"                  // jawab kis bhasha mein
+"If-None-Match: \"a4f1c9\""               // body tabhi bhejiye jab badli ho
+```
+
+`Content-Type` aur `Accept` ulti dishaon ki cheezein hain aur lagatar aapas mein uljhti hain: ek
+aapki body ke baare mein hai, doosra us response ke baare mein jo aapko chahiye. `415 Unsupported
+Media Type` lautata server pehli wali ki shikayat kar raha hai; `406 Not Acceptable` lautata server
+doosri ki.
+
+<Detail summary="Conditional requests, aur 304 jodne layak kyun hai">
+Server ek `ETag` bhejta hai — ek chhoti-si bematlab dikhti string, jo us cheez ke theek usi roop ki
+pehchan hai. Client use rakh leta hai aur agli request mein wapas bhejta hai:
+
+```http title="Conditional GET" numbered
+GET /v1/orders HTTP/1.1
+If-None-Match: "a4f1c9"
+```
+
+Agar kuch nahi badla, to jawab ye hai:
+
+```http title="Response" numbered
+HTTP/1.1 304 Not Modified
+ETag: "a4f1c9"
+```
+
+Koi body nahi. Jis list ko har tees second mein pucha jata hai, us par ye zyadatar responses ko kuch
+sau kilobyte se ghatakar chand darjan bytes kar deta hai, aur gine-chune data par ye bachat asli
+hoti hai.
+
+Aage ke phases ke liye baat ye hai: agar server cache wale headers bhejta hai aur aapne OkHttp ko
+cache ki jagah de rakhi hai, to ye sab wo khud kar leta hai. Zyadatar app wo jagah kabhi set hi
+nahi karte, aur har na-badle response ki poori keemat chukate hain.
+</Detail>
+
+## REST aapse maangta kya hai
+
+REST kuch sharton ka naam hai, aur Android ke kisi codebase mein unmein se do hi dikhti hain:
+
+**Cheezein noun hain, aur verb method mein hai.** `POST /v1/orders` ek order banata hai.
+`POST /v1/createOrder` wahi call hai, bas bhes badalkar — path ek kaam ka naam le raha hai, to
+method ab koi jankari nahi dho raha aur koi proxy padhne aur likhne mein farak nahi kar sakta.
+
+**Har request apne aap mein poori hai.** Server ko aapki pichhli call yaad nahi rehti, isiliye har
+request apna `Authorization` header khud lekar chalti hai. Yahi yaad na rakhna retry ko kaam karne
+layak banata hai, aur yahi wajah hai ki app ke paas session nahi, ek token hota hai.
+
+Bahut saari asli APIs sirf dheele-dhaale tarike se RESTful hoti hain. Ye theek hai — aap client ho,
+aur kaam ye hai ki server sach mein karta kya hai uska model banao, ye nahi ki use karna kya
+chahiye tha.
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jinki keemat ek release hoti hai">
+**Har gair-2xx ko exception maan lena.** Kisi search endpoint par `404` ka matlab aksar "kuch nahi
+mila" hota hai, jo ek aam haalat hai, crash nahi. Har endpoint ke liye khud tay kijiye ki asamanya
+kya hai.
+
+**Aankh moondkar dobara bhejna.** `400` par dobara bhejna har baar nakaam hoga aur bas error mein
+der karayega. Idempotent na hone wale `POST` par dobara bhejna paise do baar kaat sakta hai.
+
+**`Retry-After` andekha karna.** `429` aapko bata deta hai ki kitni der rukna hai. Uski jagah apne
+andaze se rukna hi wo raasta hai jisse rate limit ek ban ban jati hai.
+
+**Ye maan lena ki body hai.** `204` ya `304` ki body padhne par exception aata hai, aur wo exception
+JSON ka naam leta hai, us status code ka nahi jiski wajah se aaya — isiliye usmein ek dopahar chali
+jati hai.
+
+**Base URL ka slash galat rakhna.** Retrofit ke base URL ka ant `/` par hona chahiye, aur endpoint
+ke path ke aage laga `/` jodne ke bajaye poora base path hi badal deta hai. Dono us server par `404`
+dete hain jo bilkul theek chal raha hai.
+</Pitfall>
+
+## Abhyaas
+
+1. `curl -i https://api.github.com/users/torvalds` chalaiye aur body se pehle har header padhiye.
+2. `curl -i -H 'Accept: application/xml' https://api.github.com/users/torvalds` bhejiye aur dekhiye
+   ki jo request server poori nahi kar sakta uska wo kya karta hai.
+3. Kisi response se `ETag` lijiye aur use `If-None-Match` banakar wapas bhejiye. `304` aur khaali
+   body pakki kijiye.
+4. Aap jo app istemal karte ho uski har call ginaiye, aur har ek par safe, idempotent, ya inmein se
+   kuch nahi likhiye. "Kuch nahi" wala khana hi aapki retry ke khatron ki list hai.
+5. Likh lijiye ki `401`, `403`, `429` aur `503` par aapke app ko kya karna chahiye. Agar inmein se
+   do ka jawab ek hi hai, to dekhiye ki wo jaanbujhkar hai ya nahi.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| HTTP | Ek request aur ek response, dono mein headers aur chahein to body |
+| Safe | Server par kuch nahi badalta |
+| Idempotent | Do baar ka asar wahi jo ek baar ka |
+| Idempotency key | `POST` ko dobara bhejne layak bana deti hai |
+| `2xx` / `3xx` | Kaam hua / kahin aur dekhiye |
+| `4xx` / `5xx` | Aapki request / unka server — yahin retry ka faisla hota hai |
+| `401` banam `403` | Token refresh kijiye banam rehne hi dijiye |
+| `Content-Type` banam `Accept` | Main kya bhej raha hoon banam mujhe kya chahiye |
+| `ETag` + `If-None-Match` | Kuch na badle to `304` aur koi body nahi |
+| REST | Path mein noun, method mein verb, server ke paas koi session nahi |
+
+<Interview title="Ek sawal, jo asal mein retries ke baare mein hai">
+"Jo network request timeout ho jaye, use aap kaise sambhaloge?"
+
+Sabse pehle ye puchkar ki wo request idempotent hai ya nahi, kyunki baaki sab yahi tay karta hai.
+`GET` ko badhte hue antaral ke saath bejhijhak dobara bheja ja sakta hai. `POST` ko nahi: timeout ye
+nahi batata ki server ne kaam kiya ya nahi, to aankh moondkar dobara bhejne par kaam do baar hone ka
+khatra hai. Unke liye main ek idempotency key bhejunga, jo user ke har ek kaam par ek baar banti
+hai, taki server dobara aayi request ko pehchankar wahi pehla result lauta de. Iske baad main sirf
+`5xx`, `429` aur sachchi I/O nakamiyon par dobara bhejunga — `4xx` par kabhi nahi, jahan mushkil
+request mein hi hai aur dobara bhejna error mein der ke alawa kuch nahi karta — aur jab server
+`Retry-After` bheje to use manunga.
+</Interview>

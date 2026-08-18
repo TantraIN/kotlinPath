@@ -29,6 +29,7 @@ export const CODE_LANGS = [
   "toml",
   "properties",
   "sql",
+  "http",
   "diff",
   "text",
 ] as const;
@@ -52,6 +53,7 @@ function getHighlighter(): Promise<Highlighter> {
       "toml",
       "ini",
       "sql",
+      "http",
       "diff",
       "typescript",
     ],
@@ -161,6 +163,13 @@ function glossaryTransformer(scope: GlossaryScope): ShikiTransformer {
   };
 }
 
+/**
+ * Languages whose tokens are not Kotlin or Android identifiers, so a glossary
+ * lookup could only ever produce a false positive. An HTTP block's `id` or
+ * `json` is not the Kotlin term of the same name.
+ */
+const NO_GLOSSARY_LANGS = new Set(["http"]);
+
 export type HighlightOptions = {
   /** Render `1 2 3 …` in the gutter. */
   numbered?: boolean;
@@ -187,7 +196,7 @@ export async function highlight(
       transformerNotationHighlight({ matchAlgorithm: "v3" }),
       transformerNotationDiff({ matchAlgorithm: "v3" }),
       transformerNotationFocus({ matchAlgorithm: "v3" }),
-      ...(options.noGlossary
+      ...(options.noGlossary || NO_GLOSSARY_LANGS.has(safeLang)
         ? []
         : [glossaryTransformer(safeLang === "xml" ? "xml" : "code")]),
     ],

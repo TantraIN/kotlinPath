@@ -1,0 +1,232 @@
+---
+title: HTTP and REST, from the client's side
+description: Retrofit hides HTTP until the day it breaks, and then you are reading a raw exchange with no idea which half is at fault. This is the protocol an Android app actually speaks.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+HTTP is a request, then a response. Everything an app gets wrong at this layer is one of four
+things: the **method** it chose, the **status** it ignored, the **headers** it never set, or the
+**body** it assumed. Learn to read the exchange and network bugs stop being guesswork.
+</KeyIdea>
+
+## Why this matters
+
+Retrofit will turn an interface into working network code in ten minutes, and that is exactly the
+problem. The first time a request returns 401 on one device and 200 on another, or works on Wi-Fi
+and fails on mobile data, no amount of Retrofit knowledge helps — the answer is in the exchange
+itself.
+
+An HTTP request is text with a shape:
+
+```http title="Request" numbered
+GET /v1/orders?status=open&limit=20 HTTP/1.1
+Host: api.example.com
+Authorization: Bearer eyJhbGciOi...
+Accept: application/json
+```
+
+And the response has the same shape, with a number at the front:
+
+```http title="Response" numbered
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: max-age=60
+ETag: "a4f1c9"
+
+{"orders":[{"id":"o_18","total":499}]}
+```
+
+That number, those headers and that body are the three things every network layer you write is
+handling. Retrofit does not remove them; it moves them into annotations.
+
+## Methods, and the property that matters on mobile
+
+REST maps verbs onto operations, but the distinction that earns its keep on a phone is not
+create-versus-update. It is whether sending the same request twice is safe.
+
+| Method | Purpose | Safe | Idempotent |
+| --- | --- | --- | --- |
+| `GET` | Read | Yes | Yes |
+| `HEAD` | Read headers only | Yes | Yes |
+| `PUT` | Replace at a known id | No | Yes |
+| `DELETE` | Remove | No | Yes |
+| `PATCH` | Partial update | No | Usually not |
+| `POST` | Create, or anything else | No | No |
+
+**Safe** means it changes nothing on the server. **Idempotent** means doing it twice leaves the
+same result as doing it once.
+
+This matters because mobile networks fail in the worst possible way: the request arrives, the
+server acts, and the response is lost on the way back. The client sees a timeout and cannot tell
+that from the request never arriving. Retrying a `GET` costs nothing. Retrying a `POST` that
+charges a card charges it twice.
+
+<Quiz
+  question="A payment request times out. The app retries it automatically. What is the correct fix?"
+  options={[
+    "Increase the timeout so it does not happen",
+    "Never retry — show the user an error and let them decide",
+    "Send an idempotency key with the request, so the server recognises the retry as the same operation",
+  ]}
+  answer={2}
+  explanation="A longer timeout reduces how often it happens without changing what happens, and the failure mode is a double charge, so 'less often' is not a fix. Refusing to retry is safer but pushes a network problem onto the user, who has no way to know whether the first attempt went through either. The real answer is to make the operation idempotent: the client generates a unique key, sends it as a header, and the server stores it against the result. The first request does the work; every retry with that key returns the stored result instead of charging again. Generate the key once when the user taps, not once per attempt — a key generated inside the retry loop is a new key each time and buys you nothing."
+/>
+
+## Status codes, and the split that decides your error handling
+
+The first digit tells you who has a problem, which is the same question your error handling needs
+to answer.
+
+<Figure caption="The first digit answers: did it work, do I look elsewhere, is it my fault, or is it theirs?">
+  <PipelineDiagram
+    title="Status code families"
+    description="Two hundreds succeeded, three hundreds redirect, four hundreds blame the client, five hundreds blame the server."
+    stages={[
+      { label: "2xx", sub: "it worked", accent: "emerald" },
+      { label: "3xx", sub: "look elsewhere", accent: "sky" },
+      { label: "4xx", sub: "your request", accent: "amber" },
+      { label: "5xx", sub: "their server", accent: "rose" },
+    ]}
+  />
+</Figure>
+
+The ones worth knowing by name:
+
+| Code | Means | What the app should do |
+| --- | --- | --- |
+| `200` | OK | Parse the body |
+| `201` | Created | Read the new id, often from the `Location` header |
+| `204` | No content | Succeeded, and there is no body — do not parse one |
+| `304` | Not modified | Your cached copy is still good |
+| `400` | Bad request | Your fault; a retry will fail identically |
+| `401` | Unauthenticated | No valid credentials — refresh the token |
+| `403` | Forbidden | Credentials are fine, permission is not — refreshing changes nothing |
+| `404` | Not found | The resource, or a wrong path |
+| `409` | Conflict | Something changed underneath you |
+| `429` | Too many requests | Back off, and read `Retry-After` |
+| `500` | Server error | Not your fault; a retry may work |
+| `503` | Unavailable | Temporary; back off |
+
+The `401` versus `403` distinction is the one that produces real bugs. Treating them alike gives
+you an app that tries to refresh a token on every permission error, fails, refreshes again, and
+logs the user out of a screen they simply were not allowed to open.
+
+<Note>
+`4xx` means retrying is pointless until something changes; `5xx` and `429` mean retrying is
+reasonable if you wait. That single sentence is the whole retry policy, and it is why an
+interceptor that retries every failure is worse than one that retries none.
+</Note>
+
+## Headers the app actually sets
+
+```kotlin title="Headers.kt" numbered
+// Retrofit and OkHttp both express these; the meaning is the same either way
+"Content-Type: application/json"          // what I am sending
+"Accept: application/json"                // what I can read back
+"Authorization: Bearer $token"            // who I am
+"Accept-Language: hi-IN"                  // which locale to answer in
+"If-None-Match: \"a4f1c9\""               // only send a body if it changed
+```
+
+`Content-Type` and `Accept` are different directions and get confused constantly: one describes
+your body, the other describes the response you want. A server returning `415 Unsupported Media
+Type` is complaining about the first; one returning `406 Not Acceptable` about the second.
+
+<Detail summary="Conditional requests, and why 304 is worth wiring up">
+A server sends an `ETag` — a short opaque string identifying that exact version of the resource.
+The client stores it and sends it back on the next request:
+
+```http title="Conditional GET" numbered
+GET /v1/orders HTTP/1.1
+If-None-Match: "a4f1c9"
+```
+
+If nothing changed, the answer is:
+
+```http title="Response" numbered
+HTTP/1.1 304 Not Modified
+ETag: "a4f1c9"
+```
+
+No body. On a list that is polled every thirty seconds this turns most responses into a few dozen
+bytes instead of a few hundred kilobytes, and the saving is real on metered data.
+
+The point for later phases: OkHttp does this for you if the server sends cache headers and you gave
+it a cache directory. Most apps never set the cache directory, and so pay full price for every
+unchanged response.
+</Detail>
+
+## What REST actually asks of you
+
+REST is a set of constraints, and the two that show up in an Android codebase are these:
+
+**Resources are nouns, and the method is the verb.** `POST /v1/orders` creates an order.
+`POST /v1/createOrder` is the same call wearing a costume — the path names an action, so the method
+now carries no information and a proxy cannot tell a read from a write.
+
+**Each request stands alone.** The server keeps no memory of your last call, which is why every
+request carries its own `Authorization` header. That statelessness is what lets a retry work at
+all, and it is the reason a token, not a session, is what an app holds.
+
+Plenty of real APIs are only loosely RESTful. That is fine — you are the client, and the job is to
+model what the server actually does rather than what it should have done.
+
+## Common mistakes
+
+<Pitfall title="Five that cost a release">
+**Treating any non-2xx as an exception.** A `404` on a search endpoint often means "no results",
+which is a normal state, not a crash. Decide per endpoint what is exceptional.
+
+**Retrying blindly.** A retry on `400` will fail every time and just delays the error. A retry on a
+non-idempotent `POST` can double a charge.
+
+**Ignoring `Retry-After`.** A `429` tells you how long to wait. Backing off for your own guessed
+interval instead is how a rate limit becomes a ban.
+
+**Assuming a body exists.** Parsing the body of a `204` or a `304` throws, and the exception names
+JSON rather than the status code that caused it — which is why it costs an afternoon.
+
+**Getting the base URL slash wrong.** Retrofit's base URL must end in `/`, and a leading `/` on an
+endpoint path replaces the whole base path rather than appending to it. Both produce a `404`
+against a server that is working perfectly.
+</Pitfall>
+
+## Practice
+
+1. Run `curl -i https://api.github.com/users/torvalds` and read every header before the body.
+2. Send `curl -i -H 'Accept: application/xml' https://api.github.com/users/torvalds` and see what
+   the server does with a request it cannot satisfy.
+3. Take an `ETag` from a response and send it back as `If-None-Match`. Confirm the `304` and the
+   empty body.
+4. List every call in an app you use, and mark each one safe, idempotent, or neither. The neither
+   column is your retry hazard list.
+5. Write down what your app should do for `401`, `403`, `429` and `503`. If two of them share an
+   answer, work out whether that is deliberate.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| HTTP | A request and a response, each with headers and an optional body |
+| Safe | Changes nothing on the server |
+| Idempotent | Twice has the same effect as once |
+| Idempotency key | Makes a `POST` safe to retry |
+| `2xx` / `3xx` | Worked / look elsewhere |
+| `4xx` / `5xx` | Your request / their server — the retry decision |
+| `401` vs `403` | Refresh the token vs do not bother |
+| `Content-Type` vs `Accept` | What I send vs what I want back |
+| `ETag` + `If-None-Match` | A `304` and no body when nothing changed |
+| REST | Nouns in the path, verbs in the method, no server-side session |
+
+<Interview title="A question that is really about retries">
+"How would you handle a network request that times out?"
+
+First by asking whether the request is idempotent, because that decides everything else. A `GET`
+can be retried freely with exponential backoff. A `POST` cannot: a timeout does not tell you whether
+the server acted, so a blind retry risks doing the work twice. For those I would send an idempotency
+key generated once per user action, so the server can recognise a retry and return the original
+result. Then I would retry only on `5xx`, `429` and genuine I/O failures — never on `4xx`, where the
+request itself is the problem and a retry only delays the error — and honour `Retry-After` when the
+server sends one.
+</Interview>
