@@ -1,0 +1,198 @@
+---
+title: Material 3 theming and dynamic color
+description: One composable holds your colours, type and shapes, and every component reads from it. The whole skill is never writing a colour anywhere else.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`MaterialTheme` provides three things — a `ColorScheme`, a `Typography` and a `Shapes` — to
+everything beneath it. Components read them instead of hardcoding, which is why replacing the
+theme restyles the app and why one hardcoded `Color(0xFF...)` breaks dark mode for one widget.
+</KeyIdea>
+
+## Why this matters
+
+```kotlin title="Two.kt"
+Text("Total", color = Color(0xFF111111))                     // wrong in dark mode, forever
+Text("Total", color = MaterialTheme.colorScheme.onSurface)   // correct in both, automatically
+```
+
+This is the same lesson as styles and themes in XML, with one difference: here the wrong version
+is easier to write, because a colour literal is just Kotlin and nothing warns you.
+
+## Setting the theme up once
+
+```kotlin title="Theme.kt" numbered
+@Composable
+fun AppTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context)
+            else dynamicLightColorScheme(context)
+        }
+        darkTheme -> DarkColors
+        else -> LightColors
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = AppTypography,
+        shapes = AppShapes,
+        content = content,
+    )
+}
+```
+
+```kotlin title="MainActivity.kt"
+setContent {
+    AppTheme {          // wraps everything, including dialogs and sheets
+        AppNavHost()
+    }
+}
+```
+
+## The surprise on a modern phone
+
+<Quiz
+  question="You ship a carefully chosen brand palette. On an Android 12 device the app comes out green, matching the user's wallpaper. What happened?"
+  options={[
+    "The theme failed to load and Compose fell back to defaults",
+    "Dynamic color is enabled, so the scheme is derived from the wallpaper and replaces your palette",
+    "`isSystemInDarkTheme` returned the wrong value",
+  ]}
+  answer={1}
+  explanation="dynamicLightColorScheme and dynamicDarkColorScheme build a whole Material 3 scheme from the user's wallpaper, and they replace your colours entirely — that is their purpose, not a bug. It is a real product decision, not a technical one: a personal app usually feels better matching the device, while an app whose brand colour is part of its identity should pass dynamicColor = false. What you must not do is keep dynamic color on and then hardcode your brand colour in a few places, because you end up with a wallpaper-tinted app carrying two stray brand-coloured buttons."
+/>
+
+## Colour roles, not colours
+
+| Role | For | Its pair |
+| --- | --- | --- |
+| `primary` | The main action | `onPrimary` |
+| `secondaryContainer` | Selected chips, tonal buttons | `onSecondaryContainer` |
+| `surface` | Cards, sheets, the background | `onSurface` |
+| `surfaceVariant` | Quiet fills | `onSurfaceVariant` |
+| `error` | Errors | `onError` |
+
+Every `x` has an `onX` that is guaranteed legible on it. Text on a card is `onSurface`, never
+`primary` — using an accent colour for body text is the most common way a Compose screen fails
+contrast.
+
+## Typography and shape come from the same place
+
+```kotlin title="Type.kt" numbered
+val AppTypography = Typography(
+    titleLarge = TextStyle(fontFamily = Grotesk, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+    bodyMedium = TextStyle(fontFamily = Jakarta, fontSize = 15.sp, lineHeight = 22.sp),
+)
+
+Text("Weekly report", style = MaterialTheme.typography.titleLarge)
+```
+
+```kotlin title="Shape.kt"
+val AppShapes = Shapes(
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(20.dp),
+)
+```
+
+Components pick a shape by size class, so a `Card` uses `medium` and a `Button` uses `small`
+without either of them naming a number.
+
+## Under the hood: `CompositionLocal`
+
+<Timeline>
+  <TimelineItem title="A theme is an implicit parameter" meta="passed down the tree">
+    `MaterialTheme` provides values that any composable below can read without them being passed
+    through every function in between.
+  </TimelineItem>
+  <TimelineItem title="Reading one subscribes you" meta="like state">
+    Reading `MaterialTheme.colorScheme` in a composable means that composable recomposes when the
+    scheme changes — which is exactly how the whole app flips to dark.
+  </TimelineItem>
+  <TimelineItem title="Nesting overrides a subtree" meta="the overlay pattern">
+    A second `MaterialTheme` deeper in the tree changes the values only for what is under it. That
+    is how one dark card lives inside a light screen.
+  </TimelineItem>
+  <TimelineItem title="You can add your own" meta="for tokens M3 has no name for">
+    `compositionLocalOf` creates a local of your own, for spacing scales or brand gradients that
+    Material does not model.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Your own design tokens">
+Material 3 has no opinion about spacing, so most design systems add one:
+
+```kotlin title="Spacing.kt" numbered
+data class Spacing(val small: Dp = 8.dp, val medium: Dp = 16.dp, val large: Dp = 24.dp)
+
+val LocalSpacing = staticCompositionLocalOf { Spacing() }
+
+@Composable
+fun AppTheme(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalSpacing provides Spacing()) {
+        MaterialTheme(content = content)
+    }
+}
+
+// anywhere below
+Column(Modifier.padding(LocalSpacing.current.medium))
+```
+
+`staticCompositionLocalOf` is for values that essentially never change — reading it does not
+subscribe, so it is cheaper. Use `compositionLocalOf` when the value genuinely changes at runtime.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that break a theme">
+**A colour literal in a composable.** It cannot change with the theme, so dark mode breaks one
+widget at a time and nobody notices until a screenshot.
+
+**Not wrapping everything.** A dialog or bottom sheet composed outside `AppTheme` renders with
+Material defaults and looks like a different app.
+
+**`primary` for body text.** It is an accent, not a text colour; contrast on a surface is not
+guaranteed. Use `onSurface` and `onSurfaceVariant`.
+
+**Dynamic color with no thought.** Either commit to it, or pass `dynamicColor = false`. Mixing it
+with a few hardcoded brand colours gives the worst of both.
+</Pitfall>
+
+## Practice
+
+1. Hardcode a colour on one `Text`, switch to dark mode, and find it.
+2. Wrap only half the app in `AppTheme` and open a dialog from the unwrapped half.
+3. Turn dynamic color on, change the device wallpaper, and reopen the app.
+4. Add a `Spacing` composition local and replace every literal `16.dp` on one screen.
+5. Nest a second `MaterialTheme` with a dark scheme around a single card inside a light screen.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `MaterialTheme` | Provides `colorScheme`, `typography` and `shapes` to everything below |
+| Colour roles | Use `x` / `onX` pairs; never a literal |
+| `isSystemInDarkTheme` | Follows the system setting |
+| Dynamic color | Android 12+, derived from the wallpaper, replaces your palette |
+| `dynamicColor = false` | The switch for a brand-led app |
+| `Typography` | Named text styles; components pick by role |
+| `Shapes` | Small, medium and large; components pick by size class |
+| `CompositionLocal` | How the theme reaches everything without parameters |
+| `staticCompositionLocalOf` | For values that never change, and cheaper to read |
+
+<Interview title="A question about a feature people either love or turn off">
+"What is dynamic color and when would you not use it?"
+
+It builds a full Material 3 colour scheme from the user's wallpaper on Android 12 and above, so
+the app matches their device. You turn it off when the brand colour is part of the product's
+identity — a bank or a retailer cannot be green because somebody's wallpaper is. The part worth
+adding is that it is all or nothing: leaving it on and hardcoding a few brand colours gives a
+wallpaper-themed app with two mismatched buttons in it.
+</Interview>

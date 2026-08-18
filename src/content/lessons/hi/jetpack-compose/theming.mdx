@@ -1,0 +1,198 @@
+---
+title: Material 3 theming और dynamic color
+description: एक composable आपके रंग, typography और shapes रखता है, और हर component उसी से पढ़ता है। पूरा हुनर यही है कि रंग और कहीं लिखा ही न जाए।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+`MaterialTheme` अपने नीचे की हर चीज को तीन चीजें देता है — एक `ColorScheme`, एक `Typography` और
+एक `Shapes`। Components रंग खुद तय करने के बजाय इन्हीं से पढ़ते हैं, इसीलिए theme बदलने से पूरी app
+बदल जाती है और इसीलिए एक जगह सीधे लिखा `Color(0xFF...)` एक widget का dark mode तोड़ देता है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Two.kt"
+Text("Total", color = Color(0xFF111111))                     // dark mode में हमेशा के लिए गलत
+Text("Total", color = MaterialTheme.colorScheme.onSurface)   // दोनों में अपने आप सही
+```
+
+यह वही पाठ है जो XML के styles और themes वाला था, बस एक फर्क के साथ: यहाँ गलत रूप लिखना ज्यादा
+आसान है, क्योंकि रंग सीधे लिख देना बस Kotlin है और कोई चेतावनी भी नहीं देता।
+
+## Theme एक बार तैयार करना
+
+```kotlin title="Theme.kt" numbered
+@Composable
+fun AppTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context)
+            else dynamicLightColorScheme(context)
+        }
+        darkTheme -> DarkColors
+        else -> LightColors
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = AppTypography,
+        shapes = AppShapes,
+        content = content,
+    )
+}
+```
+
+```kotlin title="MainActivity.kt"
+setContent {
+    AppTheme {          // सब कुछ लपेटता है, dialogs और sheets समेत
+        AppNavHost()
+    }
+}
+```
+
+## आज के phone पर मिलने वाली हैरानी
+
+<Quiz
+  question="आप सोच-समझकर चुना हुआ brand का रंग ship करते हैं। Android 12 वाले device पर app हरी निकलती है, user के wallpaper से मिलती हुई। हुआ क्या?"
+  options={[
+    "Theme लोड नहीं हुई और Compose defaults पर लौट गया",
+    "Dynamic color चालू है, तो scheme wallpaper से बनती है और आपके रंग की जगह ले लेती है",
+    "`isSystemInDarkTheme` ने गलत जवाब दिया",
+  ]}
+  answer={1}
+  explanation="dynamicLightColorScheme और dynamicDarkColorScheme user के wallpaper से पूरी Material 3 scheme बनाते हैं, और आपके रंगों की जगह पूरी तरह ले लेते हैं — यही उनका काम है, कोई bug नहीं। यह तकनीकी नहीं, product का फैसला है: निजी किस्म की app device से मिलती हुई ज्यादा अच्छी लगती है, जबकि जिस app की पहचान में उसका brand का रंग शामिल है उसे dynamicColor = false भेजना चाहिए। जो नहीं करना चाहिए वह है dynamic color चालू रखकर कुछ जगहों पर brand का रंग सीधे लिख देना, क्योंकि फिर wallpaper के रंग वाली app में दो भटके हुए brand रंग वाले buttons रह जाते हैं।"
+/>
+
+## रंग नहीं, भूमिकाएँ
+
+| भूमिका | किसके लिए | उसकी जोड़ी |
+| --- | --- | --- |
+| `primary` | मुख्य काम | `onPrimary` |
+| `secondaryContainer` | चुने हुए chips, tonal buttons | `onSecondaryContainer` |
+| `surface` | Cards, sheets, background | `onSurface` |
+| `surfaceVariant` | हल्की भराई | `onSurfaceVariant` |
+| `error` | Errors | `onError` |
+
+हर `x` का एक `onX` है जिसकी उस पर पढ़े जाने की गारंटी है। Card पर text `onSurface` होगा, `primary`
+कभी नहीं — body के text के लिए accent वाला रंग लेना ही वह सबसे आम तरीका है जिससे कोई Compose
+screen contrast में नाकाम होती है।
+
+## Typography और shape भी उसी जगह से आते हैं
+
+```kotlin title="Type.kt" numbered
+val AppTypography = Typography(
+    titleLarge = TextStyle(fontFamily = Grotesk, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+    bodyMedium = TextStyle(fontFamily = Jakarta, fontSize = 15.sp, lineHeight = 22.sp),
+)
+
+Text("Weekly report", style = MaterialTheme.typography.titleLarge)
+```
+
+```kotlin title="Shape.kt"
+val AppShapes = Shapes(
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(20.dp),
+)
+```
+
+Components नाप के हिसाब से shape चुनते हैं, तो `Card` `medium` लेता है और `Button` `small`, और
+दोनों में से कोई कोई आँकड़ा लिखता ही नहीं।
+
+## अंदर की बात: `CompositionLocal`
+
+<Timeline>
+  <TimelineItem title="Theme एक छिपा हुआ parameter है" meta="पेड़ में नीचे तक जाता है">
+    `MaterialTheme` ऐसी values देता है जिन्हें नीचे का कोई भी composable बीच के हर function से
+    गुजारे बिना पढ़ सकता है।
+  </TimelineItem>
+  <TimelineItem title="उसे पढ़ना आपको जोड़ देता है" meta="state की तरह">
+    किसी composable में `MaterialTheme.colorScheme` पढ़ने का मतलब है कि scheme बदलने पर वह
+    composable recompose होगा — पूरी app इसी तरह dark में पलटती है।
+  </TimelineItem>
+  <TimelineItem title="अंदर रखने से सिर्फ उस हिस्से में बदलता है" meta="overlay वाला तरीका">
+    पेड़ में और नीचे रखा दूसरा `MaterialTheme` values सिर्फ अपने नीचे बदलता है। एक dark card light
+    screen के अंदर इसी तरह रहता है।
+  </TimelineItem>
+  <TimelineItem title="अपना भी बना सकते हैं" meta="उन tokens के लिए जिनका M3 में नाम नहीं">
+    `compositionLocalOf` से अपना local बनता है, उस spacing के पैमाने या brand के gradient के लिए
+    जिसे Material नहीं गिनता।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="अपने design tokens">
+Material 3 की spacing पर कोई राय नहीं है, तो ज्यादातर design systems एक जोड़ लेते हैं:
+
+```kotlin title="Spacing.kt" numbered
+data class Spacing(val small: Dp = 8.dp, val medium: Dp = 16.dp, val large: Dp = 24.dp)
+
+val LocalSpacing = staticCompositionLocalOf { Spacing() }
+
+@Composable
+fun AppTheme(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalSpacing provides Spacing()) {
+        MaterialTheme(content = content)
+    }
+}
+
+// नीचे कहीं भी
+Column(Modifier.padding(LocalSpacing.current.medium))
+```
+
+`staticCompositionLocalOf` उन values के लिए है जो लगभग कभी बदलती नहीं — उसे पढ़ना आपको जोड़ता
+नहीं, इसलिए वह सस्ता है। जो value सच में चलते वक्त बदलती है उसके लिए `compositionLocalOf` लीजिए।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो theme तोड़ देती हैं">
+**Composable में सीधे लिखा रंग।** वह theme के साथ बदल ही नहीं सकता, तो dark mode एक-एक widget
+करके टूटता है और किसी screenshot तक किसी को पता नहीं चलता।
+
+**सब कुछ न लपेटना।** `AppTheme` के बाहर बना कोई dialog या bottom sheet Material के defaults से
+बनता है और किसी और app जैसा दिखता है।
+
+**Body के text के लिए `primary`।** वह accent है, text का रंग नहीं; किसी surface पर उसका contrast
+तय नहीं है। `onSurface` और `onSurfaceVariant` लीजिए।
+
+**बिना सोचे dynamic color।** या तो उसे पूरा अपनाइए, या `dynamicColor = false` भेजिए। उसे कुछ
+सीधे लिखे brand रंगों के साथ मिलाना दोनों का सबसे बुरा हिस्सा देता है।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी एक `Text` पर रंग सीधे लिखिए, dark mode में जाइए, और उसे ढूँढ़िए।
+2. App का सिर्फ आधा हिस्सा `AppTheme` में लपेटिए और बिना लपेटे आधे से कोई dialog खोलिए।
+3. Dynamic color चालू कीजिए, device का wallpaper बदलिए, और app दोबारा खोलिए।
+4. `Spacing` वाला composition local जोड़िए और एक screen के हर सीधे लिखे `16.dp` की जगह उसे रखिए।
+5. Light screen के अंदर किसी एक card के चारों तरफ dark scheme वाला दूसरा `MaterialTheme` रखिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `MaterialTheme` | अपने नीचे सबको `colorScheme`, `typography` और `shapes` देता है |
+| रंग की भूमिकाएँ | `x` / `onX` जोड़ियाँ लीजिए; रंग सीधे कभी नहीं |
+| `isSystemInDarkTheme` | System की setting के पीछे चलता है |
+| Dynamic color | Android 12+, wallpaper से बनता है, आपके रंगों की जगह लेता है |
+| `dynamicColor = false` | Brand वाली app के लिए वह switch |
+| `Typography` | नाम वाले text styles; components भूमिका से चुनते हैं |
+| `Shapes` | Small, medium और large; components नाप से चुनते हैं |
+| `CompositionLocal` | Theme बिना parameters के हर जगह इसी से पहुँचती है |
+| `staticCompositionLocalOf` | उन values के लिए जो बदलती नहीं, और पढ़ने में सस्ता |
+
+<Interview title="ऐसे feature पर सवाल जिसे लोग या तो पसंद करते हैं या बंद कर देते हैं">
+"Dynamic color क्या है और आप उसे कब इस्तेमाल नहीं करेंगे?"
+
+Android 12 और उससे ऊपर वह user के wallpaper से पूरी Material 3 colour scheme बनाता है, तो app
+उनके device से मिलती-जुलती लगती है। उसे तब बंद करते हैं जब brand का रंग product की पहचान का हिस्सा
+हो — कोई bank या दुकान इसलिए हरी नहीं हो सकती कि किसी का wallpaper हरा है। जोड़ने लायक बात यह है कि
+यह पूरा का पूरा मामला है: उसे चालू रखकर कुछ brand रंग सीधे लिख देने से wallpaper वाली theme में दो
+बेमेल buttons वाली app मिलती है।
+</Interview>
