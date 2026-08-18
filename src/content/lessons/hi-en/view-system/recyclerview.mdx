@@ -1,0 +1,185 @@
+---
+title: RecyclerView, ViewHolder aur DiffUtil
+description: Views ki koi list hoti hi nahi. Ek chhota sa guchha hota hai jo baar-baar dobara use hota hai, aur RecyclerView ka lagbhag har bug yahi bhoolne se aata hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Das hazaar rows wali `RecyclerView` lagbhag **ek darjan** views banati hai. Scroll karne se nayi
+nahi bantin; purani dobara bind hoti hain. Aap jo bhi row dekh rahe ho, wo kuch pal pehle kisi aur
+ki row thi.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Bugs ka aakar hamesha ek jaisa hota hai. Upar jo checkbox aapne lagaya tha wo aadhi list neeche
+phir laga hua dikhta hai. Sahi chehra load hone se pehle avatar mein galat chehra jhalak jata hai.
+Kisi row par us row wali moti styling reh jati hai jo pehle us jagah thi.
+
+Inmein se koi rendering ki gadbad nahi hai. Har ek aisa `ViewHolder` hai jo apne pichhle
+kirayedaar ka state ab bhi liye baitha hai, kyunki `onBindViewHolder` ne kuch fields rakhe aur
+kuch chhod diye.
+
+## Teen hisse, teen kaam
+
+| Hissa | Kiska jawab |
+| --- | --- |
+| `LayoutManager` | Rows *kahan* jayengi — linear, grid, staggered |
+| `Adapter` | Har row mein *kya* hai, aur kul kitni rows hain |
+| `ViewHolder` | Dobara use hone wali view, aur uske rakhe hue references |
+
+<Figure caption="Views screen se nikalkar ek guchhe mein jati hain aur alag data ke saath laut aati hain. Guchha chhota aur tay hai; data nahi.">
+  <PipelineDiagram
+    title="Ek row view ki zindagi"
+    description="View ek baar banti hai, kisi item se bind hoti hai, scroll hokar bahar jati hai, guchhe mein lautti hai, aur kisi dusre item se dobara bind ho jati hai."
+    stages={[
+      { label: "onCreateViewHolder", sub: "~12 baar", accent: "violet" },
+      { label: "onBindViewHolder", sub: "lagatar", accent: "amber" },
+      { label: "Recycled", sub: "wapas guchhe mein", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+## Recycling se jo niyam nikalta hai
+
+```kotlin title="OrderAdapter.kt" numbered
+class OrderAdapter : ListAdapter<Order, OrderAdapter.Holder>(DIFF) {
+
+    class Holder(val binding: ItemOrderBinding) : RecyclerView.ViewHolder(binding.root)
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        Holder(ItemOrderBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        val order = getItem(position)
+        with(holder.binding) {
+            title.text = order.title
+            badge.isVisible = order.isUrgent          // dono haalat mein set hota hai
+            note.text = order.note ?: ""              // kabhi jaisa tha waisa nahi chhoda
+        }
+    }
+}
+```
+
+**`onBindViewHolder` jo bhi field kabhi set karta hai, use har call par set karna hi chahiye.**
+Aisi koi "else" shakha nahi hai jise chhoda ja sake — jo view aapko mili hai usmein pehle se kisi
+aur ki values padi hain.
+
+<Quiz
+  question="Aapka bind `badge.isVisible = true` sirf tab karta hai jab order urgent ho. User ko kya dikhega?"
+  options={[
+    "Kuch galat nahi — har baar bind hone par views nayi shuru hoti hain",
+    "Jo rows urgent nahi hain un par bhi badge dikhega, jinhone urgent row ki view dobara li",
+    "Badge sirf pehli screen bhar ki rows par dikhega",
+  ]}
+  answer={1}
+  explanation="onBindViewHolder ko mili view nayi nahi hoti — wo upar se scroll hokar nikli hui wahi view hai, jis par pichhle item ka rakha hua sab kuch ab bhi pada hai. Agar aap isVisible ko sirf true karte ho, to use wapas false koi karta hi nahi, isliye jis view ne ek baar badge dikha diya wo aage har us item ke liye badge dikhati rehti hai jiske liye wo dobara use hoti hai. Ilaaj hai bina shart assignment: isVisible = order.isUrgent, jo dono dishayein dhak leta hai. Yahi aakar purani images, purane checkboxes aur bache hue text rang ki wajah bhi hai."
+/>
+
+## `ListAdapter` aur `DiffUtil`
+
+Adapter ko ye batana ki kya badla, "sab kuch badal gaya" kehne se tez bhi hai aur dekhne mein
+behtar bhi. `ListAdapter` ye compare aapke liye background thread par kar deta hai.
+
+```kotlin title="Diff.kt" numbered
+val DIFF = object : DiffUtil.ItemCallback<Order>() {
+
+    // Kya ye wahi row hai? Pehchan milao.
+    override fun areItemsTheSame(old: Order, new: Order) = old.id == new.id
+
+    // Kya us row ka content badla? Barabari milao.
+    override fun areContentsTheSame(old: Order, new: Order) = old == new
+}
+```
+
+| Callback | Sawal | Aam tarika |
+| --- | --- | --- |
+| `areItemsTheSame` | Wahi cheez hai? | ids milao |
+| `areContentsTheSame` | Dobara banane ki zarurat hai? | `==`, to item ko `data class` banao |
+
+<Warning>
+`submitList` nayi list ko purani se milata hai. Usi `MutableList` ko badalkar dobara submit karo
+aur dono references ek hi object ki taraf honge, to `DiffUtil` ko koi farak dikhega hi nahi aur
+kuch update nahi hoga. Hamesha nayi list bhejo — kam se kam `submitList(items.toList())`.
+</Warning>
+
+## Andar ki baat
+
+<Timeline>
+  <TimelineItem title="Guchha har view type ka alag hai" meta="aur maangne par shared">
+    Har `getItemViewType` value ka apna guchha hota hai, to headers wali list mein headers aur rows
+    alag rehte hain. `setRecycledViewPool` se ek hi guchha kai lists mein baanta ja sakta hai.
+  </TimelineItem>
+  <TimelineItem title="Prefetch khaali frames mein chalta hai" meta="5.0 se">
+    Kinare se theek aage wali row aapke pahunchne se pehle hi ban aur bind ho jati hai, frame ke
+    aakhir ki bachi hui fursat mein. `onBindViewHolder` mein bhaari kaam is faayde ko khatam kar
+    deta hai.
+  </TimelineItem>
+  <TimelineItem title="Stable ids animations mein madad karti hain" meta="sahi hone mein nahi">
+    `setHasStableIds(true)` aur asli `getItemId` se animator kisi row ko badlav ke aar-paar pehchan
+    leta hai. `ListAdapter` aur theek `DiffUtil` ke saath iski zarurat kam hi padti hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`notifyDataSetChanged` galat default kyun hai">
+Ye `RecyclerView` se kehta hai ki use jo pata tha wo sab raddi hai. Har dikhti row dobara bind hoti
+hai, koi item animation nahi chalta, aur scroll ki jagah sambhalna naazuk ho jata hai.
+
+Nishana lagakar bulai jane wali calls — `notifyItemInserted`, `notifyItemRemoved`,
+`notifyItemChanged` — kam se kam kaam karti hain aur theek se animate bhi. `ListAdapter` aapke liye
+tay kar leta hai ki inmein se kaun si bulani hai, aur saade `RecyclerView.Adapter` ke bajaye use
+chunne ki asli wajah yahi hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Paanch, usi order mein jismein aapko milengi">
+**Shart wala binding.** Wahi quiz. Har field bina shart set karo.
+
+**`onBindViewHolder` ke andar click listener lagana.** Wo har bind par chalta hai, to listeners
+jama hote jate hain. Use `onCreateViewHolder` mein ek baar lagao aur andar `bindingAdapterPosition`
+padho.
+
+**Der se aane wale callback mein `position` use karna.** Wo ek snapshot hai. Network call lautte
+tak wo row koi aur ho sakti hai — jis pal zarurat ho usi pal `bindingAdapterPosition` padho, aur
+dekh lo ki wo `NO_POSITION` na ho.
+
+**Wahi list instance dobara bhejna.** `DiffUtil` pehle references milata hai aur tay kar leta hai
+ki kuch nahi badla.
+
+**Ek item ke badlav ke liye `notifyDataSetChanged`.** Poori screen dobara bind hoti hai aur
+animation mar jata hai.
+</Pitfall>
+
+## Practice
+
+1. Background rang sirf kisi `if` shakha mein set karo. Tab tak scroll karo jab tak galat rows
+   rangi na dikhein, phir bina shart assignment se theek karo.
+2. `onCreateViewHolder` aur `onBindViewHolder` dono mein log daalo. Hazaar items wali list scroll
+   karo aur dono gintiyan milao.
+3. Kisi `MutableList` ko jagah par badalkar `submitList` karo. Kuch na hote dekho, phir copy bhejo.
+4. `onBindViewHolder` mein click listener lagao aur bees baar aage-peechhe scroll karke kisi row
+   par dabao. Gino ki handler kitni baar chala.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Kitni views banti hain | Lagbhag ek screen bhar, har item ke liye ek nahi |
+| `onBindViewHolder` | Lagatar chalta hai; har baar har field set karna zaruri |
+| `LayoutManager` | Tay karta hai rows kahan jayengi |
+| `ListAdapter` | `DiffUtil` main thread se hatkar chalata hai aur sahi notify bulata hai |
+| `areItemsTheSame` | Pehchan — ids milao |
+| `areContentsTheSame` | Barabari — item ko `data class` banao |
+| `submitList` | Nayi list chahiye, badli hui purani nahi |
+| `bindingAdapterPosition` | Callback mein padhne laayak iklauti position |
+
+<Interview title="RecyclerView ka aam sawal, aur asal mein ye recycling ka sawal hai">
+"List mein checkbox galat row par laga hua kyun dikh jata hai?"
+
+Kyunki `ViewHolder` dobara use hota hai aur bind ne checked state sirf ek disha mein set kiya.
+Mazboot jawab aam niyam batata hai — `onBindViewHolder` ko har call par har field set karna padta
+hai, kyunki view pichhle item ka state liye hue aati hai — aur phir jodta hai ki yahi aakar purani
+images aur bachi hui styling ki wajah bhi hai, jo dikhata hai ki ise ek kisse ki tarah nahi, bugs
+ki ek poori jaati ki tarah samjha gaya hai.
+</Interview>

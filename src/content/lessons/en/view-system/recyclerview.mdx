@@ -1,0 +1,178 @@
+---
+title: RecyclerView, ViewHolder and DiffUtil
+description: There is no list of views. There is a small pool of them being reused, and almost every RecyclerView bug is forgetting that.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A `RecyclerView` holding ten thousand rows creates roughly **a dozen** views. Scrolling does not
+build new ones; it rebinds old ones. Every row you see was somebody else's row a moment ago.
+</KeyIdea>
+
+## Why this matters
+
+The bugs all have the same shape. A checkbox you ticked at the top reappears ticked halfway down.
+An avatar flashes the wrong face before the right one loads. A row keeps the bold styling from
+the row that used to live in that slot.
+
+None of those are rendering glitches. Each is a `ViewHolder` still carrying state from its
+previous occupant, because `onBindViewHolder` set some fields and not others.
+
+## Three parts, three jobs
+
+| Part | Answers |
+| --- | --- |
+| `LayoutManager` | *Where* do rows go — linear, grid, staggered |
+| `Adapter` | *What* is in each row, and how many rows there are |
+| `ViewHolder` | The reused view itself, plus its cached references |
+
+<Figure caption="Views leave the screen, go into a pool, and come back bound to different data. The pool is small and fixed; the data is not.">
+  <PipelineDiagram
+    title="The life of one row view"
+    description="A view is created once, bound to an item, scrolled off, returned to the pool, and bound again to a different item."
+    stages={[
+      { label: "onCreateViewHolder", sub: "~12 times", accent: "violet" },
+      { label: "onBindViewHolder", sub: "constantly", accent: "amber" },
+      { label: "Recycled", sub: "back to pool", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+## The rule that follows from recycling
+
+```kotlin title="OrderAdapter.kt" numbered
+class OrderAdapter : ListAdapter<Order, OrderAdapter.Holder>(DIFF) {
+
+    class Holder(val binding: ItemOrderBinding) : RecyclerView.ViewHolder(binding.root)
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        Holder(ItemOrderBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        val order = getItem(position)
+        with(holder.binding) {
+            title.text = order.title
+            badge.isVisible = order.isUrgent          // set on BOTH paths
+            note.text = order.note ?: ""              // never left as-is
+        }
+    }
+}
+```
+
+**`onBindViewHolder` must set every field it ever sets, on every call.** There is no "else"
+branch you can skip — the view you were handed already has somebody else's values in it.
+
+<Quiz
+  question="Your bind sets `badge.isVisible = true` only when an order is urgent. What does the user see?"
+  options={[
+    "Nothing wrong — views start fresh each time they are bound",
+    "Badges appear on non-urgent rows that reuse an urgent row's view",
+    "The badge shows only on the first screen of rows",
+  ]}
+  answer={1}
+  explanation="The view handed to onBindViewHolder is not new — it is one that scrolled off the top, still carrying whatever the previous item set on it. If you only ever set isVisible to true, nothing ever sets it back to false, so once a view has shown a badge it keeps showing one for every item it is later reused for. The fix is unconditional assignment: isVisible = order.isUrgent, which covers both directions. This same shape explains stale images, stale checkboxes and leftover text colour."
+/>
+
+## `ListAdapter` and `DiffUtil`
+
+Telling the adapter what changed is faster and better-looking than telling it everything changed.
+`ListAdapter` does the comparison for you on a background thread.
+
+```kotlin title="Diff.kt" numbered
+val DIFF = object : DiffUtil.ItemCallback<Order>() {
+
+    // Are these the same row? Compare identity.
+    override fun areItemsTheSame(old: Order, new: Order) = old.id == new.id
+
+    // Has that row's content changed? Compare equality.
+    override fun areContentsTheSame(old: Order, new: Order) = old == new
+}
+```
+
+| Callback | Question | Usual implementation |
+| --- | --- | --- |
+| `areItemsTheSame` | Same underlying thing? | Compare ids |
+| `areContentsTheSame` | Does it need redrawing? | `==`, so make the item a `data class` |
+
+<Warning>
+`submitList` compares the new list against the old one. Mutate the same `MutableList` instance and
+submit it again and both references point at the same object, so `DiffUtil` sees no difference and
+nothing updates. Always submit a new list — `submitList(items.toList())` at minimum.
+</Warning>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="The pool is per view type" meta="and shared on request">
+    Each `getItemViewType` value gets its own pool, so a list with headers keeps headers and rows
+    apart. `setRecycledViewPool` can share one pool across several lists.
+  </TimelineItem>
+  <TimelineItem title="Prefetch runs during idle frames" meta="since 5.0">
+    The row just beyond the edge is created and bound before you reach it, using the slack at the
+    end of a frame. Heavy work in `onBindViewHolder` cancels that benefit.
+  </TimelineItem>
+  <TimelineItem title="Stable ids help animations" meta="not correctness">
+    `setHasStableIds(true)` plus a real `getItemId` lets the animator track a row across a change.
+    With `ListAdapter` and a proper `DiffUtil`, you rarely need it.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Why `notifyDataSetChanged` is the wrong default">
+It tells the `RecyclerView` that everything it knows is void. Every visible row rebinds, no item
+animations run, and scroll position handling gets fragile.
+
+The targeted calls — `notifyItemInserted`, `notifyItemRemoved`, `notifyItemChanged` — do the
+minimum and animate properly. `ListAdapter` works out which of those to call for you, which is the
+real reason to use it over a raw `RecyclerView.Adapter`.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, in the order you will hit them">
+**Conditional binding.** The quiz. Assign every field unconditionally.
+
+**Registering a click listener inside `onBindViewHolder`.** It runs on every bind, so listeners
+pile up. Set it once in `onCreateViewHolder` and read `bindingAdapterPosition` inside it.
+
+**Using `position` in a delayed callback.** It is a snapshot. By the time a network call returns
+the row may be somebody else — read `bindingAdapterPosition` at the moment you need it, and check
+it is not `NO_POSITION`.
+
+**Submitting the same list instance.** `DiffUtil` compares references first and concludes nothing
+changed.
+
+**`notifyDataSetChanged` for a one-item edit.** Rebinds the whole screen and kills the animation.
+</Pitfall>
+
+## Practice
+
+1. Set a background colour only in an `if` branch. Scroll until the wrong rows are coloured, then
+   fix it with an unconditional assignment.
+2. Log inside `onCreateViewHolder` and `onBindViewHolder`. Scroll a thousand-item list and compare
+   the two counts.
+3. Mutate a `MutableList` in place and `submitList` it. Watch nothing happen, then submit a copy.
+4. Register a click listener in `onBindViewHolder` and tap a row after scrolling back and forth
+   twenty times. Count how many times the handler fires.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Views created | Roughly one screenful, not one per item |
+| `onBindViewHolder` | Runs constantly; must set every field every time |
+| `LayoutManager` | Decides where rows go |
+| `ListAdapter` | Runs `DiffUtil` off the main thread and calls the right notify |
+| `areItemsTheSame` | Identity — compare ids |
+| `areContentsTheSame` | Equality — make the item a `data class` |
+| `submitList` | Needs a new list instance, not a mutated one |
+| `bindingAdapterPosition` | The only position safe to read in a callback |
+
+<Interview title="The standard RecyclerView question, and it is really about recycling">
+"Why does a checkbox in a list end up ticked on the wrong row?"
+
+Because the `ViewHolder` is reused and the bind only set the checked state in one direction. The
+strong answer names the general rule — `onBindViewHolder` must assign every field on every call,
+since the view arrives carrying the last item's state — and then adds that the same shape causes
+stale images and leftover styling, which shows it is understood as a class of bug rather than one
+anecdote.
+</Interview>

@@ -1,0 +1,181 @@
+---
+title: RecyclerView, ViewHolder और DiffUtil
+description: Views की कोई list होती ही नहीं। एक छोटा सा गुच्छा होता है जो बार-बार दोबारा इस्तेमाल होता है, और RecyclerView का लगभग हर bug यही भूलने से आता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+दस हजार rows वाली `RecyclerView` लगभग **एक दर्जन** views बनाती है। Scroll करने से नई नहीं बनतीं;
+पुरानी दोबारा bind होती हैं। आप जो भी row देख रहे हैं, वह कुछ पल पहले किसी और की row थी।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+Bugs का आकार हमेशा एक जैसा होता है। ऊपर जो checkbox आपने लगाया था वह आधी list नीचे फिर लगा हुआ
+दिखता है। सही चेहरा load होने से पहले avatar में गलत चेहरा झलक जाता है। किसी row पर उस row वाली
+मोटी styling रह जाती है जो पहले उस जगह थी।
+
+इनमें से कोई rendering की गड़बड़ नहीं है। हर एक ऐसा `ViewHolder` है जो अपने पिछले किरायेदार का
+state अब भी लिए बैठा है, क्योंकि `onBindViewHolder` ने कुछ fields रखे और कुछ छोड़ दिए।
+
+## तीन हिस्से, तीन काम
+
+| हिस्सा | किसका जवाब |
+| --- | --- |
+| `LayoutManager` | Rows *कहाँ* जाएँगी — linear, grid, staggered |
+| `Adapter` | हर row में *क्या* है, और कुल कितनी rows हैं |
+| `ViewHolder` | दोबारा इस्तेमाल होने वाली view, और उसके रखे हुए references |
+
+<Figure caption="Views screen से निकलकर एक गुच्छे में जाती हैं और अलग data के साथ लौट आती हैं। गुच्छा छोटा और तय है; data नहीं।">
+  <PipelineDiagram
+    title="एक row view की जिंदगी"
+    description="View एक बार बनती है, किसी item से bind होती है, scroll होकर बाहर जाती है, गुच्छे में लौटती है, और किसी दूसरे item से दोबारा bind हो जाती है।"
+    stages={[
+      { label: "onCreateViewHolder", sub: "~12 बार", accent: "violet" },
+      { label: "onBindViewHolder", sub: "लगातार", accent: "amber" },
+      { label: "Recycled", sub: "वापस गुच्छे में", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+## Recycling से जो नियम निकलता है
+
+```kotlin title="OrderAdapter.kt" numbered
+class OrderAdapter : ListAdapter<Order, OrderAdapter.Holder>(DIFF) {
+
+    class Holder(val binding: ItemOrderBinding) : RecyclerView.ViewHolder(binding.root)
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        Holder(ItemOrderBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        val order = getItem(position)
+        with(holder.binding) {
+            title.text = order.title
+            badge.isVisible = order.isUrgent          // दोनों हालत में सेट होता है
+            note.text = order.note ?: ""              // कभी जैसा था वैसा नहीं छोड़ा
+        }
+    }
+}
+```
+
+**`onBindViewHolder` जो भी field कभी सेट करता है, उसे हर call पर सेट करना ही चाहिए।** ऐसी कोई
+"else" शाखा नहीं है जिसे छोड़ा जा सके — जो view आपको मिली है उसमें पहले से किसी और की values पड़ी
+हैं।
+
+<Quiz
+  question="आपका bind `badge.isVisible = true` सिर्फ तब करता है जब order urgent हो। User को क्या दिखेगा?"
+  options={[
+    "कुछ गलत नहीं — हर बार bind होने पर views नई शुरू होती हैं",
+    "जो rows urgent नहीं हैं उन पर भी badge दिखेगा, जिन्होंने urgent row की view दोबारा ली",
+    "Badge सिर्फ पहली screen भर की rows पर दिखेगा",
+  ]}
+  answer={1}
+  explanation="onBindViewHolder को मिली view नई नहीं होती — वह ऊपर से scroll होकर निकली हुई वही view है, जिस पर पिछले item का रखा हुआ सब कुछ अब भी पड़ा है। अगर आप isVisible को सिर्फ true करते हैं, तो उसे वापस false कोई करता ही नहीं, इसलिए जिस view ने एक बार badge दिखा दिया वह आगे हर उस item के लिए badge दिखाती रहती है जिसके लिए वह दोबारा इस्तेमाल होती है। इलाज है बिना शर्त assignment: isVisible = order.isUrgent, जो दोनों दिशाएँ ढक लेता है। यही आकार पुरानी images, पुराने checkboxes और बचे हुए text रंग की वजह भी है।"
+/>
+
+## `ListAdapter` और `DiffUtil`
+
+Adapter को यह बताना कि क्या बदला, "सब कुछ बदल गया" कहने से तेज भी है और देखने में बेहतर भी।
+`ListAdapter` यह तुलना आपके लिए background thread पर कर देता है।
+
+```kotlin title="Diff.kt" numbered
+val DIFF = object : DiffUtil.ItemCallback<Order>() {
+
+    // क्या यह वही row है? पहचान मिलाइए।
+    override fun areItemsTheSame(old: Order, new: Order) = old.id == new.id
+
+    // क्या उस row का content बदला? बराबरी मिलाइए।
+    override fun areContentsTheSame(old: Order, new: Order) = old == new
+}
+```
+
+| Callback | सवाल | आम तरीका |
+| --- | --- | --- |
+| `areItemsTheSame` | वही चीज है? | ids मिलाइए |
+| `areContentsTheSame` | दोबारा बनाने की जरूरत है? | `==`, तो item को `data class` बनाइए |
+
+<Warning>
+`submitList` नई list को पुरानी से मिलाता है। उसी `MutableList` को बदलकर दोबारा submit कीजिए और
+दोनों references एक ही object की तरफ होंगे, तो `DiffUtil` को कोई फर्क दिखेगा ही नहीं और कुछ update
+नहीं होगा। हमेशा नई list भेजिए — कम से कम `submitList(items.toList())`।
+</Warning>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="गुच्छा हर view type का अलग है" meta="और माँगने पर साझा">
+    हर `getItemViewType` value का अपना गुच्छा होता है, तो headers वाली list में headers और rows अलग
+    रहते हैं। `setRecycledViewPool` से एक ही गुच्छा कई lists में बाँटा जा सकता है।
+  </TimelineItem>
+  <TimelineItem title="Prefetch खाली frames में चलता है" meta="5.0 से">
+    किनारे से ठीक आगे वाली row आपके पहुँचने से पहले ही बन और bind हो जाती है, frame के आखिर की
+    बची हुई फुरसत में। `onBindViewHolder` में भारी काम इस फायदे को खत्म कर देता है।
+  </TimelineItem>
+  <TimelineItem title="Stable ids animations में मदद करती हैं" meta="सही होने में नहीं">
+    `setHasStableIds(true)` और असली `getItemId` से animator किसी row को बदलाव के आर-पार पहचान लेता
+    है। `ListAdapter` और ठीक `DiffUtil` के साथ इसकी जरूरत कम ही पड़ती है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="`notifyDataSetChanged` गलत default क्यों है">
+यह `RecyclerView` से कहता है कि उसे जो पता था वह सब रद्दी है। हर दिखती row दोबारा bind होती है,
+कोई item animation नहीं चलता, और scroll की जगह सँभालना नाजुक हो जाता है।
+
+निशाना लगाकर बुलाई जाने वाली calls — `notifyItemInserted`, `notifyItemRemoved`,
+`notifyItemChanged` — कम से कम काम करती हैं और ठीक से animate भी। `ListAdapter` आपके लिए तय कर
+लेता है कि इनमें से कौन सी बुलानी है, और सादे `RecyclerView.Adapter` के बजाय उसे चुनने की असली वजह
+यही है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, उसी क्रम में जिसमें आपको मिलेंगी">
+**शर्त वाला binding।** वही quiz। हर field बिना शर्त सेट कीजिए।
+
+**`onBindViewHolder` के अंदर click listener लगाना।** वह हर bind पर चलता है, तो listeners जमा होते
+जाते हैं। उसे `onCreateViewHolder` में एक बार लगाइए और अंदर `bindingAdapterPosition` पढ़िए।
+
+**देर से आने वाले callback में `position` इस्तेमाल करना।** वह एक snapshot है। Network call लौटते
+तक वह row कोई और हो सकती है — जिस पल जरूरत हो उसी पल `bindingAdapterPosition` पढ़िए, और देख लीजिए
+कि वह `NO_POSITION` न हो।
+
+**वही list instance दोबारा भेजना।** `DiffUtil` पहले references मिलाता है और तय कर लेता है कि कुछ
+नहीं बदला।
+
+**एक item के बदलाव के लिए `notifyDataSetChanged`।** पूरी screen दोबारा bind होती है और animation
+मर जाता है।
+</Pitfall>
+
+## अभ्यास
+
+1. Background रंग सिर्फ किसी `if` शाखा में सेट कीजिए। तब तक scroll कीजिए जब तक गलत rows रंगी न
+   दिखें, फिर बिना शर्त assignment से ठीक कीजिए।
+2. `onCreateViewHolder` और `onBindViewHolder` दोनों में log डालिए। हजार items वाली list scroll
+   कीजिए और दोनों गिनतियाँ मिलाइए।
+3. किसी `MutableList` को जगह पर बदलकर `submitList` कीजिए। कुछ न होते देखिए, फिर copy भेजिए।
+4. `onBindViewHolder` में click listener लगाइए और बीस बार आगे-पीछे scroll करके किसी row पर दबाइए।
+   गिनिए कि handler कितनी बार चला।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| कितनी views बनती हैं | लगभग एक screen भर, हर item के लिए एक नहीं |
+| `onBindViewHolder` | लगातार चलता है; हर बार हर field सेट करना जरूरी |
+| `LayoutManager` | तय करता है rows कहाँ जाएँगी |
+| `ListAdapter` | `DiffUtil` main thread से हटकर चलाता है और सही notify बुलाता है |
+| `areItemsTheSame` | पहचान — ids मिलाइए |
+| `areContentsTheSame` | बराबरी — item को `data class` बनाइए |
+| `submitList` | नई list चाहिए, बदली हुई पुरानी नहीं |
+| `bindingAdapterPosition` | Callback में पढ़ने लायक इकलौती position |
+
+<Interview title="RecyclerView का आम सवाल, और असल में यह recycling का सवाल है">
+"List में checkbox गलत row पर लगा हुआ क्यों दिख जाता है?"
+
+क्योंकि `ViewHolder` दोबारा इस्तेमाल होता है और bind ने checked state सिर्फ एक दिशा में सेट किया।
+मजबूत जवाब आम नियम बताता है — `onBindViewHolder` को हर call पर हर field सेट करना पड़ता है, क्योंकि
+view पिछले item का state लिए हुए आती है — और फिर जोड़ता है कि यही आकार पुरानी images और बची हुई
+styling की वजह भी है, जो दिखाता है कि इसे एक किस्से की तरह नहीं, bugs की एक पूरी जाति की तरह समझा
+गया है।
+</Interview>
