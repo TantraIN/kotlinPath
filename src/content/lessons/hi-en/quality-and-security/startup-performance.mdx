@@ -1,0 +1,195 @@
+---
+title: Startup ka samay aur Baseline Profiles
+description: Cold start wo iklauta aankda hai jise har user bhugatta hai aur zyadatar teams kabhi naapti nahi. Baseline Profiles wo birli behtari hai jismein code nahi badalna padta aur uska paanchwan hissa bharose se wapas mil jata hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Start teen tarah ke hote hain, aur mushkil sirf **cold** hai: process hota hi nahi, to Android use
+banata hai, aapki classes ladta hai, `Application.onCreate` chalata hai, aur uske baad hi pehli screen
+banata hai. Us pehle frame se pehle aap jo bhi karte ho wo asli raaste par hai.
+</KeyIdea>
+
+## Teenon starts
+
+| Start | Haalat | Aam taur par budget |
+| --- | --- | --- |
+| Cold | Koi process nahi; sab kuch shoonya se | 500ms se kam achha hai |
+| Warm | Process zinda, activity dobara bani | ~200ms |
+| Hot | Activity memory mein hi hai, aage layi gayi | Lagbhag turant |
+
+Google Play **5 second** se zyada ke cold start ko aapki store listing par bure behaviour ki tarah darj
+karta hai, jisse ye un gine-chune performance wale aankdon mein aa jata hai jinka karobari asar bhi
+hai.
+
+Ise mehsoos karne ke bajaye naapiye:
+
+```bash title="adb" numbered
+adb shell am start -W -n com.example/.MainActivity
+# TotalTime: 412        <- yahi maayne rakhta hai
+```
+
+`TotalTime` process banne se pehle frame tak hai. Asli cold start pane ke liye `adb shell pm clear` ke
+baad manjhole device par kai baar chalaiye.
+
+## Asli raaste par hai kya
+
+```kotlin title="MyApp.kt" numbered
+class MyApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        analytics.init(this)          // network, main thread par, kisi bhi UI se pehle
+        crashReporter.init(this)
+        imageLoader.warmUp()
+        featureFlags.fetchBlocking()  // ek HTTP call, pehle frame ko rokte hue
+    }
+}
+```
+
+Wahan ki har line user ke kuch bhi dekhne se pehle chalti hai. `Application.onCreate` wo jagah hai jahan
+startup ka samay dam todta hai, kyunki har library ki setup wali guide kehti hai "ise `onCreate` mein
+bulaiye" aur jod koi nahi lagata.
+
+Ilaaj hai ye tay karna ki sach mein pehle kya hona hi chahiye:
+
+```kotlin title="Deferred.kt" numbered
+override fun onCreate() {
+    super.onCreate()
+    crashReporter.init(this)                       // haan: startup ke crashes use pakadne hain
+
+    applicationScope.launch {                      // nahi: ye ruk sakte hain
+        analytics.init(this@MyApp)
+        featureFlags.refresh()
+    }
+}
+```
+
+`androidx.startup` ise `Initializer` wale hisson se vyavasthit kar deta hai jo ek-doosre par nirbharta
+batate hain, aur isse wo content-provider wala tarika bhi hat jata hai jo kai SDKs `onCreate` se pehle
+code chalane ke liye leti hain.
+
+<Quiz
+  question="Kisi app ka cold start 1.8s hai. Profile batata hai ki zyadatar samay `Application.onCreate` mein hai. Team saari shuruati taiyari kisi background coroutine mein le jati hai aur cold start 700ms ho jata hai — par crash ki reporton mein `UninitializedPropertyAccessException` ka uchhal dikhta hai. Galat kya hua?"
+  options={[
+    "Us coroutine ko background dispatcher ke bajaye `Dispatchers.Main.immediate` chahiye tha",
+    "Taalna sahi hai, par kisi ko intezar karna sikhaya hi nahi gaya — pehli screen ab wo dependencies padhti hai jo abhi ban rahi hain, to ilaaj hai sirf wahi taalna jo sach mein pehle frame ko nahi chahiye, aur baaki ko maan lene ke bajaye taiyar hone ka intezar karana",
+    "`Application.onCreate` mein coroutines safe tarike se shuru ho hi nahi sakte"
+  ]}
+  answer={1}
+  explanation="Kaam ko startup ke raaste se hatana sahi soojh hai aur naap sabit karta hai ki wo chala. Us badlaav ne saath mein ye bhi kiya ki order ki ek guarantee ko daud mein badal diya: jo code pehle ye maan sakta tha ki sab taiyar hai wo ab taiyari ke chalte hue chalta hai, aur lateinit wala padhna kabhi-kabhi daud jeet jata hai. Jo farak maayne rakhta hai wo us kaam aur us kaam ke beech hai jo pehle frame ko chahiye aur jo nahi. Crash ki reporting order se honi chahiye, kyunki use startup ke dauran hote crashes pakadne hain. Analytics aur feature flags aam taur par nahi, par unhe padhne wali har cheez ko na-taiyar sambhalna padega — koi StateFlow jise screen collect kare, koi suspend function jo kisi Deferred ka intezar kare, ya asli value aane tak koi samajhdar default. Aankh moondkar sab taal dena dheeme app ko gair-bharosemand app se badal deta hai, aur users use kam maaf karte hain."
+/>
+
+## Baseline Profiles
+
+Ye wo anokhi behtari hai: code mein koi badlaav nahi, aur aam taur par **20–30% tez startup**.
+
+Android aam taur par aapke code ko samajhte hue chalata hai aur garam raaston ko tabhi compile karta hai
+jab app kuch der chal chuka ho. Baseline Profile un classes aur methods ki list hai jo startup aur
+doosre ahem safron mein lagti hain, jo app ke saath bheji jati hai, taki wo pehle se compile hon —
+pehli baar chalne par wo performance milti hai jo dasvin baar ko milti.
+
+```kotlin title="BaselineProfileGenerator.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class BaselineProfileGenerator {
+    @get:Rule val rule = BaselineProfileRule()
+
+    @Test
+    fun generate() = rule.collect(packageName = "com.example") {
+        pressHome()
+        startActivityAndWait()
+        device.findObject(By.res("order_list")).fling(Direction.DOWN)   // jo safar maayne rakhte hain
+    }
+}
+```
+
+Bani hui `baseline-prof.txt` `src/main` mein jati hai aur release wale build ke saath pack hoti hai.
+Wahi safar rakhiye jo users sach mein karte hain — startup, pehli list, mukhya navigation — kyunki pehle
+se compile sirf wahi hota hai jo us profile mein hai.
+
+Result dawe par bharosa karne ke bajaye Macrobenchmark se naapiye:
+
+```kotlin title="StartupBenchmark.kt" numbered
+@Test
+fun startupCompilationNone() = benchmark(CompilationMode.None())
+
+@Test
+fun startupBaselineProfile() = benchmark(CompilationMode.Partial(BaselineProfileMode.Require))
+```
+
+<Detail summary="Splash screen, aur wo chhupati kya hai">
+Android 12 se `SplashScreen` wo system ki banai screen hai jo process bante waqt aapke liye dikhai jati
+hai, aur `installSplashScreen()` uska compat wala darwaza hai:
+
+```kotlin title="Splash.kt" numbered
+override fun onCreate(savedInstanceState: Bundle?) {
+    val splash = installSplashScreen()
+    splash.setKeepOnScreenCondition { viewModel.isLoading.value }    // sambhalkar
+    super.onCreate(savedInstanceState)
+}
+```
+
+`setKeepOnScreenCondition` wo hissa hai jise kam hi lena chahiye. Data ladne tak splash roke rakhna
+naape gaye startup ke aankde ko achha dikhata hai — pehla frame jaldi aa jata hai — jabki user do second
+tak logo taakta rehta hai. Wo khaali haalat aur dhancha dikhane se bura hai, kyunki splash na koi pragati
+ka ehsaas deti hai na kuch chhoone ka raasta.
+
+Imandaar istemal hai use kuch darjan milliseconds rokna jab tak sthaniya haalat padhi jaye, aur network
+ki kisi call ke liye kabhi nahi. Agar pehli screen ko door ka data chahiye, to screen khaali dhanchon ke
+saath banaiye aur data ko bharne dijiye — mehsoos hota startup wo hai jab kuch dikhe, tab nahi jab sab
+poora ho.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli mein startup ka zyadatar samay basta hai">
+**`Application.onCreate` mein dher saari library ki taiyari.** Har guide yahi kehti hai; jod koi nahi
+lagata.
+
+**Pehle frame se pehle network ki call.** Wo user ke connection ko aapke asli raaste par rakh deti hai.
+
+**Bina intezar karaye taalna.** Ek daud, aur kuch users ke liye `lateinit` wale crashes.
+
+**Data ladne tak splash rokna.** Aankda sudharta hai aur anubhav bigadta hai.
+
+**Koi Baseline Profile na hona.** Aapke startup ka paanchwan hissa, bina kisi code badle, yun hi chhoda
+hua.
+</Pitfall>
+
+## Abhyaas
+
+1. `adb shell pm clear` phir `am start -W` paanch baar chalaiye, aur beech wala aankda lijiye.
+2. `Application.onCreate` ki har line baari-baari hataiye aur farak naapiye.
+3. Baseline Profile jodiye aur Macrobenchmark se pehle-baad naapiye.
+4. Kisi ek library ki taiyari taaliye aur pakka kijiye ki use lene wali screen na-taiyar sambhalti hai.
+5. Splash do second rokiye aur mehsoos kijiye ki wo dhanche se kitna bura lagta hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Cold start | Koi process nahi; iklauta mushkil maamla |
+| Play ki had | 5 second se zyada listing par darj hota hai |
+| `am start -W` | `pm clear` ke baad `TotalTime`, manjhole device par |
+| `Application.onCreate` | Jahan startup ka samay dam todta hai |
+| Order se zaruri | Crash ki reporting, taki startup ke crashes pakde |
+| Taalna | Theek hai, par padhne walon ko manne ke bajaye intezar karna hai |
+| Baseline Profile | 20–30% tez startup, bina code badle |
+| Daayra | Pehle se compile sirf wahi safar hote hain jo profile mein hain |
+| Macrobenchmark | Dawe par bharose ke bajaye naapiye |
+| Splash | Network ki call ke liye use kabhi mat rokiye |
+
+<Interview title="Ek sawal, jiska asamanya roop se achha jawab maujood hai">
+"2 second ke cold start ko aap kaise sudharoge?"
+
+Pehle main `pm clear` ke baad `am start -W` se, manjhole device par naapunga, taki mere paas koi tassavur
+nahi balki beech wala aankda ho. Phir main `Application.onCreate` dekhunga, kyunki samay lagbhag hamesha
+wahin hota hai: har library ki setup wali guide wahin taiyari karne ko kehti hai, aur jod koi nahi
+lagata. Har line par sawal ye hai ki pehle frame ko wo sach mein chahiye ya nahi — crash ki reporting ko
+chahiye, kyunki use startup ke crashes pakadne hain; analytics aur feature flags ko aam taur par nahi.
+
+Jo hissa main waise bhi karunga wo Baseline Profile hai, kyunki wo birli behtari hai jismein koi code
+nahi badalta aur 20–30% ka bharosemand faayda hai — wo startup mein lagne wali classes ki list bhejta
+hai taki wo samajhkar chalane ke bajaye pehle se compile hon. Aur taalte waqt main padhne walon ko taiyar
+hone ka intezar karaunga, maan lene nahi doonga, kyunki aankh moondkar sab taal dena dheeme app ko aise
+app se badal deta hai jo kuch users ke liye `UninitializedPropertyAccessException` se crash karta hai.
+</Interview>

@@ -1,0 +1,192 @@
+---
+title: Startup time and Baseline Profiles
+description: Cold start is the one number every user experiences and most teams never measure. Baseline Profiles are the rare optimisation that costs no code changes and reliably wins a fifth of it back.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+There are three starts, and only **cold** is the hard one: the process does not exist, so Android
+creates it, loads your classes, runs `Application.onCreate`, and only then builds the first screen.
+Everything you do before that first frame is on the critical path.
+
+</KeyIdea>
+
+## The three starts
+
+| Start | Situation | Typical budget |
+| --- | --- | --- |
+| Cold | No process; everything from scratch | Under 500ms is good |
+| Warm | Process alive, activity recreated | ~200ms |
+| Hot | Activity still in memory, brought forward | Near instant |
+
+Google Play flags a cold start over **5 seconds** as bad behaviour on your store listing, which makes
+this one of the few performance numbers with a business consequence attached.
+
+Measure it rather than feel it:
+
+```bash title="adb" numbered
+adb shell am start -W -n com.example/.MainActivity
+# TotalTime: 412        <- what you care about
+```
+
+`TotalTime` is process creation to the first frame. Run it several times on a mid-range device after
+`adb shell pm clear` to get a real cold start.
+
+## What is actually on the critical path
+
+```kotlin title="MyApp.kt" numbered
+class MyApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        analytics.init(this)          // network, on the main thread, before any UI
+        crashReporter.init(this)
+        imageLoader.warmUp()
+        featureFlags.fetchBlocking()  // an HTTP call, blocking the first frame
+    }
+}
+```
+
+Every line there runs before the user sees anything. `Application.onCreate` is where startup time goes
+to die, because every library's setup guide says "call this in `onCreate`" and nobody adds up the
+total.
+
+The fix is to decide what genuinely must happen first:
+
+```kotlin title="Deferred.kt" numbered
+override fun onCreate() {
+    super.onCreate()
+    crashReporter.init(this)                       // yes: it must catch crashes during startup
+
+    applicationScope.launch {                      // no: these can wait
+        analytics.init(this@MyApp)
+        featureFlags.refresh()
+    }
+}
+```
+
+`androidx.startup` formalises this with `Initializer` components that declare dependencies on each
+other, which also removes the content-provider-per-library pattern that several SDKs use to run code
+before `onCreate`.
+
+<Quiz
+  question="An app's cold start is 1.8s. A profile shows most of it in `Application.onCreate`. The team moves all initialisation into a background coroutine and cold start drops to 700ms — but crash reports show a spike in `UninitializedPropertyAccessException`. What went wrong?"
+  options={[
+    "The coroutine needed `Dispatchers.Main.immediate` rather than a background dispatcher",
+    "Deferring is right, but nothing was made to wait — the first screen now reads dependencies that are still initialising, so the fix is to defer only what is genuinely not needed for the first frame and make the rest await readiness rather than assume it",
+    "`Application.onCreate` cannot safely start coroutines"
+  ]}
+  answer={1}
+  explanation="Moving work off the startup path is the right instinct and the measurement proves it worked. What the change also did was turn a sequential guarantee into a race: code that previously could assume everything was ready now runs while initialisation is still in flight, and a lateinit read wins the race sometimes. The distinction that matters is between work the first frame needs and work it does not. Crash reporting must be synchronous, because it has to catch crashes that happen during startup. Analytics and feature flags usually do not, but anything reading them has to handle not-ready — a StateFlow the screen collects, a suspend function that awaits a Deferred, or a sensible default until the real value arrives. Blindly deferring everything trades a slow app for an unreliable one, which users forgive less."
+/>
+
+## Baseline Profiles
+
+This is the unusual optimisation: no code changes, and typically **20–30% faster startup**.
+
+Android normally interprets your code and only compiles hot paths after the app has run a while. A
+Baseline Profile is a list of the classes and methods used during startup and other critical journeys,
+shipped with the app, so those are compiled ahead of time — the first run gets the performance the
+tenth run would have had.
+
+```kotlin title="BaselineProfileGenerator.kt" numbered
+@RunWith(AndroidJUnit4::class)
+class BaselineProfileGenerator {
+    @get:Rule val rule = BaselineProfileRule()
+
+    @Test
+    fun generate() = rule.collect(packageName = "com.example") {
+        pressHome()
+        startActivityAndWait()
+        device.findObject(By.res("order_list")).fling(Direction.DOWN)   // the journeys that matter
+    }
+}
+```
+
+The generated `baseline-prof.txt` goes into `src/main` and is packaged with the release build. Include
+the journeys users actually take — startup, the first list, the main navigation — since only what the
+profile covers is compiled ahead of time.
+
+Measure the result with Macrobenchmark rather than trusting the claim:
+
+```kotlin title="StartupBenchmark.kt" numbered
+@Test
+fun startupCompilationNone() = benchmark(CompilationMode.None())
+
+@Test
+fun startupBaselineProfile() = benchmark(CompilationMode.Partial(BaselineProfileMode.Require))
+```
+
+<Detail summary="The splash screen, and what it hides">
+`SplashScreen` since Android 12 is a system-drawn screen shown for you during process creation, and
+`installSplashScreen()` is the compat entry point:
+
+```kotlin title="Splash.kt" numbered
+override fun onCreate(savedInstanceState: Bundle?) {
+    val splash = installSplashScreen()
+    splash.setKeepOnScreenCondition { viewModel.isLoading.value }    // careful
+    super.onCreate(savedInstanceState)
+}
+```
+
+`setKeepOnScreenCondition` is the part to use sparingly. Holding the splash until data loads makes the
+measured startup number look good — the first frame arrives quickly — while the user stares at a logo
+for two seconds. That is worse than showing an empty state with a skeleton, because a splash gives no
+sense of progress and no way to interact.
+
+The honest use is holding it for a few dozen milliseconds while local state is read, and never for a
+network call. If the first screen needs remote data, draw the screen with placeholders and let the
+data fill in — the perceived startup is when something appears, not when it is complete.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is where most startup time lives">
+**Library init piled into `Application.onCreate`.** Every guide says to; nobody sums the total.
+
+**A network call before the first frame.** It puts the user's connection on your critical path.
+
+**Deferring without awaiting.** A race, and `lateinit` crashes for some users.
+
+**Holding the splash until data loads.** The metric improves and the experience gets worse.
+
+**No Baseline Profile.** A fifth of your startup, left on the table for no code changes.
+</Pitfall>
+
+## Practice
+
+1. `adb shell pm clear` then `am start -W` five times, and take the median.
+2. Comment out each line of `Application.onCreate` in turn and measure the difference.
+3. Add a Baseline Profile and measure with Macrobenchmark before and after.
+4. Defer one library's init and confirm the screen that uses it handles not-ready.
+5. Hold the splash for two seconds and notice how much worse it feels than a skeleton.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Cold start | No process; the only hard case |
+| Play's limit | Over 5 seconds is flagged on your listing |
+| `am start -W` | `TotalTime` after `pm clear`, on a mid-range device |
+| `Application.onCreate` | Where startup time goes to die |
+| Must be synchronous | Crash reporting, so it catches startup crashes |
+| Deferring | Fine, but the readers must await rather than assume |
+| Baseline Profile | 20–30% faster startup, no code changes |
+| Coverage | Only the journeys the profile records are compiled ahead |
+| Macrobenchmark | Measure it rather than trust the claim |
+| Splash | Never hold it for a network call |
+
+<Interview title="A question with an unusually good answer available">
+"How would you improve a 2-second cold start?"
+
+I would measure first with `am start -W` after `pm clear`, on a mid-range device, so I have a median
+rather than an impression. Then I would look at `Application.onCreate`, because that is almost always
+where the time is: every library's setup guide says to initialise there, and nobody adds up the total.
+The question for each line is whether the first frame genuinely needs it — crash reporting does,
+because it has to catch crashes during startup; analytics and feature flags usually do not.
+
+The part I would do regardless is a Baseline Profile, because it is the rare optimisation with no code
+changes and a reliable 20–30% win — it ships a list of the classes used during startup so they are
+compiled ahead of time instead of interpreted. And when deferring, I would make the readers await
+readiness rather than assume it, since deferring everything blindly trades a slow app for one that
+crashes with `UninitializedPropertyAccessException` for some users.
+</Interview>
