@@ -1,0 +1,217 @@
+---
+title: "Side effects: LaunchedEffect, DisposableEffect और उनके साथी"
+description: Composable को साफ-सुथरा रहना है, इसलिए जिस चीज का कोई नतीजा होता है वह किसी effect API से होकर जाती है। हर एक इस बात का अलग जवाब देता है कि काम शुरू कब होगा और रुकेगा कब।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Effect API काम को **composition की उम्र और किसी key** से बाँध देता है। Composable के आते ही वह
+शुरू होता है, उसके जाते ही रुकता है, और key बदलने पर दोबारा शुरू होता है। Effect के लगभग हर bug की
+जड़ गलत key चुनना है।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+```kotlin title="Wrong.kt"
+@Composable
+fun OrderScreen(id: String, scope: CoroutineScope) {
+    scope.launch { load(id) }        // हर recomposition पर एक नया coroutine
+    // ...
+}
+```
+
+Composable एक ही frame में कई बार चल सकता है, तो यह अनगिनत loads शुरू कर देता है। यह कोई हल्की सी
+बर्बादी नहीं है; यह requests की झड़ी है।
+
+```kotlin title="Right.kt" numbered
+@Composable
+fun OrderScreen(id: String) {
+    LaunchedEffect(id) {             // एक load, जो सिर्फ id बदलने पर दोबारा चलता है
+        load(id)
+    }
+}
+```
+
+## पूरी API key ही है
+
+<Quiz
+  question="आप `LaunchedEffect(Unit) { viewModel.load(userId) }` लिखते हैं और `userId` बदलने पर भी screen पहले वाले user का data दिखाती रहती है। क्यों?"
+  options={[
+    "`LaunchedEffect` जानबूझकर हर Activity में सिर्फ एक बार चलता है",
+    "Key `Unit` है, जो कभी बदलती नहीं, तो effect दोबारा चलता ही नहीं और पकड़ा हुआ `userId` पहला वाला ही रहता है",
+    "`viewModel.load` को `rememberCoroutineScope` से बुलाना चाहिए",
+  ]}
+  answer={1}
+  explanation="LaunchedEffect तब दोबारा चलता है जब उसकी कोई key बदले, और Unit कभी बदलती नहीं — तो पहली composition पर शुरू हुआ coroutine उसी userId के साथ चलता रहता है जो उसने तब पकड़ा था। userId को key की तरह देने से यह ठीक हो जाता है: पुराना coroutine रोक दिया जाता है और नई value के साथ नया शुरू होता है। उल्टी दिशा वाली गलती भी उतनी ही मायने रखती है। जो key हर recomposition पर बदलती है, जैसे कोई lambda या ताजा बना हुआ कोई object, वह effect को लगातार रोककर दोबारा शुरू करती रहती है, और वह ऐसी request जैसा दिखता है जो कभी खत्म ही नहीं होती। Keys ठीक वही चुनिए जो उस काम के असली inputs हैं।"
+/>
+
+## कौन सा effect किस सवाल के लिए
+
+| API | कब लें |
+| --- | --- |
+| `LaunchedEffect(key)` | Composition से बँधा suspend करने वाला काम; key बदलने पर दोबारा |
+| `rememberCoroutineScope()` | किसी *घटना* से शुरू होने वाला काम, जैसे click |
+| `DisposableEffect(key)` | वह चीज जो दर्ज करनी है और फिर हटानी भी है |
+| `SideEffect` | Compose की state को Compose के बाहर की चीजों तक पहुँचाना |
+| `produceState` | किसी callback या flow को `State` में बदलना |
+| `derivedStateOf` | ऐसी value निकालना जो अपने inputs से कम बदलती है |
+| `snapshotFlow` | Compose की `State` को `Flow` में बदलना |
+| `rememberUpdatedState` | लंबा चलने वाला effect रखते हुए नई lambda पढ़ना |
+
+<Note>
+पहले दो को ही लोग आपस में मिला देते हैं। `LaunchedEffect` इसलिए चलता है कि *composable screen पर
+है*। `rememberCoroutineScope` इसलिए चलता है कि *user ने कुछ किया*। `LaunchedEffect` से किसी click
+वाले काम को चलाना उसे बिना click के चला देता है; composable की body में `rememberCoroutineScope` से
+snackbar दिखाना कभी चलता ही नहीं।
+</Note>
+
+## दर्ज करना और हटाना
+
+```kotlin title="Disposable.kt" numbered
+DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_RESUME) refresh()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+
+    onDispose {
+        lifecycleOwner.lifecycle.removeObserver(observer)
+    }
+}
+```
+
+`DisposableEffect` उन चीजों के लिए `LaunchedEffect` है जो coroutine नहीं हैं। `onDispose` वाला
+हिस्सा जरूरी है — compiler इसके बिना effect लिखने ही नहीं देता, यानी API ही leak को नामुमकिन बना
+देती है।
+
+## Effect वही रखना, पर वह जो इस्तेमाल करे उसे ताजा रखना
+
+```kotlin title="Updated.kt" numbered
+@Composable
+fun AutoDismiss(onTimeout: () -> Unit) {
+    val currentOnTimeout by rememberUpdatedState(onTimeout)
+
+    LaunchedEffect(Unit) {          // जानबूझकर कभी दोबारा नहीं चलता
+        delay(5_000)
+        currentOnTimeout()          // पर सबसे नई lambda बुलाता है
+    }
+}
+```
+
+यहाँ `Unit` सही key है: बुलाने वाले के recompose होने पर पाँच सेकंड का यह timer दोबारा शुरू नहीं
+होना चाहिए। पर इन पाँच सेकंड में जो lambda उसे बुलानी है वह बदल सकती है, और effect सबसे नई वाली
+बिना दोबारा शुरू हुए `rememberUpdatedState` से ही पढ़ता है।
+
+## दूसरी दुनियाओं को `State` में बदलना
+
+```kotlin title="Produce.kt" numbered
+@Composable
+fun rememberLocation(): State<Location?> = produceState<Location?>(initialValue = null) {
+    val callback = LocationCallback { value = it }
+    locationClient.register(callback)
+    awaitDispose { locationClient.unregister(callback) }
+}
+```
+
+`produceState` एक ही call में `LaunchedEffect` और एक `MutableState` है, किसी callback वाली API को
+ढालने के लिए। उल्टी दिशा में, `snapshotFlow` Compose की state को `Flow` में बदलता है:
+
+```kotlin title="ToFlow.kt"
+LaunchedEffect(listState) {
+    snapshotFlow { listState.firstVisibleItemIndex }
+        .distinctUntilChanged()
+        .collect { analytics.trackScroll(it) }
+}
+```
+
+<Detail summary="derivedStateOf, और उसके साथ होने वाली इकलौती गलती">
+`derivedStateOf` अपने inputs के बदलने पर हिसाब दोबारा करता है पर पढ़ने वालों को *खबर* सिर्फ तब
+करता है जब जवाब बदले। इसीलिए वह उस value के लिए सही है जो लगातार बदलती किसी चीज से पढ़ी जा रही हो:
+
+```kotlin title="Derived.kt" numbered
+val showButton by remember {
+    derivedStateOf { listState.firstVisibleItemIndex > 5 }
+}
+```
+
+गलती है `remember` के बिना `derivedStateOf { }` लिखना। तब हर recomposition पर एक नया derived state
+बनता है, उसके पास मिलाने को कोई पुराना जवाब होता ही नहीं, और आपको कीमत पूरी मिलती है फायदा कुछ
+नहीं। अगर वह `remember` के अंदर नहीं है, तो वह आपके लिए कुछ कर ही नहीं रहा।
+
+यह कोई आम cache भी नहीं है। जब जवाब उतनी ही बार बदलता है जितनी बार input — जैसे किसी string को
+format करना — तो सादा `remember(input)` ज्यादा सीधा और सस्ता है।
+</Detail>
+
+## अंदर की बात: कौन कब चलता है
+
+<Timeline>
+  <TimelineItem title="Composition होती है" meta="body चलती है">
+    Effects अभी चले नहीं हैं। वे अपनी keys के साथ बस दर्ज होते हैं।
+  </TimelineItem>
+  <TimelineItem title="Composition लागू होती है" meta="बदलाव पक्के होते हैं">
+    `SideEffect` यहाँ चलता है, हर सफल composition पर — इसीलिए किसी Compose के बाहर वाली चीज तक कोई
+    value पहुँचाने की जगह यही है।
+  </TimelineItem>
+  <TimelineItem title="Effects शुरू होते हैं" meta="frame के बाद">
+    `LaunchedEffect` की bodies composition के coroutine scope पर शुरू होती हैं। नई keys पहले पुराना
+    coroutine रोक देती हैं।
+  </TimelineItem>
+  <TimelineItem title="Composable चला जाता है" meta="सफाई">
+    Coroutines रोक दिए जाते हैं और हर `onDispose` उल्टे क्रम में चलता है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली दो से ही ज्यादातर बनती हैं">
+**बदलते data पर `LaunchedEffect(Unit)`।** Effect पहली value हमेशा के लिए लिए रहता है।
+
+**डाँवाडोल key।** Key की जगह कोई lambda या ताजा बना object effect को हर recomposition पर दोबारा
+शुरू कर देता है, और काम कभी पूरा नहीं होता।
+
+**जहाँ `LaunchedEffect` चाहिए वहाँ `rememberCoroutineScope`।** Composable की body में सीधे
+`scope.launch` इसी पाठ के शुरू वाली requests की झड़ी है।
+
+**बिना `remember` के `derivedStateOf`।** पूरा ताम-झाम, cache कुछ नहीं।
+
+**Effect के बजाय body में काम।** Composable की body में logging, navigation और analytics कितनी बार
+चलेंगे यह तय नहीं, और call छोड़ी गई तो एक बार भी नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. `LaunchedEffect(Unit)` में एक `println` रखिए और composable की body में एक, फिर दस बार recompose
+   कराकर गिनती मिलाइए।
+2. Key को `Unit` से बदलकर कोई parameter कीजिए और effect को ठीक तभी दोबारा चलते देखिए जब चलना चाहिए।
+3. Key की जगह कोई lambda भेजिए और effect को लगातार दोबारा शुरू होते देखिए। `rememberUpdatedState`
+   से ठीक कीजिए।
+4. ऐसा `DisposableEffect` लिखिए जो कोई listener दर्ज करे, फिर आगे navigate कीजिए, और `onDispose`
+   चलते देखिए।
+5. Scroll-to-top button को पहले सीधे `firstVisibleItemIndex` से चलाइए, फिर `derivedStateOf` से, और
+   Layout Inspector में recomposition की गिनती मिलाइए।
+6. किसी `derivedStateOf` के चारों तरफ से `remember` हटाइए और गिनती को वापस चढ़ते देखिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| सफाई | Composable की body में कोई effect नहीं, कभी नहीं |
+| `LaunchedEffect(key)` | Composition से बँधा suspend काम; key बदलने पर दोबारा |
+| Key का चुनाव | ठीक वही inputs जिन पर वह काम टिका है |
+| `rememberCoroutineScope` | किसी घटना से शुरू होने वाले काम के लिए |
+| `DisposableEffect` | दर्ज करना, और साथ में जरूरी `onDispose` |
+| `SideEffect` | हर composition के बाद Compose के बाहर तक पहुँचाना |
+| `rememberUpdatedState` | Effect दोबारा शुरू किए बिना सबसे नई lambda |
+| `produceState` | Callback या flow से `State` |
+| `snapshotFlow` | `State` से `Flow` |
+| `derivedStateOf` | अपने inputs से कम खबर करता है; `remember` चाहिए |
+
+<Interview title="वह सवाल जो पढ़ने और करने को जल्दी अलग कर देता है">
+"`LaunchedEffect` कब लेते हैं और `rememberCoroutineScope` कब?"
+
+`LaunchedEffect` उस काम के लिए जो इसलिए होना चाहिए कि composable screen पर है — composable के जाते
+ही वह रुक जाता है और key बदलने पर दोबारा शुरू होता है। `rememberCoroutineScope` उस काम के लिए जो
+किसी घटना से शुरू होता है, जैसे click, जिसे किसी composition से बाँधना है ही नहीं। असली इस्तेमाल
+दिखाने वाली line key है: बदलते data पर `LaunchedEffect(Unit)` effects का सबसे आम bug है, और
+डाँवाडोल key वही गलती दूसरी दिशा में है।
+</Interview>

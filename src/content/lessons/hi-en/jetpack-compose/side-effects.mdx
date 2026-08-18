@@ -1,0 +1,219 @@
+---
+title: "Side effects: LaunchedEffect, DisposableEffect aur unke saathi"
+description: Composable ko saaf-suthra rehna hai, isliye jis cheez ka koi result hota hai wo kisi effect API se hokar jati hai. Har ek is baat ka alag jawab deta hai ki kaam shuru kab hoga aur rukega kab.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Effect API kaam ko **composition ki umar aur kisi key** se baandh deta hai. Composable ke aate hi
+wo shuru hota hai, uske jate hi rukta hai, aur key badalne par dobara shuru hota hai. Effect ke
+lagbhag har bug ki jad galat key chunna hai.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+```kotlin title="Wrong.kt"
+@Composable
+fun OrderScreen(id: String, scope: CoroutineScope) {
+    scope.launch { load(id) }        // har recomposition par ek naya coroutine
+    // ...
+}
+```
+
+Composable ek hi frame mein kai baar chal sakta hai, to ye anginat loads shuru kar deta hai. Ye
+koi halki si barbadi nahi hai; ye requests ki jhadi hai.
+
+```kotlin title="Right.kt" numbered
+@Composable
+fun OrderScreen(id: String) {
+    LaunchedEffect(id) {             // ek load, jo sirf id badalne par dobara chalta hai
+        load(id)
+    }
+}
+```
+
+## Poori API key hi hai
+
+<Quiz
+  question="Aap `LaunchedEffect(Unit) { viewModel.load(userId) }` likhte hain aur `userId` badalne par bhi screen pehle wale user ka data dikhati rehti hai. Kyun?"
+  options={[
+    "`LaunchedEffect` jaanbujhkar har Activity mein sirf ek baar chalta hai",
+    "Key `Unit` hai, jo kabhi badalti nahi, to effect dobara chalta hi nahi aur pakda hua `userId` pehla wala hi rehta hai",
+    "`viewModel.load` ko `rememberCoroutineScope` se bulana chahiye",
+  ]}
+  answer={1}
+  explanation="LaunchedEffect tab dobara chalta hai jab uski koi key badle, aur Unit kabhi badalti nahi — to pehli composition par shuru hua coroutine usi userId ke saath chalta rehta hai jo usne tab pakda tha. userId ko key ki tarah dene se ye theek ho jata hai: purana coroutine rok diya jata hai aur nai value ke saath naya shuru hota hai. Ulti disha wali galti bhi utni hi maayne rakhti hai. Jo key har recomposition par badalti hai, jaise koi lambda ya taza bana hua koi object, wo effect ko lagatar rokkar dobara shuru karti rehti hai, aur wo aisi request jaisa dikhta hai jo kabhi khatam hi nahi hoti. Keys theek wahi chuniye jo us kaam ke asli inputs hain."
+/>
+
+## Kaun sa effect kis sawal ke liye
+
+| API | Kab lein |
+| --- | --- |
+| `LaunchedEffect(key)` | Composition se bandha suspend karne wala kaam; key badalne par dobara |
+| `rememberCoroutineScope()` | Kisi *ghatna* se shuru hone wala kaam, jaise click |
+| `DisposableEffect(key)` | Wo cheez jo darj karni hai aur phir hatani bhi hai |
+| `SideEffect` | Compose ki state ko Compose ke bahar ki cheezon tak pahunchana |
+| `produceState` | Kisi callback ya flow ko `State` mein badalna |
+| `derivedStateOf` | Aisi value nikalna jo apne inputs se kam badalti hai |
+| `snapshotFlow` | Compose ki `State` ko `Flow` mein badalna |
+| `rememberUpdatedState` | Lamba chalne wala effect rakhte hue nai lambda padhna |
+
+<Note>
+Pehle do ko hi log aapas mein mila dete hain. `LaunchedEffect` isliye chalta hai ki *composable
+screen par hai*. `rememberCoroutineScope` isliye chalta hai ki *user ne kuch kiya*.
+`LaunchedEffect` se kisi click wale kaam ko chalana use bina click ke chala deta hai; composable ki
+body mein `rememberCoroutineScope` se snackbar dikhana kabhi chalta hi nahi.
+</Note>
+
+## Darj karna aur hatana
+
+```kotlin title="Disposable.kt" numbered
+DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_RESUME) refresh()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+
+    onDispose {
+        lifecycleOwner.lifecycle.removeObserver(observer)
+    }
+}
+```
+
+`DisposableEffect` un cheezon ke liye `LaunchedEffect` hai jo coroutine nahi hain. `onDispose` wala
+hissa zaruri hai — compiler iske bina effect likhne hi nahi deta, yani API hi leak ko namumkin bana
+deti hai.
+
+## Effect wahi rakhna, par wo jo istemal kare use taza rakhna
+
+```kotlin title="Updated.kt" numbered
+@Composable
+fun AutoDismiss(onTimeout: () -> Unit) {
+    val currentOnTimeout by rememberUpdatedState(onTimeout)
+
+    LaunchedEffect(Unit) {          // jaanbujhkar kabhi dobara nahi chalta
+        delay(5_000)
+        currentOnTimeout()          // par sabse nai lambda bulata hai
+    }
+}
+```
+
+Yahan `Unit` sahi key hai: bulane wale ke recompose hone par paanch second ka ye timer dobara shuru
+nahi hona chahiye. Par in paanch second mein jo lambda use bulani hai wo badal sakti hai, aur effect
+sabse nai wali bina dobara shuru hue `rememberUpdatedState` se hi padhta hai.
+
+## Doosri duniyaon ko `State` mein badalna
+
+```kotlin title="Produce.kt" numbered
+@Composable
+fun rememberLocation(): State<Location?> = produceState<Location?>(initialValue = null) {
+    val callback = LocationCallback { value = it }
+    locationClient.register(callback)
+    awaitDispose { locationClient.unregister(callback) }
+}
+```
+
+`produceState` ek hi call mein `LaunchedEffect` aur ek `MutableState` hai, kisi callback wali API ko
+dhalne ke liye. Ulti disha mein, `snapshotFlow` Compose ki state ko `Flow` mein badalta hai:
+
+```kotlin title="ToFlow.kt"
+LaunchedEffect(listState) {
+    snapshotFlow { listState.firstVisibleItemIndex }
+        .distinctUntilChanged()
+        .collect { analytics.trackScroll(it) }
+}
+```
+
+<Detail summary="derivedStateOf, aur uske saath hone wali iklauti galti">
+`derivedStateOf` apne inputs ke badalne par hisab dobara karta hai par padhne walon ko *khabar*
+sirf tab karta hai jab jawab badle. Isiliye wo us value ke liye sahi hai jo lagatar badalti kisi
+cheez se padhi ja rahi ho:
+
+```kotlin title="Derived.kt" numbered
+val showButton by remember {
+    derivedStateOf { listState.firstVisibleItemIndex > 5 }
+}
+```
+
+Galti hai `remember` ke bina `derivedStateOf { }` likhna. Tab har recomposition par ek naya derived
+state banta hai, uske paas milane ko koi purana jawab hota hi nahi, aur aapko keemat poori milti
+hai faayda kuch nahi. Agar wo `remember` ke andar nahi hai, to wo aapke liye kuch kar hi nahi raha.
+
+Ye koi aam cache bhi nahi hai. Jab jawab utni hi baar badalta hai jitni baar input — jaise kisi
+string ko format karna — to saada `remember(input)` zyada seedha aur sasta hai.
+</Detail>
+
+## Andar ki baat: kaun kab chalta hai
+
+<Timeline>
+  <TimelineItem title="Composition hoti hai" meta="body chalti hai">
+    Effects abhi chale nahi hain. Wo apni keys ke saath bas darj hote hain.
+  </TimelineItem>
+  <TimelineItem title="Composition lagu hoti hai" meta="badlaav pakke hote hain">
+    `SideEffect` yahan chalta hai, har safal composition par — isiliye kisi Compose ke bahar wali
+    cheez tak koi value pahunchane ki jagah yahi hai.
+  </TimelineItem>
+  <TimelineItem title="Effects shuru hote hain" meta="frame ke baad">
+    `LaunchedEffect` ki bodies composition ke coroutine scope par shuru hoti hain. Nai keys pehle
+    purana coroutine rok deti hain.
+  </TimelineItem>
+  <TimelineItem title="Composable chala jata hai" meta="safai">
+    Coroutines rok diye jate hain aur har `onDispose` ulte kram mein chalta hai.
+  </TimelineItem>
+</Timeline>
+
+## Common galtiyan
+
+<Pitfall title="Paanch, aur pehli do se hi zyadatar banti hain">
+**Badalte data par `LaunchedEffect(Unit)`.** Effect pehli value hamesha ke liye liye rehta hai.
+
+**Daanwadol key.** Key ki jagah koi lambda ya taza bana object effect ko har recomposition par
+dobara shuru kar deta hai, aur kaam kabhi poora nahi hota.
+
+**Jahan `LaunchedEffect` chahiye wahan `rememberCoroutineScope`.** Composable ki body mein seedhe
+`scope.launch` isi paath ke shuru wali requests ki jhadi hai.
+
+**Bina `remember` ke `derivedStateOf`.** Poora taam-jhaam, cache kuch nahi.
+
+**Effect ke bajaye body mein kaam.** Composable ki body mein logging, navigation aur analytics
+kitni baar chalenge ye tay nahi, aur call chhodi gayi to ek baar bhi nahi.
+</Pitfall>
+
+## Practice
+
+1. `LaunchedEffect(Unit)` mein ek `println` rakhiye aur composable ki body mein ek, phir das baar
+   recompose karakar ginti milaiye.
+2. Key ko `Unit` se badalkar koi parameter kijiye aur effect ko theek tabhi dobara chalte dekhiye
+   jab chalna chahiye.
+3. Key ki jagah koi lambda bhejiye aur effect ko lagatar dobara shuru hote dekhiye.
+   `rememberUpdatedState` se theek kijiye.
+4. Aisa `DisposableEffect` likhiye jo koi listener darj kare, phir aage navigate kijiye, aur
+   `onDispose` chalte dekhiye.
+5. Scroll-to-top button ko pehle seedhe `firstVisibleItemIndex` se chalaiye, phir `derivedStateOf`
+   se, aur Layout Inspector mein recomposition ki ginti milaiye.
+6. Kisi `derivedStateOf` ke charon taraf se `remember` hataiye aur ginti ko wapas chadhte dekhiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Safai | Composable ki body mein koi effect nahi, kabhi nahi |
+| `LaunchedEffect(key)` | Composition se bandha suspend kaam; key badalne par dobara |
+| Key ka chunaav | Theek wahi inputs jin par wo kaam tika hai |
+| `rememberCoroutineScope` | Kisi ghatna se shuru hone wale kaam ke liye |
+| `DisposableEffect` | Darj karna, aur saath mein zaruri `onDispose` |
+| `SideEffect` | Har composition ke baad Compose ke bahar tak pahunchana |
+| `rememberUpdatedState` | Effect dobara shuru kiye bina sabse nai lambda |
+| `produceState` | Callback ya flow se `State` |
+| `snapshotFlow` | `State` se `Flow` |
+| `derivedStateOf` | Apne inputs se kam khabar karta hai; `remember` chahiye |
+
+<Interview title="Wo sawal jo padhne aur karne ko jaldi alag kar deta hai">
+"`LaunchedEffect` kab lete hain aur `rememberCoroutineScope` kab?"
+
+`LaunchedEffect` us kaam ke liye jo isliye hona chahiye ki composable screen par hai — composable
+ke jate hi wo ruk jata hai aur key badalne par dobara shuru hota hai. `rememberCoroutineScope` us
+kaam ke liye jo kisi ghatna se shuru hota hai, jaise click, jise kisi composition se baandhna hai
+hi nahi. Asli istemal dikhane wali line key hai: badalte data par `LaunchedEffect(Unit)` effects ka
+sabse aam bug hai, aur daanwadol key wahi galti doosri disha mein hai.
+</Interview>
