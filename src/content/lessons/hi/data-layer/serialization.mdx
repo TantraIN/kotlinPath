@@ -1,0 +1,233 @@
+---
+title: kotlinx.serialization और Moshi के साथ JSON
+description: DTO एक दावा है कि server क्या भेजता है, और compiler उसे जाँच नहीं सकता। आपके हाथ में यह है कि जब वह दावा गलत निकले तब parser क्या करे।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+JSON parse करना आसान है। जो हिस्सा तय करता है कि server के बदलने पर आपका ऐप बचेगा या नहीं, वह यह है
+कि **अनजाने field**, **गायब field** और **वहाँ null जहाँ आपने वादा किया था कि नहीं होगा** — इन तीन
+अलग-अलग हालतों का क्या होता है, जिन्हें लोग आदतन एक ही मान लेते हैं।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+DTO वही जगह है जहाँ server का बुरा करार या तो रुकता है या फैलता है:
+
+```kotlin title="OrderDto.kt" numbered
+@Serializable
+data class OrderDto(
+    val id: String,
+    @SerialName("created_at") val createdAt: String,
+    val total: Int,
+    val note: String? = null,
+)
+```
+
+उस class की हर बात एक वादा है: `id` हमेशा आता है, `note` न भी हो सकता है, `total` एक संख्या है।
+इनमें से किसी की पुष्टि कोई नहीं करता। Server दूसरे लोग लिखते हैं, वह उनके हिसाब से बदलता है, और
+टूटे हुए वादे की खबर आपको सबसे पहले किसी crash report से मिलती है।
+
+तो काम का सवाल यह नहीं है कि "JSON parse कैसे करूँ", बल्कि यह कि "जब मैं गलत निकलूँ तब मेरा parser
+क्या करता है"।
+
+## तीन नाकामियाँ, जो एक जैसी दिखती हैं और हैं नहीं
+
+`val note: String? = null` को देखते हुए:
+
+| Server भेजता है | क्या होता है | क्यों |
+| --- | --- | --- |
+| `{"note": "hi"}` | `note = "hi"` | मौजूद है और ठीक है |
+| `{}` | `note = null` | गायब है, तो default लगा |
+| `{"note": null}` | `note = null` | खुलकर null, जिसे `String?` मानता है |
+
+अब बिना default वाले `val total: Int` को देखते हुए:
+
+| Server भेजता है | क्या होता है |
+| --- | --- |
+| `{"total": 499}` | `total = 499` |
+| `{}` | **फेंकता है** — जरूरी field गायब |
+| `{"total": null}` | **फेंकता है** — `Int` nullable नहीं है |
+
+Nullable होना और default होना अलग सवालों के जवाब हैं। `String?` कहता है *value null हो सकती है*;
+`= null` कहता है *key हो ही न, यह भी चलेगा*। जो field दोनों मायनों में वैकल्पिक है उसे दोनों चाहिए,
+और "staging में चलता है, production में crash होता है" की सबसे आम जड़ यही है।
+
+<Quiz
+  question="कोई ऐप महीनों ठीक parse करता रहा। Backend ने order वाले response में एक नया field जोड़ा और ऐप हर request पर crash करने लगा। गलत क्या था?"
+  options={[
+    "DTO में वह नया field नहीं था, तो उसे जोड़कर ऐप update करना पड़ेगा",
+    "Parser को अनजानी keys छोड़ने के लिए कहा ही नहीं गया था, तो जो field ऐप ने कभी माँगा ही नहीं वह जानलेवा error बन गया",
+    "नया field nullable था और DTO nullable नहीं था",
+  ]}
+  answer={1}
+  explanation="Field जोड़ना backend का सबसे आम काम है, और वह पीछे की तरफ चलता रहने वाला बदलाव माना जाता है — पुराने clients उसे बस पढ़ते नहीं। पर kotlinx.serialization default से सख्त है: JSON की जिस key से कोई property मेल नहीं खाती, उस पर SerializationException आता है। तो जो बदलाव कुछ भी तोड़ने के लिए नहीं था वह हर उस client को गिरा देता है जिसने ignoreUnknownKeys = true नहीं रखा। DTO को वह नया field नहीं चाहिए; parser को उसे छोड़ देने की इजाजत चाहिए। Moshi का default इसका उलटा है और वह अनजानी keys चुपचाप छोड़ देता है, जो यहाँ ज्यादा मेहरबान है और तब कम मददगार जब आपने सच में किसी property का नाम गलत लिखा हो। दोनों हाल में यह Json या Moshi वाले instance में एक बार सोच-समझकर लेने का फैसला है, crash report से पता चलने वाली चीज नहीं।"
+/>
+
+## दोनों libraries
+
+<Compare
+  left={{
+    title: "kotlinx.serialization",
+    subtitle: "Kotlin का compiler plugin",
+    accent: "violet",
+    points: [
+      "+ Defaults, nullability और value classes ठीक से समझता है",
+      "+ कोई reflection नहीं, तो KMP पर चलता है और जल्दी शुरू होता है",
+      "+ Serializers compile वक्त बनते हैं, KSP का चक्कर नहीं",
+      "- Default से सख्त; जब तक न कहें, अनजानी keys फेंकती हैं",
+    ],
+  }}
+  right={{
+    title: "Moshi",
+    subtitle: "Java के जमाने की library, Kotlin की समझ के साथ",
+    accent: "emerald",
+    points: [
+      "+ Default से नरम; अनजानी keys छोड़ दी जाती हैं",
+      "+ Server की टेढ़ी शक्लों के लिए पका हुआ adapters का संसार",
+      "+ Gson से आए codebase में जाना-पहचाना लगता है",
+      "- Codegen वाला adapter चाहिए, वरना reflection पर उतर आता है",
+    ],
+  }}
+/>
+
+सिर्फ Kotlin वाले नए ऐप के लिए `kotlinx.serialization` ही डिफॉल्ट चुनाव है: वही है जो जानता है कि
+Kotlin के default argument का मतलब क्या है। Moshi उस codebase में अपनी जगह बनाता है जिसमें पहले से
+रखने लायक adapters हैं, या जो Gson से हट रहा है।
+
+<Note>
+Gson अब भी पुराने projects में और बहुत सारी सिखाने वाली सामग्री में दिखता है। वह Kotlin से पहले का
+है और objects बनाने के लिए reflection लेता है, यानी वह बिना किसी हिचक के किसी गैर-null `String` में
+`null` छोड़ सकता है — type कहता है यह हो नहीं सकता, debugger कहता है हो गया। नया कुछ भी उससे शुरू
+मत कीजिए।
+</Note>
+
+## Parser को सजाना
+
+```kotlin title="Json.kt" numbered
+val json = Json {
+    ignoreUnknownKeys = true    // server का नया field जानलेवा नहीं होना चाहिए
+    coerceInputValues = true    // default वाले गैर-null field पर null आए तो default ले लीजिए
+    explicitNulls = false       // लिखते वक्त null छोड़ दीजिए, "key": null भेजने के बजाय
+    isLenient = false           // आते हुए JSON पर सख्ती बनी रहे
+}
+```
+
+`ignoreUnknownKeys` वह है जो हमेशा चाहिए। बाकी तीन असली चुनाव हैं:
+
+**`coerceInputValues`** "default वाले field पर server ने `null` भेजा" को crash से बदलकर default बना
+देता है। किसी दिखाने भर वाले field के लिए यह अच्छे तरीके से उदार है और जिससे हिसाब करना है उसके लिए
+बुरे तरीके से, क्योंकि जो `0` असल में `null` था उसे बाद में पहचाना नहीं जा सकता।
+
+**`explicitNulls = false`** बदलता है कि आप *लिखते* क्या हैं, और `PATCH` के लिए यह मायने रखता है:
+इसके साथ null property छोड़ दी जाती है, और जो server छूटने को "मत बदलो" और `null` को "यह field खाली
+कर दो" मानता है वह सही काम करेगा। इसे `true` पर छोड़िए और हर patch आपके न भेजे हुए हर field को खाली
+कर देगा।
+
+**`isLenient`** बिगड़ा हुआ JSON भी मान लेता है, जैसे बिना quotes वाली keys। इसे बंद रखिए — गलत JSON
+भेजती API बताने लायक दिक्कत है, सोख लेने लायक नहीं।
+
+<Detail summary="Parse करने वाला code आता कहाँ से है, और वह आपके build में क्यों दिखता है">
+`kotlinx.serialization` एक **compiler plugin** है। `@Serializable` से Kotlin compiler उसी
+compilation में उस class के साथ-साथ एक serializer बना देता है, इसीलिए build में कोई annotation
+processor नहीं है और चलते वक्त कोई reflection नहीं। इसीलिए plugin की version को आपकी Kotlin version
+के साथ चलना पड़ता है — मेल न खाने पर वह build की error है, चलते वक्त का अचरज नहीं।
+
+`moshi-kotlin-codegen` वाला Moshi adapters **KSP** से बनाता है, तो वे `build/generated` में दिखते
+हैं और एक processing का कदम जोड़ते हैं। Codegen के बिना `moshi-kotlin` reflection पर उतर आता है, जो
+`kotlin-reflect` खींच लाता है — कई megabytes, और पहली बार धीमा। अगर Moshi वाला कोई ऐप उम्मीद से बड़ा
+है, तो वजह आमतौर पर यही है।
+
+नतीजा दोनों के लिए एक ही है: ये build वक्त के करार हैं। जिस `@Serializable` class को R8 हटा या नाम
+बदल दे वह सिर्फ release में टूटती है, इसलिए दोनों libraries अपने consumer rules खुद भेजती हैं और जब
+तक सच में कुछ नाकाम न हो रहा हो, अपने नियम मत लिखिए।
+</Detail>
+
+## नाम, और server सच में जो शक्लें भेजते हैं
+
+```kotlin title="Naming.kt" numbered
+@Serializable
+data class OrderDto(
+    @SerialName("order_id") val id: String,        // यहाँ एक नाम, तार पर दूसरा
+    @SerialName("created_at") val createdAt: String,
+)
+
+// या, एक बार, उस server के लिए जो पूरा snake_case है
+val json = Json { namingStrategy = JsonNamingStrategy.SnakeCase }
+```
+
+जो response किसी type वाले field के हिसाब से शक्ल बदलता है, उसे nullables से भरी एक class के बजाय
+sealed पेड़ की तरह लिखिए:
+
+```kotlin title="Polymorphic.kt" numbered
+@Serializable
+@JsonClassDiscriminator("type")
+sealed interface PaymentDto {
+    @Serializable @SerialName("card") data class Card(val last4: String) : PaymentDto
+    @Serializable @SerialName("upi") data class Upi(val vpa: String) : PaymentDto
+}
+```
+
+चपटा विकल्प — `last4: String?` और `vpa: String?` वाली एक class — compile होता है और ठीक उसी तरह
+गलत है जैसे architecture वाले phase में UI state के लिए गलत था: वह ऐसा card payment बना सकता है
+जिसके साथ UPI का पता भी हो, जो server कभी भेज ही नहीं सकता। Sealed पेड़ उस जोड़ को लिखने लायक ही
+नहीं रहने देता, और उस पर `when` पूरा होता है।
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, जो सही-सलामत production तक पहुँच जाती हैं">
+**`ignoreUnknownKeys` न होना।** Backend एक field जोड़ता है, हर client गिर जाता है। ऊपर वाला quiz
+देखिए।
+
+**Nullable और वैकल्पिक को एक समझना।** `String?` null value की इजाजत देता है; `= null` key के गायब
+होने की। दोनों मायनों में वैकल्पिक को दोनों चाहिए।
+
+**DTO, entity और domain के लिए एक ही class।** तब JSON के किसी field का नाम बदलना आपके database की
+schema और आपके UI तक एक साथ पहुँचता है — repository वाले पाठ की mapping functions वही जगह हैं जहाँ
+यह रुकता है।
+
+**`PATCH` के साथ `explicitNulls = true`।** हर patch request आपके न भेजे हुए हर field को खाली कर
+देती है।
+
+**Server के nullability वाले दस्तावेज पर भरोसा करना।** अगर किसी field की गारंटी नहीं है, तो उसे
+nullable लिखिए और तय कीजिए कि UI क्या करेगा — parser किसी वादे की पुष्टि नहीं कर सकता, और न आप।
+</Pitfall>
+
+## अभ्यास
+
+1. एक अनजाने field वाला response parse कीजिए, पहले बिना `ignoreUnknownKeys` के और फिर उसके साथ।
+2. Default वाले किसी field को खुलकर `null` भेजिए। उसे फेंकते देखिए, फिर `coerceInputValues` चालू
+   करके न फेंकते देखिए।
+3. `@SerialName` से किसी property का नाम बदलिए और पक्का कीजिए कि तार वाली शक्ल नहीं बदली।
+4. जो response type के हिसाब से बदलता है उसे sealed interface की तरह लिखिए, और बिना `else` वाला
+   `when` लिखिए।
+5. एक null property वाला object दोनों `explicitNulls` settings पर serialise कीजिए और दोनों JSON का
+   फर्क देखिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| DTO | Server क्या भेजता है, इसका ऐसा दावा जिसकी पुष्टि नहीं हो सकती |
+| `String?` | Value null हो सकती है |
+| `= null` | Key गायब हो सकती है |
+| `ignoreUnknownKeys` | Server का नया field जानलेवा नहीं होना चाहिए |
+| `coerceInputValues` | Default वाले field पर null आए तो default बन जाता है |
+| `explicitNulls = false` | लिखते वक्त null छोड़िए — `PATCH` को यही चाहिए |
+| `@SerialName` | तार वाला नाम property के नाम से अलग |
+| Sealed DTO | उन responses के लिए जिनकी शक्ल किसी type वाले field से बदलती है |
+| kotlinx | Compiler plugin, Kotlin की समझ, default से सख्त |
+| Moshi | KSP या reflection, default से नरम |
+
+<Interview title="पीछे की तरफ चलते रहने का सवाल, library के भेस में">
+"जब backend किसी response में एक field जोड़ देता है तब क्या होता है?"
+
+कुछ नहीं, अगर parser को अनजानी keys छोड़ने के लिए कहा गया हो — और पूरी बात यही है, क्योंकि field
+जोड़ना पीछे की तरफ चलता रहने वाला बदलाव माना जाता है। `kotlinx.serialization` में यह default नहीं
+है, तो बिना सजाए हुए client उस बदलाव पर गिर जाता है जो कुछ भी तोड़ने के लिए नहीं था।
+
+जिस मिलती-जुलती हालत को अलग रखना चाहिए वह है किसी field का *हट जाना* या `null` आना। वह parser की
+setting नहीं, लिखने का फैसला है: nullable यानी value null हो सकती है, default यानी key गायब हो सकती
+है, और सच में वैकल्पिक field को दोनों चाहिए। मैं DTO को domain के model से अलग भी रखूँगा, ताकि जब
+करार सच में बदले तो सिर्फ mapping वाला function हिले, हर वह screen नहीं जो उसे दिखाती थी।
+</Interview>

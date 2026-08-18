@@ -1,0 +1,239 @@
+---
+title: kotlinx.serialization aur Moshi ke saath JSON
+description: DTO ek dawa hai ki server kya bhejta hai, aur compiler use check nahi kar sakta. Aapke haath mein ye hai ki jab wo dawa galat nikle tab parser kya kare.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+JSON parse karna aasan hai. Jo hissa tay karta hai ki server ke badalne par aapka app bachega ya
+nahi, wo ye hai ki **anjane field**, **gayab field** aur **wahan null jahan aapne wada kiya tha ki
+nahi hoga** — in teen alag-alag haalaton ka kya hota hai, jinhe log aadatan ek hi maan lete hain.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+DTO wahi jagah hai jahan server ka bura karaar ya to rukta hai ya phailta hai:
+
+```kotlin title="OrderDto.kt" numbered
+@Serializable
+data class OrderDto(
+    val id: String,
+    @SerialName("created_at") val createdAt: String,
+    val total: Int,
+    val note: String? = null,
+)
+```
+
+Us class ki har baat ek wada hai: `id` hamesha aata hai, `note` na bhi ho sakta hai, `total` ek
+number hai. Inmein se kisi ki pushti koi nahi karta. Server doosre log likhte hain, wo unke hisab se
+badalta hai, aur toote hue wade ki khabar aapko sabse pehle kisi crash report se milti hai.
+
+To kaam ka sawal ye nahi hai ki "JSON parse kaise karoon", balki ye ki "jab main galat niklun tab
+mera parser kya karta hai".
+
+## Teen nakamiyan, jo ek jaisi dikhti hain aur hain nahi
+
+`val note: String? = null` ko dekhte hue:
+
+| Server bhejta hai | Kya hota hai | Kyun |
+| --- | --- | --- |
+| `{"note": "hi"}` | `note = "hi"` | Maujood hai aur theek hai |
+| `{}` | `note = null` | Gayab hai, to default laga |
+| `{"note": null}` | `note = null` | Khulkar null, jise `String?` manta hai |
+
+Ab bina default wale `val total: Int` ko dekhte hue:
+
+| Server bhejta hai | Kya hota hai |
+| --- | --- |
+| `{"total": 499}` | `total = 499` |
+| `{}` | **Phenkta hai** — zaruri field gayab |
+| `{"total": null}` | **Phenkta hai** — `Int` nullable nahi hai |
+
+Nullable hona aur default hona alag sawalon ke jawab hain. `String?` kehta hai *value null ho sakti
+hai*; `= null` kehta hai *key ho hi na, ye bhi chalega*. Jo field dono maayno mein optional hai use
+dono chahiye, aur "staging mein chalta hai, production mein crash hota hai" ki sabse aam jad yahi
+hai.
+
+<Quiz
+  question="Koi app mahinon theek parse karta raha. Backend ne order wale response mein ek naya field joda aur app har request par crash karne laga. Galat kya tha?"
+  options={[
+    "DTO mein wo naya field nahi tha, to use jodkar app update karna padega",
+    "Parser ko anjani keys chhodne ke liye kaha hi nahi gaya tha, to jo field app ne kabhi maanga hi nahi wo jaanleva error ban gaya",
+    "Naya field nullable tha aur DTO nullable nahi tha",
+  ]}
+  answer={1}
+  explanation="Field jodna backend ka sabse aam kaam hai, aur wo peeche ki taraf chalta rehne wala badlaav mana jata hai — purane clients use bas padhte nahi. Par kotlinx.serialization default se sakht hai: JSON ki jis key se koi property mel nahi khati, us par SerializationException aata hai. To jo badlaav kuch bhi todne ke liye nahi tha wo har us client ko gira deta hai jisne ignoreUnknownKeys = true nahi rakha. DTO ko wo naya field nahi chahiye; parser ko use chhod dene ki ijazat chahiye. Moshi ka default iska ulta hai aur wo anjani keys chupchap chhod deta hai, jo yahan zyada meharban hai aur tab kam madadgar jab aapne sach mein kisi property ka naam galat likha ho. Dono haal mein ye Json ya Moshi wale instance mein ek baar soch-samajhkar lene ka faisla hai, crash report se pata chalne wali cheez nahi."
+/>
+
+## Dono libraries
+
+<Compare
+  left={{
+    title: "kotlinx.serialization",
+    subtitle: "Kotlin ka compiler plugin",
+    accent: "violet",
+    points: [
+      "+ Defaults, nullability aur value classes theek se samajhta hai",
+      "+ Koi reflection nahi, to KMP par chalta hai aur jaldi shuru hota hai",
+      "+ Serializers compile waqt bante hain, KSP ka chakkar nahi",
+      "- Default se sakht; jab tak na kahein, anjani keys phenkti hain",
+    ],
+  }}
+  right={{
+    title: "Moshi",
+    subtitle: "Java ke zamane ki library, Kotlin ki samajh ke saath",
+    accent: "emerald",
+    points: [
+      "+ Default se naram; anjani keys chhod di jati hain",
+      "+ Server ki tedhi shakalon ke liye paka hua adapters ka sansaar",
+      "+ Gson se aaye codebase mein jana-pehchana lagta hai",
+      "- Codegen wala adapter chahiye, warna reflection par utar aata hai",
+    ],
+  }}
+/>
+
+Sirf Kotlin wale naye app ke liye `kotlinx.serialization` hi default chunaav hai: wahi hai jo janta
+hai ki Kotlin ke default argument ka matlab kya hai. Moshi us codebase mein apni jagah banata hai
+jisme pehle se rakhne layak adapters hain, ya jo Gson se hat raha hai.
+
+<Note>
+Gson ab bhi purane projects mein aur bahut saari sikhane wali samagri mein dikhta hai. Wo Kotlin se
+pehle ka hai aur objects banane ke liye reflection leta hai, yani wo bina kisi hichak ke kisi
+gair-null `String` mein `null` chhod sakta hai — type kehta hai ye ho nahi sakta, debugger kehta hai
+ho gaya. Naya kuch bhi usse shuru mat kijiye.
+</Note>
+
+## Parser ko sajana
+
+```kotlin title="Json.kt" numbered
+val json = Json {
+    ignoreUnknownKeys = true    // server ka naya field jaanleva nahi hona chahiye
+    coerceInputValues = true    // default wale gair-null field par null aaye to default le lijiye
+    explicitNulls = false       // likhte waqt null chhod dijiye, "key": null bhejne ke bajaye
+    isLenient = false           // aate hue JSON par sakhti bani rahe
+}
+```
+
+`ignoreUnknownKeys` wo hai jo hamesha chahiye. Baaki teen asli chunaav hain:
+
+**`coerceInputValues`** "default wale field par server ne `null` bheja" ko crash se badalkar default
+bana deta hai. Kisi dikhane bhar wale field ke liye ye achhe tarike se udaar hai aur jisse hisab
+karna hai uske liye bure tarike se, kyunki jo `0` asal mein `null` tha use baad mein pehchana nahi
+ja sakta.
+
+**`explicitNulls = false`** badalta hai ki aap *likhte* kya ho, aur `PATCH` ke liye ye maayne rakhta
+hai: iske saath null property chhod di jati hai, aur jo server chhootne ko "mat badlo" aur `null` ko
+"ye field khaali kar do" manta hai wo sahi kaam karega. Ise `true` par chhodiye aur har patch aapke
+na bheje hue har field ko khaali kar dega.
+
+**`isLenient`** bigda hua JSON bhi maan leta hai, jaise bina quotes wali keys. Ise band rakhiye —
+galat JSON bhejti API batane layak mushkil hai, sokh lene layak nahi.
+
+<Detail summary="Parse karne wala code aata kahan se hai, aur wo aapke build mein kyun dikhta hai">
+`kotlinx.serialization` ek **compiler plugin** hai. `@Serializable` se Kotlin compiler usi
+compilation mein us class ke saath-saath ek serializer bana deta hai, isiliye build mein koi
+annotation processor nahi hai aur chalte waqt koi reflection nahi. Isiliye plugin ki version ko aapki
+Kotlin version ke saath chalna padta hai — mel na khane par wo build ki error hai, chalte waqt ka
+achraj nahi.
+
+`moshi-kotlin-codegen` wala Moshi adapters **KSP** se banata hai, to wo `build/generated` mein dikhte
+hain aur ek processing ka kadam jodte hain. Codegen ke bina `moshi-kotlin` reflection par utar aata
+hai, jo `kotlin-reflect` kheench lata hai — kai megabytes, aur pehli baar dheema. Agar Moshi wala
+koi app ummid se bada hai, to wajah aam taur par yahi hai.
+
+Anjaam dono ke liye ek hi hai: ye build waqt ke karaar hain. Jis `@Serializable` class ko R8 hata ya
+naam badal de wo sirf release mein tootti hai, isliye dono libraries apne consumer rules khud bhejti
+hain aur jab tak sach mein kuch nakaam na ho raha ho, apne niyam mat likhiye.
+</Detail>
+
+## Naam, aur server sach mein jo shakalein bhejte hain
+
+```kotlin title="Naming.kt" numbered
+@Serializable
+data class OrderDto(
+    @SerialName("order_id") val id: String,        // yahan ek naam, taar par doosra
+    @SerialName("created_at") val createdAt: String,
+)
+
+// ya, ek baar, us server ke liye jo poora snake_case hai
+val json = Json { namingStrategy = JsonNamingStrategy.SnakeCase }
+```
+
+Jo response kisi type wale field ke hisab se shakal badalta hai, use nullables se bhari ek class ke
+bajaye sealed ped ki tarah likhiye:
+
+```kotlin title="Polymorphic.kt" numbered
+@Serializable
+@JsonClassDiscriminator("type")
+sealed interface PaymentDto {
+    @Serializable @SerialName("card") data class Card(val last4: String) : PaymentDto
+    @Serializable @SerialName("upi") data class Upi(val vpa: String) : PaymentDto
+}
+```
+
+Chapta vikalp — `last4: String?` aur `vpa: String?` wali ek class — compile hota hai aur theek usi
+tarah galat hai jaise architecture wale phase mein UI state ke liye galat tha: wo aisa card payment
+bana sakta hai jiske saath UPI ka pata bhi ho, jo server kabhi bhej hi nahi sakta. Sealed ped us jod
+ko likhne layak hi nahi rehne deta, aur us par `when` poora hota hai.
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jo sahi-salamat production tak pahunch jati hain">
+**`ignoreUnknownKeys` na hona.** Backend ek field jodta hai, har client gir jata hai. Upar wala quiz
+dekhiye.
+
+**Nullable aur optional ko ek samajhna.** `String?` null value ki ijazat deta hai; `= null` key ke
+gayab hone ki. Dono maayno mein optional ko dono chahiye.
+
+**DTO, entity aur domain ke liye ek hi class.** Tab JSON ke kisi field ka naam badalna aapke database
+ki schema aur aapke UI tak ek saath pahunchta hai — repository wale lesson ki mapping functions wahi
+jagah hain jahan ye rukta hai.
+
+**`PATCH` ke saath `explicitNulls = true`.** Har patch request aapke na bheje hue har field ko khaali
+kar deti hai.
+
+**Server ke nullability wale document par bharosa karna.** Agar kisi field ki guarantee nahi hai, to
+use nullable likhiye aur tay kijiye ki UI kya karega — parser kisi wade ki pushti nahi kar sakta,
+aur na aap.
+</Pitfall>
+
+## Abhyaas
+
+1. Ek anjane field wala response parse kijiye, pehle bina `ignoreUnknownKeys` ke aur phir uske saath.
+2. Default wale kisi field ko khulkar `null` bhejiye. Use phenkte dekhiye, phir `coerceInputValues`
+   chalu karke na phenkte dekhiye.
+3. `@SerialName` se kisi property ka naam badliye aur pakka kijiye ki taar wali shakal nahi badli.
+4. Jo response type ke hisab se badalta hai use sealed interface ki tarah likhiye, aur bina `else`
+   wala `when` likhiye.
+5. Ek null property wala object dono `explicitNulls` settings par serialise kijiye aur dono JSON ka
+   farak dekhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| DTO | Server kya bhejta hai, iska aisa dawa jiski pushti nahi ho sakti |
+| `String?` | Value null ho sakti hai |
+| `= null` | Key gayab ho sakti hai |
+| `ignoreUnknownKeys` | Server ka naya field jaanleva nahi hona chahiye |
+| `coerceInputValues` | Default wale field par null aaye to default ban jata hai |
+| `explicitNulls = false` | Likhte waqt null chhodiye — `PATCH` ko yahi chahiye |
+| `@SerialName` | Taar wala naam property ke naam se alag |
+| Sealed DTO | Un responses ke liye jinki shakal kisi type wale field se badalti hai |
+| kotlinx | Compiler plugin, Kotlin ki samajh, default se sakht |
+| Moshi | KSP ya reflection, default se naram |
+
+<Interview title="Peeche ki taraf chalte rehne ka sawal, library ke bhes mein">
+"Jab backend kisi response mein ek field jod deta hai tab kya hota hai?"
+
+Kuch nahi, agar parser ko anjani keys chhodne ke liye kaha gaya ho — aur poori baat yahi hai, kyunki
+field jodna peeche ki taraf chalta rehne wala badlaav mana jata hai. `kotlinx.serialization` mein ye
+default nahi hai, to bina sajaye hue client us badlaav par gir jata hai jo kuch bhi todne ke liye
+nahi tha.
+
+Jis milti-julti haalat ko alag rakhna chahiye wo hai kisi field ka *hat jana* ya `null` aana. Wo
+parser ki setting nahi, likhne ka faisla hai: nullable yani value null ho sakti hai, default yani key
+gayab ho sakti hai, aur sach mein optional field ko dono chahiye. Main DTO ko domain ke model se alag
+bhi rakhunga, taki jab karaar sach mein badle to sirf mapping wala function hile, har wo screen nahi
+jo use dikhati thi.
+</Interview>
