@@ -1,0 +1,192 @@
+---
+title: Semantics ke saath Compose UI ki padtal
+description: Compose ka test pixels nahi dekhta. Wo semantics ke ped se puchta hai — wahi banawat jo screen reader leta hai — aur isiliye jaanche ja sakne wala UI likhna aur sulabh UI likhna ek hi kaam nikalte hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Compose har composable ko ek **semantics ke ped** se bahar dikhata hai: iska byora ki screen par kya
+hai aur uska matlab kya hai. Aapka test usi ped mein node dhoondhta hai, aur TalkBack bhi. Jo hissa
+jaanchna mushkil hai wo aam taur par wahi hai jise screen reader bhi bata nahi pata.
+</KeyIdea>
+
+## Shakal
+
+```kotlin title="OrderScreenTest.kt" numbered
+class OrderScreenTest {
+
+    @get:Rule val composeRule = createComposeRule()
+
+    @Test
+    fun `shows an empty message when there are no orders`() {
+        composeRule.setContent {
+            OrderScreen(state = OrderUiState(orders = emptyList()), onRefresh = {})
+        }
+
+        composeRule.onNodeWithText("No orders yet").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping refresh calls the callback`() {
+        var refreshed = false
+        composeRule.setContent {
+            OrderScreen(state = OrderUiState(), onRefresh = { refreshed = true })
+        }
+
+        composeRule.onNodeWithContentDescription("Refresh").performClick()
+
+        assertTrue(refreshed)
+    }
+}
+```
+
+`createComposeRule()` ko koi activity nahi chahiye — wo composable ko seedhe rakhta hai, aur isi se ye
+secondon mein chalte hain, na ki Espresso wale dasiyon second mein.
+`createAndroidComposeRule<MainActivity>()` tabhi lijiye jab test ko sach mein wo activity chahiye.
+
+Ye state hoisting ka phal hai. `OrderScreen` apni state parameter mein leta hai aur ghatnayein callbacks
+se batata hai, to test use seedhe chalata hai — na `ViewModel`, na repository, na Hilt.
+
+## Dhoondhne wale aur kaam
+
+```kotlin title="Finders.kt" numbered
+onNodeWithText("Place order")                     // dikhta text
+onNodeWithContentDescription("Refresh")            // icons ke liye, aur TalkBack ke liye
+onNodeWithTag("order_list")                        // sirf test wala hattha
+onAllNodesWithText("Pending")[0]                   // jab kai milte hon
+
+.performClick()
+.performTextInput("2 lattes")
+.performScrollTo()
+.performTouchInput { swipeLeft() }
+
+.assertIsDisplayed()
+.assertIsEnabled()
+.assertTextEquals("Order placed")
+.assertDoesNotExist()
+```
+
+`testTag` ke bajaye text ya content description se dhoondhna behtar hai. User wahi mehsoos karta hai, to
+unhe lene wala test tab nakaam hota hai jab user ka anubhav toote — jabki `testTag` wala label ke galat
+ho jane ke baad bhi pass hota rehta hai.
+
+`testTag` tab apni jagah banata hai jab pakadne ko kuch dikhta hi na ho: koi dibba, koi list jise scroll
+karna hai, do ek jaisi rows jinhe alag batana hai.
+
+<Quiz
+  question="Koi test `setContent` ke turant baad `onNodeWithText(\"Loaded\").assertIsDisplayed()` karta hai, jabki wo screen `LaunchedEffect` mein data lati hai. Wo nakaam hota hai, kehta hai koi node nahi mili. `Thread.sleep(500)` jodne se theek ho jata hai. Sahi ilaaj kya hai?"
+  options={[
+    "Wo sleep rehne dijiye — async UI ko sach mein jamne ka waqt chahiye",
+    "Wo rule ghadi khud aage badhata hai aur Compose se taalmel rakhta hai, par test ne us effect ke poora hone se pehle dawa kar diya. `waitUntil { onAllNodesWithText(\"Loaded\").fetchSemanticsNodes().isNotEmpty() }` lijiye, ya data lane ke bajaye state seedhe dijiye",
+    "`assertIsDisplayed` ki jagah `assertExists` chahiye, jise taalmel ki zarurat nahi"
+  ]}
+  answer={1}
+  explanation="Wo sleep ittefaq se chalta hai aur theek wahi gair-bharosemandi lauta lata hai jisse bachne ke liye Compose ki testing bani hai: wo aapki machine par pass hota hai aur bojh mein dabe CI par nakaam, phir dobara chalane par pass. Wo rule composition se pehle hi taalmel rakhta hai aur uske khaali hone ka intezar karta hai — jo wo jaan nahi sakta wo ye hai ki aapke LaunchedEffect ne aisa kaam shuru kiya jo poora nahi hua, kyunki wo aapka coroutine hai, Compose ka recomposition nahi. waitUntil semantics ke ped ko ek samay ki had ke saath baar-baar dekhta hai aur kisi daud ke bajaye saaf sandesh ke saath nakaam hota hai. Par behtar ilaaj aam taur par upar hai: agar wo screen apni state parameter mein leti, to test ladi hui state seedhe rakh deta aur intezar karne ko kuch hota hi nahi. Baar-baar waitUntil ki zarurat padna aksar ishara hai ki test us ViewModel ko chala raha hai jise kisi unit test ne dhakna chahiye tha."
+/>
+
+## Apni semantics
+
+```kotlin title="Semantics.kt" numbered
+Box(
+    modifier = Modifier
+        .semantics {
+            contentDescription = "Order progress, 40 percent"
+            stateDescription = "In transit"
+        }
+        .progressSemantics(0.4f),
+)
+
+// kisi judi hui cheez ko ek hi cheez ki tarah padhwane ke liye milaiye
+Row(modifier = Modifier.semantics(mergeDescendants = true) { }) {
+    Icon(...); Text("Pending"); Text("2 items")
+}
+```
+
+`mergeDescendants` samajhne layak hai kyunki wo tests aur sulabhta dono ko ek hi disha mein badalta hai:
+uske bina teen composables wali row teen alag nodes hai, to screen reader teen tukde bolta hai aur aapke
+test ko unhe alag-alag dhoondhna padta hai. Uske saath wo row ek node hai, jiska label juda hua hai.
+
+`testTag` khud bhi semantics ki ek cheez hai, aur isiliye kabhi-kabhi `useUnmergedTree = true` chahiye —
+milane se kisi bachche ka tag aam khoj se chhup sakta hai.
+
+<Detail summary="Screenshot wale tests, aur wo kahan baithte hain">
+Upar wale tests banawat par dawa karte hain. Wo ye nahi bata sakte ki text safed par safed hai, ya ki
+koi lamba label apne button se bahar beh raha hai:
+
+```kotlin title="Screenshot.kt" numbered
+@Preview(name = "Empty")
+@Preview(name = "Dark", uiMode = UI_MODE_NIGHT_YES)
+@Preview(name = "Large font", fontScale = 2f)
+@Composable
+private fun OrderScreenPreview() {
+    AppTheme { OrderScreen(state = OrderUiState(), onRefresh = {}) }
+}
+```
+
+Paparazzi aur Roborazzi inhe JVM par banate hain — koi emulator nahi — aur commit ki gayi sunehri
+tasveeron se milate hain, dikhne mein farak aane par build nakaam karte hue. Compose Preview Screenshot
+Testing wahi kaam unhin `@Preview` functions se karta hai jo aapke paas pehle se hain.
+
+`fontScale = 2f` wala preview sabse zyada asli bugs pakadta hai, kyunki tay unchai wala button aur lamba
+anuvad kiya gaya label aisi layout hai jo users ke bade hisse ke liye tootti hai aur team mein kisi ke
+liye nahi.
+
+Keemat ye hai ki design jaanbujhkar badalne par sunehri tasveerein dobara banani padti hain, aur sameeksha
+karne wale ko wo farak sach mein dekhna padta hai. Kisi design system ya maayne rakhti screen ke liye ye
+iske layak hai; har screen ke liye nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli gair-bharosemandi wapas le aati hai">
+**Saamagri ke intezar mein `Thread.sleep`.** `waitUntil` lijiye, ya state seedhe dijiye.
+
+**Har jagah `testTag`.** User ko dikhte label ke galat ho jane ke baad bhi test pass hota hai.
+
+**Zarurat na hone par `createAndroidComposeRule`.** Bina faayde ke dheema.
+
+**Aisi screen dekhna jo apna `ViewModel` khud rakhti hai.** State upar uthaiye aur test ko koi graph
+nahi chahiye.
+
+**`useUnmergedTree` bhoolna.** Milana us node ko chhupa sakta hai jise aap dhoondh rahe ho.
+</Pitfall>
+
+## Abhyaas
+
+1. Aisa test likhiye jo button ko text se dhoondhe aur dawa kare ki callback chala.
+2. Kisi `testTag` wale khoji ko `onNodeWithText` se badliye aur label ka naam badliye — dekhiye kaunsa
+   test nakaam hota hai.
+3. Kisi row mein `mergeDescendants` jodiye aur dekhiye ki semantics ka ped kaise badalta hai.
+4. Jab koi khoji nakaam ho to `composeRule.onRoot().printToLog()` se ped chhapiye.
+5. `fontScale = 2f` wala preview jodiye aur ek aisi screen dhoondhiye jo tootti hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Semantics ka ped | Jisse tests puchte hain, aur jise TalkBack padhta hai |
+| `createComposeRule` | Koi activity nahi; dasiyon ke bajaye kuch second |
+| Upar uthai state | Test bina `ViewModel` ke screen chala leta hai |
+| Text se dhoondhna | User ka anubhav tootne par nakaam hota hai |
+| `testTag` | Dibbon aur bina dikhte label wali cheezon ke liye |
+| `waitUntil` | Asli async ke liye, sone ke bajaye |
+| `mergeDescendants` | Teen ke bajaye ek node, tests aur screen readers dono ke liye |
+| `useUnmergedTree` | Jab milana aapki chahi node chhupa de |
+| `printToLog` | Khoji nakaam ho to ped chhapiye |
+| Screenshot wale tests | Safed par safed aur behti layout sirf yahi pakadte hain |
+
+<Interview title="Ek sawal, jo do cheezein jodta hai jinhe log alag maante hain">
+"Compose wali screen ki padtal aap kaise karoge?"
+
+Semantics ke ped se, `createComposeRule` lekar taki koi activity na ho aur test secondon mein chale. Main
+screen ki state upar uthata hoon taki test theek wahi haalat bhej sake jo use chahiye — ladi hui, khaali,
+error — aur us par dawa karta hoon jo user ko dikhta, nodes ko tag ke bajaye text ya content description
+se dhoondhte hue, kyunki wo tab nakaam hote hain jab anubhav toote aur tag nahi hota.
+
+Jo jod batane layak hai wo ye hai ki yahi wo ped hai jise screen reader leta hai. Jo composable jaanchne
+mein asahaj hai — jahan user ek row dekhta hai wahan teen alag nodes, bina content description wala icon
+ka button — use TalkBack bhi buri tarah batata hai, to test theek karna aam taur par sulabhta bhi saath
+hi theek kar deta hai. Aur agar main baar-baar `waitUntil` ki taraf ja raha hoon, to wo aam taur par
+ishara hai ki wo screen aisa lana-dharna kar rahi hai jise kisi `ViewModel` wale unit test ne dhakna
+chahiye tha.
+</Interview>

@@ -1,0 +1,190 @@
+---
+title: Semantics के साथ Compose UI की जाँच
+description: Compose का test pixels नहीं देखता। वह semantics के पेड़ से पूछता है — वही बनावट जो screen reader लेता है — और इसीलिए जाँचे जा सकने वाला UI लिखना और सुलभ UI लिखना एक ही काम निकलते हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Compose हर composable को एक **semantics के पेड़** से बाहर दिखाता है: इसका ब्योरा कि screen पर क्या है
+और उसका मतलब क्या है। आपका test उसी पेड़ में node ढूँढ़ता है, और TalkBack भी। जो हिस्सा जाँचना मुश्किल
+है वह आमतौर पर वही है जिसे screen reader भी बता नहीं पाता।
+</KeyIdea>
+
+## शक्ल
+
+```kotlin title="OrderScreenTest.kt" numbered
+class OrderScreenTest {
+
+    @get:Rule val composeRule = createComposeRule()
+
+    @Test
+    fun `shows an empty message when there are no orders`() {
+        composeRule.setContent {
+            OrderScreen(state = OrderUiState(orders = emptyList()), onRefresh = {})
+        }
+
+        composeRule.onNodeWithText("No orders yet").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping refresh calls the callback`() {
+        var refreshed = false
+        composeRule.setContent {
+            OrderScreen(state = OrderUiState(), onRefresh = { refreshed = true })
+        }
+
+        composeRule.onNodeWithContentDescription("Refresh").performClick()
+
+        assertTrue(refreshed)
+    }
+}
+```
+
+`createComposeRule()` को कोई activity नहीं चाहिए — वह composable को सीधे रखता है, और इसी से ये
+सेकंडों में चलते हैं, न कि Espresso वाले दसियों सेकंड में।
+`createAndroidComposeRule<MainActivity>()` तभी लीजिए जब test को सच में वह activity चाहिए।
+
+यह state hoisting का फल है। `OrderScreen` अपनी state parameter में लेता है और घटनाएँ callbacks से
+बताता है, तो test उसे सीधे चलाता है — न `ViewModel`, न repository, न Hilt।
+
+## ढूँढ़ने वाले और काम
+
+```kotlin title="Finders.kt" numbered
+onNodeWithText("Place order")                     // दिखता text
+onNodeWithContentDescription("Refresh")            // icons के लिए, और TalkBack के लिए
+onNodeWithTag("order_list")                        // सिर्फ test वाला हत्था
+onAllNodesWithText("Pending")[0]                   // जब कई मिलते हों
+
+.performClick()
+.performTextInput("2 lattes")
+.performScrollTo()
+.performTouchInput { swipeLeft() }
+
+.assertIsDisplayed()
+.assertIsEnabled()
+.assertTextEquals("Order placed")
+.assertDoesNotExist()
+```
+
+`testTag` के बजाय text या content description से ढूँढ़ना बेहतर है। User वही महसूस करता है, तो उन्हें
+लेने वाला test तब नाकाम होता है जब user का अनुभव टूटे — जबकि `testTag` वाला label के गलत हो जाने के
+बाद भी पास होता रहता है।
+
+`testTag` तब अपनी जगह बनाता है जब पकड़ने को कुछ दिखता ही न हो: कोई डिब्बा, कोई list जिसे scroll करना
+है, दो एक जैसी rows जिन्हें अलग बताना है।
+
+<Quiz
+  question="कोई test `setContent` के तुरंत बाद `onNodeWithText(\"Loaded\").assertIsDisplayed()` करता है, जबकि वह screen `LaunchedEffect` में data लाती है। वह नाकाम होता है, कहता है कोई node नहीं मिली। `Thread.sleep(500)` जोड़ने से ठीक हो जाता है। सही इलाज क्या है?"
+  options={[
+    "वह sleep रहने दीजिए — async UI को सच में जमने का वक्त चाहिए",
+    "वह rule घड़ी खुद आगे बढ़ाता है और Compose से तालमेल रखता है, पर test ने उस effect के पूरा होने से पहले दावा कर दिया। `waitUntil { onAllNodesWithText(\"Loaded\").fetchSemanticsNodes().isNotEmpty() }` लीजिए, या data लाने के बजाय state सीधे दीजिए",
+    "`assertIsDisplayed` की जगह `assertExists` चाहिए, जिसे तालमेल की जरूरत नहीं"
+  ]}
+  answer={1}
+  explanation="वह sleep इत्तेफाक से चलता है और ठीक वही गैर-भरोसेमंदी लौटा लाता है जिससे बचने के लिए Compose की testing बनी है: वह आपकी मशीन पर पास होता है और बोझ में दबे CI पर नाकाम, फिर दोबारा चलाने पर पास। वह rule composition से पहले ही तालमेल रखता है और उसके खाली होने का इंतजार करता है — जो वह जान नहीं सकता वह यह है कि आपके LaunchedEffect ने ऐसा काम शुरू किया जो पूरा नहीं हुआ, क्योंकि वह आपका coroutine है, Compose का recomposition नहीं। waitUntil semantics के पेड़ को एक समय-सीमा के साथ बार-बार देखता है और किसी दौड़ के बजाय साफ संदेश के साथ नाकाम होता है। पर बेहतर इलाज आमतौर पर ऊपर है: अगर वह screen अपनी state parameter में लेती, तो test लदी हुई state सीधे रख देता और इंतजार करने को कुछ होता ही नहीं। बार-बार waitUntil की जरूरत पड़ना अक्सर इशारा है कि test उस ViewModel को चला रहा है जिसे किसी unit test ने ढकना चाहिए था।"
+/>
+
+## अपनी semantics
+
+```kotlin title="Semantics.kt" numbered
+Box(
+    modifier = Modifier
+        .semantics {
+            contentDescription = "Order progress, 40 percent"
+            stateDescription = "In transit"
+        }
+        .progressSemantics(0.4f),
+)
+
+// किसी जुड़ी हुई चीज को एक ही चीज की तरह पढ़वाने के लिए मिलाइए
+Row(modifier = Modifier.semantics(mergeDescendants = true) { }) {
+    Icon(...); Text("Pending"); Text("2 items")
+}
+```
+
+`mergeDescendants` समझने लायक है क्योंकि वह tests और सुलभता दोनों को एक ही दिशा में बदलता है: उसके
+बिना तीन composables वाली row तीन अलग nodes है, तो screen reader तीन टुकड़े बोलता है और आपके test को
+उन्हें अलग-अलग ढूँढ़ना पड़ता है। उसके साथ वह row एक node है, जिसका label जुड़ा हुआ है।
+
+`testTag` खुद भी semantics की एक चीज है, और इसीलिए कभी-कभी `useUnmergedTree = true` चाहिए — मिलाने से
+किसी बच्चे का tag आम खोज से छिप सकता है।
+
+<Detail summary="Screenshot वाले tests, और वे कहाँ बैठते हैं">
+ऊपर वाले tests बनावट पर दावा करते हैं। वे यह नहीं बता सकते कि text सफेद पर सफेद है, या कि कोई लंबा
+label अपने button से बाहर बह रहा है:
+
+```kotlin title="Screenshot.kt" numbered
+@Preview(name = "Empty")
+@Preview(name = "Dark", uiMode = UI_MODE_NIGHT_YES)
+@Preview(name = "Large font", fontScale = 2f)
+@Composable
+private fun OrderScreenPreview() {
+    AppTheme { OrderScreen(state = OrderUiState(), onRefresh = {}) }
+}
+```
+
+Paparazzi और Roborazzi इन्हें JVM पर बनाते हैं — कोई emulator नहीं — और commit की गई सुनहरी तस्वीरों
+से मिलाते हैं, दिखने में फर्क आने पर build नाकाम करते हुए। Compose Preview Screenshot Testing वही काम
+उन्हीं `@Preview` functions से करता है जो आपके पास पहले से हैं।
+
+`fontScale = 2f` वाला preview सबसे ज्यादा असली bugs पकड़ता है, क्योंकि तय ऊँचाई वाला button और लंबा
+अनुवाद किया गया label ऐसी layout है जो users के बड़े हिस्से के लिए टूटती है और team में किसी के लिए
+नहीं।
+
+कीमत यह है कि design जानबूझकर बदलने पर सुनहरी तस्वीरें दोबारा बनानी पड़ती हैं, और समीक्षा करने वाले को
+वह फर्क सच में देखना पड़ता है। किसी design system या मायने रखती screen के लिए यह इसके लायक है; हर
+screen के लिए नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली गैर-भरोसेमंदी वापस ले आती है">
+**सामग्री के इंतजार में `Thread.sleep`।** `waitUntil` लीजिए, या state सीधे दीजिए।
+
+**हर जगह `testTag`।** User को दिखते label के गलत हो जाने के बाद भी test पास होता है।
+
+**जरूरत न होने पर `createAndroidComposeRule`।** बिना फायदे के धीमा।
+
+**ऐसी screen जाँचना जो अपना `ViewModel` खुद रखती है।** State ऊपर उठाइए और test को कोई graph नहीं चाहिए।
+
+**`useUnmergedTree` भूलना।** मिलाना उस node को छिपा सकता है जिसे आप ढूँढ़ रहे हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. ऐसा test लिखिए जो button को text से ढूँढ़े और दावा करे कि callback चला।
+2. किसी `testTag` वाले खोजी को `onNodeWithText` से बदलिए और label का नाम बदलिए — देखिए कौन सा test
+   नाकाम होता है।
+3. किसी row में `mergeDescendants` जोड़िए और देखिए कि semantics का पेड़ कैसे बदलता है।
+4. जब कोई खोजी नाकाम हो तो `composeRule.onRoot().printToLog()` से पेड़ छापिए।
+5. `fontScale = 2f` वाला preview जोड़िए और एक ऐसी screen ढूँढ़िए जो टूटती है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Semantics का पेड़ | जिससे tests पूछते हैं, और जिसे TalkBack पढ़ता है |
+| `createComposeRule` | कोई activity नहीं; दसियों के बजाय कुछ सेकंड |
+| ऊपर उठाई state | Test बिना `ViewModel` के screen चला लेता है |
+| Text से ढूँढ़ना | User का अनुभव टूटने पर नाकाम होता है |
+| `testTag` | डिब्बों और बिना दिखते label वाली चीजों के लिए |
+| `waitUntil` | असली async के लिए, सोने के बजाय |
+| `mergeDescendants` | तीन के बजाय एक node, tests और screen readers दोनों के लिए |
+| `useUnmergedTree` | जब मिलाना आपकी चाही node छिपा दे |
+| `printToLog` | खोजी नाकाम हो तो पेड़ छापिए |
+| Screenshot वाले tests | सफेद पर सफेद और बहती layout सिर्फ यही पकड़ते हैं |
+
+<Interview title="एक सवाल, जो दो चीजें जोड़ता है जिन्हें लोग अलग मानते हैं">
+"Compose वाली screen की जाँच आप कैसे करेंगे?"
+
+Semantics के पेड़ से, `createComposeRule` लेकर ताकि कोई activity न हो और test सेकंडों में चले। मैं
+screen की state ऊपर उठाता हूँ ताकि test ठीक वही हालत भेज सके जो उसे चाहिए — लदी हुई, खाली, error —
+और उस पर दावा करता हूँ जो user को दिखता, nodes को tag के बजाय text या content description से ढूँढ़ते
+हुए, क्योंकि वे तब नाकाम होते हैं जब अनुभव टूटे और tag नहीं होता।
+
+जो जोड़ बताने लायक है वह यह है कि यही वह पेड़ है जिसे screen reader लेता है। जो composable जाँचने में
+असहज है — जहाँ user एक row देखता है वहाँ तीन अलग nodes, बिना content description वाला icon का button —
+उसे TalkBack भी बुरी तरह बताता है, तो test ठीक करना आमतौर पर सुलभता भी साथ ही ठीक कर देता है। और अगर
+मैं बार-बार `waitUntil` की तरफ जा रहा हूँ, तो वह आमतौर पर इशारा है कि वह screen ऐसा लाना-धरना कर रही
+है जिसे किसी `ViewModel` वाले unit test ने ढकना चाहिए था।
+</Interview>
