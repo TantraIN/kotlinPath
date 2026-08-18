@@ -1,0 +1,215 @@
+---
+title: Text, Button, TextField, Card and Scaffold
+description: The handful of Material 3 composables that build most screens, and the two or three places where each of them behaves differently from the widget it replaced.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Material 3 components already read your theme, so your job is passing **state and callbacks**, not
+styling each one. Where they surprise people is that they hold no state at all — a `TextField`
+shows exactly the value you hand it, and nothing else.
+</KeyIdea>
+
+## Text
+
+```kotlin title="Texts.kt" numbered
+Text("Order #1204")
+
+Text(
+    text = order.note,
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = 2,
+    overflow = TextOverflow.Ellipsis,
+)
+```
+
+`maxLines` and `overflow` are the pair from the view system, with the same rule: `maxLines` alone
+cuts mid-word, and `overflow` is what turns that into a readable ellipsis.
+
+<Tip>
+Do not pass `color` unless you mean to override. Inside a `Surface` or `Card`, text already picks
+up the correct `onX` colour from the theme, which is how a dark card gets light text without you
+saying anything.
+</Tip>
+
+## Buttons — one API, four emphases
+
+```kotlin title="Buttons.kt" numbered
+Button(onClick = ::pay) { Text("Pay") }                  // filled, highest emphasis
+FilledTonalButton(onClick = ::save) { Text("Save") }     // tonal
+OutlinedButton(onClick = ::cancel) { Text("Cancel") }    // outlined
+TextButton(onClick = ::skip) { Text("Skip") }            // lowest emphasis
+```
+
+These are the same four looks the `MaterialButton` styles gave you in XML, except the choice is a
+function name instead of a style attribute — so a wrong one is now visible at a glance.
+
+The content is a lambda, not a `text` parameter, which is why an icon plus a label is just two
+calls inside it.
+
+## Text fields hold nothing
+
+<Quiz
+  question="You write `TextField(value = query, onValueChange = { })` where `query` is a `String` variable. Typing does nothing at all. Why?"
+  options={[
+    "`TextField` needs `enabled = true` to accept input",
+    "It renders exactly the `value` it is given; with no state update, the value never changes",
+    "The keyboard events are consumed by the parent layout",
+  ]}
+  answer={1}
+  explanation="A Compose TextField is fully controlled: it draws the string you pass and reports keystrokes through onValueChange. It never stores anything itself. So an empty callback means the value it is handed is identical on the next composition and the field appears frozen — the keystrokes did arrive, they simply had nowhere to go. The fix is state: hold the query in a remembered mutableStateOf and assign to it inside onValueChange. This is the same controlled-component contract as every other Compose input, which is why one habit covers Switch, Slider, Checkbox and the rest."
+/>
+
+```kotlin title="Field.kt" numbered
+var email by rememberSaveable { mutableStateOf("") }
+val invalid = email.isNotEmpty() && "@" !in email
+
+OutlinedTextField(
+    value = email,
+    onValueChange = { email = it },
+    label = { Text("Email") },
+    supportingText = { Text(if (invalid) "Enter a valid email" else "We never share it") },
+    isError = invalid,
+    keyboardOptions = KeyboardOptions(
+        keyboardType = KeyboardType.Email,
+        imeAction = ImeAction.Next,
+    ),
+)
+```
+
+`label`, `supportingText` and `isError` are the `TextInputLayout` features, now parameters on the
+field itself rather than a wrapper you must remember to add.
+
+## Surfaces: `Card` and what sits behind it
+
+```kotlin title="Cards.kt" numbered
+Card(modifier = Modifier.fillMaxWidth()) {
+    Column(Modifier.padding(16.dp)) {
+        Text("Weekly report", style = MaterialTheme.typography.titleMedium)
+        Text("Ready to download")
+    }
+}
+```
+
+| Composable | Use it for |
+| --- | --- |
+| `Surface` | The base: background, shape, border, tonal elevation, content colour |
+| `Card` | A `Surface` with card defaults, for grouped content |
+| `ElevatedCard` | The same with a shadow, for content that floats |
+| `OutlinedCard` | The same with a border instead of elevation |
+
+A `Card` has no padding of its own. That is deliberate — an image should reach the card's edges,
+so the padding belongs on the content inside.
+
+## `Scaffold` and the padding you must not drop
+
+```kotlin title="Screen.kt" numbered
+Scaffold(
+    topBar = { TopAppBar(title = { Text("Orders") }) },
+    floatingActionButton = {
+        FloatingActionButton(onClick = ::newOrder) {
+            Icon(Icons.Default.Add, contentDescription = "New order")
+        }
+    },
+    snackbarHost = { SnackbarHost(snackbarHostState) },
+) { innerPadding ->
+    OrderList(
+        modifier = Modifier
+            .padding(innerPadding)     // not optional
+            .fillMaxSize(),
+    )
+}
+```
+
+<Warning>
+That `innerPadding` is how `Scaffold` tells you how much room the bars and the system insets took.
+Ignore it and your first list item sits underneath the top app bar — the single most common
+Compose layout bug, and one that looks fine in a preview with no bars.
+</Warning>
+
+<Detail summary="Showing a snackbar from a Scaffold">
+The host is a piece of state, and showing a message is a suspending call, so it needs a scope.
+
+```kotlin title="Snack.kt" numbered
+val snackbarHostState = remember { SnackbarHostState() }
+val scope = rememberCoroutineScope()
+
+Button(onClick = {
+    scope.launch {
+        val result = snackbarHostState.showSnackbar(
+            message = "Order cancelled",
+            actionLabel = "Undo",
+        )
+        if (result == SnackbarResult.ActionPerformed) undo()
+    }
+}) { Text("Cancel") }
+```
+
+`showSnackbar` suspends until the snackbar goes away and returns whether the action was tapped,
+so the Undo handling reads top to bottom instead of arriving in a callback.
+</Detail>
+
+## Under the hood
+
+<Timeline>
+  <TimelineItem title="Every component reads the theme" meta="MaterialTheme">
+    Colour, typography and shape come from `MaterialTheme` unless you override them, which is why
+    a component you never styled still changes with the app.
+  </TimelineItem>
+  <TimelineItem title="`Surface` sets the content colour" meta="LocalContentColor">
+    Putting content inside a `Surface` changes the default colour of text and icons under it, so
+    the right contrast happens without a parameter.
+  </TimelineItem>
+  <TimelineItem title="Slots are lambdas" meta="not parameters">
+    `topBar`, `label` and `supportingText` take composable content, so anything can go in them —
+    a row of chips as a label is a normal thing to write.
+  </TimelineItem>
+</Timeline>
+
+## Common mistakes
+
+<Pitfall title="Four that reach the screen">
+**Dropping `Scaffold`'s padding.** Content slides under the app bar and the navigation bar.
+
+**A `TextField` with no state.** It looks frozen; the keystrokes had nowhere to go.
+
+**Passing an explicit `color` everywhere.** You lose the automatic contrast a `Surface` was
+already giving you, and dark mode breaks one component at a time.
+
+**Nesting `Scaffold`s.** Each one applies its own insets, so you get the system bar padding twice
+and a gap nobody can find.
+</Pitfall>
+
+## Practice
+
+1. Build a form with a `TextField`, a validation message and a submit button that is disabled
+   until the input is valid.
+2. Remove the `innerPadding` from a `Scaffold` and see exactly how it fails on a device with
+   gesture navigation.
+3. Put the same `Text` inside and outside a dark `Surface` and compare the colours you did not set.
+4. Show a snackbar with an Undo action and handle the result.
+5. Replace an `ElevatedCard` with an `OutlinedCard` and decide which suits a dense list better.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `Text` | Style from `MaterialTheme.typography`; `maxLines` needs `overflow` |
+| Button family | Four functions, four levels of emphasis |
+| `TextField` | Fully controlled — it shows the value you pass, and stores nothing |
+| `label` / `supportingText` / `isError` | The `TextInputLayout` features, as parameters |
+| `Card` | A `Surface` with card defaults, and no padding of its own |
+| `Surface` | Sets background, shape and the content colour beneath it |
+| `Scaffold` | Bars, FAB and snackbar host; hands you padding you must apply |
+| Slots | Composable lambdas, so anything can go inside them |
+
+<Interview title="A small question that quickly shows whether someone has built a screen">
+"Why might a `TextField` appear not to accept input?"
+
+Because it is a controlled component: it renders the `value` it is handed and forwards keystrokes
+to `onValueChange`, storing nothing itself. If that callback does not write to state that feeds
+the value back in, the field is handed the same string every time and looks frozen. Adding that
+the same contract covers `Switch`, `Slider` and `Checkbox` shows it is a pattern rather than a
+quirk of text fields.
+</Interview>

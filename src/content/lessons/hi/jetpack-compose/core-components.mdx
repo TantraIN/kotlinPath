@@ -1,0 +1,214 @@
+---
+title: Text, Button, TextField, Card और Scaffold
+description: गिने-चुने Material 3 composables जिनसे ज्यादातर screens बनती हैं, और हर एक की वे दो-तीन जगहें जहाँ वह अपने बदले हुए widget से अलग बरतता है।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Material 3 के components आपकी theme पहले से पढ़ते हैं, तो आपका काम है **state और callbacks भेजना**,
+हर एक को सजाना नहीं। लोग वहाँ चौंकते हैं जहाँ पता चलता है कि ये कोई state रखते ही नहीं — `TextField`
+ठीक वही value दिखाता है जो आप उसे थमाते हैं, और कुछ नहीं।
+</KeyIdea>
+
+## Text
+
+```kotlin title="Texts.kt" numbered
+Text("Order #1204")
+
+Text(
+    text = order.note,
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = 2,
+    overflow = TextOverflow.Ellipsis,
+)
+```
+
+`maxLines` और `overflow` view system वाली वही जोड़ी हैं, उसी नियम के साथ: अकेला `maxLines` शब्द के
+बीच से काट देता है, और उसे पढ़े जाने लायक `…` में `overflow` ही बदलता है।
+
+<Tip>
+`color` तब तक मत भेजिए जब तक जानबूझकर बदलना न हो। किसी `Surface` या `Card` के अंदर text theme से
+सही `onX` रंग पहले ही उठा लेता है, और इसी तरह dark card पर बिना कुछ कहे हल्का text आ जाता है।
+</Tip>
+
+## Buttons — एक ही API, चार जोर
+
+```kotlin title="Buttons.kt" numbered
+Button(onClick = ::pay) { Text("Pay") }                  // filled, सबसे ज्यादा जोर
+FilledTonalButton(onClick = ::save) { Text("Save") }     // tonal
+OutlinedButton(onClick = ::cancel) { Text("Cancel") }    // outlined
+TextButton(onClick = ::skip) { Text("Skip") }            // सबसे कम जोर
+```
+
+ये वही चार शक्लें हैं जो XML में `MaterialButton` के styles देते थे, बस चुनाव अब style attribute
+नहीं बल्कि function का नाम है — तो गलत वाला एक नजर में दिख जाता है।
+
+अंदर की चीज lambda है, कोई `text` parameter नहीं, इसीलिए icon और label बस उसके अंदर दो calls हैं।
+
+## Text fields कुछ रखते नहीं
+
+<Quiz
+  question="आप `TextField(value = query, onValueChange = { })` लिखते हैं, जहाँ `query` एक `String` variable है। लिखने पर कुछ भी नहीं होता। क्यों?"
+  options={[
+    "`TextField` को input लेने के लिए `enabled = true` चाहिए",
+    "वह ठीक वही `value` बनाता है जो उसे दी जाती है; state बदली ही नहीं, तो value कभी बदलती नहीं",
+    "Keyboard के events ऊपर वाला layout खा जाता है",
+  ]}
+  answer={1}
+  explanation="Compose का TextField पूरी तरह बाहर से चलाया जाता है: वह आपकी दी हुई string बनाता है और हर keystroke onValueChange से बताता है। वह खुद कभी कुछ रखता नहीं। तो खाली callback का मतलब है कि अगली composition पर उसे वही value मिलती है और field जमी हुई लगती है — keystrokes आए तो थे, बस उनके जाने की कोई जगह नहीं थी। इलाज state है: query को remember की गई mutableStateOf में रखिए और onValueChange के अंदर उसमें लिख दीजिए। यही बाहर से चलाए जाने का करार Compose के हर input पर लागू है, इसीलिए एक ही आदत Switch, Slider, Checkbox और बाकी सब सँभाल लेती है।"
+/>
+
+```kotlin title="Field.kt" numbered
+var email by rememberSaveable { mutableStateOf("") }
+val invalid = email.isNotEmpty() && "@" !in email
+
+OutlinedTextField(
+    value = email,
+    onValueChange = { email = it },
+    label = { Text("Email") },
+    supportingText = { Text(if (invalid) "Enter a valid email" else "We never share it") },
+    isError = invalid,
+    keyboardOptions = KeyboardOptions(
+        keyboardType = KeyboardType.Email,
+        imeAction = ImeAction.Next,
+    ),
+)
+```
+
+`label`, `supportingText` और `isError` `TextInputLayout` वाली ही चीजें हैं, अब किसी लपेटे के बजाय
+खुद field के parameters, जिन्हें जोड़ना याद नहीं रखना पड़ता।
+
+## सतहें: `Card` और उसके पीछे क्या है
+
+```kotlin title="Cards.kt" numbered
+Card(modifier = Modifier.fillMaxWidth()) {
+    Column(Modifier.padding(16.dp)) {
+        Text("Weekly report", style = MaterialTheme.typography.titleMedium)
+        Text("Ready to download")
+    }
+}
+```
+
+| Composable | किसके लिए |
+| --- | --- |
+| `Surface` | बुनियाद: background, shape, border, tonal elevation, content का रंग |
+| `Card` | Card वाले defaults के साथ एक `Surface`, साथ रखी चीजों के लिए |
+| `ElevatedCard` | वही, छाया के साथ, उस content के लिए जो तैरता दिखे |
+| `OutlinedCard` | वही, elevation की जगह एक लकीर के साथ |
+
+`Card` का अपना कोई padding नहीं होता। यह जानबूझकर है — कोई तस्वीर card के किनारों तक जानी चाहिए,
+इसलिए padding अंदर वाले content पर लगता है।
+
+## `Scaffold` और वह padding जिसे गिराना नहीं है
+
+```kotlin title="Screen.kt" numbered
+Scaffold(
+    topBar = { TopAppBar(title = { Text("Orders") }) },
+    floatingActionButton = {
+        FloatingActionButton(onClick = ::newOrder) {
+            Icon(Icons.Default.Add, contentDescription = "New order")
+        }
+    },
+    snackbarHost = { SnackbarHost(snackbarHostState) },
+) { innerPadding ->
+    OrderList(
+        modifier = Modifier
+            .padding(innerPadding)     // वैकल्पिक नहीं
+            .fillMaxSize(),
+    )
+}
+```
+
+<Warning>
+वह `innerPadding` `Scaffold` का आपको बताना है कि bars और system के insets ने कितनी जगह ली।
+अनदेखा कीजिए और आपकी list का पहला item top app bar के नीचे जा बैठेगा — Compose का सबसे आम layout
+bug, और वह जो बिना bars वाले preview में बिलकुल ठीक दिखता है।
+</Warning>
+
+<Detail summary="Scaffold से snackbar दिखाना">
+Host खुद एक state है, और संदेश दिखाना suspend करने वाली call है, तो उसे एक scope चाहिए।
+
+```kotlin title="Snack.kt" numbered
+val snackbarHostState = remember { SnackbarHostState() }
+val scope = rememberCoroutineScope()
+
+Button(onClick = {
+    scope.launch {
+        val result = snackbarHostState.showSnackbar(
+            message = "Order cancelled",
+            actionLabel = "Undo",
+        )
+        if (result == SnackbarResult.ActionPerformed) undo()
+    }
+}) { Text("Cancel") }
+```
+
+`showSnackbar` snackbar के हटने तक रुका रहता है और लौटाता है कि action पर tap हुआ या नहीं, तो Undo
+सँभालना किसी callback में आने के बजाय ऊपर से नीचे पढ़ा जाता है।
+</Detail>
+
+## अंदर की बात
+
+<Timeline>
+  <TimelineItem title="हर component theme पढ़ता है" meta="MaterialTheme">
+    रंग, typography और shape `MaterialTheme` से आते हैं, जब तक आप बदल न दें — इसीलिए जिस component
+    को आपने कभी सजाया ही नहीं वह भी app के साथ बदल जाता है।
+  </TimelineItem>
+  <TimelineItem title="`Surface` content का रंग तय करता है" meta="LocalContentColor">
+    किसी `Surface` के अंदर चीजें रखने से उसके नीचे के text और icons का default रंग बदल जाता है, तो
+    सही contrast बिना किसी parameter के आ जाता है।
+  </TimelineItem>
+  <TimelineItem title="Slots lambdas हैं" meta="parameters नहीं">
+    `topBar`, `label` और `supportingText` composable content लेते हैं, तो उनमें कुछ भी जा सकता है —
+    label की जगह chips की एक row रखना आम बात है।
+  </TimelineItem>
+</Timeline>
+
+## आम गलतियाँ
+
+<Pitfall title="चार जो screen तक पहुँच जाती हैं">
+**`Scaffold` का padding गिरा देना।** Content app bar और navigation bar के नीचे सरक जाता है।
+
+**बिना state वाला `TextField`।** वह जमा हुआ दिखता है; keystrokes के जाने की कोई जगह ही नहीं थी।
+
+**हर जगह अलग से `color` भेजना।** जो अपने आप मिलने वाला contrast `Surface` पहले ही दे रहा था वह चला
+जाता है, और dark mode एक-एक component करके टूटता है।
+
+**`Scaffold` के अंदर `Scaffold`।** हर एक अपने insets लगाता है, तो system bar वाला padding दो बार
+लगता है और एक ऐसी खाली जगह बनती है जिसे कोई ढूँढ़ नहीं पाता।
+</Pitfall>
+
+## अभ्यास
+
+1. एक form बनाइए जिसमें `TextField` हो, एक जाँच वाला संदेश हो, और submit button तब तक बंद रहे जब
+   तक input सही न हो।
+2. किसी `Scaffold` से `innerPadding` हटाइए और देखिए कि gesture navigation वाले device पर वह ठीक
+   कैसे बिगड़ता है।
+3. वही `Text` किसी गाढ़े `Surface` के अंदर और बाहर रखिए और उन रंगों को मिलाइए जो आपने तय ही नहीं
+   किए।
+4. Undo वाला snackbar दिखाइए और उसका नतीजा सँभालिए।
+5. `ElevatedCard` की जगह `OutlinedCard` रखिए और तय कीजिए कि घनी list में कौन सा जँचता है।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| `Text` | Style `MaterialTheme.typography` से; `maxLines` को `overflow` चाहिए |
+| Button वाला परिवार | चार functions, जोर के चार स्तर |
+| `TextField` | पूरी तरह बाहर से चलता है — जो value दें वही दिखाता है, रखता कुछ नहीं |
+| `label` / `supportingText` / `isError` | `TextInputLayout` वाली चीजें, parameters की तरह |
+| `Card` | Card वाले defaults के साथ एक `Surface`, अपना कोई padding नहीं |
+| `Surface` | Background, shape और अपने नीचे के content का रंग तय करता है |
+| `Scaffold` | Bars, FAB और snackbar host; padding देता है जिसे लगाना जरूरी है |
+| Slots | Composable lambdas, तो उनमें कुछ भी जा सकता है |
+
+<Interview title="छोटा सवाल जो जल्दी बता देता है कि किसी ने screen बनाई है या नहीं">
+"`TextField` input लेता हुआ क्यों नहीं दिखता?"
+
+क्योंकि वह बाहर से चलाया जाने वाला component है: वह दी हुई `value` बनाता है और keystrokes
+`onValueChange` को भेज देता है, खुद कुछ नहीं रखता। अगर वह callback ऐसी state में नहीं लिखता जो
+वापस उसी value को खिलाए, तो field को हर बार वही string मिलती है और वह जमी हुई लगती है। यह जोड़ना
+कि यही करार `Switch`, `Slider` और `Checkbox` पर भी लागू है, दिखाता है कि यह text fields की कोई
+सनक नहीं, एक तरीका है।
+</Interview>
