@@ -1,0 +1,184 @@
+---
+title: "Shrinking the app: R8, ProGuard and resources"
+description: R8 removes what your code does not reach, which is exactly why anything reached only by reflection disappears. Almost every R8 bug is that sentence played out.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+R8 walks your code from its entry points and deletes everything it cannot reach. It is a **static**
+analysis, so it cannot see a class named by a string at run time — and that is the whole reason keep
+rules exist.
+</KeyIdea>
+
+## Turning it on
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    buildTypes {
+        release {
+            isMinifyEnabled = true          // R8: shrink, optimise, obfuscate
+            isShrinkResources = true        // drop resources no code references
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+}
+```
+
+`isShrinkResources` needs `isMinifyEnabled` — it works out which resources are unreachable from the
+code R8 kept, so without shrinking there is nothing to reason from.
+
+R8 does four things, and they fail differently:
+
+| Step | What it does | How it breaks |
+| --- | --- | --- |
+| Shrinking | Removes unreachable classes and members | `ClassNotFoundException` for reflected types |
+| Optimisation | Inlines, merges, removes branches | Rare; usually fine |
+| Obfuscation | Renames to `a`, `b`, `c` | Reflection by name, and unreadable stack traces |
+| Resource shrinking | Drops unused drawables and strings | Resources loaded by name |
+
+## Why reflection is the whole story
+
+```kotlin title="Reflection.kt" numbered
+// R8 sees no reference to OrderDto — the name is a string at run time
+val dto = json.decodeFromString(serializer(clazz), body)
+
+// resource by name: nothing statically references R.drawable.icon_pending
+val id = resources.getIdentifier("icon_$status", "drawable", packageName)
+```
+
+Both compile, both work in debug, and both fail only in a minified release build. That gap is why R8
+problems are found late — often by users.
+
+Modern libraries mostly ship their own **consumer rules**, so Retrofit, Room, Hilt and
+kotlinx.serialization work without you writing anything. What still needs rules is your own reflection
+and anything you load by name.
+
+```proguard title="proguard-rules.pro" numbered
+# a class the serializer instantiates by name
+-keep class com.example.data.dto.** { *; }
+
+# keep enum values, which are read reflectively by valueOf
+-keepclassmembers enum * { public static **[] values(); public static ** valueOf(java.lang.String); }
+
+# keep line numbers so stack traces are readable, but still rename classes
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+```
+
+<Quiz
+  question="A release build crashes with `ClassNotFoundException` for a class that plainly exists in the source. It works in debug. What is happening, and what is the wrong fix?"
+  options={[
+    "The class is missing from the manifest; add it there",
+    "R8 removed or renamed it because nothing statically references it — it is reached by reflection. The right fix is a narrow `-keep` rule for that class; the wrong one is disabling minification, which gives back the size and keeps the app unshrunk forever",
+    "The build needs `isShrinkResources = false`, which is removing the class"
+  ]}
+  answer={1}
+  explanation="Debug does not run R8 at all, which is why the gap only appears in release — and it is the single most common R8 symptom. R8 keeps what it can reach from your entry points, and a class instantiated from a string name is unreachable as far as static analysis is concerned, so it is removed or renamed and the run-time lookup fails. The correct response is a keep rule scoped to that class or package, and `build/outputs/mapping/release/usage.txt` will confirm it was removed rather than renamed. The tempting wrong fix is turning off isMinifyEnabled, which does make the crash go away — and also gives back every kilobyte, disables the optimisations, and means the next reflection problem is invisible until someone turns it on again. Resource shrinking is unrelated: it only removes resources, never classes."
+/>
+
+## What actually makes an app large
+
+Before writing rules, find out where the size is:
+
+```bash title="Analyse" numbered
+# Android Studio: Build > Analyze APK, or
+./gradlew :app:bundleRelease
+```
+
+Nearly always the answer is one of four, in this order:
+
+- **Images.** A PNG that should be a vector, or five densities of something a `VectorDrawable`
+  renders at any size. WebP is smaller than PNG for photographs.
+- **Unused dependencies.** A library pulled in for one function, bringing a transitive tree.
+- **Native libraries.** ABI splits or an App Bundle stop shipping every architecture to every device.
+- **Resources for locales you do not support.** `resourceConfigurations` limits them.
+
+```kotlin title="Bundle.kt" numbered
+android {
+    bundle {
+        language { enableSplit = true }     // Play delivers only the user's language
+        density  { enableSplit = true }
+        abi      { enableSplit = true }
+    }
+}
+```
+
+An App Bundle is usually the single biggest win available, because Play then generates a per-device
+APK containing one density, one ABI and one language rather than all of them.
+
+<Detail summary="Mapping files, and the crash reports you will need">
+Obfuscation renames everything, so a production stack trace is unreadable without the mapping file:
+
+```text title="Without mapping" numbered
+at a.b.c.d(Unknown Source:12)
+```
+
+`build/outputs/mapping/release/mapping.txt` is generated per build and is the only way back. Upload it
+to your crash reporter — Crashlytics does this automatically via its Gradle plugin — and **archive it
+with the release**, because a mapping file from a different build deobfuscates to plausible nonsense
+rather than failing loudly.
+
+The same directory has two files worth reading when something disappeared:
+
+- `usage.txt` — everything R8 removed. If your class is here, it was shrunk.
+- `seeds.txt` — everything a keep rule preserved. If your class is here, it survived and the problem
+  is elsewhere.
+
+Those two answer "removed or renamed?" in seconds, which is otherwise a long guess.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second undoes the whole exercise">
+**Never testing a minified build.** The gap is only visible in release, so test release before shipping.
+
+**Disabling minification to fix a crash.** It works, gives back the size, and hides the next one.
+
+**`-keep class com.example.** { *; }`.** Keeping everything is disabling R8 with extra steps.
+
+**Losing the mapping file.** Production stack traces become unreadable and unrecoverable.
+
+**Shrinking code but not resources.** `isShrinkResources` needs `isMinifyEnabled`, and it is free.
+</Pitfall>
+
+## Practice
+
+1. Build a release with `isMinifyEnabled` and run every screen. Note what breaks.
+2. Find a removed class in `usage.txt`, then add a narrow keep rule and confirm it moves to `seeds.txt`.
+3. Analyze the APK and list the five largest entries.
+4. Convert a multi-density PNG to a `VectorDrawable` and compare the size.
+5. Deobfuscate a stack trace with the mapping file, then try with the wrong build's mapping.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| R8 | Removes what static analysis cannot reach |
+| Reflection | Invisible to it, which is why keep rules exist |
+| `isMinifyEnabled` | Shrink, optimise, obfuscate |
+| `isShrinkResources` | Needs minification; free size |
+| Consumer rules | Most libraries ship their own |
+| `usage.txt` | What R8 removed |
+| `seeds.txt` | What a keep rule preserved |
+| `mapping.txt` | The only way to read a production stack trace |
+| Keep rules | Narrow; a broad one disables R8 |
+| App Bundle | Per-device density, ABI and language — the biggest single win |
+
+<Interview title="A question whose wrong answer is very tempting">
+"A release build crashes with `ClassNotFoundException` but debug is fine. What do you do?"
+
+That gap is R8, since debug does not run it. The class is almost certainly reached by reflection — a
+serializer instantiating from a string name, or a resource looked up with `getIdentifier` — so nothing
+statically references it and R8 removed or renamed it. I would check
+`build/outputs/mapping/release/usage.txt` to confirm it was removed, then add a keep rule scoped to
+that class or package.
+
+What I would not do is turn off `isMinifyEnabled`. It makes the crash go away, which is why it is
+tempting, and it gives back every kilobyte, disables the optimisations, and means the next reflection
+problem stays invisible until someone turns minification on again — probably under release pressure.
+I would also make sure the mapping file is archived with the release, because a production stack trace
+deobfuscated with the wrong build's mapping produces plausible nonsense rather than an error.
+</Interview>

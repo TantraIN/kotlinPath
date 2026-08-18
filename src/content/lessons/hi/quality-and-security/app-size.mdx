@@ -1,0 +1,189 @@
+---
+title: "ऐप छोटा करना: R8, ProGuard और resources"
+description: R8 वह हटा देता है जहाँ तक आपका code पहुँचता नहीं, और ठीक इसीलिए जो चीज सिर्फ reflection से पहुँची जाती है वह गायब हो जाती है। R8 का लगभग हर bug इसी वाक्य का खेल है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+R8 आपके code को उसके दरवाजों से चलकर देखता है और वह सब मिटा देता है जहाँ तक वह पहुँच नहीं सकता। यह
+**स्थिर** जाँच है, तो वह उस class को देख ही नहीं सकता जिसका नाम चलते वक्त किसी string में आता है — और
+keep वाले नियम इसी वजह से हैं।
+</KeyIdea>
+
+## इसे चालू करना
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    buildTypes {
+        release {
+            isMinifyEnabled = true          // R8: घटाना, बेहतर करना, नाम बदलना
+            isShrinkResources = true        // जिन resources का code में जिक्र नहीं, वे हटाइए
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+}
+```
+
+`isShrinkResources` को `isMinifyEnabled` चाहिए — वह निकालता है कि R8 के रखे हुए code से कौन से
+resources तक पहुँचा नहीं जा सकता, तो घटाए बिना सोचने को कुछ बचता ही नहीं।
+
+R8 चार काम करता है, और वे अलग-अलग तरह से टूटते हैं:
+
+| कदम | क्या करता है | कैसे टूटता है |
+| --- | --- | --- |
+| घटाना | न पहुँचने वाली classes और सदस्य हटाता है | Reflection वाले types पर `ClassNotFoundException` |
+| बेहतर करना | अंदर लाता है, जोड़ता है, शाखाएँ हटाता है | कम; आमतौर पर ठीक |
+| नाम बदलना | `a`, `b`, `c` कर देता है | नाम से reflection, और न पढ़े जाने वाले stack traces |
+| Resource घटाना | बिना इस्तेमाल के drawables और strings हटाता है | नाम से लादे गए resources |
+
+## Reflection ही पूरी कहानी क्यों है
+
+```kotlin title="Reflection.kt" numbered
+// R8 को OrderDto का कोई जिक्र दिखता ही नहीं — नाम चलते वक्त एक string है
+val dto = json.decodeFromString(serializer(clazz), body)
+
+// नाम से resource: R.drawable.icon_pending का स्थिर जिक्र कहीं नहीं है
+val id = resources.getIdentifier("icon_$status", "drawable", packageName)
+```
+
+दोनों compile होते हैं, दोनों debug में चलते हैं, और दोनों सिर्फ minify किए release वाले build में
+नाकाम होते हैं। उसी फासले की वजह से R8 की दिक्कतें देर से मिलती हैं — अक्सर users से।
+
+आजकल की ज्यादातर libraries अपने **consumer rules** खुद भेजती हैं, तो Retrofit, Room, Hilt और
+kotlinx.serialization बिना आपके कुछ लिखे चलते हैं। जो अब भी नियम माँगता है वह है आपका अपना reflection
+और जो कुछ भी आप नाम से लादते हैं।
+
+```proguard title="proguard-rules.pro" numbered
+# ऐसी class जिसे serializer नाम से बनाता है
+-keep class com.example.data.dto.** { *; }
+
+# enum की values रखिए, जिन्हें valueOf reflection से पढ़ता है
+-keepclassmembers enum * { public static **[] values(); public static ** valueOf(java.lang.String); }
+
+# लाइन नंबर रखिए ताकि stack traces पढ़े जा सकें, पर classes के नाम फिर भी बदलिए
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+```
+
+<Quiz
+  question="Release वाला build ऐसी class पर `ClassNotFoundException` से crash करता है जो source में साफ मौजूद है। Debug में चलता है। हो क्या रहा है, और गलत इलाज क्या है?"
+  options={[
+    "वह class manifest में नहीं है; उसे वहाँ जोड़िए",
+    "R8 ने उसे हटाया या नाम बदल दिया क्योंकि उसका कोई स्थिर जिक्र नहीं है — वह reflection से पहुँची जाती है। सही इलाज उस class के लिए सँकरा `-keep` नियम है; गलत इलाज minification बंद करना है, जो नाप वापस दे देता है और ऐप को हमेशा के लिए बिना घटा छोड़ देता है",
+    "उस build को `isShrinkResources = false` चाहिए, जो उस class को हटा रहा है"
+  ]}
+  answer={1}
+  explanation="Debug में R8 चलता ही नहीं, इसीलिए वह फासला सिर्फ release में दिखता है — और R8 का यह सबसे आम लक्षण है। R8 वही रखता है जहाँ तक वह आपके दरवाजों से पहुँच सके, और जो class किसी string वाले नाम से बनती है वह स्थिर जाँच की नजर में पहुँच से बाहर है, तो वह हटा या नाम बदल दी जाती है और चलते वक्त की खोज नाकाम होती है। सही जवाब उस class या package तक सिमटा keep वाला नियम है, और build/outputs/mapping/release/usage.txt पक्का कर देगा कि वह हटाई गई थी या नाम बदला गया था। लुभाने वाला गलत इलाज isMinifyEnabled बंद करना है, जिससे crash सच में चला जाता है — और साथ में हर kilobyte वापस आ जाता है, वे बेहतरियाँ बंद हो जाती हैं, और अगली reflection वाली दिक्कत तब तक अदृश्य रहती है जब तक कोई उसे दोबारा चालू न करे। Resource घटाने का इससे कोई लेना-देना नहीं: वह सिर्फ resources हटाता है, classes कभी नहीं।"
+/>
+
+## ऐप को बड़ा असल में करता क्या है
+
+नियम लिखने से पहले पता कीजिए कि नाप है कहाँ:
+
+```bash title="Analyse" numbered
+# Android Studio: Build > Analyze APK, या
+./gradlew :app:bundleRelease
+```
+
+लगभग हमेशा जवाब इन चार में से एक होता है, इसी क्रम में:
+
+- **तस्वीरें।** ऐसी PNG जो vector होनी चाहिए थी, या ऐसी चीज की पाँच densities जिसे `VectorDrawable`
+  किसी भी नाप पर बना देता। तस्वीरों के लिए WebP, PNG से छोटा है।
+- **बिना इस्तेमाल की dependencies।** एक function के लिए लाई गई library, जो अपना पूरा पेड़ साथ लाती है।
+- **Native libraries।** ABI के हिस्से या App Bundle हर device को हर architecture भेजना बंद कर देते हैं।
+- **उन भाषाओं के resources जो आप देते ही नहीं।** `resourceConfigurations` उन्हें सीमित करता है।
+
+```kotlin title="Bundle.kt" numbered
+android {
+    bundle {
+        language { enableSplit = true }     // Play सिर्फ user की भाषा भेजता है
+        density  { enableSplit = true }
+        abi      { enableSplit = true }
+    }
+}
+```
+
+App Bundle आमतौर पर मौजूद सबसे बड़ा इकलौता फायदा है, क्योंकि Play फिर हर device के लिए ऐसी APK बनाता
+है जिसमें एक density, एक ABI और एक भाषा होती है, सब नहीं।
+
+<Detail summary="Mapping की files, और वे crash रिपोर्टें जो आपको चाहिए होंगी">
+नाम बदलने से हर चीज का नाम बदल जाता है, तो mapping की file के बिना production का कोई stack trace पढ़ा
+नहीं जा सकता:
+
+```text title="Without mapping" numbered
+at a.b.c.d(Unknown Source:12)
+```
+
+`build/outputs/mapping/release/mapping.txt` हर build पर बनती है और वापसी का इकलौता रास्ता है। उसे अपने
+crash reporter को दीजिए — Crashlytics यह अपने Gradle plugin से खुद कर लेता है — और उसे **release के
+साथ सँभालकर रखिए**, क्योंकि किसी दूसरे build की mapping file जोर से नाकाम होने के बजाय भरोसेमंद लगती
+बकवास खोल देती है।
+
+उसी directory में दो और files हैं जो कुछ गायब होने पर पढ़ने लायक हैं:
+
+- `usage.txt` — R8 ने जो कुछ हटाया। अगर आपकी class यहाँ है, तो वह घटाई गई थी।
+- `seeds.txt` — keep वाले नियम ने जो कुछ बचाया। अगर आपकी class यहाँ है, तो वह बच गई और दिक्कत कहीं और
+  है।
+
+वे दोनों "हटाई गई या नाम बदला?" का जवाब सेकंडों में दे देती हैं, जो वरना लंबा अंदाजा होता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और दूसरी पूरी कवायद बेकार कर देती है">
+**Minify किया build कभी न जाँचना।** वह फासला सिर्फ release में दिखता है, तो भेजने से पहले release
+जाँचिए।
+
+**Crash ठीक करने के लिए minification बंद करना।** चल जाता है, नाप वापस दे देता है, और अगली दिक्कत छिपा
+देता है।
+
+**`-keep class com.example.** { *; }`।** सब कुछ रखना R8 बंद करना ही है, बस कुछ और कदमों के साथ।
+
+**Mapping की file खो देना।** Production के stack traces न पढ़े जाने लायक और न लौटाए जाने लायक हो जाते
+हैं।
+
+**Code घटाना पर resources नहीं।** `isShrinkResources` को `isMinifyEnabled` चाहिए, और वह मुफ्त है।
+</Pitfall>
+
+## अभ्यास
+
+1. `isMinifyEnabled` के साथ release बनाइए और हर screen चलाइए। जो टूटे उसे लिखिए।
+2. `usage.txt` में हटाई गई कोई class ढूँढ़िए, फिर सँकरा keep नियम जोड़कर पक्का कीजिए कि वह `seeds.txt`
+   में चली जाती है।
+3. APK का विश्लेषण कीजिए और सबसे बड़ी पाँच चीजें गिनाइए।
+4. कई densities वाली PNG को `VectorDrawable` में बदलिए और नाप मिलाइए।
+5. Mapping की file से कोई stack trace खोलिए, फिर गलत build की mapping से कोशिश कीजिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| R8 | वह हटाता है जहाँ तक स्थिर जाँच पहुँच नहीं सकती |
+| Reflection | उसे दिखती ही नहीं, और keep नियम इसीलिए हैं |
+| `isMinifyEnabled` | घटाना, बेहतर करना, नाम बदलना |
+| `isShrinkResources` | Minification चाहिए; मुफ्त का नाप |
+| Consumer rules | ज्यादातर libraries अपने खुद भेजती हैं |
+| `usage.txt` | R8 ने क्या हटाया |
+| `seeds.txt` | Keep नियम ने क्या बचाया |
+| `mapping.txt` | Production का stack trace पढ़ने का इकलौता रास्ता |
+| Keep नियम | सँकरे; चौड़ा नियम R8 को बंद कर देता है |
+| App Bundle | हर device की density, ABI और भाषा — सबसे बड़ा इकलौता फायदा |
+
+<Interview title="एक सवाल, जिसका गलत जवाब बहुत लुभाता है">
+"Release वाला build `ClassNotFoundException` से crash करता है पर debug ठीक है। आप क्या करेंगे?"
+
+वह फासला R8 है, क्योंकि debug में वह चलता ही नहीं। वह class लगभग पक्के तौर पर reflection से पहुँची
+जाती है — कोई serializer जो string वाले नाम से बना रहा है, या `getIdentifier` से ढूँढ़ा गया कोई
+resource — तो उसका कोई स्थिर जिक्र नहीं है और R8 ने उसे हटा या नाम बदल दिया। मैं
+`build/outputs/mapping/release/usage.txt` देखकर पक्का करूँगा कि वह हटाई गई थी, फिर उस class या package
+तक सिमटा keep नियम जोड़ूँगा।
+
+जो मैं नहीं करूँगा वह है `isMinifyEnabled` बंद करना। उससे crash चला जाता है, इसीलिए वह लुभाता है, और
+साथ में हर kilobyte वापस आ जाता है, वे बेहतरियाँ बंद हो जाती हैं, और अगली reflection वाली दिक्कत तब तक
+अदृश्य रहती है जब तक कोई minification दोबारा चालू न करे — शायद release के दबाव में। मैं यह भी पक्का
+करूँगा कि mapping की file release के साथ सँभालकर रखी है, क्योंकि गलत build की mapping से खोला गया
+production का stack trace error के बजाय भरोसेमंद लगती बकवास देता है।
+</Interview>

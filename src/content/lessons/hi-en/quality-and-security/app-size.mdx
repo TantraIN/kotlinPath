@@ -1,0 +1,193 @@
+---
+title: "App chhota karna: R8, ProGuard aur resources"
+description: R8 wo hata deta hai jahan tak aapka code pahunchta nahi, aur theek isiliye jo cheez sirf reflection se pahunchi jati hai wo gayab ho jati hai. R8 ka lagbhag har bug isi vakya ka khel hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+R8 aapke code ko uske darwazon se chalkar dekhta hai aur wo sab mita deta hai jahan tak wo pahunch nahi
+sakta. Ye **sthir** padtal hai, to wo us class ko dekh hi nahi sakta jiska naam chalte waqt kisi string
+mein aata hai — aur keep wale niyam isi wajah se hain.
+</KeyIdea>
+
+## Ise chalu karna
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    buildTypes {
+        release {
+            isMinifyEnabled = true          // R8: ghatana, behtar karna, naam badalna
+            isShrinkResources = true        // jin resources ka code mein zikr nahi, wo hataiye
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+}
+```
+
+`isShrinkResources` ko `isMinifyEnabled` chahiye — wo nikalta hai ki R8 ke rakhe hue code se kaun se
+resources tak pahuncha nahi ja sakta, to ghataye bina sochne ko kuch bachta hi nahi.
+
+R8 chaar kaam karta hai, aur wo alag-alag tarah se tootte hain:
+
+| Kadam | Kya karta hai | Kaise tootta hai |
+| --- | --- | --- |
+| Ghatana | Na pahunchne wali classes aur sadasya hatata hai | Reflection wale types par `ClassNotFoundException` |
+| Behtar karna | Andar lata hai, jodta hai, shakhayein hatata hai | Kam; aam taur par theek |
+| Naam badalna | `a`, `b`, `c` kar deta hai | Naam se reflection, aur na padhe jane wale stack traces |
+| Resource ghatana | Bina istemal ke drawables aur strings hatata hai | Naam se lade gaye resources |
+
+## Reflection hi poori kahani kyun hai
+
+```kotlin title="Reflection.kt" numbered
+// R8 ko OrderDto ka koi zikr dikhta hi nahi — naam chalte waqt ek string hai
+val dto = json.decodeFromString(serializer(clazz), body)
+
+// naam se resource: R.drawable.icon_pending ka sthir zikr kahin nahi hai
+val id = resources.getIdentifier("icon_$status", "drawable", packageName)
+```
+
+Dono compile hote hain, dono debug mein chalte hain, aur dono sirf minify kiye release wale build mein
+nakaam hote hain. Usi faasle ki wajah se R8 ki mushkilein der se milti hain — aksar users se.
+
+Aajkal ki zyadatar libraries apne **consumer rules** khud bhejti hain, to Retrofit, Room, Hilt aur
+kotlinx.serialization bina aapke kuch likhe chalte hain. Jo ab bhi niyam maangta hai wo hai aapka apna
+reflection aur jo kuch bhi aap naam se ladte ho.
+
+```proguard title="proguard-rules.pro" numbered
+# aisi class jise serializer naam se banata hai
+-keep class com.example.data.dto.** { *; }
+
+# enum ki values rakhiye, jinhe valueOf reflection se padhta hai
+-keepclassmembers enum * { public static **[] values(); public static ** valueOf(java.lang.String); }
+
+# line number rakhiye taki stack traces padhe ja sakein, par classes ke naam phir bhi badliye
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+```
+
+<Quiz
+  question="Release wala build aisi class par `ClassNotFoundException` se crash karta hai jo source mein saaf maujood hai. Debug mein chalta hai. Ho kya raha hai, aur galat ilaaj kya hai?"
+  options={[
+    "Wo class manifest mein nahi hai; use wahan jodiye",
+    "R8 ne use hataya ya naam badal diya kyunki uska koi sthir zikr nahi hai — wo reflection se pahunchi jati hai. Sahi ilaaj us class ke liye sankra `-keep` niyam hai; galat ilaaj minification band karna hai, jo naap wapas de deta hai aur app ko hamesha ke liye bina ghata chhod deta hai",
+    "Us build ko `isShrinkResources = false` chahiye, jo us class ko hata raha hai"
+  ]}
+  answer={1}
+  explanation="Debug mein R8 chalta hi nahi, isiliye wo faasla sirf release mein dikhta hai — aur R8 ka ye sabse aam lakshan hai. R8 wahi rakhta hai jahan tak wo aapke darwazon se pahunch sake, aur jo class kisi string wale naam se banti hai wo sthir padtal ki nazar mein pahunch se bahar hai, to wo hata ya naam badal di jati hai aur chalte waqt ki khoj nakaam hoti hai. Sahi jawab us class ya package tak simta keep wala niyam hai, aur build/outputs/mapping/release/usage.txt pakka kar dega ki wo hatai gayi thi ya naam badla gaya tha. Lubhane wala galat ilaaj isMinifyEnabled band karna hai, jisse crash sach mein chala jata hai — aur saath mein har kilobyte wapas aa jata hai, wo behtariyan band ho jati hain, aur agli reflection wali mushkil tab tak adrishya rehti hai jab tak koi use dobara chalu na kare. Resource ghatane ka isse koi lena-dena nahi: wo sirf resources hatata hai, classes kabhi nahi."
+/>
+
+## App ko bada asal mein karta kya hai
+
+Niyam likhne se pehle pata kijiye ki naap hai kahan:
+
+```bash title="Analyse" numbered
+# Android Studio: Build > Analyze APK, ya
+./gradlew :app:bundleRelease
+```
+
+Lagbhag hamesha jawab in chaar mein se ek hota hai, isi order mein:
+
+- **Tasveerein.** Aisi PNG jo vector honi chahiye thi, ya aisi cheez ki paanch densities jise
+  `VectorDrawable` kisi bhi naap par bana deta. Tasveeron ke liye WebP, PNG se chhota hai.
+- **Bina istemal ki dependencies.** Ek function ke liye layi gayi library, jo apna poora ped saath lati
+  hai.
+- **Native libraries.** ABI ke hisse ya App Bundle har device ko har architecture bhejna band kar dete
+  hain.
+- **Un bhashaon ke resources jo aap dete hi nahi.** `resourceConfigurations` unhe seemit karta hai.
+
+```kotlin title="Bundle.kt" numbered
+android {
+    bundle {
+        language { enableSplit = true }     // Play sirf user ki bhasha bhejta hai
+        density  { enableSplit = true }
+        abi      { enableSplit = true }
+    }
+}
+```
+
+App Bundle aam taur par maujood sabse bada iklauta faayda hai, kyunki Play phir har device ke liye aisi
+APK banata hai jismein ek density, ek ABI aur ek bhasha hoti hai, sab nahi.
+
+<Detail summary="Mapping ki files, aur wo crash reportein jo aapko chahiye hongi">
+Naam badalne se har cheez ka naam badal jata hai, to mapping ki file ke bina production ka koi stack
+trace padha nahi ja sakta:
+
+```text title="Without mapping" numbered
+at a.b.c.d(Unknown Source:12)
+```
+
+`build/outputs/mapping/release/mapping.txt` har build par banti hai aur wapsi ka iklauta raasta hai. Use
+apne crash reporter ko dijiye — Crashlytics ye apne Gradle plugin se khud kar leta hai — aur use
+**release ke saath sambhalkar rakhiye**, kyunki kisi doosre build ki mapping file zor se nakaam hone ke
+bajaye bharosemand lagti bakwas khol deti hai.
+
+Usi directory mein do aur files hain jo kuch gayab hone par padhne layak hain:
+
+- `usage.txt` — R8 ne jo kuch hataya. Agar aapki class yahan hai, to wo ghatai gayi thi.
+- `seeds.txt` — keep wale niyam ne jo kuch bachaya. Agar aapki class yahan hai, to wo bach gayi aur
+  mushkil kahin aur hai.
+
+Wo dono "hatai gayi ya naam badla?" ka jawab secondon mein de deti hain, jo warna lamba andaza hota hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri poori kavayad bekaar kar deti hai">
+**Minify kiya build kabhi na dekhna.** Wo faasla sirf release mein dikhta hai, to bhejne se pehle
+release dekhiye.
+
+**Crash theek karne ke liye minification band karna.** Chal jata hai, naap wapas de deta hai, aur agli
+mushkil chhupa deta hai.
+
+**`-keep class com.example.** { *; }`.** Sab kuch rakhna R8 band karna hi hai, bas kuch aur kadmon ke
+saath.
+
+**Mapping ki file kho dena.** Production ke stack traces na padhe jane layak aur na lautaye jane layak
+ho jate hain.
+
+**Code ghatana par resources nahi.** `isShrinkResources` ko `isMinifyEnabled` chahiye, aur wo muft hai.
+</Pitfall>
+
+## Abhyaas
+
+1. `isMinifyEnabled` ke saath release banaiye aur har screen chalaiye. Jo toote use likhiye.
+2. `usage.txt` mein hatai gayi koi class dhoondhiye, phir sankra keep niyam jodkar pakka kijiye ki wo
+   `seeds.txt` mein chali jati hai.
+3. APK ka vishleshan kijiye aur sabse badi paanch cheezein ginaiye.
+4. Kai densities wali PNG ko `VectorDrawable` mein badliye aur naap milaiye.
+5. Mapping ki file se koi stack trace kholiye, phir galat build ki mapping se koshish kijiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| R8 | Wo hatata hai jahan tak sthir padtal pahunch nahi sakti |
+| Reflection | Use dikhti hi nahi, aur keep niyam isiliye hain |
+| `isMinifyEnabled` | Ghatana, behtar karna, naam badalna |
+| `isShrinkResources` | Minification chahiye; muft ka naap |
+| Consumer rules | Zyadatar libraries apne khud bhejti hain |
+| `usage.txt` | R8 ne kya hataya |
+| `seeds.txt` | Keep niyam ne kya bachaya |
+| `mapping.txt` | Production ka stack trace padhne ka iklauta raasta |
+| Keep niyam | Sankre; chauda niyam R8 ko band kar deta hai |
+| App Bundle | Har device ki density, ABI aur bhasha — sabse bada iklauta faayda |
+
+<Interview title="Ek sawal, jiska galat jawab bahut lubhata hai">
+"Release wala build `ClassNotFoundException` se crash karta hai par debug theek hai. Aap kya karoge?"
+
+Wo faasla R8 hai, kyunki debug mein wo chalta hi nahi. Wo class lagbhag pakke taur par reflection se
+pahunchi jati hai — koi serializer jo string wale naam se bana raha hai, ya `getIdentifier` se dhoondha
+gaya koi resource — to uska koi sthir zikr nahi hai aur R8 ne use hata ya naam badal diya. Main
+`build/outputs/mapping/release/usage.txt` dekhkar pakka karunga ki wo hatai gayi thi, phir us class ya
+package tak simta keep niyam jodunga.
+
+Jo main nahi karunga wo hai `isMinifyEnabled` band karna. Usse crash chala jata hai, isiliye wo lubhata
+hai, aur saath mein har kilobyte wapas aa jata hai, wo behtariyan band ho jati hain, aur agli reflection
+wali mushkil tab tak adrishya rehti hai jab tak koi minification dobara chalu na kare — shayad release ke
+dabav mein. Main ye bhi pakka karunga ki mapping ki file release ke saath sambhalkar rakhi hai, kyunki
+galat build ki mapping se khola gaya production ka stack trace error ke bajaye bharosemand lagti bakwas
+deta hai.
+</Interview>
