@@ -1,0 +1,188 @@
+---
+title: "Pehchan: email, Google aur phone ka OTP"
+description: Firebase Auth credentials sambhal leta hai taki aapko passwords na rakhne pade. Jo wo nahi sambhalta wahi asal mein tootta hai — session rehta kahan hai, aur aapka backend us token ka karta kya hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firebase Auth aapko hastakshar kiya hua ek **ID token** deta hai jo sabit karta hai ki user kaun hai.
+Aapka app kabhi koi password nahi rakhta, aur aapka server pehchan ke baare mein app ke dawe par kabhi
+bharosa nahi karta — wo us token ko parakhta hai. Yahan ki har suraksha wali galti inhin do niyamon mein
+se kisi ek ka chhootna hai.
+</KeyIdea>
+
+## Email aur password
+
+```kotlin title="EmailAuth.kt" numbered
+suspend fun signIn(email: String, password: String): Outcome<Unit> = try {
+    auth.signInWithEmailAndPassword(email, password).await()
+    Outcome.Success(Unit)
+} catch (e: FirebaseAuthInvalidCredentialsException) {
+    Outcome.Failure(AuthError.WrongCredentials)
+} catch (e: FirebaseAuthInvalidUserException) {
+    Outcome.Failure(AuthError.WrongCredentials)          // jaanbujhkar wahi
+} catch (e: FirebaseNetworkException) {
+    Outcome.Failure(AuthError.Offline)
+}
+```
+
+"Aisa koi user nahi" aur "galat password" ko ek hi error banana jaanbujhkar hai: unhe alag batana
+hamlawar ko ye bata deta hai ki kaun se email darj hain, aur isi tarah churaye hue passwords ki list aur
+paini hoti hai. Ye data wali parat ke phase ka `Outcome`/`DataError` wala tarika hai, wahan lagaya gaya
+jahan us farak ka suraksha wala asar hai.
+
+`auth.currentUser` hi session hai, aur Firebase use dobara chalu hone ke aar-paar khud sambhalta hai —
+aap koi token khud nahi rakhte. Use ek baar padhne ke bajaye dekhte rahiye:
+
+```kotlin title="AuthState.kt" numbered
+val authState: Flow<FirebaseUser?> = callbackFlow {
+    val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+    auth.addAuthStateListener(listener)
+    awaitClose { auth.removeAuthStateListener(listener) }
+}
+```
+
+Shuru mein ek baar `currentUser` padh lena us maamle ko chook jata hai jahan wo token baad mein bekaar
+ho jaye — band kiya gaya khata, kisi doosre device par badla gaya password — aur app aise session ke liye
+signed-in wala UI dikhata reh jata hai jise server thukra dega.
+
+## Google se sign-in, Credential Manager ke saath
+
+```kotlin title="Google.kt" numbered
+val option = GetGoogleIdOption.Builder()
+    .setServerClientId(BuildConfig.WEB_CLIENT_ID)     // *web* wali client id, Android wali nahi
+    .setFilterByAuthorizedAccounts(false)
+    .build()
+
+val result = credentialManager.getCredential(context, GetCredentialRequest(listOf(option)))
+val idToken = GoogleIdTokenCredential.createFrom(result.credential.data).idToken
+
+auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+```
+
+`GoogleSignInClient` hataya ja chuka hai; uski jagah Credential Manager hai, jo passkeys aur saheje hue
+passwords bhi dhakta hai.
+
+`setServerClientId` Firebase ke console se **web** wali client id leta hai, aur taiyari ki sabse aam
+galti yahi hai — Android wali client id dene par aisa token milta hai jise Firebase bina madadgar sandesh
+ke thukra deta hai. Aur Android wala OAuth client tabhi chalta hai jab aapke hastakshar wale certificate
+ka SHA-1 darj ho, aur isiliye Google se sign-in debug mein chalta hai aur Play ke dobara hastakshar karne
+ke baad nakaam hota hai.
+
+<Quiz
+  question="Koi app Firebase se pehchan karata hai, phir user ki `uid` kisi header mein apne backend ko bhejta hai taki server jaan sake ki bulane wala kaun hai. Suraksha ki sameeksha ise thukra deti hai. Kyun?"
+  options={[
+    "`uid` header ke bajaye body mein bheji jani chahiye",
+    "`uid` bas ek string hai jise client ne bhejna chuna — koi bhi wahan kisi bhi user ki `uid` rakh sakta hai. App ko hastakshar kiya hua ID token bhejna chahiye, aur server ko use Admin SDK se parakhkar `uid` parakhe hue dawon se padhni chahiye",
+    "`uid` ko bhejne se pehle encrypt karna chahiye"
+  ]}
+  answer={1}
+  explanation="Ye pehchan ka natak hai: us request mein pehchan ka dawa hai jiske peeche kuch bhi nahi, to jo hamlawar kisi bhi uid tak pahunch jaye — aur wo raaz hoti nahi, aksar URLs aur share dastavezon mein dikhti hain — wo ek header badalkar us user ki tarah kaam kar sakta hai. Firebase aapko asal mein jo deta hai wo Google ka hastakshar kiya hua JWT hai, aur suraksha usi hastakshar se aati hai. App auth.currentUser.getIdToken() ko Authorization wale header mein bhejta hai, aur server Firebase ke Admin SDK se verifyIdToken bulata hai, jo bharosemand dawe lautane se pehle hastakshar, miyad aur manzil dekhta hai. uid phir unhin parakhe hue dawon se aati hai, kabhi us cheez se nahi jo client ne likhi. uid ko encrypt karne se madad nahi milti, kyunki mushkil ye nahi hai ki wo padhi ja sakti hai — mushkil ye hai ki uske peeche koi pehchan nahi hai."
+/>
+
+## Phone ka OTP
+
+```kotlin title="Phone.kt" numbered
+val options = PhoneAuthOptions.newBuilder(auth)
+    .setPhoneNumber("+919876543210")                   // hamesha E.164
+    .setTimeout(60L, TimeUnit.SECONDS)
+    .setActivity(activity)
+    .setCallbacks(object : OnVerificationStateChangedCallbacks() {
+        override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+            signIn(credential)                          // khud padhna; shayad kabhi na chale
+        }
+        override fun onCodeSent(id: String, token: ForceResendingToken) {
+            verificationId = id                         // process marne par bhi bache
+        }
+        override fun onVerificationFailed(e: FirebaseException) { /* quota, galat number */ }
+    })
+    .build()
+```
+
+`onVerificationCompleted` tab chalta hai jab Android khud SMS padh le, aur bahut saare devices par wo
+kabhi chalta hi nahi — to haath se code bharne wala raasta mukhya raasta hai, badli wala nahi. Bahav ko
+ulta banane se aisi screen banti hai jo banane wale ke phone par chalti hai aur baaki sabko uljha deti
+hai.
+
+`verificationId` wahan rakhiye jahan wo process marne par bache. Jo user apne SMS wale app par jata hai
+uska aapka process maara ja sakta hai, aur aisi screen par lautna jo wo verification bhool chuki hai,
+aisa band raasta hai jisse nikalne ka iklauta tarika shuru se shuru karna hai.
+
+Phone wali pehchan ki har verification par keemat lagti hai aur wahi durupyog ka aam nishana hai, to App
+Check chalu kijiye aur quota tay kijiye — bill aane ke baad nahi, launch se pehle.
+
+<Detail summary="Server kya karta hai, aur dobara pehchan">
+Backend wala aadha hissa chhota hai aur us par koi samjhauta nahi:
+
+```kotlin title="Client" numbered
+val token = auth.currentUser?.getIdToken(false)?.await()?.token
+// Authorization: Bearer $token
+```
+
+```js title="Server (Admin SDK)" numbered
+const decoded = await admin.auth().verifyIdToken(token)
+const uid = decoded.uid            // bharosemand, kyunki hastakshar sahi nikla
+```
+
+`getIdToken(false)` rakha hua token lautata hai aur miyad paas aane par use khud taza kar leta hai, to
+aap use har request par bulate ho, khud rakhkar nahi. Tokens banawat se hi ek ghanta chalte hain — itne
+chhote ki radd kiya gaya khata jaldi kaam karna band kar de.
+
+Doosri janne layak baat hai **dobara pehchan**. Email badalna, password badalna ya khata mitana, teenon
+ko haal ka sign-in chahiye, aur session purana ho to Firebase `FirebaseAuthRecentLoginRequiredException`
+phenkta hai. Wo ghumakar paar karne wali asuvidha nahi hai: wahi us insaan ko khata hadapne se rokti hai
+jiske haath maanga hua khula phone laga hai. Use pakadkar andekha karne ke bajaye dobara credentials
+maangkar sambhaliye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli sirf naam ki pehchan hai">
+**Pehchan ke taur par `uid` bhejna.** ID token bhejiye; server use parakhta hai.
+
+**`setServerClientId` mein Android wali client id.** Use web wali client id chahiye.
+
+**`currentUser` ek baar padhna.** Auth ki haalat dekhte rahiye, warna UI session se zyada ji jata hai.
+
+**OTP mein khud padhne ko mukhya raasta manna.** Bahut saare devices par wo kabhi chalta hi nahi.
+
+**"Aisa koi user nahi" aur "galat password" alag batana.** Wo hamlawar ko bata deta hai ki kaun se email
+hain.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi test wale endpoint ko `uid` bhejiye, phir use kisi doosre user ki karke dekhiye kya hota hai.
+2. Server ki taraf ID token parakhiye aur khule hue dawon se `uid` padhiye.
+3. Android wali client id se Google se sign-in kijiye aur error padhiye.
+4. `onCodeSent` aur code bharne ke beech app maariye, aur dekhiye ki wo bahav bachta hai ya nahi.
+5. Purane sign-in ke baad password badliye aur haal wale login ki exception sambhaliye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| ID token | Hastakshar kiya JWT; server ko sirf isi par bharosa karna chahiye |
+| Header mein `uid` | Bina pehchan wala dawa, jise koi bhi gadh sakta hai |
+| `verifyIdToken` | Admin SDK; hastakshar, miyad aur manzil dekhta hai |
+| `getIdToken(false)` | Rakha hua, aur khud taza — har request par bulaiye |
+| Auth ki haalat | Dekhte rahiye; `currentUser` ek baar mat padhiye |
+| Credential Manager | `GoogleSignInClient` ki jagah; passkeys bhi |
+| `setServerClientId` | Web wali client id, Android wali nahi |
+| SHA-1 | Play ke hastakshar wala certificate darj kijiye, warna release tootta hai |
+| OTP ka khud padhna | Aksar chalta hi nahi; haath se bharna mukhya raasta hai |
+| Dobara pehchan | Samvedansheel badlavon ke liye zaruri, banawat se hi |
+
+<Interview title="Ek sawal, jo bahut aam banawat ko pakadta hai">
+"Koi app Firebase ki `uid` apne backend ko bhejta hai taki server jaan sake ki bulane wala kaun hai. Kya ye theek hai?"
+
+Nahi — wo pehchan ka aisa dawa hai jiske peeche kuch nahi. `uid` bas ek string hai jo client ne request
+mein daali, aur wo raaz hoti nahi; jo kisi ek tak pahunch jaye wo header badalkar us user ki tarah kaam
+kar sakta hai. Server ke paas asli aur gadhe hue bulane wale mein farak karne ka koi raasta nahi.
+
+Firebase asal mein jo deta hai wo Google ka hastakshar kiya hua JWT hai, aur suraksha usi hastakshar mein
+hai. App `getIdToken()` ko `Authorization` wale header mein bhejta hai, aur server Admin SDK se
+`verifyIdToken` bulata hai, jo dawe lautane se pehle hastakshar, miyad aur manzil dekhta hai — aur `uid`
+unhin parakhe hue dawon se aati hai, kabhi us cheez se nahi jo client ne likhi. Tokens ek ghanta chalte
+hain aur khud taza hote hain, to har request par `getIdToken(false)` bulana sahi bhi hai aur sasta bhi.
+</Interview>

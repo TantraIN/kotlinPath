@@ -1,0 +1,184 @@
+---
+title: "Authentication: email, Google and phone OTP"
+description: Firebase Auth handles the credentials so you do not store passwords. What it does not handle is the part that actually breaks — where the session lives, and what your backend does with the token.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firebase Auth gives you a signed **ID token** that proves who the user is. Your app never stores a
+password, and your server never trusts the app's claim about identity — it verifies that token. Every
+security mistake here is one of those two rules being skipped.
+</KeyIdea>
+
+## Email and password
+
+```kotlin title="EmailAuth.kt" numbered
+suspend fun signIn(email: String, password: String): Outcome<Unit> = try {
+    auth.signInWithEmailAndPassword(email, password).await()
+    Outcome.Success(Unit)
+} catch (e: FirebaseAuthInvalidCredentialsException) {
+    Outcome.Failure(AuthError.WrongCredentials)
+} catch (e: FirebaseAuthInvalidUserException) {
+    Outcome.Failure(AuthError.WrongCredentials)          // deliberately the same
+} catch (e: FirebaseNetworkException) {
+    Outcome.Failure(AuthError.Offline)
+}
+```
+
+Mapping "no such user" and "wrong password" to the same error is deliberate: distinguishing them tells
+an attacker which email addresses are registered, which is how a credential-stuffing list gets
+refined. This is the `Outcome`/`DataError` pattern from the data-layer phase applied where the
+distinction has a security consequence.
+
+`auth.currentUser` is the session, and Firebase persists it across restarts by itself — you do not
+store a token yourself. Observe it rather than reading it once:
+
+```kotlin title="AuthState.kt" numbered
+val authState: Flow<FirebaseUser?> = callbackFlow {
+    val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+    auth.addAuthStateListener(listener)
+    awaitClose { auth.removeAuthStateListener(listener) }
+}
+```
+
+Reading `currentUser` once at startup misses the case where the token becomes invalid later — a
+disabled account, a password changed on another device — and leaves the app showing a signed-in UI for
+a session the server will reject.
+
+## Google sign-in, with Credential Manager
+
+```kotlin title="Google.kt" numbered
+val option = GetGoogleIdOption.Builder()
+    .setServerClientId(BuildConfig.WEB_CLIENT_ID)     // the *web* client id, not the Android one
+    .setFilterByAuthorizedAccounts(false)
+    .build()
+
+val result = credentialManager.getCredential(context, GetCredentialRequest(listOf(option)))
+val idToken = GoogleIdTokenCredential.createFrom(result.credential.data).idToken
+
+auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+```
+
+`GoogleSignInClient` is deprecated; Credential Manager is the replacement and also covers passkeys and
+saved passwords.
+
+`setServerClientId` takes the **web** client id from the Firebase console, which is the single most
+common setup error — using the Android client id gives a token Firebase rejects with an unhelpful
+message. And the Android OAuth client only works if your signing certificate's SHA-1 is registered,
+which is why Google sign-in works in debug and fails after Play re-signs the release.
+
+<Quiz
+  question="An app authenticates with Firebase, then sends the user's `uid` to its own backend in a header so the server knows who is calling. A security review rejects it. Why?"
+  options={[
+    "The `uid` should be sent in the body rather than a header",
+    "A `uid` is just a string the client chose to send — anyone can put any user's `uid` there. The app must send the signed ID token, and the server must verify it with the Admin SDK and read the `uid` from the verified claims",
+    "The `uid` needs to be encrypted before transmission"
+  ]}
+  answer={1}
+  explanation="This is authentication theatre: the request carries an identity claim with nothing backing it, so an attacker who learns any uid — and they are not secret, they often appear in URLs and shared documents — can act as that user by editing one header. What Firebase actually gives you is a JWT signed by Google, and the security comes from the signature. The app sends auth.currentUser.getIdToken() in an Authorization header, and the server calls verifyIdToken with the Firebase Admin SDK, which checks the signature, the expiry and the audience before returning trustworthy claims. The uid then comes from those verified claims and never from anything the client typed. Encrypting the uid would not help, because the problem is not that it is readable — it is that it is unauthenticated."
+/>
+
+## Phone OTP
+
+```kotlin title="Phone.kt" numbered
+val options = PhoneAuthOptions.newBuilder(auth)
+    .setPhoneNumber("+919876543210")                   // E.164, always
+    .setTimeout(60L, TimeUnit.SECONDS)
+    .setActivity(activity)
+    .setCallbacks(object : OnVerificationStateChangedCallbacks() {
+        override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+            signIn(credential)                          // auto-retrieval; may never fire
+        }
+        override fun onCodeSent(id: String, token: ForceResendingToken) {
+            verificationId = id                         // survive process death
+        }
+        override fun onVerificationFailed(e: FirebaseException) { /* quota, bad number */ }
+    })
+    .build()
+```
+
+`onVerificationCompleted` fires when Android auto-reads the SMS, and on many devices it never fires at
+all — so the manual code-entry path is the main path, not the fallback. Building the flow the other way
+round produces a screen that works on the developer's phone and confuses everyone else.
+
+Store `verificationId` where it survives process death. A user who switches to their SMS app can have
+your process killed, and returning to a screen that has forgotten the verification is a dead end with
+no way out but starting over.
+
+Phone auth costs money per verification and is the usual target for abuse, so enable App Check and set
+a quota before launch rather than after the bill.
+
+<Detail summary="What the server does, and re-authentication">
+The backend half is short and non-negotiable:
+
+```kotlin title="Client" numbered
+val token = auth.currentUser?.getIdToken(false)?.await()?.token
+// Authorization: Bearer $token
+```
+
+```js title="Server (Admin SDK)" numbered
+const decoded = await admin.auth().verifyIdToken(token)
+const uid = decoded.uid            // trustworthy, because the signature checked out
+```
+
+`getIdToken(false)` returns a cached token and refreshes it automatically when it is close to expiring,
+so you call it per request rather than caching it yourself. Tokens last an hour by design — short
+enough that a revoked account stops working quickly.
+
+The other thing to know is **re-authentication**. Changing an email, changing a password or deleting
+an account requires a recent sign-in, and Firebase throws `FirebaseAuthRecentLoginRequiredException`
+if the session is old. That is not an inconvenience to work around: it is what stops someone with a
+borrowed unlocked phone from taking over the account. Handle it by prompting for credentials again
+rather than by catching and ignoring it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is authentication in name only">
+**Sending a `uid` as identity.** Send the ID token; the server verifies it.
+
+**The Android client id in `setServerClientId`.** It needs the web client id.
+
+**Reading `currentUser` once.** Observe the auth state, or the UI outlives the session.
+
+**Treating auto-retrieval as the main OTP path.** On many devices it never fires.
+
+**Distinguishing "no such user" from "wrong password".** It tells an attacker which emails exist.
+</Pitfall>
+
+## Practice
+
+1. Send a `uid` to a test endpoint, then change it to another user's and see what happens.
+2. Verify an ID token server-side and read the `uid` from the decoded claims.
+3. Sign in with Google using the Android client id and read the error.
+4. Kill the app between `onCodeSent` and entering the code, and see whether the flow survives.
+5. Change a password after an old sign-in and handle the recent-login exception.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| ID token | A signed JWT; the only thing a server should trust |
+| `uid` in a header | An unauthenticated claim anyone can forge |
+| `verifyIdToken` | Admin SDK; checks signature, expiry and audience |
+| `getIdToken(false)` | Cached, and auto-refreshed — call it per request |
+| Auth state | Observe it; do not read `currentUser` once |
+| Credential Manager | Replaces `GoogleSignInClient`; also passkeys |
+| `setServerClientId` | The web client id, not the Android one |
+| SHA-1 | Register the Play signing certificate, or release breaks |
+| OTP auto-retrieval | Often never fires; manual entry is the main path |
+| Re-authentication | Required for sensitive changes, by design |
+
+<Interview title="A question that catches a very common design">
+"An app sends the Firebase `uid` to its backend so the server knows who is calling. Is that fine?"
+
+No — that is an identity claim with nothing backing it. A `uid` is just a string the client put in a
+request, and they are not secret; anyone who learns one can act as that user by editing a header. The
+server has no way to tell a genuine caller from a forged one.
+
+What Firebase actually provides is a JWT signed by Google, and the security is in the signature. The
+app sends `getIdToken()` in an `Authorization` header, and the server calls `verifyIdToken` with the
+Admin SDK, which checks the signature, the expiry and the audience before returning claims — and the
+`uid` comes from those verified claims, never from anything the client typed. Tokens last an hour and
+refresh automatically, so calling `getIdToken(false)` per request is both correct and cheap.
+</Interview>

@@ -1,0 +1,183 @@
+---
+title: "पहचान: email, Google और phone का OTP"
+description: Firebase Auth credentials सँभाल लेता है ताकि आपको passwords न रखने पड़ें। जो वह नहीं सँभालता वही असल में टूटता है — session रहता कहाँ है, और आपका backend उस token का करता क्या है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Firebase Auth आपको हस्ताक्षर किया हुआ एक **ID token** देता है जो साबित करता है कि user कौन है। आपका
+ऐप कभी कोई password नहीं रखता, और आपका server पहचान के बारे में ऐप के दावे पर कभी भरोसा नहीं करता — वह
+उस token को परखता है। यहाँ की हर सुरक्षा वाली गलती इन्हीं दो नियमों में से किसी एक का छूटना है।
+</KeyIdea>
+
+## Email और password
+
+```kotlin title="EmailAuth.kt" numbered
+suspend fun signIn(email: String, password: String): Outcome<Unit> = try {
+    auth.signInWithEmailAndPassword(email, password).await()
+    Outcome.Success(Unit)
+} catch (e: FirebaseAuthInvalidCredentialsException) {
+    Outcome.Failure(AuthError.WrongCredentials)
+} catch (e: FirebaseAuthInvalidUserException) {
+    Outcome.Failure(AuthError.WrongCredentials)          // जानबूझकर वही
+} catch (e: FirebaseNetworkException) {
+    Outcome.Failure(AuthError.Offline)
+}
+```
+
+"ऐसा कोई user नहीं" और "गलत password" को एक ही error बनाना जानबूझकर है: उन्हें अलग बताना हमलावर को यह
+बता देता है कि कौन से email दर्ज हैं, और इसी तरह चुराए हुए passwords की सूची और पैनी होती है। यह
+data वाली परत के phase का `Outcome`/`DataError` वाला तरीका है, वहाँ लगाया गया जहाँ उस फर्क का सुरक्षा
+वाला नतीजा है।
+
+`auth.currentUser` ही session है, और Firebase उसे दोबारा चालू होने के आर-पार खुद सँभालता है — आप कोई
+token खुद नहीं रखते। उसे एक बार पढ़ने के बजाय देखते रहिए:
+
+```kotlin title="AuthState.kt" numbered
+val authState: Flow<FirebaseUser?> = callbackFlow {
+    val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+    auth.addAuthStateListener(listener)
+    awaitClose { auth.removeAuthStateListener(listener) }
+}
+```
+
+शुरू में एक बार `currentUser` पढ़ लेना उस मामले को चूक जाता है जहाँ वह token बाद में बेकार हो जाए —
+बंद किया गया खाता, किसी दूसरे device पर बदला गया password — और ऐप ऐसे session के लिए signed-in वाला UI
+दिखाता रह जाता है जिसे server ठुकरा देगा।
+
+## Google से sign-in, Credential Manager के साथ
+
+```kotlin title="Google.kt" numbered
+val option = GetGoogleIdOption.Builder()
+    .setServerClientId(BuildConfig.WEB_CLIENT_ID)     // *web* वाली client id, Android वाली नहीं
+    .setFilterByAuthorizedAccounts(false)
+    .build()
+
+val result = credentialManager.getCredential(context, GetCredentialRequest(listOf(option)))
+val idToken = GoogleIdTokenCredential.createFrom(result.credential.data).idToken
+
+auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+```
+
+`GoogleSignInClient` हटाया जा चुका है; उसकी जगह Credential Manager है, जो passkeys और सहेजे हुए
+passwords भी ढकता है।
+
+`setServerClientId` Firebase के console से **web** वाली client id लेता है, और तैयारी की सबसे आम गलती
+यही है — Android वाली client id देने पर ऐसा token मिलता है जिसे Firebase बिना मददगार संदेश के ठुकरा
+देता है। और Android वाला OAuth client तभी चलता है जब आपके हस्ताक्षर वाले certificate का SHA-1 दर्ज हो,
+और इसीलिए Google से sign-in debug में चलता है और Play के दोबारा हस्ताक्षर करने के बाद नाकाम होता है।
+
+<Quiz
+  question="कोई ऐप Firebase से पहचान कराता है, फिर user की `uid` किसी header में अपने backend को भेजता है ताकि server जान सके कि बुलाने वाला कौन है। सुरक्षा की समीक्षा इसे ठुकरा देती है। क्यों?"
+  options={[
+    "`uid` header के बजाय body में भेजी जानी चाहिए",
+    "`uid` बस एक string है जिसे client ने भेजना चुना — कोई भी वहाँ किसी भी user की `uid` रख सकता है। ऐप को हस्ताक्षर किया हुआ ID token भेजना चाहिए, और server को उसे Admin SDK से परखकर `uid` परखे हुए दावों से पढ़नी चाहिए",
+    "`uid` को भेजने से पहले encrypt करना चाहिए"
+  ]}
+  answer={1}
+  explanation="यह पहचान का नाटक है: उस request में पहचान का दावा है जिसके पीछे कुछ भी नहीं, तो जो हमलावर किसी भी uid तक पहुँच जाए — और वे राज होती नहीं, अक्सर URLs और साझा दस्तावेजों में दिखती हैं — वह एक header बदलकर उस user की तरह काम कर सकता है। Firebase आपको असल में जो देता है वह Google का हस्ताक्षर किया हुआ JWT है, और सुरक्षा उसी हस्ताक्षर से आती है। ऐप auth.currentUser.getIdToken() को Authorization वाले header में भेजता है, और server Firebase के Admin SDK से verifyIdToken बुलाता है, जो भरोसेमंद दावे लौटाने से पहले हस्ताक्षर, मियाद और मंजिल जाँचता है। uid फिर उन्हीं परखे हुए दावों से आती है, कभी उस चीज से नहीं जो client ने लिखी। uid को encrypt करने से मदद नहीं मिलती, क्योंकि दिक्कत यह नहीं है कि वह पढ़ी जा सकती है — दिक्कत यह है कि उसके पीछे कोई पहचान नहीं है।"
+/>
+
+## Phone का OTP
+
+```kotlin title="Phone.kt" numbered
+val options = PhoneAuthOptions.newBuilder(auth)
+    .setPhoneNumber("+919876543210")                   // हमेशा E.164
+    .setTimeout(60L, TimeUnit.SECONDS)
+    .setActivity(activity)
+    .setCallbacks(object : OnVerificationStateChangedCallbacks() {
+        override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+            signIn(credential)                          // खुद पढ़ना; शायद कभी न चले
+        }
+        override fun onCodeSent(id: String, token: ForceResendingToken) {
+            verificationId = id                         // process मरने पर भी बचे
+        }
+        override fun onVerificationFailed(e: FirebaseException) { /* quota, गलत नंबर */ }
+    })
+    .build()
+```
+
+`onVerificationCompleted` तब चलता है जब Android खुद SMS पढ़ ले, और बहुत सारे devices पर वह कभी चलता ही
+नहीं — तो हाथ से code भरने वाला रास्ता मुख्य रास्ता है, बदली वाला नहीं। बहाव को उलटा बनाने से ऐसी
+screen बनती है जो बनाने वाले के phone पर चलती है और बाकी सबको उलझा देती है।
+
+`verificationId` वहाँ रखिए जहाँ वह process मरने पर बचे। जो user अपने SMS वाले ऐप पर जाता है उसका आपका
+process मारा जा सकता है, और ऐसी screen पर लौटना जो वह verification भूल चुकी है, ऐसा बंद रास्ता है
+जिससे निकलने का इकलौता तरीका शुरू से शुरू करना है।
+
+Phone वाली पहचान की हर verification पर कीमत लगती है और वही दुरुपयोग का आम निशाना है, तो App Check चालू
+कीजिए और quota तय कीजिए — बिल आने के बाद नहीं, launch से पहले।
+
+<Detail summary="Server क्या करता है, और दोबारा पहचान">
+Backend वाला आधा हिस्सा छोटा है और उस पर कोई समझौता नहीं:
+
+```kotlin title="Client" numbered
+val token = auth.currentUser?.getIdToken(false)?.await()?.token
+// Authorization: Bearer $token
+```
+
+```js title="Server (Admin SDK)" numbered
+const decoded = await admin.auth().verifyIdToken(token)
+const uid = decoded.uid            // भरोसेमंद, क्योंकि हस्ताक्षर सही निकला
+```
+
+`getIdToken(false)` रखा हुआ token लौटाता है और मियाद पास आने पर उसे खुद ताजा कर लेता है, तो आप उसे हर
+request पर बुलाते हैं, खुद रखकर नहीं। Tokens बनावट से ही एक घंटा चलते हैं — इतने छोटे कि रद्द किया गया
+खाता जल्दी काम करना बंद कर दे।
+
+दूसरी जानने लायक बात है **दोबारा पहचान**। Email बदलना, password बदलना या खाता मिटाना, तीनों को हाल का
+sign-in चाहिए, और session पुराना हो तो Firebase `FirebaseAuthRecentLoginRequiredException` फेंकता है।
+वह घुमाकर पार करने वाली असुविधा नहीं है: वही उस इंसान को खाता हड़पने से रोकती है जिसके हाथ माँगा हुआ
+खुला phone लगा है। उसे पकड़कर अनदेखा करने के बजाय दोबारा credentials माँगकर सँभालिए।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली सिर्फ नाम की पहचान है">
+**पहचान के तौर पर `uid` भेजना।** ID token भेजिए; server उसे परखता है।
+
+**`setServerClientId` में Android वाली client id।** उसे web वाली client id चाहिए।
+
+**`currentUser` एक बार पढ़ना।** Auth की हालत देखते रहिए, वरना UI session से ज्यादा जी जाता है।
+
+**OTP में खुद पढ़ने को मुख्य रास्ता मानना।** बहुत सारे devices पर वह कभी चलता ही नहीं।
+
+**"ऐसा कोई user नहीं" और "गलत password" अलग बताना।** वह हमलावर को बता देता है कि कौन से email हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी test वाले endpoint को `uid` भेजिए, फिर उसे किसी दूसरे user की करके देखिए क्या होता है।
+2. Server की तरफ ID token परखिए और खुले हुए दावों से `uid` पढ़िए।
+3. Android वाली client id से Google से sign-in कीजिए और error पढ़िए।
+4. `onCodeSent` और code भरने के बीच ऐप मारिए, और देखिए कि वह बहाव बचता है या नहीं।
+5. पुराने sign-in के बाद password बदलिए और हाल वाले login की exception सँभालिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| ID token | हस्ताक्षर किया JWT; server को सिर्फ इसी पर भरोसा करना चाहिए |
+| Header में `uid` | बिना पहचान वाला दावा, जिसे कोई भी गढ़ सकता है |
+| `verifyIdToken` | Admin SDK; हस्ताक्षर, मियाद और मंजिल जाँचता है |
+| `getIdToken(false)` | रखा हुआ, और खुद ताजा — हर request पर बुलाइए |
+| Auth की हालत | देखते रहिए; `currentUser` एक बार मत पढ़िए |
+| Credential Manager | `GoogleSignInClient` की जगह; passkeys भी |
+| `setServerClientId` | Web वाली client id, Android वाली नहीं |
+| SHA-1 | Play के हस्ताक्षर वाला certificate दर्ज कीजिए, वरना release टूटता है |
+| OTP का खुद पढ़ना | अक्सर चलता ही नहीं; हाथ से भरना मुख्य रास्ता है |
+| दोबारा पहचान | संवेदनशील बदलावों के लिए जरूरी, बनावट से ही |
+
+<Interview title="एक सवाल, जो बहुत आम बनावट को पकड़ता है">
+"कोई ऐप Firebase की `uid` अपने backend को भेजता है ताकि server जान सके कि बुलाने वाला कौन है। क्या यह ठीक है?"
+
+नहीं — वह पहचान का ऐसा दावा है जिसके पीछे कुछ नहीं। `uid` बस एक string है जो client ने request में
+डाली, और वे राज होती नहीं; जो किसी एक तक पहुँच जाए वह header बदलकर उस user की तरह काम कर सकता है।
+Server के पास असली और गढ़े हुए बुलाने वाले में फर्क करने का कोई रास्ता नहीं।
+
+Firebase असल में जो देता है वह Google का हस्ताक्षर किया हुआ JWT है, और सुरक्षा उसी हस्ताक्षर में है।
+ऐप `getIdToken()` को `Authorization` वाले header में भेजता है, और server Admin SDK से `verifyIdToken`
+बुलाता है, जो दावे लौटाने से पहले हस्ताक्षर, मियाद और मंजिल जाँचता है — और `uid` उन्हीं परखे हुए दावों
+से आती है, कभी उस चीज से नहीं जो client ने लिखी। Tokens एक घंटा चलते हैं और खुद ताजा होते हैं, तो हर
+request पर `getIdToken(false)` बुलाना सही भी है और सस्ता भी।
+</Interview>
