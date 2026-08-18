@@ -1,0 +1,169 @@
+---
+title: Memory के leaks और LeakCanary
+description: Leak का मतलब memory का बढ़ना नहीं है। वह ऐसी चीज है जिससे आपका code निपट चुका है पर garbage collector फिर भी उसे छोड़ नहीं सकता, क्योंकि कोई ज्यादा लंबी उम्र वाली चीज उसका पता पकड़े है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Garbage collector वह सब छोड़ देता है जो किसी **GC root** से पहुँचा नहीं जा सकता — कोई static field,
+कोई चलता thread, कोई चलती service. इसलिए leak की शक्ल हमेशा एक ही होती है: कोई लंबी उम्र वाली चीज किसी
+छोटी उम्र वाली का पता पकड़े है, और इकलौता सवाल यह है कि कौन।
+</KeyIdea>
+
+## Activity सबसे महँगी क्यों है
+
+`Activity` अपना पूरा view का पेड़ पकड़े रहती है, और हर view अपने bitmaps। उसे leak करना कोई छोटी चीज
+leak करना नहीं है; वह एक पूरी screen leak करना है। Leak के रहते दस बार घुमाइए और memory में दस
+activities तथा दस view के पेड़ हो जाते हैं, और इसी तरह ठीक-ठाक लगता ऐप `OutOfMemoryError` तक पहुँचता
+है।
+
+```kotlin title="Leaks.kt" numbered
+// 1. किसी Context का static पता
+object Cache { lateinit var context: Context }        // process की पूरी उम्र तक पकड़ा हुआ
+
+// 2. किसी लंबी उम्र वाली चीज पर दर्ज listener, जो कभी हटाया नहीं गया
+sensorManager.registerListener(this, sensor, SENSOR_DELAY_NORMAL)   // कोई unregister नहीं
+
+// 3. अंदरूनी class, जिसके पास बाहर वाले का छिपा हुआ पता है
+private val handler = object : Handler(Looper.getMainLooper()) {    // Activity पकड़े है
+    override fun handleMessage(msg: Message) { updateUi() }
+}
+handler.postDelayed({ }, 60_000)                       // उसे एक मिनट जिंदा रखता है
+
+// 4. ऐसे scope में coroutine जिसे कोई रोकता नहीं
+CoroutineScope(Dispatchers.IO).launch { forever() }    // किसी lifecycle से बँधा नहीं
+```
+
+हर एक वही गलती है, अलग कपड़ों में: पता उस चीज से ज्यादा जीता है जिसका वह पता है।
+
+इनमें से दो के बारे में पिछले phases चेता चुके हैं — बिना हटाया sensor वाला listener, और वह `Service`
+जो lifecycle owner नहीं है इसलिए उसका coroutine scope आपको रोकना है। यह पाठ वह जगह है जहाँ वे सब एक
+ही विचार बन जाते हैं।
+
+## LeakCanary
+
+```kotlin title="build.gradle.kts" numbered
+debugImplementation("com.squareup.leakcanary:leakcanary-android:2.14")
+```
+
+पूरी तैयारी बस इतनी है। वह खुद लग जाता है, हर खत्म हुई `Activity` और `Fragment` पर नजर रखता है, और
+जब garbage collection के बाद भी कोई पहुँचने लायक बची रह जाए तो heap उतारकर notification भेजता है।
+
+उसे काम का बनाती है **leak की कड़ी** — किसी GC root से उस चीज तक पतों की जंजीर जिसे मर जाना चाहिए था:
+
+```text title="Leak trace" numbered
+┬───
+│ GC Root: Global variable in native code
+│
+├─ com.example.Cache class
+│    ↓ static Cache.context          ← दोषी यही है
+├─ com.example.OrderActivity instance
+│    Leaking: YES (Activity#mDestroyed is true)
+╰→ ...
+```
+
+उसे नीचे से पढ़िए: leak होती चीज आखिर में है, और तीर वाली लाइन वह पता है जिसे हटाना है। LeakCanary हर
+कड़ी पर `Leaking: YES / NO / UNKNOWN` लिखता है, और दोषी हमेशा आखिरी `NO` और पहले `YES` के बीच होता है
+— वही पता है जो साफ हो जाना चाहिए था और नहीं हुआ।
+
+<Quiz
+  question="किसी ऐप में LeakCanary कोई leak नहीं बताता, पर लंबी scrolling के दौरान memory लगातार चढ़ती है और आखिर में `OutOfMemoryError` से crash हो जाता है। क्या हो रहा है?"
+  options={[
+    "LeakCanary से छूट गया; उसकी पकड़ने की हद घटानी पड़ेगी",
+    "यह leak है ही नहीं — यह बिना हद के रोकी गई memory है जिसे कोई चीज जायज तौर पर पकड़े हुए है, जैसे बिना निकासी के लगातार बढ़ता कोई cache, तो कुछ भी पहुँच से बाहर नहीं है और LeakCanary के बताने को कुछ है ही नहीं",
+    "Garbage collector काफी बार नहीं चल रहा और उसे हाथ से `System.gc()` चाहिए"
+  ]}
+  answer={1}
+  explanation="LeakCanary एक ही सवाल का जवाब देता है: क्या कोई खत्म हो चुकी चीज अब भी पहुँचने लायक है। जो cache बिना हद के बढ़ता है वह बनावट से ही पूरी तरह पहुँच में है, तो वह leak नहीं है — उसका हर byte जानबूझकर उस code ने पकड़ा है जिसने कभी छोड़ने का फैसला ही नहीं किया। यह फर्क इसलिए मायने रखता है कि इलाज अलग है: leak कोई पता छोड़ने से हटती है, जबकि बिना हद की रुकावट को हद देकर ठीक किया जाता है — कोई LRU नाप, निकासी की कोई नीति, या छोटी page की खिड़की। यहाँ सही औजार LeakCanary नहीं बल्कि Android Profiler का memory वाला हिस्सा है, क्योंकि वह दिखाता है कि रोका क्या गया है, न कि पहुँच से बाहर क्या है — और scrolling के दौरान आम दोषी हैं decode हुए bitmaps और ऐसी list जो screen से दूर वाले pages गिराने के बजाय हर page जमा करती जाती है। System.gc() से मदद नहीं मिलती, क्योंकि उन चीजों का पता अब भी किसी के पास है।"
+/>
+
+## इलाज, शक्ल के हिसाब से
+
+| शक्ल | इलाज |
+| --- | --- |
+| Static `Context` | `applicationContext` लीजिए, या रखिए ही मत |
+| Listener, receiver, observer | उसे मेल खाते lifecycle वाले callback में हटाइए |
+| अंदरूनी class या lambda | उसे `static`/ऊपर के स्तर पर कीजिए, या बाहर वाले को कमजोर पकड़िए |
+| देर तक चलता coroutine | उसे scope दीजिए — `viewModelScope`, `lifecycleScope`, या अपना रोकिए |
+| देरी वाले संदेशों वाला `Handler` | `onDestroy` में `removeCallbacksAndMessages(null)` |
+| Callback पकड़े singleton | उसे देकर वापस लीजिए, या उसकी जगह कोई `Flow` लीजिए |
+
+`applicationContext` इतनी बार जवाब होता है कि उसे साफ-साफ कहना बनता है: जो `Context` किसी screen की
+उम्र से आगे पकड़ा जाए वह लगभग कभी `Activity` नहीं होना चाहिए। Hilt इसका constructor वाला रूप नामुमकिन
+बना देता है — `@ActivityContext` माँगती कोई `@Singleton` compile ही नहीं होती — जिससे वह किस्म के
+leaks हट जाते हैं जो compiler को दिखते हैं, और registration वाले आपके लिए बचते हैं।
+
+<Detail summary="Compose, और उसके leaks आते कहाँ से हैं">
+Compose इनमें से कुछ हटा देता है और अपना एक जोड़ देता है। तरीका `DisposableEffect` है:
+
+```kotlin title="Effect.kt" numbered
+DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event -> onEvent(event) }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }   // वैकल्पिक नहीं
+}
+```
+
+किसी composable में आप जो भी दर्ज करें उसे `onDispose` में हटाना पड़ता है, और वह कब होगा यह key तय
+करती है — गलत key का मतलब है कि वह effect दोबारा चलता ही नहीं और पुराना दर्ज बना रहता है।
+
+Compose वाला खास जाल है किसी lambda में ऐसी चीज पकड़ लेना जो उस composition से ज्यादा जीती है, और
+अक्सर यह किसी composable के callback को किसी singleton या `ViewModel` के field में रखने से होता है।
+Composition चली जाती है, वह lambda नहीं, और वह अपनी पकड़ी हर चीज थामे रहता है।
+
+`rememberUpdatedState` उस साथ वाले मामले के लिए है जहाँ लंबी उम्र वाले effect को दोबारा शुरू हुए बिना
+ताजा callback दिखना चाहिए — उसे गलत लेना leak नहीं बल्कि पुराने callback वाला bug है, पर दोनों पड़ोसी
+हैं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली Android का सबसे आम leak है">
+**किसी static या singleton में `Context`।** `applicationContext` लीजिए, या कुछ मत रखिए।
+
+**दर्ज करके न हटाना।** Listeners, receivers और observers, सब screen से ज्यादा जीते हैं।
+
+**हाथ से बनाया `CoroutineScope(...)`।** उसे कोई न रोके तो काम process मरने तक चलता है।
+
+**रोकी हुई memory को leak मानना।** बिना हद का cache पूरी तरह पहुँच में है; उसकी जगह हद लगाइए।
+
+**Leaks सिर्फ आँख से जाँचना।** LeakCanary लगाकर बीस बार घुमाइए और उसे बताने दीजिए।
+</Pitfall>
+
+## अभ्यास
+
+1. LeakCanary जोड़िए, किसी `object` में `Context` रखिए, और वह जो leak की कड़ी बनाए उसे पढ़िए।
+2. बिना unregister किए sensor वाला listener दर्ज कीजिए, दस बार घुमाइए, और गिनती देखिए।
+3. किसी कड़ी में `Leaking: NO` और `YES` की सरहद ढूँढ़कर दोषी लाइन निकालिए।
+4. हाथ से बने `CoroutineScope` की जगह `viewModelScope` रखिए और पक्का कीजिए कि leak चली गई।
+5. बिना हद का cache बनाइए और पक्का कीजिए कि memory चढ़ते हुए भी LeakCanary कुछ नहीं बताता।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Leak | GC root से पहुँच में, पर आपका code उससे निपट चुका |
+| Activities क्यों | एक leak हुई `Activity` यानी पूरा view का पेड़ और उसके bitmaps |
+| LeakCanary | एक `debugImplementation` लाइन; खत्म हुई activities पर नजर |
+| Leak की कड़ी | दोषी आखिरी `Leaking: NO` और पहले `YES` के बीच है |
+| Static `Context` | `applicationContext` लीजिए |
+| दर्ज करना | उसे मेल खाते callback में हटाइए |
+| हाथ से बने scopes | किसी को उन्हें रोकना है |
+| `DisposableEffect` | `onDispose` वैकल्पिक नहीं है |
+| रोकी हुई memory | Leak नहीं — उसकी जगह cache को हद दीजिए |
+| Profiler | रुकावट के लिए; पहुँच के लिए LeakCanary |
+
+<Interview title="एक सवाल, जिसका जवाब वह फर्क ही है">
+"Memory खत्म होते ऐप की छानबीन आप कैसे करेंगे?"
+
+पहले मैं leak और रुकी हुई memory को अलग करूँगा, क्योंकि बाहर से दोनों एक जैसी दिखती हैं और उनके इलाज
+अलग हैं। LeakCanary एक ही सवाल का जवाब देता है — क्या कोई खत्म हो चुकी चीज अब भी पहुँच में है — तो अगर
+memory चढ़ते हुए भी वह कुछ नहीं बताता, तो वह memory उस code ने जानबूझकर पकड़ रखी है जो कभी छोड़ता ही
+नहीं: बिना हद का cache, हर page जमा करती list, पूरे नाप पर रखे decode हुए bitmaps। वह Android Profiler
+के memory वाले हिस्से का काम है, और इलाज पता छोड़ना नहीं बल्कि हद लगाना है।
+
+अगर LeakCanary कुछ बताता है, तो वह कड़ी दोषी का नाम ले लेती है: नीचे से पढ़िए, और हटाने वाला पता आखिरी
+`Leaking: NO` और पहले `YES` के बीच बैठा होता है। व्यवहार में वह लगभग हमेशा वही गिनी-चुनी शक्लें होती
+हैं — किसी singleton में कोई `Context`, दर्ज करके कभी न हटाया गया कोई listener, या हाथ से बना कोई
+`CoroutineScope` जिसे कोई रोकता नहीं।
+</Interview>

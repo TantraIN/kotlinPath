@@ -1,0 +1,171 @@
+---
+title: Memory leaks and LeakCanary
+description: A leak is not memory growing. It is an object your code has finished with that the garbage collector still cannot free, because something longer-lived is holding a reference to it.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+The garbage collector frees anything not reachable from a **GC root** — a static field, a live thread,
+a running service. A leak is therefore always the same shape: something long-lived holds a reference
+to something short-lived, and the only question is what.
+</KeyIdea>
+
+## Why an Activity is the expensive one
+
+An `Activity` holds its whole view tree, and every view holds its bitmaps. Leaking one is not leaking
+a small object; it is leaking a screen. Rotate ten times with a leak in place and you have ten
+activities and ten view trees in memory, which is how an app that felt fine reaches
+`OutOfMemoryError`.
+
+```kotlin title="Leaks.kt" numbered
+// 1. a static reference to a Context
+object Cache { lateinit var context: Context }        // held for the life of the process
+
+// 2. a listener registered on something long-lived and never removed
+sensorManager.registerListener(this, sensor, SENSOR_DELAY_NORMAL)   // no unregister
+
+// 3. an inner class with an implicit outer reference
+private val handler = object : Handler(Looper.getMainLooper()) {    // holds the Activity
+    override fun handleMessage(msg: Message) { updateUi() }
+}
+handler.postDelayed({ }, 60_000)                       // keeps it alive for a minute
+
+// 4. a coroutine in a scope nobody cancels
+CoroutineScope(Dispatchers.IO).launch { forever() }    // not tied to any lifecycle
+```
+
+Each is the same mistake wearing different clothes: the reference outlives the thing referenced.
+
+Two of these the earlier phases already warned about — the unregistered sensor listener, and the
+`Service` that is not a lifecycle owner so its coroutine scope is yours to cancel. This lesson is
+where those become one idea.
+
+## LeakCanary
+
+```kotlin title="build.gradle.kts" numbered
+debugImplementation("com.squareup.leakcanary:leakcanary-android:2.14")
+```
+
+That is the entire setup. It installs itself, watches every destroyed `Activity` and `Fragment`, and
+when one is still reachable after a garbage collection it dumps the heap and posts a notification.
+
+What makes it useful is the **leak trace** — the chain of references from a GC root to the object
+that should have died:
+
+```text title="Leak trace" numbered
+┬───
+│ GC Root: Global variable in native code
+│
+├─ com.example.Cache class
+│    ↓ static Cache.context          ← the culprit
+├─ com.example.OrderActivity instance
+│    Leaking: YES (Activity#mDestroyed is true)
+╰→ ...
+```
+
+Read it from the bottom: the leaking object is at the end, and the line marked with the arrow is the
+reference to remove. LeakCanary labels each node `Leaking: YES / NO / UNKNOWN`, and the culprit is
+always between the last `NO` and the first `YES` — that is the reference that should have been
+cleared and was not.
+
+<Quiz
+  question="An app has no leaks in LeakCanary, but memory climbs steadily during a long scrolling session and eventually crashes with `OutOfMemoryError`. What is likely happening?"
+  options={[
+    "LeakCanary missed it; the detection threshold needs lowering",
+    "This is not a leak — it is unbounded retained memory that something is legitimately still holding, such as an ever-growing cache with no eviction, so nothing is unreachable and there is nothing for LeakCanary to report",
+    "The garbage collector is not running often enough and needs a manual `System.gc()`"
+  ]}
+  answer={1}
+  explanation="LeakCanary answers one question: is a destroyed object still reachable. A cache that grows without bound is fully reachable by design, so it is not leaking — every byte is held on purpose by code that never decided to let go. The distinction matters because the fix is different: a leak is removed by dropping a reference, while unbounded retention is fixed by bounding it, with an LRU size, an eviction policy, or a smaller page window. The Android Profiler's memory view is the right tool here rather than LeakCanary, since it shows what is retained rather than what is unreachable — and the usual culprits in a scrolling session are decoded bitmaps and a list that accumulates every page instead of dropping the ones far off screen. System.gc() would not help, because the objects are still referenced."
+/>
+
+## The fixes, by shape
+
+| Shape | Fix |
+| --- | --- |
+| Static `Context` | Use `applicationContext`, or do not hold one |
+| Listener, receiver, observer | Remove it in the matching lifecycle callback |
+| Inner class or lambda | Make it `static`/top-level, or hold the outer weakly |
+| Long-running coroutine | Scope it — `viewModelScope`, `lifecycleScope`, or cancel your own |
+| `Handler` with delayed messages | `removeCallbacksAndMessages(null)` in `onDestroy` |
+| Singleton holding a callback | Hand it out and take it back, or use a `Flow` instead |
+
+`applicationContext` is the answer often enough to be worth stating plainly: a `Context` held past a
+screen's life should almost never be the `Activity`. Hilt makes the constructor-shaped version of this
+impossible — a `@Singleton` requesting `@ActivityContext` does not compile — which removes the class
+of leak the compiler can see, and leaves the registration-shaped ones for you.
+
+<Detail summary="Compose, and where its leaks come from">
+Compose removes some of these and adds one of its own. `DisposableEffect` is the mechanism:
+
+```kotlin title="Effect.kt" numbered
+DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event -> onEvent(event) }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }   // not optional
+}
+```
+
+Anything you register in a composable must be removed in `onDispose`, and the key is what decides
+when that happens — a wrong key means the effect never re-runs and the old registration stays.
+
+The Compose-specific trap is capturing something in a lambda that outlives the composition, most
+often by storing a composable's callback in a singleton or a `ViewModel` field. The composition goes
+away, the lambda does not, and it holds everything it captured.
+
+`rememberUpdatedState` exists for the related case where a long-lived effect must see the latest
+callback without restarting — using it wrongly is a stale-callback bug rather than a leak, but the
+two are neighbours.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is the most common leak in Android">
+**A `Context` in a static or singleton.** Use `applicationContext`, or hold nothing.
+
+**Registering without unregistering.** Listeners, receivers and observers all outlive the screen.
+
+**`CoroutineScope(...)` created by hand.** If nobody cancels it, the work runs until the process dies.
+
+**Treating retained memory as a leak.** An unbounded cache is fully reachable; bound it instead.
+
+**Testing leaks only by eye.** Rotate twenty times with LeakCanary installed and let it tell you.
+</Pitfall>
+
+## Practice
+
+1. Add LeakCanary, put a `Context` in an `object`, and read the leak trace it produces.
+2. Register a sensor listener without unregistering, rotate ten times, and watch the count.
+3. Find the culprit line in a trace by locating the boundary between `Leaking: NO` and `YES`.
+4. Replace a hand-made `CoroutineScope` with `viewModelScope` and confirm the leak goes.
+5. Build an unbounded cache and confirm LeakCanary reports nothing while memory climbs.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| A leak | Reachable from a GC root, but your code is done with it |
+| Why activities | One leaked `Activity` is a whole view tree and its bitmaps |
+| LeakCanary | One `debugImplementation` line; watches destroyed activities |
+| Leak trace | The culprit is between the last `Leaking: NO` and the first `YES` |
+| Static `Context` | Use `applicationContext` |
+| Registration | Remove it in the matching callback |
+| Hand-made scopes | Somebody must cancel them |
+| `DisposableEffect` | `onDispose` is not optional |
+| Retained memory | Not a leak — bound the cache instead |
+| The profiler | For retention; LeakCanary for reachability |
+
+<Interview title="A question where the distinction is the answer">
+"How would you investigate an app running out of memory?"
+
+First I would separate a leak from retention, because they look the same from outside and have
+different fixes. LeakCanary answers one question — is a destroyed object still reachable — so if it
+reports nothing while memory climbs, the memory is being held on purpose by code that never lets go:
+an unbounded cache, a list accumulating every page, decoded bitmaps kept at full resolution. That is
+the Android Profiler's memory view, and the fix is bounding it rather than dropping a reference.
+
+If LeakCanary does report something, the trace names the culprit: read from the bottom, and the
+reference to remove sits between the last `Leaking: NO` and the first `YES`. In practice it is almost
+always the same few shapes — a `Context` in a singleton, a listener registered and never removed, or a
+`CoroutineScope` created by hand that nobody cancels.
+</Interview>
