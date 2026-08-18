@@ -1,0 +1,215 @@
+---
+title: Foreground services और उनके नियम
+description: User के कहीं और रहते हुए चलते रहने का इकलौता रास्ता foreground service है, और Android ने एक दशक लगाकर उसे जानबूझकर मुश्किल बनाया है। नियम सख्त हैं, और उन्हें तोड़ना चेतावनी नहीं, crash है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Foreground service कहती है: **user को पता है कि यह चल रहा है, और इसे मारा नहीं जाना चाहिए**। वह जरूरी
+notification कोई झंझट नहीं है जिससे बचना हो — वही पूरी दलील है, और Android ने तब से जो भी नियम जोड़े
+वे इसीलिए हैं कि कोई ऐप वह दलील झूठ-मूठ न कर सके।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+पीछे चलने की गुंजाइश सालों से घटती आई है, और आज की हालत सीधी है: पीछे गया ऐप कुछ सेकंड पाता है और
+फिर रुक जाता है। जिसे user के दूसरे ऐप में रहते हुए चलते रहना है उसके पास ठीक दो रास्ते हैं, और गलत
+चुनना यहाँ की सबसे आम गलती है।
+
+<Compare
+  left={{
+    title: "WorkManager",
+    subtitle: "टाला जा सकने वाला काम",
+    accent: "emerald",
+    points: [
+      "+ Reboot और process मरने पर बचता है",
+      "+ Constraints network, charge, खालीपन का इंतजार करती हैं",
+      "+ कोई notification नहीं, user को कुछ नहीं दिखता",
+      "- कब चलेगा यह system तय करता है — मिनटों से घंटों में",
+    ],
+  }}
+  right={{
+    title: "Foreground service",
+    subtitle: "अभी हो रहा काम",
+    accent: "amber",
+    points: [
+      "+ तुरंत और लगातार चलती है",
+      "+ पीछे की पाबंदियों से लगभग छूट",
+      "- दिखने वाली notification जरूरी है",
+      "- शुरू करने के सख्त नियम; गलत करना crash है",
+    ],
+  }}
+/>
+
+कसौटी यह है कि notification देखकर user को हैरानी होगी या नहीं। बजता music, नापी जा रही दौड़, progress
+वाली पट्टी के साथ चढ़ती कोई file — वे इसकी उम्मीद रखते हैं। ऐसी sync जो उन्होंने कभी माँगी ही नहीं —
+नहीं रखते, और वह WorkManager का काम है।
+
+## शक्ल
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+<service
+    android:name=".TrackingService"
+    android:exported="false"
+    android:foregroundServiceType="location" />
+```
+
+```kotlin title="TrackingService.kt" numbered
+class TrackingService : Service() {
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForeground(NOTIFICATION_ID, buildNotification())   // 5 सेकंड के अंदर
+        scope.launch { track() }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        scope.cancel()                                          // यह lifecycle owner नहीं है
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null        // bound service नहीं
+}
+```
+
+उस file की दो बारीकियाँ बोझ उठा रही हैं।
+
+**पाँच सेकंड के अंदर `startForeground`।** चूकिए तो system `ForegroundServiceDidNotStartInTimeException`
+फेंकता है और service मार देता है। तो notification पहले बनाइए और काम बाद में शुरू कीजिए — कभी ऐसा मत
+कीजिए कि कुछ लाकर फिर `startForeground` बुलाएँ।
+
+**अपना scope खुद रोकिए।** `Service` के पास कोई `lifecycleScope` नहीं है, तो यहाँ शुरू किया coroutine
+service से ज्यादा जीता है जब तक आप उसे रोकें नहीं। यही वह leak है जो user के tracking बंद करने के बाद
+भी location सुनने वाले को चलाता रहता है।
+
+## Types, और उन्हें बताया क्यों जाता है
+
+Android 10 से foreground service को बताना पड़ता है कि वह किसलिए है, और Android 14 से वह बताना मनवाया
+भी जाता है: हर type की अपनी permission और अपनी शर्तें हैं।
+
+| Type | आमतौर पर | बात |
+| --- | --- | --- |
+| `mediaPlayback` | Music, podcasts | सबसे ढीला |
+| `location` | दौड़ नापना, navigation | पहले location वाली permission मिली होनी चाहिए |
+| `dataSync` | Upload या download | Android 15 पर काफी कसा हुआ — समय की हद है |
+| `camera` / `microphone` | Recording | मेल खाती permission चाहिए |
+| `connectedDevice` | Wearables, BLE | |
+| `shortService` | तीन मिनट से कम | कोई permission नहीं, पर समय की पक्की हद |
+
+`dataSync` से सावधान रहिए: Android 15 पर वह चौबीस घंटे की खिड़की में छह घंटे तक सीमित है, जिसके बाद
+system उसे रोक देता है। अगर किसी sync को उससे ज्यादा चाहिए, तो वह शुरू से ही WorkManager का काम था।
+
+<Quiz
+  question="Connectivity लौटने पर कोई ऐप `BroadcastReceiver` से foreground service शुरू करता है। Testing में चलता है और production में `ForegroundServiceStartNotAllowedException` के साथ crash करता है। हो क्या रहा है?"
+  options={[
+    "Manifest में उस service का `foregroundServiceType` नहीं है",
+    "Android 12 से पीछे गया ऐप foreground service शुरू कर ही नहीं सकता, सिवाय छूटों की एक छोटी सूची के — और testing के दौरान ऐप सामने था",
+    "Broadcast receivers कभी कोई service शुरू नहीं कर सकते",
+  ]}
+  answer={1}
+  explanation="यही वह नियम है जो लगभग सबको पकड़ता है, क्योंकि ऐप खोलकर test करते वक्त वह दिखता ही नहीं। Android 12 ने पीछे गए ऐप्स को foreground service शुरू करने से रोक दिया, और छूटों की सूची छोटी है — user का notification से कुछ करना, कोई Bluetooth device जुड़ना, कोई पक्का alarm बजना, कोई ऊँची प्राथमिकता वाला Firebase संदेश, और कुछ और। Connectivity वाला broadcast उसमें नहीं है। बनाते वक्त ऐप screen पर होता है, तो ऐप सामने है, शुरू करना जायज है, और कुछ भी उस दिक्कत को उजागर नहीं करता। इलाज लगभग हमेशा यह होता है कि वह foreground का काम था ही नहीं: connectivity से चलने वाली sync ठीक वही है जो WorkManager की network वाली शर्त करती है, बिना notification और बिना उस पाबंदी के। जहाँ काम सच में user को दिखता है, वहाँ service किसी system की घटना से नहीं, user के अपने किए से शुरू कीजिए।"
+/>
+
+## रोकना, और लौटाई जाने वाली value
+
+```kotlin title="Stop.kt" numbered
+// service के अंदर से
+stopSelf()
+
+// बाहर से
+context.stopService(Intent(context, TrackingService::class.java))
+```
+
+`onStartCommand` की लौटाई value तय करती है कि memory की तंगी में system के service मार देने पर क्या
+होगा:
+
+| लौटाइए | मारे जाने पर |
+| --- | --- |
+| `START_STICKY` | दोबारा बनती है, `null` intent के साथ |
+| `START_NOT_STICKY` | दोबारा नहीं बनती |
+| `START_REDELIVER_INTENT` | असली intent के साथ दोबारा बनती है |
+
+`START_STICKY` का आपको `null` intent थमाना crashes की असली वजह है — जो code
+`intent.getStringExtra(...)` पढ़ता है वह हर बार चलता है, सिवाय उस एक बार के जब system service दोबारा
+शुरू करता है। Intent के data से चलने वाली किसी भी चीज के लिए `START_REDELIVER_INTENT` ईमानदार चुनाव
+है।
+
+<Detail summary="Notification ही करार है, तो उसे काम का बनाइए">
+Service के चलते हुए foreground notification हटाई नहीं जा सकती, तो बुरी notification एक ऐसी स्थायी
+खीझ है जिसे user मिटा भी नहीं सकता:
+
+```kotlin title="Notification.kt" numbered
+NotificationCompat.Builder(this, CHANNEL_ID)
+    .setContentTitle(getString(R.string.tracking_title))
+    .setContentText(getString(R.string.tracking_distance, km))
+    .setSmallIcon(R.drawable.ic_run)
+    .setOngoing(true)
+    .setContentIntent(openAppPendingIntent)                 // tap करने पर ऐप में वापस
+    .addAction(R.drawable.ic_stop, getString(R.string.stop), stopPendingIntent)
+    .build()
+```
+
+रोकने वाला action दिखने से ज्यादा मायने रखता है। उसके बिना service खत्म करने का इकलौता रास्ता ऐप में
+सही screen ढूँढ़ना है, और जिन्हें वह नहीं मिलती वे ऐप ही हटा देते हैं। जिंदा बदलती जानकारी — दूरी,
+upload का प्रतिशत — वही उस notification को कर से बदलकर सुविधा बना देती है।
+
+Android 12 और उसके बाद system उसे दिखाने में दस सेकंड तक की देर कर सकता है, तो जो service उतने में
+खत्म हो जाए उसका कुछ दिखता ही नहीं। सच में छोटे काम के लिए यह ठीक है, और `shortService` उसी के लिए
+है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और उनमें से तीन crash करती हैं">
+**पीछे से शुरू करना।** Android 12 से `ForegroundServiceStartNotAllowedException`, और ऐप खोलकर test
+करते वक्त अदृश्य।
+
+**धीमा `startForeground`।** पाँच सेकंड से ज्यादा और system service मार देता है।
+
+**Service का coroutine scope न रोकना।** `Service` lifecycle owner नहीं है, तो काम उससे ज्यादा जीता है।
+
+**`START_STICKY` के बाद extras पढ़ना।** दोबारा शुरू होने पर `null` intent मिलता है।
+
+**टाले जा सकने वाले काम के लिए इसे लेना।** जो sync किसी ने माँगी ही नहीं वह स्थायी notification की
+हकदार नहीं, और `dataSync` पर अब समय की हद है जो उसे वैसे भी रोक देगी।
+</Pitfall>
+
+## अभ्यास
+
+1. कोई foreground service शुरू कीजिए और पक्का कीजिए कि दूसरा ऐप इस्तेमाल करते हुए भी वह चलती रहती है।
+2. `startForeground` को पाँच सेकंड से आगे टालिए और exception पढ़िए।
+3. ऐप पीछे रखते हुए किसी broadcast receiver से एक शुरू करने की कोशिश कीजिए।
+4. `START_STICKY` लौटाइए, Settings से ऐप मारिए, और जो intent मिले उसे log कीजिए।
+5. Notification में रोकने वाला action जोड़िए और बिना ऐप खोले service खत्म कीजिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| मतलब क्या है | User को पता है कि यह चल रहा है; इसे मत मारिए |
+| कसौटी | Notification देखकर उन्हें हैरानी होगी क्या |
+| `startForeground` | पाँच सेकंड के अंदर, वरना system आपको मार देता है |
+| `foregroundServiceType` | बताया हुआ, permission वाला, और Android 14 से मनवाया हुआ |
+| `dataSync` | Android 15 पर रोज छह घंटे — आमतौर पर WorkManager का काम |
+| पीछे से शुरू | Android 12 से बंद, छूटों की छोटी सूची के साथ |
+| Coroutine scope | आपको ही रोकना है; `Service` lifecycle owner नहीं |
+| `START_STICKY` | `null` intent के साथ दोबारा शुरू |
+| `START_REDELIVER_INTENT` | असली intent के साथ दोबारा शुरू |
+| Notification | हटाई नहीं जा सकती, तो उसे जिंदा data और रोकने वाला action दीजिए |
+
+<Interview title="एक सवाल, जो असल में औजार चुनने का है">
+"Foreground service कब लेंगे?"
+
+सिर्फ तब जब काम अभी हो रहा हो और user को उसका पता हो — बजता music, नापी जा रही दौड़, progress वाली
+पट्टी के साथ कोई upload। वह जरूरी notification ही दलील है, तो मैं यह कसौटी लगाता हूँ कि उसे देखकर
+user को हैरानी होगी क्या। अगर होगी, तो वह टाला जा सकने वाला काम है और WorkManager की जगह है।
+
+जो नियम लोगों को पकड़ता है वह यह है कि Android 12 से पीछे गया ऐप foreground service शुरू कर ही नहीं
+सकता, छूटों की छोटी सूची के बाहर। बनाते वक्त वह अदृश्य है क्योंकि test करते हुए ऐप screen पर होता है,
+और production में वह `ForegroundServiceStartNotAllowedException` बनकर दिखता है। जब मुझे वह मिलता है
+तो जवाब आमतौर पर कोई छूट ढूँढ़ना नहीं होता — जवाब यह होता है कि वह काम कभी foreground का था ही नहीं,
+और WorkManager की एक शर्त वही काम बिना notification के कर देती है।
+</Interview>

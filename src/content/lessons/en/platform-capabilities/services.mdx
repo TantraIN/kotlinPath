@@ -1,0 +1,217 @@
+---
+title: Foreground services and their rules
+description: A foreground service is the only way to keep running while the user is elsewhere, and Android has spent a decade making that harder on purpose. The rules are strict, and breaking them is a crash rather than a warning.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A foreground service says: **the user knows this is running, and it must not be killed**. The
+mandatory notification is not a nuisance to work around — it is the entire justification, and every
+rule Android has added since exists to stop apps claiming that justification falsely.
+</KeyIdea>
+
+## Why this matters
+
+Background execution has been narrowing for years, and the current position is simple: an app in the
+background gets a few seconds and then stops. Something that must keep running while the user is in
+another app has exactly two options, and picking the wrong one is the most common mistake here.
+
+<Compare
+  left={{
+    title: "WorkManager",
+    subtitle: "Deferrable work",
+    accent: "emerald",
+    points: [
+      "+ Survives reboot and process death",
+      "+ Constraints wait for network, charge, idle",
+      "+ No notification, no user-visible presence",
+      "- The system decides when — minutes to hours",
+    ],
+  }}
+  right={{
+    title: "Foreground service",
+    subtitle: "Work happening now",
+    accent: "amber",
+    points: [
+      "+ Runs immediately and continuously",
+      "+ Effectively exempt from background limits",
+      "- A visible notification is mandatory",
+      "- Strict start rules; getting them wrong crashes",
+    ],
+  }}
+/>
+
+The test is whether a user would be surprised to see a notification. Music playing, a run being
+tracked, a file uploading with a progress bar — they expect it. A sync they never asked about — they
+do not, and that is WorkManager's job.
+
+## The shape
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+<service
+    android:name=".TrackingService"
+    android:exported="false"
+    android:foregroundServiceType="location" />
+```
+
+```kotlin title="TrackingService.kt" numbered
+class TrackingService : Service() {
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForeground(NOTIFICATION_ID, buildNotification())   // within 5 seconds
+        scope.launch { track() }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        scope.cancel()                                          // it is not a lifecycle owner
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null        // not a bound service
+}
+```
+
+Two details in that file are load-bearing.
+
+**`startForeground` within five seconds.** Miss it and the system throws
+`ForegroundServiceDidNotStartInTimeException` and kills the service. So build the notification
+first and start the work after — never fetch something and then call `startForeground`.
+
+**Cancel your own scope.** A `Service` has no `lifecycleScope`, so a coroutine started here outlives
+the service unless you cancel it. This is the leak that keeps a location listener running after the
+user stopped tracking.
+
+## The types, and why they are declared
+
+Since Android 10 a foreground service must declare what it is for, and since Android 14 the
+declaration is enforced: each type has its own permission and its own preconditions.
+
+| Type | Typical use | Note |
+| --- | --- | --- |
+| `mediaPlayback` | Music, podcasts | The most permissive |
+| `location` | Run tracking, navigation | Needs a location permission granted first |
+| `dataSync` | Upload or download | Heavily restricted on Android 15 — has a time budget |
+| `camera` / `microphone` | Recording | Needs the matching permission |
+| `connectedDevice` | Wearables, BLE | |
+| `shortService` | Under three minutes | No permission, but a hard time limit |
+
+`dataSync` is the one to be careful with: on Android 15 it is limited to six hours in a
+twenty-four-hour window, after which the system stops it. If a sync needs longer than that, it was
+WorkManager's job all along.
+
+<Quiz
+  question="An app starts a foreground service from a `BroadcastReceiver` when connectivity returns. It works in testing and crashes in production with `ForegroundServiceStartNotAllowedException`. What is happening?"
+  options={[
+    "The service is missing its `foregroundServiceType` in the manifest",
+    "Since Android 12 an app in the background cannot start a foreground service at all, except from a short list of exemptions — and the app was in the foreground during testing",
+    "Broadcast receivers can never start services",
+  ]}
+  answer={1}
+  explanation="This is the rule that catches almost everyone, because it is invisible while you are testing with the app open. Android 12 stopped background apps from starting foreground services, and the exemption list is short — the user interacting with a notification, a Bluetooth device connecting, an exact alarm firing, a high-priority Firebase message, and a few more. A connectivity broadcast is not on it. During development the app is on screen, so the app is in the foreground, the start is allowed, and nothing reveals the problem. The fix is almost always that this was not foreground work: connectivity-triggered sync is exactly what WorkManager's network constraint does, without a notification and without the restriction. Where the work genuinely is user-visible, start the service from the user's own action rather than from a system event."
+/>
+
+## Stopping, and the return value
+
+```kotlin title="Stop.kt" numbered
+// from inside the service
+stopSelf()
+
+// from outside
+context.stopService(Intent(context, TrackingService::class.java))
+```
+
+`onStartCommand`'s return value decides what happens if the system kills the service under memory
+pressure:
+
+| Return | If killed |
+| --- | --- |
+| `START_STICKY` | Recreated, with a `null` intent |
+| `START_NOT_STICKY` | Not recreated |
+| `START_REDELIVER_INTENT` | Recreated with the original intent |
+
+`START_STICKY` handing you a `null` intent is a real source of crashes — code that reads
+`intent.getStringExtra(...)` works every time until the one time the system restarts the service.
+For anything driven by intent data, `START_REDELIVER_INTENT` is the honest choice.
+
+<Detail summary="The notification is the contract, so make it useful">
+A foreground notification cannot be dismissed while the service runs, so a bad one is a permanent
+irritation the user cannot remove:
+
+```kotlin title="Notification.kt" numbered
+NotificationCompat.Builder(this, CHANNEL_ID)
+    .setContentTitle(getString(R.string.tracking_title))
+    .setContentText(getString(R.string.tracking_distance, km))
+    .setSmallIcon(R.drawable.ic_run)
+    .setOngoing(true)
+    .setContentIntent(openAppPendingIntent)                 // tapping returns to the app
+    .addAction(R.drawable.ic_stop, getString(R.string.stop), stopPendingIntent)
+    .build()
+```
+
+The stop action matters more than it looks. Without it the only way to end the service is to find
+the right screen in the app, and users who cannot find it uninstall instead. Live updating — the
+distance, the upload percentage — is what turns the notification from a tax into the feature.
+
+On Android 12 and above the system may delay showing it for ten seconds, so a service that finishes
+in under that time shows nothing at all. For genuinely short work that is fine, and `shortService`
+exists for it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and three of them crash">
+**Starting one from the background.** `ForegroundServiceStartNotAllowedException` since Android 12,
+and invisible while testing with the app open.
+
+**Slow `startForeground`.** More than five seconds and the system kills the service.
+
+**Not cancelling the service's coroutine scope.** A `Service` is not a lifecycle owner, so the work
+outlives it.
+
+**Reading extras after `START_STICKY`.** The restart delivers a `null` intent.
+
+**Using one for deferrable work.** A sync nobody asked about does not justify a permanent
+notification, and `dataSync` now has a time budget that will stop it anyway.
+</Pitfall>
+
+## Practice
+
+1. Start a foreground service and confirm the app keeps running while you use another app.
+2. Delay `startForeground` past five seconds and read the exception.
+3. Try starting one from a broadcast receiver with your app backgrounded.
+4. Return `START_STICKY`, kill the app from Settings, and log the intent you receive.
+5. Add a stop action to the notification and end the service without opening the app.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| What it means | The user knows this is running; do not kill it |
+| The test | Would a notification surprise them |
+| `startForeground` | Within five seconds, or the system kills you |
+| `foregroundServiceType` | Declared, permissioned, and enforced since Android 14 |
+| `dataSync` | Six hours per day on Android 15 — usually WorkManager's job |
+| Background start | Blocked since Android 12, with a short exemption list |
+| Coroutine scope | Yours to cancel; a `Service` is not a lifecycle owner |
+| `START_STICKY` | Restarts with a `null` intent |
+| `START_REDELIVER_INTENT` | Restarts with the original intent |
+| The notification | Not dismissible, so give it live data and a stop action |
+
+<Interview title="A question that is really about which tool">
+"When would you use a foreground service?"
+
+Only when the work is happening now and the user knows about it — music playing, a run being tracked,
+an upload with a progress bar. The mandatory notification is the justification, so the test I apply
+is whether a user would be surprised to see it. If they would, it is deferrable work and belongs in
+WorkManager.
+
+The rule that catches people is that since Android 12 a background app cannot start a foreground
+service at all, outside a short exemption list. It is invisible in development because the app is on
+screen while you test, and it surfaces as `ForegroundServiceStartNotAllowedException` in production.
+When I hit that, the answer is usually not to find an exemption — it is that the work was never
+foreground work, and a WorkManager constraint does the same job with no notification.
+</Interview>

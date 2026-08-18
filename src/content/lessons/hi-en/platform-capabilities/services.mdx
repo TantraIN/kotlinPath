@@ -1,0 +1,221 @@
+---
+title: Foreground services aur unke niyam
+description: User ke kahin aur rehte hue chalte rehne ka iklauta raasta foreground service hai, aur Android ne ek dashak lagakar use jaanbujhkar mushkil banaya hai. Niyam sakht hain, aur unhe todna chetavani nahi, crash hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Foreground service kehti hai: **user ko pata hai ki ye chal raha hai, aur ise maara nahi jana
+chahiye**. Wo zaruri notification koi jhanjhat nahi hai jisse bachna ho — wahi poori daleel hai, aur
+Android ne tab se jo bhi niyam jode wo isiliye hain ki koi app wo daleel jhooth-mooth na kar sake.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Peeche chalne ki gunjaish saalon se ghatti aayi hai, aur aaj ki haalat seedhi hai: peeche gaya app
+kuch second pata hai aur phir ruk jata hai. Jise user ke doosre app mein rehte hue chalte rehna hai
+uske paas theek do raaste hain, aur galat chunna yahan ki sabse aam galti hai.
+
+<Compare
+  left={{
+    title: "WorkManager",
+    subtitle: "Taala ja sakne wala kaam",
+    accent: "emerald",
+    points: [
+      "+ Reboot aur process marne par bachta hai",
+      "+ Constraints network, charge, khaalipan ka intezar karti hain",
+      "+ Koi notification nahi, user ko kuch nahi dikhta",
+      "- Kab chalega ye system tay karta hai — minton se ghanton mein",
+    ],
+  }}
+  right={{
+    title: "Foreground service",
+    subtitle: "Abhi ho raha kaam",
+    accent: "amber",
+    points: [
+      "+ Turant aur lagatar chalti hai",
+      "+ Peeche ki pabandiyon se lagbhag chhoot",
+      "- Dikhne wali notification zaruri hai",
+      "- Shuru karne ke sakht niyam; galat karna crash hai",
+    ],
+  }}
+/>
+
+Kasauti ye hai ki notification dekhkar user ko hairani hogi ya nahi. Bajta music, naapi ja rahi daud,
+progress wali patti ke saath chadhti koi file — wo iski ummid rakhte hain. Aisi sync jo unhone kabhi
+maangi hi nahi — nahi rakhte, aur wo WorkManager ka kaam hai.
+
+## Shakal
+
+```xml title="AndroidManifest.xml" numbered
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+<service
+    android:name=".TrackingService"
+    android:exported="false"
+    android:foregroundServiceType="location" />
+```
+
+```kotlin title="TrackingService.kt" numbered
+class TrackingService : Service() {
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForeground(NOTIFICATION_ID, buildNotification())   // 5 second ke andar
+        scope.launch { track() }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        scope.cancel()                                          // ye lifecycle owner nahi hai
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null        // bound service nahi
+}
+```
+
+Us file ki do bareekiyan bojh utha rahi hain.
+
+**Paanch second ke andar `startForeground`.** Chookiye to system
+`ForegroundServiceDidNotStartInTimeException` phenkta hai aur service maar deta hai. To notification
+pehle banaiye aur kaam baad mein shuru kijiye — kabhi aisa mat kijiye ki kuch lakar phir
+`startForeground` bulayein.
+
+**Apna scope khud rokiye.** `Service` ke paas koi `lifecycleScope` nahi hai, to yahan shuru kiya
+coroutine service se zyada jeeta hai jab tak aap use roko nahi. Yahi wo leak hai jo user ke tracking
+band karne ke baad bhi location sunne wale ko chalata rehta hai.
+
+## Types, aur unhe bataya kyun jata hai
+
+Android 10 se foreground service ko batana padta hai ki wo kisliye hai, aur Android 14 se wo batana
+manwaya bhi jata hai: har type ki apni permission aur apni sharten hain.
+
+| Type | Aam taur par | Baat |
+| --- | --- | --- |
+| `mediaPlayback` | Music, podcasts | Sabse dheela |
+| `location` | Daud naapna, navigation | Pehle location wali permission mili honi chahiye |
+| `dataSync` | Upload ya download | Android 15 par kaafi kasa hua — samay ki had hai |
+| `camera` / `microphone` | Recording | Mel khati permission chahiye |
+| `connectedDevice` | Wearables, BLE | |
+| `shortService` | Teen minute se kam | Koi permission nahi, par samay ki pakki had |
+
+`dataSync` se saavdhan rahiye: Android 15 par wo chaubees ghante ki khidki mein chhah ghante tak
+seemit hai, jiske baad system use rok deta hai. Agar kisi sync ko usse zyada chahiye, to wo shuru se
+hi WorkManager ka kaam tha.
+
+<Quiz
+  question="Connectivity lautne par koi app `BroadcastReceiver` se foreground service shuru karta hai. Testing mein chalta hai aur production mein `ForegroundServiceStartNotAllowedException` ke saath crash karta hai. Ho kya raha hai?"
+  options={[
+    "Manifest mein us service ka `foregroundServiceType` nahi hai",
+    "Android 12 se peeche gaya app foreground service shuru kar hi nahi sakta, siwaye chhooton ki ek chhoti list ke — aur testing ke dauran app saamne tha",
+    "Broadcast receivers kabhi koi service shuru nahi kar sakte",
+  ]}
+  answer={1}
+  explanation="Yahi wo niyam hai jo lagbhag sabko pakadta hai, kyunki app kholkar test karte waqt wo dikhta hi nahi. Android 12 ne peeche gaye apps ko foreground service shuru karne se rok diya, aur chhooton ki list chhoti hai — user ka notification se kuch karna, koi Bluetooth device judna, koi pakka alarm bajna, koi unchi prathamikta wala Firebase sandesh, aur kuch aur. Connectivity wala broadcast usmein nahi hai. Banate waqt app screen par hota hai, to app saamne hai, shuru karna jayaz hai, aur kuch bhi us mushkil ko ujagar nahi karta. Ilaaj lagbhag hamesha ye hota hai ki wo foreground ka kaam tha hi nahi: connectivity se chalne wali sync theek wahi hai jo WorkManager ki network wali shart karti hai, bina notification aur bina us pabandi ke. Jahan kaam sach mein user ko dikhta hai, wahan service kisi system ki ghatna se nahi, user ke apne kiye se shuru kijiye."
+/>
+
+## Rokna, aur lautai jane wali value
+
+```kotlin title="Stop.kt" numbered
+// service ke andar se
+stopSelf()
+
+// bahar se
+context.stopService(Intent(context, TrackingService::class.java))
+```
+
+`onStartCommand` ki lautai value tay karti hai ki memory ki tangi mein system ke service maar dene par
+kya hoga:
+
+| Lautaiye | Maare jane par |
+| --- | --- |
+| `START_STICKY` | Dobara banti hai, `null` intent ke saath |
+| `START_NOT_STICKY` | Dobara nahi banti |
+| `START_REDELIVER_INTENT` | Asli intent ke saath dobara banti hai |
+
+`START_STICKY` ka aapko `null` intent thamana crashes ki asli wajah hai — jo code
+`intent.getStringExtra(...)` padhta hai wo har baar chalta hai, siwaye us ek baar ke jab system service
+dobara shuru karta hai. Intent ke data se chalne wali kisi bhi cheez ke liye `START_REDELIVER_INTENT`
+imandaar chunaav hai.
+
+<Detail summary="Notification hi karaar hai, to use kaam ka banaiye">
+Service ke chalte hue foreground notification hatai nahi ja sakti, to buri notification ek aisi
+sthayi kheejh hai jise user mita bhi nahi sakta:
+
+```kotlin title="Notification.kt" numbered
+NotificationCompat.Builder(this, CHANNEL_ID)
+    .setContentTitle(getString(R.string.tracking_title))
+    .setContentText(getString(R.string.tracking_distance, km))
+    .setSmallIcon(R.drawable.ic_run)
+    .setOngoing(true)
+    .setContentIntent(openAppPendingIntent)                 // tap karne par app mein wapas
+    .addAction(R.drawable.ic_stop, getString(R.string.stop), stopPendingIntent)
+    .build()
+```
+
+Rokne wala action dikhne se zyada maayne rakhta hai. Uske bina service khatam karne ka iklauta raasta
+app mein sahi screen dhoondhna hai, aur jinhe wo nahi milti wo app hi hata dete hain. Zinda badalti
+jankari — doori, upload ka pratishat — wahi us notification ko kar se badalkar suvidha bana deti hai.
+
+Android 12 aur uske baad system use dikhane mein das second tak ki der kar sakta hai, to jo service
+utne mein khatam ho jaye uska kuch dikhta hi nahi. Sach mein chhote kaam ke liye ye theek hai, aur
+`shortService` usi ke liye hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur unmein se teen crash karti hain">
+**Peeche se shuru karna.** Android 12 se `ForegroundServiceStartNotAllowedException`, aur app kholkar
+test karte waqt adrishya.
+
+**Dheema `startForeground`.** Paanch second se zyada aur system service maar deta hai.
+
+**Service ka coroutine scope na rokna.** `Service` lifecycle owner nahi hai, to kaam usse zyada jeeta
+hai.
+
+**`START_STICKY` ke baad extras padhna.** Dobara shuru hone par `null` intent milta hai.
+
+**Taale ja sakne wale kaam ke liye ise lena.** Jo sync kisi ne maangi hi nahi wo sthayi notification ki
+haqdar nahi, aur `dataSync` par ab samay ki had hai jo use waise bhi rok degi.
+</Pitfall>
+
+## Abhyaas
+
+1. Koi foreground service shuru kijiye aur pakka kijiye ki doosra app istemal karte hue bhi wo chalti
+   rehti hai.
+2. `startForeground` ko paanch second se aage taaliye aur exception padhiye.
+3. App peeche rakhte hue kisi broadcast receiver se ek shuru karne ki koshish kijiye.
+4. `START_STICKY` lautaiye, Settings se app maariye, aur jo intent mile use log kijiye.
+5. Notification mein rokne wala action jodiye aur bina app khole service khatam kijiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Matlab kya hai | User ko pata hai ki ye chal raha hai; ise mat maariye |
+| Kasauti | Notification dekhkar unhe hairani hogi kya |
+| `startForeground` | Paanch second ke andar, warna system aapko maar deta hai |
+| `foregroundServiceType` | Bataya hua, permission wala, aur Android 14 se manwaya hua |
+| `dataSync` | Android 15 par roz chhah ghante — aam taur par WorkManager ka kaam |
+| Peeche se shuru | Android 12 se band, chhooton ki chhoti list ke saath |
+| Coroutine scope | Aapko hi rokna hai; `Service` lifecycle owner nahi |
+| `START_STICKY` | `null` intent ke saath dobara shuru |
+| `START_REDELIVER_INTENT` | Asli intent ke saath dobara shuru |
+| Notification | Hatai nahi ja sakti, to use zinda data aur rokne wala action dijiye |
+
+<Interview title="Ek sawal, jo asal mein auzar chunne ka hai">
+"Foreground service kab loge?"
+
+Sirf tab jab kaam abhi ho raha ho aur user ko uska pata ho — bajta music, naapi ja rahi daud, progress
+wali patti ke saath koi upload. Wo zaruri notification hi daleel hai, to main ye kasauti lagata hoon ki
+use dekhkar user ko hairani hogi kya. Agar hogi, to wo taala ja sakne wala kaam hai aur WorkManager ki
+jagah hai.
+
+Jo niyam logon ko pakadta hai wo ye hai ki Android 12 se peeche gaya app foreground service shuru kar
+hi nahi sakta, chhooton ki chhoti list ke bahar. Banate waqt wo adrishya hai kyunki test karte hue app
+screen par hota hai, aur production mein wo `ForegroundServiceStartNotAllowedException` bankar dikhta
+hai. Jab mujhe wo milta hai to jawab aam taur par koi chhoot dhoondhna nahi hota — jawab ye hota hai ki
+wo kaam kabhi foreground ka tha hi nahi, aur WorkManager ki ek shart wahi kaam bina notification ke kar
+deti hai.
+</Interview>
