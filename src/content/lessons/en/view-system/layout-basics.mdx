@@ -1,0 +1,193 @@
+---
+title: LinearLayout, FrameLayout and the measure pass
+description: A layout is a negotiation between parent and child that runs twice before anything is drawn. Nearly every layout bug is one side of that conversation saying something you did not expect.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+The parent asks each child **how big it wants to be, given these constraints**; the child
+answers; then the parent decides where everything goes. Measure, then layout, then draw — and
+the answers depend entirely on what you wrote in `layout_width` and `layout_height`.
+</KeyIdea>
+
+## Why this matters
+
+`wrap_content` behaves differently inside a `ScrollView` than inside a `LinearLayout`. A weight
+of `1` does nothing until the width is `0dp`. A view is invisible even though every attribute
+looks right.
+
+None of that is arbitrary. Each one falls out of the two passes, and once you can picture them
+the fixes stop being guesswork.
+
+## Three passes, in order
+
+<Figure caption="Every frame walks the tree three times. Measure and layout can run more than once; draw happens last.">
+  <PipelineDiagram
+    title="From XML to pixels"
+    description="The parent measures each child with a constraint, then positions them, then the tree is drawn."
+    stages={[
+      { label: "Measure", sub: "how big?", accent: "violet" },
+      { label: "Layout", sub: "where?", accent: "sky" },
+      { label: "Draw", sub: "pixels", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+The constraint a parent passes down is a `MeasureSpec` — a size plus a mode:
+
+| Mode | Means | Comes from |
+| --- | --- | --- |
+| `EXACTLY` | You get exactly this many pixels | `match_parent`, or a fixed `dp` |
+| `AT_MOST` | Take what you need, up to this | `wrap_content` |
+| `UNSPECIFIED` | Ask for anything | A scrolling parent measuring its child |
+
+<Note>
+`UNSPECIFIED` is why `match_parent` on the direct child of a `ScrollView` does not fill the
+screen — the scroller has no bounded height to hand down. `android:fillViewport="true"` on the
+`ScrollView` is the fix.
+</Note>
+
+## LinearLayout and the weight rule
+
+```xml title="res/layout/row.xml" numbered
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal">
+
+    <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/title" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/open" />
+</LinearLayout>
+```
+
+Weight divides the space **left over** after every unweighted child has been measured. That is
+the whole rule, and it explains the idiom: `0dp` means "I claim no space of my own", so the
+leftover is everything, and the weights split it cleanly.
+
+<Quiz
+  question={'Two children each have `layout_weight="1"`, but their widths are `wrap_content` rather than `0dp`. What happens?'}
+  options={[
+    "They split the row evenly, the same as with 0dp",
+    "Each gets its own width first, and only the remainder is split — so a long label wins",
+    "Weight is ignored entirely when the width is wrap_content",
+  ]}
+  answer={1}
+  explanation="Weight only ever divides leftover space. With wrap_content each child first claims the width its content needs, so a child with a long label starts bigger and stays bigger — the split looks lopsided and changes with the data. With 0dp neither child claims anything up front, the leftover is the entire row, and the weights divide it exactly. This is why 0dp plus weight is the idiom and wrap_content plus weight is almost always a bug."
+/>
+
+## FrameLayout stacks
+
+```xml title="res/layout/badge.xml" numbered
+<FrameLayout
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/avatar" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:background="@drawable/dot"
+        android:text="@string/unread" />
+</FrameLayout>
+```
+
+Children are drawn in the order they are declared, so the last one sits on top. Position within
+the frame comes from `layout_gravity`, not from order.
+
+<Tip bare>
+`gravity` positions a view's *contents*; `layout_gravity` positions the view *within its parent*.
+Mixing them up is the most common attribute mistake in XML layouts.
+</Tip>
+
+## Under the hood: why nesting weights is slow
+
+<Timeline>
+  <TimelineItem title="A weighted LinearLayout measures twice" meta="by design">
+    Once to find how much space the unweighted children need, and again to hand the leftover to
+    the weighted ones. There is no way around it — the leftover cannot be known before the first
+    pass.
+  </TimelineItem>
+  <TimelineItem title="Nesting multiplies it" meta="2, then 4, then 8">
+    A weighted layout inside a weighted layout is measured twice by its parent, and measures its
+    own children twice each time. Three levels deep is eight measure passes for the leaves.
+  </TimelineItem>
+  <TimelineItem title="Which is what ConstraintLayout fixes" meta="next lesson">
+    It expresses the same rows and columns in one flat hierarchy, so the tree is measured once.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Seeing the passes yourself">
+Layout Inspector shows the final tree, but not how often it was measured. For that, enable
+Developer Options → **Profile HWUI rendering**, or add a log in a custom view:
+
+```kotlin title="Counting.kt"
+override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+    Log.d("Measure", "pass ${++count} for $this")
+    super.onMeasure(widthSpec, heightSpec)
+}
+```
+
+Dropping one weighted nesting level and watching the count halve is the fastest way to believe
+the rule.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Four that produce layouts that look almost right">
+**`layout_weight` with `wrap_content`.** The quiz case. Set the dimension along the orientation
+to `0dp`.
+
+**`match_parent` on the child of a `ScrollView`.** The scroller measures with `UNSPECIFIED`, so
+there is no parent height to match. Use `fillViewport`.
+
+**Confusing `gravity` and `layout_gravity`.** One moves the text inside the box, the other moves
+the box inside its parent.
+
+**Deep nesting to achieve a grid.** Every level costs a measure pass, and weighted levels cost
+two. A single `ConstraintLayout` replaces four nested `LinearLayout`s.
+</Pitfall>
+
+## Practice
+
+1. Build a row with two children at `wrap_content` plus equal weights, then switch both to `0dp`.
+   Photograph both with a long label in one child.
+2. Put a `match_parent` child inside a `ScrollView` and observe. Add `fillViewport` and observe
+   again.
+3. Stack three views in a `FrameLayout`, then reorder them in the XML. Note which is on top.
+4. Nest three weighted `LinearLayout`s, count measure passes with a log, then flatten it and
+   count again.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Measure | Parent asks with a `MeasureSpec`, child answers a size |
+| Layout | Parent places the children it just measured |
+| `EXACTLY` | From `match_parent` or a fixed `dp` |
+| `AT_MOST` | From `wrap_content` |
+| `UNSPECIFIED` | From a scrolling parent — no bound to match |
+| `layout_weight` | Divides leftover space only; pair it with `0dp` |
+| `FrameLayout` | Stacks children; last declared is on top |
+| `layout_gravity` | Positions the view in its parent, not its contents |
+
+<Interview title="Asked to see whether someone has debugged a layout or only written one">
+"Why does `layout_weight` need `0dp`?"
+
+Because weight divides the space left over after unweighted measurement, so a child that already
+claimed `wrap_content` starts with a head start the weight never takes away. Adding that a
+weighted `LinearLayout` measures its children twice — and that nesting them multiplies the
+passes — turns a syntax answer into a performance one.
+</Interview>

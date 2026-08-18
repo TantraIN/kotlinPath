@@ -1,0 +1,192 @@
+---
+title: LinearLayout, FrameLayout और measure pass
+description: Layout parent और child के बीच की बातचीत है, जो कुछ भी बनने से पहले दो बार चलती है। Layout का लगभग हर bug उसी बातचीत में किसी एक तरफ से कुछ ऐसा कहे जाने से आता है जिसकी आपने उम्मीद नहीं की थी।
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Parent हर child से पूछता है कि **इन शर्तों में तुम कितने बड़े होना चाहते हो**; child जवाब देता है;
+फिर parent तय करता है कि कौन कहाँ बैठेगा। पहले measure, फिर layout, फिर draw — और जवाब पूरी तरह
+इस पर टिका है कि आपने `layout_width` और `layout_height` में क्या लिखा।
+</KeyIdea>
+
+## यह क्यों जरूरी है
+
+`wrap_content` `ScrollView` के अंदर अलग बर्ताव करता है और `LinearLayout` के अंदर अलग। `1` का
+weight तब तक कुछ नहीं करता जब तक width `0dp` न हो। कोई view दिखता ही नहीं, जबकि हर attribute सही
+लग रहा है।
+
+इनमें से कुछ भी मनमाना नहीं है। हर एक उन्हीं दो passes से निकलता है, और वे दिखने लगें तो इलाज
+अंदाजा लगाना बंद हो जाता है।
+
+## तीन passes, इसी क्रम में
+
+<Figure caption="हर frame पर पेड़ तीन बार घूमा जाता है। Measure और layout एक से ज्यादा बार चल सकते हैं; draw सबसे आखिर में होता है।">
+  <PipelineDiagram
+    title="XML से pixels तक"
+    description="Parent हर child को एक शर्त के साथ measure करता है, फिर उन्हें जगह देता है, फिर पूरा पेड़ draw होता है।"
+    stages={[
+      { label: "Measure", sub: "कितने बड़े?", accent: "violet" },
+      { label: "Layout", sub: "कहाँ?", accent: "sky" },
+      { label: "Draw", sub: "pixels", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Parent जो शर्त नीचे भेजता है वह `MeasureSpec` है — एक नाप और एक mode:
+
+| Mode | मतलब | कहाँ से आता है |
+| --- | --- | --- |
+| `EXACTLY` | तुम्हें ठीक इतने ही pixels मिलेंगे | `match_parent`, या तय `dp` |
+| `AT_MOST` | जितना चाहिए ले लो, इससे ज्यादा नहीं | `wrap_content` |
+| `UNSPECIFIED` | जितना चाहो माँग लो | Scroll करने वाला parent, अपने child को measure करते हुए |
+
+<Note>
+`UNSPECIFIED` की वजह से ही `ScrollView` के सीधे child पर `match_parent` screen नहीं भरता — scroller
+के पास नीचे भेजने के लिए कोई बँधी हुई ऊँचाई होती ही नहीं। `ScrollView` पर
+`android:fillViewport="true"` इसका इलाज है।
+</Note>
+
+## LinearLayout और weight का नियम
+
+```xml title="res/layout/row.xml" numbered
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal">
+
+    <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/title" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/open" />
+</LinearLayout>
+```
+
+Weight उस जगह को बाँटता है जो हर बिना-weight वाले child के measure हो जाने के **बाद बचती** है।
+पूरा नियम बस यही है, और इसी से वह मुहावरा निकलता है: `0dp` का मतलब है "मैं अपनी कोई जगह नहीं
+माँगता", तो बची हुई जगह पूरी हो जाती है और weights उसे साफ-साफ बाँट लेते हैं।
+
+<Quiz
+  question={'दोनों children पर `layout_weight="1"` है, पर उनकी width `0dp` नहीं, `wrap_content` है। क्या होगा?'}
+  options={[
+    "दोनों row को बराबर बाँट लेंगे, ठीक 0dp जैसा",
+    "पहले हर एक को अपनी width मिलती है, और सिर्फ बचा हुआ बँटता है — तो लंबा label जीत जाता है",
+    "Width wrap_content हो तो weight पूरी तरह अनदेखा हो जाता है",
+  ]}
+  answer={1}
+  explanation="Weight हमेशा सिर्फ बची हुई जगह बाँटता है। wrap_content के साथ हर child पहले अपने content जितनी width ले लेता है, तो जिस child पर लंबा label है वह शुरू में ही बड़ा होता है और बड़ा ही रहता है — बँटवारा टेढ़ा दिखता है और data बदलते ही बदल जाता है। 0dp के साथ कोई child पहले से कुछ नहीं माँगता, बची हुई जगह पूरी row होती है, और weights उसे ठीक-ठीक बाँट देते हैं। इसीलिए 0dp के साथ weight मुहावरा है और wrap_content के साथ weight लगभग हमेशा bug।"
+/>
+
+## FrameLayout एक के ऊपर एक रखता है
+
+```xml title="res/layout/badge.xml" numbered
+<FrameLayout
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/avatar" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:background="@drawable/dot"
+        android:text="@string/unread" />
+</FrameLayout>
+```
+
+Children उसी क्रम में draw होते हैं जिस क्रम में लिखे हैं, तो आखिरी वाला सबसे ऊपर बैठता है। Frame
+के अंदर जगह क्रम से नहीं, `layout_gravity` से तय होती है।
+
+<Tip bare>
+`gravity` किसी view के *अंदर के content* को जमाता है; `layout_gravity` उस view को *उसके parent के
+अंदर* जमाता है। इन्हें मिला देना XML layouts की सबसे आम attribute गलती है।
+</Tip>
+
+## अंदर की बात: nested weights धीमे क्यों हैं
+
+<Timeline>
+  <TimelineItem title="Weight वाला LinearLayout दो बार measure करता है" meta="जान-बूझकर">
+    एक बार यह देखने को कि बिना-weight वाले children को कितनी जगह चाहिए, और दूसरी बार बची हुई जगह
+    weight वालों को देने के लिए। इससे बचा नहीं जा सकता — पहले pass से पहले बचा हुआ पता ही नहीं
+    चल सकता।
+  </TimelineItem>
+  <TimelineItem title="Nesting इसे गुणा कर देती है" meta="2, फिर 4, फिर 8">
+    Weight वाले layout के अंदर weight वाला layout अपने parent से दो बार measure होता है, और हर
+    बार अपने children को दो-दो बार। तीन स्तर गहरा मतलब पत्तों के लिए आठ measure passes।
+  </TimelineItem>
+  <TimelineItem title="और यही ConstraintLayout ठीक करता है" meta="अगला पाठ">
+    वह वही rows और columns एक सपाट hierarchy में कह देता है, तो पेड़ एक ही बार measure होता है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Passes खुद देखिए">
+Layout Inspector आखिरी पेड़ दिखाता है, यह नहीं कि वह कितनी बार measure हुआ। उसके लिए Developer
+Options → **Profile HWUI rendering** चालू कीजिए, या किसी custom view में एक log डालिए:
+
+```kotlin title="Counting.kt"
+override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+    Log.d("Measure", "pass ${++count} for $this")
+    super.onMeasure(widthSpec, heightSpec)
+}
+```
+
+Weight वाला एक स्तर हटाकर गिनती आधी होते देखना इस नियम पर यकीन करने का सबसे तेज तरीका है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="चार, जिनसे layout लगभग सही दिखता है">
+**`wrap_content` के साथ `layout_weight`।** वही quiz वाला मामला। Orientation की दिशा वाला नाप
+`0dp` कर दीजिए।
+
+**`ScrollView` के child पर `match_parent`।** Scroller `UNSPECIFIED` से measure करता है, तो match
+करने के लिए parent की कोई ऊँचाई है ही नहीं। `fillViewport` इस्तेमाल कीजिए।
+
+**`gravity` और `layout_gravity` को मिला देना।** एक डिब्बे के अंदर text हिलाता है, दूसरा डिब्बे को
+उसके parent के अंदर।
+
+**Grid बनाने के लिए गहरी nesting।** हर स्तर एक measure pass लेता है, और weight वाला स्तर दो। एक
+अकेला `ConstraintLayout` चार nested `LinearLayout` की जगह ले लेता है।
+</Pitfall>
+
+## अभ्यास
+
+1. दो children को `wrap_content` और बराबर weight देकर एक row बनाइए, फिर दोनों को `0dp` कर दीजिए।
+   एक child में लंबा label रखकर दोनों की तस्वीर लीजिए।
+2. `ScrollView` के अंदर `match_parent` वाला child रखिए और देखिए। फिर `fillViewport` जोड़कर दोबारा
+   देखिए।
+3. `FrameLayout` में तीन views रखिए, फिर XML में उनका क्रम बदलिए। ध्यान दीजिए कौन ऊपर है।
+4. तीन weight वाले `LinearLayout` nest कीजिए, log से measure passes गिनिए, फिर उसे सपाट करके
+   दोबारा गिनिए।
+
+## सारांश
+
+| चीज | एक line |
+| --- | --- |
+| Measure | Parent `MeasureSpec` के साथ पूछता है, child नाप बताता है |
+| Layout | अभी-अभी measure किए children को parent जगह देता है |
+| `EXACTLY` | `match_parent` या तय `dp` से |
+| `AT_MOST` | `wrap_content` से |
+| `UNSPECIFIED` | Scroll वाले parent से — match करने को कोई हद ही नहीं |
+| `layout_weight` | सिर्फ बची हुई जगह बाँटता है; इसे `0dp` के साथ रखिए |
+| `FrameLayout` | एक के ऊपर एक; आखिर में लिखा सबसे ऊपर |
+| `layout_gravity` | View को उसके parent में जमाता है, उसके content को नहीं |
+
+<Interview title="यह देखने के लिए पूछा जाता है कि किसी ने layout debug किया है या सिर्फ लिखा है">
+"`layout_weight` को `0dp` क्यों चाहिए?"
+
+क्योंकि weight बिना-weight वाले measure के बाद बची हुई जगह बाँटता है, तो जिस child ने पहले ही
+`wrap_content` माँग लिया उसे ऐसी बढ़त मिल जाती है जो weight कभी वापस नहीं लेता। साथ में यह जोड़ना
+कि weight वाला `LinearLayout` अपने children को दो बार measure करता है — और nesting उन passes को
+गुणा कर देती है — जवाब को syntax से performance तक ले जाता है।
+</Interview>

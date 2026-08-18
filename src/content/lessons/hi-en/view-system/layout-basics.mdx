@@ -1,0 +1,196 @@
+---
+title: LinearLayout, FrameLayout aur measure pass
+description: Layout parent aur child ke beech ki baatcheet hai, jo kuch bhi banne se pehle do baar chalti hai. Layout ka lagbhag har bug usi baatcheet mein kisi ek taraf se kuch aisa kahe jaane se aata hai jiski aapne ummeed nahi ki thi.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Parent har child se poochta hai ki **in sharton mein tum kitne bade hona chahte ho**; child jawab
+deta hai; phir parent tay karta hai ki kaun kahan baithega. Pehle measure, phir layout, phir draw
+— aur jawab poori tarah is par tika hai ki aapne `layout_width` aur `layout_height` mein kya
+likha.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+`wrap_content` `ScrollView` ke andar alag bartav karta hai aur `LinearLayout` ke andar alag. `1`
+ka weight tab tak kuch nahi karta jab tak width `0dp` na ho. Koi view dikhta hi nahi, jabki har
+attribute sahi lag raha hai.
+
+Inmein se kuch bhi manmaana nahi hai. Har ek unhi do passes se nikalta hai, aur we dikhne lagein
+to ilaaj andaza lagana band ho jata hai.
+
+## Teen passes, isi order mein
+
+<Figure caption="Har frame par ped teen baar ghuma jata hai. Measure aur layout ek se zyada baar chal sakte hain; draw sabse aakhir mein hota hai.">
+  <PipelineDiagram
+    title="XML se pixels tak"
+    description="Parent har child ko ek shart ke saath measure karta hai, phir unhe jagah deta hai, phir poora ped draw hota hai."
+    stages={[
+      { label: "Measure", sub: "kitne bade?", accent: "violet" },
+      { label: "Layout", sub: "kahan?", accent: "sky" },
+      { label: "Draw", sub: "pixels", accent: "emerald" },
+    ]}
+  />
+</Figure>
+
+Parent jo shart neeche bhejta hai wo `MeasureSpec` hai — ek naap aur ek mode:
+
+| Mode | Matlab | Kahan se aata hai |
+| --- | --- | --- |
+| `EXACTLY` | Tumhe theek itne hi pixels milenge | `match_parent`, ya tay `dp` |
+| `AT_MOST` | Jitna chahiye le lo, isse zyada nahi | `wrap_content` |
+| `UNSPECIFIED` | Jitna chaho maang lo | Scroll karne wala parent, apne child ko measure karte hue |
+
+<Note>
+`UNSPECIFIED` ki wajah se hi `ScrollView` ke seedhe child par `match_parent` screen nahi bharta —
+scroller ke paas neeche bhejne ke liye koi bandhi hui height hoti hi nahi. `ScrollView` par
+`android:fillViewport="true"` iska ilaaj hai.
+</Note>
+
+## LinearLayout aur weight ka niyam
+
+```xml title="res/layout/row.xml" numbered
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal">
+
+    <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/title" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/open" />
+</LinearLayout>
+```
+
+Weight us jagah ko baantta hai jo har bina-weight wale child ke measure ho jaane ke **baad bachti**
+hai. Poora niyam bas yahi hai, aur isi se wo muhavara nikalta hai: `0dp` ka matlab hai "main apni
+koi jagah nahi maangta", to bachi hui jagah poori ho jati hai aur weights use saaf-saaf baant lete
+hain.
+
+<Quiz
+  question={'Dono children par `layout_weight="1"` hai, par unki width `0dp` nahi, `wrap_content` hai. Kya hoga?'}
+  options={[
+    "Dono row ko barabar baant lenge, theek 0dp jaisa",
+    "Pehle har ek ko apni width milti hai, aur sirf bacha hua baantta hai — to lamba label jeet jata hai",
+    "Width wrap_content ho to weight poori tarah ignore ho jata hai",
+  ]}
+  answer={1}
+  explanation="Weight hamesha sirf bachi hui jagah baantta hai. wrap_content ke saath har child pehle apne content jitni width le leta hai, to jis child par lamba label hai wo shuru mein hi bada hota hai aur bada hi rehta hai — bantwara tedha dikhta hai aur data badalte hi badal jata hai. 0dp ke saath koi child pehle se kuch nahi maangta, bachi hui jagah poori row hoti hai, aur weights use theek-theek baant dete hain. Isiliye 0dp ke saath weight muhavara hai aur wrap_content ke saath weight lagbhag hamesha bug."
+/>
+
+## FrameLayout ek ke upar ek rakhta hai
+
+```xml title="res/layout/badge.xml" numbered
+<FrameLayout
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <ImageView
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/avatar" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:background="@drawable/dot"
+        android:text="@string/unread" />
+</FrameLayout>
+```
+
+Children usi order mein draw hote hain jis order mein likhe hain, to aakhri wala sabse upar
+baithta hai. Frame ke andar jagah order se nahi, `layout_gravity` se tay hoti hai.
+
+<Tip bare>
+`gravity` kisi view ke *andar ke content* ko jamata hai; `layout_gravity` us view ko *uske parent
+ke andar* jamata hai. Inhe mila dena XML layouts ki sabse aam attribute galti hai.
+</Tip>
+
+## Andar ki baat: nested weights dheeme kyun hain
+
+<Timeline>
+  <TimelineItem title="Weight wala LinearLayout do baar measure karta hai" meta="jaan-boojh kar">
+    Ek baar ye dekhne ko ki bina-weight wale children ko kitni jagah chahiye, aur dusri baar bachi
+    hui jagah weight walon ko dene ke liye. Isse bacha nahi ja sakta — pehle pass se pehle bacha
+    hua pata hi nahi chal sakta.
+  </TimelineItem>
+  <TimelineItem title="Nesting ise guna kar deti hai" meta="2, phir 4, phir 8">
+    Weight wale layout ke andar weight wala layout apne parent se do baar measure hota hai, aur har
+    baar apne children ko do-do baar. Teen level gehra matlab patton ke liye aath measure passes.
+  </TimelineItem>
+  <TimelineItem title="Aur yahi ConstraintLayout theek karta hai" meta="agla lesson">
+    Wo wahi rows aur columns ek sapaat hierarchy mein keh deta hai, to ped ek hi baar measure hota
+    hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Passes khud dekho">
+Layout Inspector aakhri ped dikhata hai, ye nahi ki wo kitni baar measure hua. Uske liye Developer
+Options → **Profile HWUI rendering** chalu karo, ya kisi custom view mein ek log daalo:
+
+```kotlin title="Counting.kt"
+override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+    Log.d("Measure", "pass ${++count} for $this")
+    super.onMeasure(widthSpec, heightSpec)
+}
+```
+
+Weight wala ek level hatakar ginti aadhi hote dekhna is niyam par yakeen karne ka sabse tez tarika
+hai.
+</Detail>
+
+## Common galtiyan
+
+<Pitfall title="Chaar, jinse layout lagbhag sahi dikhta hai">
+**`wrap_content` ke saath `layout_weight`.** Wahi quiz wala maamla. Orientation ki disha wala naap
+`0dp` kar do.
+
+**`ScrollView` ke child par `match_parent`.** Scroller `UNSPECIFIED` se measure karta hai, to match
+karne ke liye parent ki koi height hai hi nahi. `fillViewport` use karo.
+
+**`gravity` aur `layout_gravity` ko mila dena.** Ek dibbe ke andar text hilata hai, dusra dibbe ko
+uske parent ke andar.
+
+**Grid banane ke liye gehri nesting.** Har level ek measure pass leta hai, aur weight wala level
+do. Ek akela `ConstraintLayout` chaar nested `LinearLayout` ki jagah le leta hai.
+</Pitfall>
+
+## Practice
+
+1. Do children ko `wrap_content` aur barabar weight dekar ek row banao, phir dono ko `0dp` kar do.
+   Ek child mein lamba label rakhkar dono ki tasveer lo.
+2. `ScrollView` ke andar `match_parent` wala child rakho aur dekho. Phir `fillViewport` jodkar
+   dobara dekho.
+3. `FrameLayout` mein teen views rakho, phir XML mein unka order badlo. Dhyan do kaun upar hai.
+4. Teen weight wale `LinearLayout` nest karo, log se measure passes gino, phir use sapaat karke
+   dobara gino.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Measure | Parent `MeasureSpec` ke saath poochta hai, child naap batata hai |
+| Layout | Abhi-abhi measure kiye children ko parent jagah deta hai |
+| `EXACTLY` | `match_parent` ya tay `dp` se |
+| `AT_MOST` | `wrap_content` se |
+| `UNSPECIFIED` | Scroll wale parent se — match karne ko koi had hi nahi |
+| `layout_weight` | Sirf bachi hui jagah baantta hai; ise `0dp` ke saath rakho |
+| `FrameLayout` | Ek ke upar ek; aakhir mein likha sabse upar |
+| `layout_gravity` | View ko uske parent mein jamata hai, uske content ko nahi |
+
+<Interview title="Ye dekhne ke liye poochha jata hai ki kisi ne layout debug kiya hai ya sirf likha hai">
+"`layout_weight` ko `0dp` kyun chahiye?"
+
+Kyunki weight bina-weight wale measure ke baad bachi hui jagah baantta hai, to jis child ne pehle
+hi `wrap_content` maang liya use aisi badhat mil jati hai jo weight kabhi wapas nahi leta. Saath
+mein ye jodna ki weight wala `LinearLayout` apne children ko do baar measure karta hai — aur
+nesting un passes ko guna kar deti hai — jawab ko syntax se performance tak le jata hai.
+</Interview>
