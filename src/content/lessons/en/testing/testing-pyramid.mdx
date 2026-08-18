@@ -1,0 +1,164 @@
+---
+title: The testing pyramid and what to test
+description: The pyramid is not a rule about ratios. It is a statement about what each kind of test costs you and what it buys, and the useful question is always which one would have caught this bug.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Every test trades **speed** against **confidence**. A unit test runs in milliseconds and proves one
+decision; a UI test takes a minute and proves the whole thing works. The pyramid says put most of
+your tests where they are cheap, and use the expensive ones for what only they can prove.
+</KeyIdea>
+
+## The three levels, concretely
+
+<Figure caption="Wider at the bottom because those tests are cheap enough to have thousands of. Each level up is slower, more brittle, and proves something the level below cannot.">
+  <LayerStack
+    title="The testing pyramid"
+    description="Cost and confidence rise together as you go up. So does the time it takes to find out you broke something."
+    topLabel="slowest, most realistic"
+    bottomLabel="fastest, most numerous"
+    layers={[
+      { label: "UI tests", sub: "Compose, Espresso — minutes", accent: "rose", detail: "Runs the real app on a device or emulator. The only level that proves a user can actually complete a journey — and the only one that fails for reasons unrelated to your code." },
+      { label: "Integration tests", sub: "Room, MockWebServer — seconds", accent: "amber", detail: "Real collaborators, no network or UI. Proves your SQL is valid and your JSON parses — things a unit test with a fake cannot know." },
+      { label: "Unit tests", sub: "JVM only — milliseconds", accent: "emerald", detail: "One class, fakes for everything else. Fast enough to run on every save, which is what makes them useful while you are still writing the code." },
+    ]}
+  />
+</Figure>
+
+| | Unit | Integration | UI |
+| --- | --- | --- | --- |
+| Runs on | JVM | JVM or device | Device or emulator |
+| Speed | Milliseconds | Seconds | Tens of seconds |
+| Needs an emulator | No | Sometimes | Yes |
+| Fails for unrelated reasons | Rarely | Sometimes | Often |
+| Proves | One decision is correct | Two things fit together | A user can do the thing |
+
+The bottom row is the one that matters. A unit test that fails tells you exactly what broke. A UI test
+that fails tells you *something* broke — possibly the emulator.
+
+## What to actually test
+
+The useful question is not "what coverage do we have" but **what would have caught the last five
+bugs**. In an Android app the answer is usually the same short list:
+
+- **Branching logic.** Anything with `when`, a threshold, or an error path. The retry decision from
+  the network lesson — `5xx` retries, `400` does not — is a pure function of a status code, and a
+  unit test of it is three lines.
+- **Mapping.** DTO to domain, domain to UI state. This is where a renamed field silently becomes
+  `null`.
+- **State reduction.** Given this event and this current state, what is the next state.
+- **Anything you got wrong once.** A test written after a bug is the one most likely to earn its
+  keep.
+
+And what usually is not worth testing: getters, `data class` equality, code that only forwards a call
+to something else, and framework behaviour. A test asserting that Room saves a row is testing Room.
+
+<Quiz
+  question="A team has 90% unit test coverage. A release ships in which no screen loads, because a dependency was missing from the Hilt graph in the release build. Every test passed. What does this tell you?"
+  options={[
+    "Coverage should be raised to 100%, since the gap was untested code",
+    "Coverage measures which lines ran, not whether the app works — every unit test constructed its subject directly, so none of them ever exercised the wiring that broke",
+    "Unit tests are unreliable and the team should move to UI tests"
+  ]}
+  answer={1}
+  explanation="Each unit test built its ViewModel by calling the constructor with fakes, which is exactly right for testing logic — and it means the real object graph was never assembled in any test. The lines were covered; the assembly was not, because assembly is not a line, it is a relationship between them. Raising coverage would not help, since there is no uncovered line to add. The cheap fix is one test that builds the graph — a Hilt test that injects the entry points, or even a smoke test that launches the app and asserts the first screen renders. That single test sits above the pyramid's base and buys the one thing the base cannot: proof that the parts fit. The general lesson is that coverage is a map of what ran, and a map showing every road is not proof that the roads connect."
+/>
+
+## Fakes over mocks, where you can
+
+```kotlin title="FakeRepository.kt" numbered
+class FakeOrderRepository : OrderRepository {
+    var result: Outcome<List<Order>> = Outcome.Success(emptyList())
+    private val orders = MutableStateFlow<List<Order>>(emptyList())
+
+    override fun observeOrders(): Flow<List<Order>> = orders
+    override suspend fun refresh(): Outcome<Unit> = result.map {}
+    fun emit(new: List<Order>) { orders.value = new }        // what the test drives
+}
+```
+
+A fake is a working implementation with a simplified inside. It has real behaviour — store something
+and it comes back — so a test reads as a sequence of actions rather than a list of stubbed calls.
+
+Mocks are right when you need to assert an *interaction*: that a token refresh was attempted exactly
+once, that analytics fired. For everything else a fake produces tests that survive refactoring,
+because they describe what the code does rather than which methods it calls.
+
+<Detail summary="Testing behaviour rather than implementation">
+The most common way a test suite becomes a liability is that it asserts on structure:
+
+```kotlin title="Brittle.kt" numbered
+verify(exactly = 1) { repository.fetchOrders() }          // breaks if you add a cache
+verify { mapper.toDomain(any()) }                          // breaks if you inline the mapper
+assertEquals(3, viewModel.internalCache.size)              // tests a private detail
+```
+
+Each of these fails when the code is reorganised without changing what it does — so a refactor
+becomes an afternoon of updating tests that never found a bug. The suite stops being a safety net and
+becomes friction, and the usual outcome is that people stop trusting it.
+
+The same intent, stated as behaviour:
+
+```kotlin title="Durable.kt" numbered
+repository.result = Outcome.Failure(DataError.Network.Offline)
+viewModel.refresh()
+assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+```
+
+That test passes whether the cache exists, whether the mapper is inlined, whether the repository is
+rewritten — and fails exactly when a user would see the wrong thing. The rule of thumb: assert on
+what leaves the class, not on what happens inside it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that produce a suite nobody trusts">
+**Chasing a coverage number.** It measures which lines ran, not whether the app works.
+
+**Testing the framework.** Asserting that Room saves a row, or that a `data class` compares equal.
+
+**Verifying calls instead of outcomes.** The test breaks on refactoring and finds no bugs.
+
+**A UI test for something a unit test could prove.** Minutes instead of milliseconds, and flaky.
+
+**No test at the seams.** Everything unit tested, nothing proving the pieces connect.
+</Pitfall>
+
+## Practice
+
+1. List the last five bugs you fixed and write down which level would have caught each.
+2. Take a `when` over an error type and unit test every branch.
+3. Replace a mock with a fake in one test and see whether the test gets shorter.
+4. Find a test that would break if you renamed a private method, and rewrite it against behaviour.
+5. Write one smoke test that launches the app and asserts the first screen renders.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| The trade | Speed against confidence, at every level |
+| Unit | Milliseconds, one decision, JVM only |
+| Integration | Seconds, real collaborators, proves the pieces fit |
+| UI | Minutes, a real device, proves a user can finish |
+| The question | What would have caught the last five bugs |
+| Worth testing | Branches, mapping, state reduction, past bugs |
+| Not worth testing | Getters, `data class` equality, framework behaviour |
+| Fake | A working implementation with a simple inside |
+| Mock | For asserting an interaction happened |
+| Coverage | A map of what ran, not proof that it works |
+
+<Interview title="A question where the number is the wrong answer">
+"How much test coverage should a project have?"
+
+I would not target a number, because coverage measures which lines ran rather than whether the app
+works — a suite can be at ninety per cent and still miss a release where no screen loads, if every
+test constructed its subject directly and nothing ever assembled the real object graph.
+
+What I actually aim for is that the things most likely to break are tested at the cheapest level that
+can prove them. Branching logic, mapping and state reduction are unit tests, because they are pure
+functions of their input and run in milliseconds. Anything involving real SQL or real JSON is an
+integration test, since a fake cannot tell me my query is valid. And I keep a small number of UI
+tests for whole journeys, because they are slow and fail for reasons unrelated to my code — but they
+are the only thing that proves the parts connect.
+</Interview>

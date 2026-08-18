@@ -1,0 +1,176 @@
+---
+title: Testing ka pyramid, aur jaanchna kya hai
+description: Pyramid anupat ka niyam nahi hai. Wo is baare mein hai ki har kism ka test aapse kya leta hai aur badle mein kya deta hai, aur kaam ka sawal hamesha yahi hai ki is bug ko pakadta kaun.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Har test **raftar** aur **bharose** ke beech sauda karta hai. Unit test milliseconds mein chalta hai
+aur ek faisla sabit karta hai; UI test ek minute leta hai aur sabit karta hai ki poori cheez chalti
+hai. Pyramid kehta hai ki zyadatar tests wahan rakhiye jahan wo saste hain, aur mehnge walon ko usi ke
+liye bachaiye jo sirf wo sabit kar sakte hain.
+</KeyIdea>
+
+## Teenon star, thos roop mein
+
+<Figure caption="Neeche chauda isliye ki wo tests itne saste hain ki hazaron rakhe ja sakein. Har upar wala star dheema aur naazuk hai, aur wo cheez sabit karta hai jo neeche wala nahi kar sakta.">
+  <LayerStack
+    title="Testing ka pyramid"
+    description="Upar jate-jate keemat aur bharosa saath-saath badhte hain. Aur ye bhi ki kuch todne ka pata chalne mein kitna waqt lagta hai."
+    topLabel="sabse dheema, sabse asli"
+    bottomLabel="sabse tez, sabse zyada"
+    layers={[
+      { label: "UI tests", sub: "Compose, Espresso — minton mein", accent: "rose", detail: "Asli app ko device ya emulator par chalata hai. Iklauta star jo sabit karta hai ki user sach mein koi safar poora kar sakta hai — aur iklauta jo aapke code se bematlab wajahon se bhi nakaam hota hai." },
+      { label: "Integration tests", sub: "Room, MockWebServer — secondon mein", accent: "amber", detail: "Asli saathi, na network na UI. Sabit karta hai ki aapki SQL sahi hai aur aapka JSON padha jata hai — wo baatein jo nakli cheez wala unit test jaan hi nahi sakta." },
+      { label: "Unit tests", sub: "Sirf JVM — milliseconds mein", accent: "emerald", detail: "Ek class, baaki sabke liye nakli cheezein. Itne tez ki har baar sahejne par chalein, aur yahi unhe code likhte waqt kaam ka banata hai." },
+    ]}
+  />
+</Figure>
+
+| | Unit | Integration | UI |
+| --- | --- | --- | --- |
+| Kahan chalta hai | JVM | JVM ya device | Device ya emulator |
+| Raftar | Milliseconds | Second | Dasiyon second |
+| Emulator chahiye | Nahi | Kabhi-kabhi | Haan |
+| Bematlab wajahon se nakaam | Kam | Kabhi-kabhi | Aksar |
+| Sabit karta hai | Ek faisla sahi hai | Do cheezein aapas mein baithti hain | User wo kaam kar sakta hai |
+
+Aakhri pankti hi maayne rakhti hai. Nakaam hua unit test theek-theek batata hai ki kya toota. Nakaam
+hua UI test batata hai ki *kuch* toota — shayad emulator.
+
+## Jaanchna asal mein kya hai
+
+Kaam ka sawal ye nahi hai ki "hamara coverage kitna hai" balki ye ki **pichhle paanch bugs ko pakadta
+kaun**. Android app mein uska jawab aam taur par wahi chhoti list hoti hai:
+
+- **Shakhaon wala tark.** Jismein bhi `when`, koi had, ya koi error wala raasta ho. Network wale
+  lesson ka dobara bhejne wala faisla — `5xx` dobara jata hai, `400` nahi — status code ka saada
+  function hai, aur uska unit test teen lines ka hai.
+- **Badalna.** DTO se domain, domain se UI ki state. Yahin naam badli hui koi field chupchap `null`
+  ban jati hai.
+- **State nikalna.** Is ghatna aur is maujooda haalat ko dekhte hue, agli haalat kya hai.
+- **Jo ek baar galat ho chuka.** Bug ke baad likha test wahi hai jiske apni keemat vasoolne ki sabse
+  zyada sambhavna hai.
+
+Aur jo aam taur par jaanchne layak nahi: getters, `data class` ki barabari, aisa code jo sirf kisi aur
+ko call aage badhata hai, aur framework ka behaviour. Jo test ye dekhe ki Room row sahejta hai wo Room
+ko hi dekh raha hai.
+
+<Quiz
+  question="Kisi team ka unit test coverage 90% hai. Aisi release jati hai jismein koi screen ladti hi nahi, kyunki release wale build mein Hilt ke graph se ek dependency gayab thi. Har test pass hua tha. Ye kya batata hai?"
+  options={[
+    "Coverage 100% karna chahiye, kyunki wo chhed bina jaanche hua code tha",
+    "Coverage naapta hai ki kaun si lines chalin, ye nahi ki app chalta hai — har unit test ne apni cheez seedhe banai thi, to unmein se kisi ne wo wiring chalai hi nahi jo tooti",
+    "Unit tests bharose layak nahi hain aur team ko UI tests par jana chahiye"
+  ]}
+  answer={1}
+  explanation="Har unit test ne apna ViewModel constructor bulakar, nakli cheezon ke saath banaya, jo tark jaanchne ke liye bilkul sahi hai — aur iska matlab hai ki asli object ka graph kisi test mein kabhi juda hi nahi. Lines dhaki hui thin; judav nahi, kyunki judav koi line nahi hai, wo lines ke beech ka rishta hai. Coverage badhane se madad nahi milti, kyunki jodne ko koi bina dhaki line hai hi nahi. Sasta ilaaj hai ek aisa test jo wo graph banaye — koi Hilt wala test jo entry points inject kare, ya aisa saada test jo app chalakar dekhe ki pehli screen banti hai. Wo akela test pyramid ki neenv se upar baithta hai aur wahi ek cheez deta hai jo neenv nahi de sakti: saboot ki hisse aapas mein baithte hain. Aam sabak ye hai ki coverage us cheez ka naksha hai jo chali, aur har sadak dikhata naksha is baat ka saboot nahi hai ki sadkein aapas mein judti hain."
+/>
+
+## Jahan chal jaye, mocks nahi nakli cheezein
+
+```kotlin title="FakeRepository.kt" numbered
+class FakeOrderRepository : OrderRepository {
+    var result: Outcome<List<Order>> = Outcome.Success(emptyList())
+    private val orders = MutableStateFlow<List<Order>>(emptyList())
+
+    override fun observeOrders(): Flow<List<Order>> = orders
+    override suspend fun refresh(): Outcome<Unit> = result.map {}
+    fun emit(new: List<Order>) { orders.value = new }        // test isi ko chalata hai
+}
+```
+
+Nakli cheez ek chalta hua implementation hai jiska andaruni hissa aasan kar diya gaya hai. Uska asli
+behaviour hai — kuch rakhiye aur wo wapas milta hai — to test kaamon ki ek kadi ki tarah padha jata
+hai, na ki nakli banai gayi calls ki list ki tarah.
+
+Mocks tab sahi hain jab aapko kisi *len-den* par dawa karna ho: ki token refresh ki koshish theek ek
+baar hui, ki analytics chala. Baaki har cheez ke liye nakli cheez aise tests banati hai jo code dobara
+sajane par bhi bachte hain, kyunki wo batate hain ki code karta kya hai, na ki kin methods ko bulata
+hai.
+
+<Detail summary="Behaviour jaanchna, banawat nahi">
+Koi test suite bojh banne ke jis raaste sabse zyada jati hai wo hai banawat par dawa karna:
+
+```kotlin title="Brittle.kt" numbered
+verify(exactly = 1) { repository.fetchOrders() }          // cache jodte hi tootta hai
+verify { mapper.toDomain(any()) }                          // mapper andar le jate hi tootta hai
+assertEquals(3, viewModel.internalCache.size)              // niji bareeki dekh raha hai
+```
+
+Inmein se har ek tab nakaam hota hai jab code bina apna kaam badle dobara sajaya jata hai — to har
+refactor un tests ko sudharne ki ek dopahar ban jata hai jinhone kabhi koi bug nahi pakda. Suite
+suraksha jaal hona chhodkar adchan ban jati hai, aur aam taur par hota ye hai ki log us par
+bharosa karna chhod dete hain.
+
+Wahi iraada, behaviour ki tarah likha hua:
+
+```kotlin title="Durable.kt" numbered
+repository.result = Outcome.Failure(DataError.Network.Offline)
+viewModel.refresh()
+assertEquals(UiText.Res(R.string.offline), viewModel.state.value.error)
+```
+
+Wo test tab bhi pass hota hai jab cache ho ya na ho, mapper andar ho ya bahar, repository dobara likha
+gaya ho — aur theek tab nakaam hota hai jab user ko galat cheez dikhti. Mota niyam: us par dawa kijiye
+jo class se bahar nikalta hai, us par nahi jo uske andar hota hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, jinse aisi suite banti hai jis par koi bharosa nahi karta">
+**Coverage ke aankde ke peeche bhagna.** Wo naapta hai ki kaun si lines chalin, ye nahi ki app chalta
+hai.
+
+**Framework ko jaanchna.** Ye dawa karna ki Room row sahejta hai, ya ki `data class` barabar nikalta
+hai.
+
+**Natijon ke bajaye calls dekhna.** Refactor par test tootta hai aur koi bug pakadta nahi.
+
+**Jise unit test sabit kar sakta tha uske liye UI test.** Milliseconds ke bajaye minute, aur
+gair-bharosemand.
+
+**Jodon par koi test na hona.** Sab kuch unit tested, aur ye sabit karne wala kuch nahi ki hisse judte
+hain.
+</Pitfall>
+
+## Abhyaas
+
+1. Pichhle paanch bugs ginaiye jo aapne theek kiye aur likhiye ki har ek ko kaunsa star pakadta.
+2. Kisi error wale type par likhe `when` ki har shakha ka unit test likhiye.
+3. Kisi ek test mein mock ki jagah nakli cheez rakhiye aur dekhiye ki test chhota hota hai ya nahi.
+4. Aisa test dhoondhiye jo kisi niji method ka naam badalne par toot jaye, aur use behaviour ke hisab
+   se dobara likhiye.
+5. Ek saada test likhiye jo app chalakar dekhe ki pehli screen banti hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Sauda | Har star par, raftar banam bharosa |
+| Unit | Milliseconds, ek faisla, sirf JVM |
+| Integration | Second, asli saathi, sabit karta hai ki hisse baithte hain |
+| UI | Minute, asli device, sabit karta hai ki user poora kar sakta hai |
+| Sawal | Pichhle paanch bugs ko pakadta kaun |
+| Jaanchne layak | Shakhayein, badalna, state nikalna, purane bugs |
+| Jaanchne layak nahi | Getters, `data class` ki barabari, framework ka behaviour |
+| Nakli cheez | Chalta hua implementation, aasan andaruni hisse ke saath |
+| Mock | Ye dawa karne ke liye ki koi len-den hua |
+| Coverage | Jo chala uska naksha, chalne ka saboot nahi |
+
+<Interview title="Ek sawal, jiska galat jawab koi aankda hai">
+"Kisi project ka test coverage kitna hona chahiye?"
+
+Main koi aankda nishana nahi banaunga, kyunki coverage naapta hai ki kaun si lines chalin, ye nahi ki
+app chalta hai — koi suite nabbe pratishat par ho sakti hai aur phir bhi aisi release chhoot sakti hai
+jismein koi screen ladti hi nahi, agar har test ne apni cheez seedhe banai aur kisi ne asli object ka
+graph joda hi nahi.
+
+Main asal mein ye chahta hoon ki jin cheezon ke tootne ki sabse zyada sambhavna hai wo us sabse saste
+star par jaanchi jayein jo unhe sabit kar sake. Shakhaon wala tark, badalna aur state nikalna unit
+tests hain, kyunki wo apne input ke saade functions hain aur milliseconds mein chalte hain. Jismein
+bhi asli SQL ya asli JSON hai wo integration test hai, kyunki koi nakli cheez mujhe ye nahi bata sakti
+ki meri query sahi hai. Aur poore safron ke liye main gine-chune UI tests rakhta hoon, kyunki wo dheeme
+hain aur mere code se bematlab wajahon se nakaam hote hain — par wahi iklauti cheez hain jo sabit karti
+hai ki hisse aapas mein judte hain.
+</Interview>
