@@ -1,0 +1,206 @@
+---
+title: "Notifications: channels, styles aur deep links"
+description: Notification aapke app ka iklauta hissa hai jo khole bina dikhta hai, aur isiliye wo kaise behave karega ye aap nahi, user tay karta hai. Channels usi akhtiyaar ko kehne ka tarika hain, aur wo pakke hote hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Android 8 se har notification kisi **channel** ki hoti hai, aur us channel ki settings — importance,
+awaaz, kampan — user ki hain. Aapka code unhe ek baar, banate waqt, tay kar sakta hai aur uske baad
+kabhi nahi. Isliye channel galat rakhna aisa bug nahi hai jise aap maujooda users ke liye agli release
+mein theek kar sako.
+</KeyIdea>
+
+## Channels, aur wo pakke kyun hote hain
+
+```kotlin title="Channels.kt" numbered
+val channel = NotificationChannel(
+    "order_updates",
+    getString(R.string.channel_order_updates),      // user ko Settings mein yahi dikhta hai
+    NotificationManager.IMPORTANCE_DEFAULT,
+).apply {
+    description = getString(R.string.channel_order_updates_desc)
+}
+NotificationManagerCompat.from(context).createNotificationChannel(channel)
+```
+
+Usi id ke saath `createNotificationChannel` dobara bulane se **naam aur vivaran** badalte hain, aur
+kuch nahi. Importance, awaaz aur kampan ek hi baar padhe jate hain, jab channel pehli baar banta hai,
+aur uske baad wo user ke hain.
+
+Iska ek vyavharik anjaam hai jo logon ko der se pata chalta hai: agar aapne `IMPORTANCE_LOW` bheja aur
+baad mein tay kiya ki un notifications ki awaaz aani chahiye, to maujooda users ke liye purana
+behaviour hamesha bana rahega. Nikalne ka iklauta raasta nai channel id hai — jo unki Settings mein
+doosri entry bankar dikhti hai, yani wo asli keemat hai, koi jugaad nahi.
+
+| Importance | Behaviour |
+| --- | --- |
+| `IMPORTANCE_HIGH` | Upar aati patti aur awaaz |
+| `IMPORTANCE_DEFAULT` | Awaaz, patti nahi |
+| `IMPORTANCE_LOW` | Chup, shade mein dikhti hai |
+| `IMPORTANCE_MIN` | Chup, simti hui, status bar mein icon nahi |
+
+Ek chaude channel ke bajaye kai sankre channels banaiye. "Order updates", "delivery", "promotions" se
+user marketing chup kara sakta hai aur delivery ki khabrein rakh sakta hai; akele "Notifications" wale
+channel mein uska iklauta chunaav sab ya kuch nahi hai, aur wo aam taur par kuch nahi chunta hai.
+
+<Note>
+Android 13 aur uske baad pehle lesson wali `POST_NOTIFICATIONS` ki runtime permission ke bina ismein
+se kuch dikhta hi nahi — na crash, na log ki koi line. Channels permission milne se pehle bhi banaye
+ja sakte hain, aur unhe jaldi banana theek rehta hai, kyunki wo Settings mein dikhte hain aur user
+dekh pata hai ki wo kis baat ke liye haan kahega.
+</Note>
+
+## Ek banana
+
+```kotlin title="Notify.kt" numbered
+val notification = NotificationCompat.Builder(context, "order_updates")
+    .setSmallIcon(R.drawable.ic_order)              // zaruri; ek rang ka, system use rangta hai
+    .setContentTitle(getString(R.string.order_shipped_title))
+    .setContentText(getString(R.string.order_shipped_body, order.id))
+    .setPriority(NotificationCompat.PRIORITY_DEFAULT)   // Android 7 aur usse neeche ke liye
+    .setContentIntent(openOrderIntent)
+    .setAutoCancel(true)                            // tap hote hi hat jaye
+    .build()
+
+NotificationManagerCompat.from(context).notify(order.id.hashCode(), notification)
+```
+
+`setPriority` aur channel ki importance ek jaisi lagti hain aur hain nahi: channel Android 8 aur uske
+upar chalata hai, `setPriority` usse purani versions par. `NotificationCompat` ko har jagah ek jaisa
+behaviour karne ke liye dono chahiye.
+
+Notification ki id sochne layak hai. Tay id ka matlab hai ki har notification pichhli ki jagah le leti
+hai, jo progress ke liye sahi hai aur teen alag orders ke liye galat. Use vishay se nikalna — jaisa
+upar hai — har order par ek notification deta hai, aur us order ko baad mein badalne par theek wahi
+wali badalti hai.
+
+## Us par tap, aur user pahunchta kahan hai
+
+```kotlin title="DeepLink.kt" numbered
+val intent = Intent(
+    Intent.ACTION_VIEW,
+    "myapp://orders/${order.id}".toUri(),
+    context,
+    MainActivity::class.java,
+)
+
+val pending = TaskStackBuilder.create(context)
+    .addNextIntentWithParentStack(intent)           // asli back stack gadh deta hai
+    .getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+```
+
+`TaskStackBuilder` wo hissa hai jise chhodna aasan hai aur chhodna nahi chahiye. Uske bina notification
+par tap karne se order ki detail wali screen khulti hai aur uske peeche kuch nahi hota, to Back order
+ki list par jane ke bajaye app se bahar kar deta hai — jo toota hua lagta hai, aur users use mehsoos
+karte hain par bata nahi paate.
+
+<Quiz
+  question="Koi notification apne `PendingIntent` mein order ki id bhejti hai. Pehli notification sahi order kholti hai; uske baad ki har notification phir se pehla hi order kholti hai. Galat kya hai?"
+  options={[
+    "`FLAG_IMMUTABLE` extras padhne nahi deta",
+    "Saari notifications ek hi request code leti hain, to system maujooda PendingIntent aur uske purane extras dobara istemal karta hai — `FLAG_UPDATE_CURRENT` extras tabhi badalta hai jab wo intents barabar mane jayein",
+    "Us activity ko `launchMode=\"singleTask\"` chahiye",
+  ]}
+  answer={1}
+  explanation="PendingIntents maangne wale package, request code, action, data aur type par milaye jate hain — jaanbujhkar extras par nahi. To ek hi request code se bani do notifications system ko bilkul ek jaisi dikhti hain, aur doosri pehli wala PendingIntent, extras samet, dobara le leti hai. FLAG_UPDATE_CURRENT ilaaj jaisa lagta hai aur hai nahi, kyunki wo usi PendingIntent ke extras badalta hai jise pehle hi barabar maan liya gaya, aur unhe alag banane wali cheez extras thi hi nahi. Do asli ilaaj hain. Har notification ko alag request code dijiye — order ki id ka hash, wahi value jo notification ki id hai. Ya id ko extras ke bajaye intent ke data wale URI mein rakhiye, kyunki data milan ka hissa hai, aur upar wala deep link theek yahi karta hai. Doosra behtar hai, kyunki wahi data URI notification aur bahar se aaye kisi link ko ek hi code ke raaste ek hi screen par pahunchata hai."
+/>
+
+## Styles
+
+```kotlin title="Styles.kt" numbered
+.setStyle(NotificationCompat.BigTextStyle().bigText(fullMessage))
+.setStyle(NotificationCompat.InboxStyle().addLine(a).addLine(b))
+.setStyle(NotificationCompat.BigPictureStyle().bigPicture(bitmap))
+.setStyle(NotificationCompat.MessagingStyle(me).addMessage(text, time, sender))
+```
+
+Default ke taur par lene layak `BigTextStyle` hai — uske bina ek line se lamba sandesh kaat diya jata
+hai aur baaki padhne ka koi raasta nahi bachta, jisse wo notification apne asli maksad ke liye bekaar
+ho jati hai.
+
+`MessagingStyle` sirf ek style nahi hai: system use baatcheet manta hai, aur isi se inline jawab,
+bubbles aur shade ka baatcheet wala hissa chalte hain. Chat jaisi kisi bhi suvidha ko title mein
+bhejne wale ka naam rakhi aam notification ke bajaye yahi lena chahiye.
+
+<Detail summary="Grouping, aur wo summary jo baadh rokti hai">
+Ek hi app ki bees notifications shade bhar deti hain. Grouping unhe samet deti hai:
+
+```kotlin title="Group.kt" numbered
+private const val GROUP = "orders"
+
+// har bachcha
+.setGroup(GROUP)
+
+// aur ek summary, apni alag id ke saath bheji hui
+NotificationCompat.Builder(context, "order_updates")
+    .setSmallIcon(R.drawable.ic_order)
+    .setStyle(NotificationCompat.InboxStyle().setSummaryText("3 order updates"))
+    .setGroup(GROUP)
+    .setGroupSummary(true)
+    .build()
+```
+
+Jo niyam log chook jate hain wo ye hai ki Android 7 aur uske upar ek hi app ki chaar ya zyada
+notifications ko system khud samooh bana deta hai, par **summary ke bina wo khaali bhoora sheershak
+dikhata hai**. Apni summary bhejna hi us simte hue samooh ko padhne layak banata hai.
+
+Aakhri bachche ke jate hi summary hataiye, warna khaali samooh ka sheershak bina kuch neeche rakhe
+tanga rehta hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli wali wapas nahi li ja sakti">
+**Launch par galat importance.** Maujooda users ke liye wo hamesha bani rehti hai; badalne ke liye nai
+channel id chahiye.
+
+**Har cheez ke liye ek channel.** User ka iklauta chunaav sab ya kuch nahi hai, aur wo kuch nahi chunta
+hai.
+
+**Har `PendingIntent` par wahi request code.** Har notification pehli wali ki screen kholti hai.
+
+**`TaskStackBuilder` na hona.** Back list par jane ke bajaye app se bahar kar deta hai.
+
+**`POST_NOTIFICATIONS` bhoolna.** Android 13 aur uske upar kuch nahi dikhta, chupchap.
+</Pitfall>
+
+## Abhyaas
+
+1. `IMPORTANCE_LOW` wala channel banaiye, phir code se use uncha karne ki koshish kijiye aur pakka
+   kijiye ki kuch nahi badalta.
+2. Ek hi request code se teen notifications bhejiye aur teenon ko ek hi screen kholte dekhiye.
+3. `TaskStackBuilder` jodiye aur dekhiye ki Back app se bahar ke bajaye list par jata hai.
+4. Bina summary ke group wali paanch notifications bhejiye, phir summary jodkar milaiye.
+5. Koi lamba sandesh `BigTextStyle` ke saath aur uske bina bhejiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Channel | Android 8 se zaruri; uski settings user ki hain |
+| Importance | Banate waqt ek baar padhi jati hai — badalne ko nai channel id chahiye |
+| Kai channels | User ek cheez chup kara sakta hai, sab kuch nahi |
+| `setPriority` | Android 8 se pehle wala jodidar; dono lagaiye |
+| Notification id | Tay id badal deti hai, vishay wali judti jati hai |
+| Request code | `PendingIntent` ke milan ka hissa; extras nahi |
+| Data URI | Wo bhi milan ka hissa, aur deep links ke saath share |
+| `TaskStackBuilder` | Back ko jane ke liye samajhdar jagah deta hai |
+| `BigTextStyle` | Warna lamba sandesh katkar na padhe jane layak reh jata hai |
+| Group summary | Uske bina chaar ya zyada par khaali bhoora sheershak dikhta hai |
+
+<Interview title="Ek sawal, jiske achhe jawab mein PendingIntent ka milan aata hai">
+"Har notification ek hi screen kyun khol sakti hai?"
+
+Kyunki `PendingIntent` package, request code, action, data aur type par milaye jate hain — aur
+jaanbujhkar extras par nahi. Ek hi request code se bani do notifications isliye system ko bilkul ek
+jaisi dikhti hain, to doosri pehli wala `PendingIntent` aur uske purane extras dobara le leti hai.
+`FLAG_UPDATE_CURRENT` ise theek nahi karta, kyunki wo usi ke extras badalta hai jise pehle hi barabar
+maan liya gaya.
+
+Main ise id ko extras ke bajaye intent ke data wale URI mein rakhkar theek karunga, kyunki data milan
+ka hissa *hai* — aur uska doosra faayda ye hai ki tab notification aur bahar se aaya koi deep link ek
+hi code ke raaste ek hi screen par pahunchte hain. Har notification par alag request code bhi chalta
+hai, aur main wahi value lunga jo notification ki id hai, taki kisi cheez ke badalne par theek wahi
+notification badle.
+</Interview>

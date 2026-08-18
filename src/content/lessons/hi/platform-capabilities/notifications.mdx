@@ -1,0 +1,199 @@
+---
+title: "Notifications: channels, styles और deep links"
+description: Notification आपके ऐप का इकलौता हिस्सा है जो खोले बिना दिखता है, और इसीलिए वह कैसे बर्ताव करेगा यह आप नहीं, user तय करता है। Channels उसी अख्तियार को कहने का तरीका हैं, और वे पक्के होते हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Android 8 से हर notification किसी **channel** की होती है, और उस channel की settings — importance,
+आवाज, कंपन — user की हैं। आपका code उन्हें एक बार, बनाते वक्त, तय कर सकता है और उसके बाद कभी नहीं।
+इसलिए channel गलत रखना ऐसा bug नहीं है जिसे आप मौजूदा users के लिए अगली release में ठीक कर सकें।
+</KeyIdea>
+
+## Channels, और वे पक्के क्यों होते हैं
+
+```kotlin title="Channels.kt" numbered
+val channel = NotificationChannel(
+    "order_updates",
+    getString(R.string.channel_order_updates),      // user को Settings में यही दिखता है
+    NotificationManager.IMPORTANCE_DEFAULT,
+).apply {
+    description = getString(R.string.channel_order_updates_desc)
+}
+NotificationManagerCompat.from(context).createNotificationChannel(channel)
+```
+
+उसी id के साथ `createNotificationChannel` दोबारा बुलाने से **नाम और विवरण** बदलते हैं, और कुछ नहीं।
+Importance, आवाज और कंपन एक ही बार पढ़े जाते हैं, जब channel पहली बार बनता है, और उसके बाद वे user
+के हैं।
+
+इसका एक व्यावहारिक नतीजा है जो लोगों को देर से पता चलता है: अगर आपने `IMPORTANCE_LOW` भेजा और बाद में
+तय किया कि उन notifications की आवाज आनी चाहिए, तो मौजूदा users के लिए पुराना बर्ताव हमेशा बना रहेगा।
+निकलने का इकलौता रास्ता नई channel id है — जो उनकी Settings में दूसरी entry बनकर दिखती है, यानी वह
+असली कीमत है, कोई जुगाड़ नहीं।
+
+| Importance | बर्ताव |
+| --- | --- |
+| `IMPORTANCE_HIGH` | ऊपर आती पट्टी और आवाज |
+| `IMPORTANCE_DEFAULT` | आवाज, पट्टी नहीं |
+| `IMPORTANCE_LOW` | चुप, shade में दिखती है |
+| `IMPORTANCE_MIN` | चुप, सिमटी हुई, status bar में icon नहीं |
+
+एक चौड़े channel के बजाय कई सँकरे channels बनाइए। "Order updates", "delivery", "promotions" से user
+marketing चुप करा सकता है और delivery की खबरें रख सकता है; अकेले "Notifications" वाले channel में
+उसका इकलौता चुनाव सब या कुछ नहीं है, और वह आमतौर पर कुछ नहीं चुनता है।
+
+<Note>
+Android 13 और उसके बाद पहले पाठ वाली `POST_NOTIFICATIONS` की runtime permission के बिना इसमें से कुछ
+दिखता ही नहीं — न crash, न log की कोई लाइन। Channels permission मिलने से पहले भी बनाए जा सकते हैं,
+और उन्हें जल्दी बनाना ठीक रहता है, क्योंकि वे Settings में दिखते हैं और user देख पाता है कि वह किस
+बात के लिए हाँ कहेगा।
+</Note>
+
+## एक बनाना
+
+```kotlin title="Notify.kt" numbered
+val notification = NotificationCompat.Builder(context, "order_updates")
+    .setSmallIcon(R.drawable.ic_order)              // जरूरी; एक रंग का, system उसे रंगता है
+    .setContentTitle(getString(R.string.order_shipped_title))
+    .setContentText(getString(R.string.order_shipped_body, order.id))
+    .setPriority(NotificationCompat.PRIORITY_DEFAULT)   // Android 7 और उससे नीचे के लिए
+    .setContentIntent(openOrderIntent)
+    .setAutoCancel(true)                            // tap होते ही हट जाए
+    .build()
+
+NotificationManagerCompat.from(context).notify(order.id.hashCode(), notification)
+```
+
+`setPriority` और channel की importance एक जैसी लगती हैं और हैं नहीं: channel Android 8 और उसके ऊपर
+चलाता है, `setPriority` उससे पुरानी versions पर। `NotificationCompat` को हर जगह एक जैसा बर्ताव करने
+के लिए दोनों चाहिए।
+
+Notification की id सोचने लायक है। तय id का मतलब है कि हर notification पिछली की जगह ले लेती है, जो
+progress के लिए सही है और तीन अलग orders के लिए गलत। उसे विषय से निकालना — जैसा ऊपर है — हर order पर
+एक notification देता है, और उस order को बाद में बदलने पर ठीक वही वाली बदलती है।
+
+## उस पर tap, और user पहुँचता कहाँ है
+
+```kotlin title="DeepLink.kt" numbered
+val intent = Intent(
+    Intent.ACTION_VIEW,
+    "myapp://orders/${order.id}".toUri(),
+    context,
+    MainActivity::class.java,
+)
+
+val pending = TaskStackBuilder.create(context)
+    .addNextIntentWithParentStack(intent)           // असली back stack गढ़ देता है
+    .getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+```
+
+`TaskStackBuilder` वह हिस्सा है जिसे छोड़ना आसान है और छोड़ना नहीं चाहिए। उसके बिना notification पर
+tap करने से order की detail वाली screen खुलती है और उसके पीछे कुछ नहीं होता, तो Back order की list
+पर जाने के बजाय ऐप से बाहर कर देता है — जो टूटा हुआ लगता है, और users उसे महसूस करते हैं पर बता नहीं
+पाते।
+
+<Quiz
+  question="कोई notification अपने `PendingIntent` में order की id भेजती है। पहली notification सही order खोलती है; उसके बाद की हर notification फिर से पहला ही order खोलती है। गलत क्या है?"
+  options={[
+    "`FLAG_IMMUTABLE` extras पढ़ने नहीं देता",
+    "सारी notifications एक ही request code लेती हैं, तो system मौजूदा PendingIntent और उसके पुराने extras दोबारा इस्तेमाल करता है — `FLAG_UPDATE_CURRENT` extras तभी बदलता है जब वे intents बराबर माने जाएँ",
+    "उस activity को `launchMode=\"singleTask\"` चाहिए",
+  ]}
+  answer={1}
+  explanation="PendingIntents माँगने वाले package, request code, action, data और type पर मिलाए जाते हैं — जानबूझकर extras पर नहीं। तो एक ही request code से बनी दो notifications system को बिलकुल एक जैसी दिखती हैं, और दूसरी पहली वाला PendingIntent, extras समेत, दोबारा ले लेती है। FLAG_UPDATE_CURRENT इलाज जैसा लगता है और है नहीं, क्योंकि वह उसी PendingIntent के extras बदलता है जिसे पहले ही बराबर मान लिया गया, और उन्हें अलग बनाने वाली चीज extras थी ही नहीं। दो असली इलाज हैं। हर notification को अलग request code दीजिए — order की id का hash, वही value जो notification की id है। या id को extras के बजाय intent के data वाले URI में रखिए, क्योंकि data मिलान का हिस्सा है, और ऊपर वाला deep link ठीक यही करता है। दूसरा बेहतर है, क्योंकि वही data URI notification और बाहर से आए किसी link को एक ही code के रास्ते एक ही screen पर पहुँचाता है।"
+/>
+
+## Styles
+
+```kotlin title="Styles.kt" numbered
+.setStyle(NotificationCompat.BigTextStyle().bigText(fullMessage))
+.setStyle(NotificationCompat.InboxStyle().addLine(a).addLine(b))
+.setStyle(NotificationCompat.BigPictureStyle().bigPicture(bitmap))
+.setStyle(NotificationCompat.MessagingStyle(me).addMessage(text, time, sender))
+```
+
+डिफॉल्ट के तौर पर लेने लायक `BigTextStyle` है — उसके बिना एक लाइन से लंबा संदेश काट दिया जाता है और
+बाकी पढ़ने का कोई रास्ता नहीं बचता, जिससे वह notification अपने असली मकसद के लिए बेकार हो जाती है।
+
+`MessagingStyle` सिर्फ एक style नहीं है: system उसे बातचीत मानता है, और इसी से inline जवाब, bubbles
+और shade का बातचीत वाला हिस्सा चलते हैं। Chat जैसी किसी भी सुविधा को title में भेजने वाले का नाम रखी
+आम notification के बजाय यही लेना चाहिए।
+
+<Detail summary="Grouping, और वह summary जो बाढ़ रोकती है">
+एक ही ऐप की बीस notifications shade भर देती हैं। Grouping उन्हें समेट देती है:
+
+```kotlin title="Group.kt" numbered
+private const val GROUP = "orders"
+
+// हर बच्चा
+.setGroup(GROUP)
+
+// और एक summary, अपनी अलग id के साथ भेजी हुई
+NotificationCompat.Builder(context, "order_updates")
+    .setSmallIcon(R.drawable.ic_order)
+    .setStyle(NotificationCompat.InboxStyle().setSummaryText("3 order updates"))
+    .setGroup(GROUP)
+    .setGroupSummary(true)
+    .build()
+```
+
+जो नियम लोग चूक जाते हैं वह यह है कि Android 7 और उसके ऊपर एक ही ऐप की चार या ज्यादा notifications
+को system खुद समूह बना देता है, पर **summary के बिना वह खाली भूरा शीर्षक दिखाता है**। अपनी summary
+भेजना ही उस सिमटे हुए समूह को पढ़ने लायक बनाता है।
+
+आखिरी बच्चे के जाते ही summary हटाइए, वरना खाली समूह का शीर्षक बिना कुछ नीचे रखे टँगा रहता है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली वाली वापस नहीं ली जा सकती">
+**Launch पर गलत importance।** मौजूदा users के लिए वह हमेशा बनी रहती है; बदलने के लिए नई channel id
+चाहिए।
+
+**हर चीज के लिए एक channel।** User का इकलौता चुनाव सब या कुछ नहीं है, और वह कुछ नहीं चुनता है।
+
+**हर `PendingIntent` पर वही request code।** हर notification पहली वाली की screen खोलती है।
+
+**`TaskStackBuilder` न होना।** Back list पर जाने के बजाय ऐप से बाहर कर देता है।
+
+**`POST_NOTIFICATIONS` भूलना।** Android 13 और उसके ऊपर कुछ नहीं दिखता, चुपचाप।
+</Pitfall>
+
+## अभ्यास
+
+1. `IMPORTANCE_LOW` वाला channel बनाइए, फिर code से उसे ऊँचा करने की कोशिश कीजिए और पक्का कीजिए कि
+   कुछ नहीं बदलता।
+2. एक ही request code से तीन notifications भेजिए और तीनों को एक ही screen खोलते देखिए।
+3. `TaskStackBuilder` जोड़िए और देखिए कि Back ऐप से बाहर के बजाय list पर जाता है।
+4. बिना summary के group वाली पाँच notifications भेजिए, फिर summary जोड़कर मिलाइए।
+5. कोई लंबा संदेश `BigTextStyle` के साथ और उसके बिना भेजिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Channel | Android 8 से जरूरी; उसकी settings user की हैं |
+| Importance | बनाते वक्त एक बार पढ़ी जाती है — बदलने को नई channel id चाहिए |
+| कई channels | User एक चीज चुप करा सकता है, सब कुछ नहीं |
+| `setPriority` | Android 8 से पहले वाला जोड़ीदार; दोनों लगाइए |
+| Notification id | तय id बदल देती है, विषय वाली जुड़ती जाती है |
+| Request code | `PendingIntent` के मिलान का हिस्सा; extras नहीं |
+| Data URI | वह भी मिलान का हिस्सा, और deep links के साथ साझा |
+| `TaskStackBuilder` | Back को जाने के लिए समझदार जगह देता है |
+| `BigTextStyle` | वरना लंबा संदेश कटकर न पढ़े जाने लायक रह जाता है |
+| Group summary | उसके बिना चार या ज्यादा पर खाली भूरा शीर्षक दिखता है |
+
+<Interview title="एक सवाल, जिसके अच्छे जवाब में PendingIntent का मिलान आता है">
+"हर notification एक ही screen क्यों खोल सकती है?"
+
+क्योंकि `PendingIntent` package, request code, action, data और type पर मिलाए जाते हैं — और जानबूझकर
+extras पर नहीं। एक ही request code से बनी दो notifications इसलिए system को बिलकुल एक जैसी दिखती हैं,
+तो दूसरी पहली वाला `PendingIntent` और उसके पुराने extras दोबारा ले लेती है। `FLAG_UPDATE_CURRENT`
+इसे ठीक नहीं करता, क्योंकि वह उसी के extras बदलता है जिसे पहले ही बराबर मान लिया गया।
+
+मैं इसे id को extras के बजाय intent के data वाले URI में रखकर ठीक करूँगा, क्योंकि data मिलान का
+हिस्सा *है* — और उसका दूसरा फायदा यह है कि तब notification और बाहर से आया कोई deep link एक ही code
+के रास्ते एक ही screen पर पहुँचते हैं। हर notification पर अलग request code भी चलता है, और मैं वही
+value लूँगा जो notification की id है, ताकि किसी चीज के बदलने पर ठीक वही notification बदले।
+</Interview>

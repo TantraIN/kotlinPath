@@ -1,0 +1,199 @@
+---
+title: "Notifications: channels, styles and deep links"
+description: A notification is the one part of your app that appears without being opened, which is why the user — not you — controls how it behaves. Channels are how that control is expressed, and they are permanent.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Since Android 8 every notification belongs to a **channel**, and the user owns the channel's
+settings — importance, sound, vibration. Your code can set those once, at creation, and never again.
+Getting a channel wrong is therefore not a bug you can fix in the next release for existing users.
+</KeyIdea>
+
+## Channels, and why they are permanent
+
+```kotlin title="Channels.kt" numbered
+val channel = NotificationChannel(
+    "order_updates",
+    getString(R.string.channel_order_updates),      // the user sees this in Settings
+    NotificationManager.IMPORTANCE_DEFAULT,
+).apply {
+    description = getString(R.string.channel_order_updates_desc)
+}
+NotificationManagerCompat.from(context).createNotificationChannel(channel)
+```
+
+Calling `createNotificationChannel` again with the same id updates the **name and description** and
+nothing else. Importance, sound and vibration are read once, when the channel is first created, and
+from then on they belong to the user.
+
+That has a practical consequence people discover late: if you ship `IMPORTANCE_LOW` and later decide
+those notifications should make a sound, existing users keep the old behaviour forever. The only way
+out is a new channel id — which shows up in their Settings as a second entry, so it is a real cost
+rather than a workaround.
+
+| Importance | Behaviour |
+| --- | --- |
+| `IMPORTANCE_HIGH` | Heads-up banner and sound |
+| `IMPORTANCE_DEFAULT` | Sound, no banner |
+| `IMPORTANCE_LOW` | Silent, visible in the shade |
+| `IMPORTANCE_MIN` | Silent, collapsed, no status bar icon |
+
+Create several narrow channels rather than one broad one. "Order updates", "delivery", "promotions"
+lets a user silence marketing and keep delivery alerts; a single "Notifications" channel means their
+only choice is all or nothing, and they usually choose nothing.
+
+<Note>
+On Android 13 and above none of this shows at all without the `POST_NOTIFICATIONS` runtime
+permission from the first lesson — no crash, no log line. Channels can still be created before the
+permission is granted, and creating them early is worth doing, because they appear in Settings and
+let the user see what they would be agreeing to.
+</Note>
+
+## Building one
+
+```kotlin title="Notify.kt" numbered
+val notification = NotificationCompat.Builder(context, "order_updates")
+    .setSmallIcon(R.drawable.ic_order)              // required; monochrome, tinted by the system
+    .setContentTitle(getString(R.string.order_shipped_title))
+    .setContentText(getString(R.string.order_shipped_body, order.id))
+    .setPriority(NotificationCompat.PRIORITY_DEFAULT)   // for Android 7 and below
+    .setContentIntent(openOrderIntent)
+    .setAutoCancel(true)                            // dismiss when tapped
+    .build()
+
+NotificationManagerCompat.from(context).notify(order.id.hashCode(), notification)
+```
+
+`setPriority` and the channel's importance look redundant and are not: the channel governs Android 8
+and above, `setPriority` governs older versions. `NotificationCompat` needs both to behave the same
+everywhere.
+
+The notification id is worth thinking about. A constant id means each notification replaces the last,
+which is right for a progress update and wrong for three separate orders. Deriving it from the
+subject — as above — gives one notification per order, and updating that order later replaces exactly
+the right one.
+
+## Tapping it, and where the user lands
+
+```kotlin title="DeepLink.kt" numbered
+val intent = Intent(
+    Intent.ACTION_VIEW,
+    "myapp://orders/${order.id}".toUri(),
+    context,
+    MainActivity::class.java,
+)
+
+val pending = TaskStackBuilder.create(context)
+    .addNextIntentWithParentStack(intent)           // synthesises a real back stack
+    .getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+```
+
+`TaskStackBuilder` is the part that is easy to skip and shouldn't be. Without it, tapping a
+notification opens the order detail screen with nothing behind it, so Back exits the app instead of
+going to the order list — which feels broken in a way users notice and cannot describe.
+
+<Quiz
+  question="A notification passes an order id in its `PendingIntent`. The first notification opens the right order; every later one opens the first order again. What is wrong?"
+  options={[
+    "`FLAG_IMMUTABLE` prevents the extras from being read",
+    "All the notifications use the same request code, so the system reuses the existing PendingIntent and its original extras — `FLAG_UPDATE_CURRENT` updates the extras only when the intents are considered equal",
+    "The activity needs `launchMode=\"singleTask\"`",
+  ]}
+  answer={1}
+  explanation="PendingIntents are matched on requesting package, request code, action, data and type — deliberately not on extras. So two notifications built with the same request code look identical to the system, and the second reuses the first one's PendingIntent, extras and all. FLAG_UPDATE_CURRENT sounds like the fix and is not, because it only updates the extras of a PendingIntent already judged equal, and the extras were never what made them different. There are two real fixes. Give each notification a distinct request code — the order id's hash, the same value used for the notification id. Or put the id in the intent's data URI rather than in extras, since data is part of the match, which is exactly what the deep link above does. The second is better, because the data URI is also what makes the notification and an external link land on the same screen through the same code path."
+/>
+
+## Styles
+
+```kotlin title="Styles.kt" numbered
+.setStyle(NotificationCompat.BigTextStyle().bigText(fullMessage))
+.setStyle(NotificationCompat.InboxStyle().addLine(a).addLine(b))
+.setStyle(NotificationCompat.BigPictureStyle().bigPicture(bitmap))
+.setStyle(NotificationCompat.MessagingStyle(me).addMessage(text, time, sender))
+```
+
+`BigTextStyle` is the one worth using by default — without it a message longer than a line is
+truncated with no way to read the rest, which makes the notification useless for its actual purpose.
+
+`MessagingStyle` is not just a style: the system treats it as a conversation, which is what enables
+inline reply, bubbles and the conversation section of the shade. Any chat-like feature should use it
+rather than a generic notification with the sender's name in the title.
+
+<Detail summary="Grouping, and the summary that stops the flood">
+Twenty notifications from one app fill the shade. Grouping collapses them:
+
+```kotlin title="Group.kt" numbered
+private const val GROUP = "orders"
+
+// each child
+.setGroup(GROUP)
+
+// plus one summary, posted with its own id
+NotificationCompat.Builder(context, "order_updates")
+    .setSmallIcon(R.drawable.ic_order)
+    .setStyle(NotificationCompat.InboxStyle().setSummaryText("3 order updates"))
+    .setGroup(GROUP)
+    .setGroupSummary(true)
+    .build()
+```
+
+The rule people miss is that on Android 7 and above the system auto-groups four or more notifications
+from the same app, but **without a summary it shows an empty grey header**. Posting your own summary
+is what makes the collapsed group readable.
+
+Cancel the summary when the last child goes, or an empty group header lingers with nothing under it.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one you cannot undo">
+**Wrong importance at launch.** Existing users keep it forever; changing it needs a new channel id.
+
+**One channel for everything.** The user's only choice is all or nothing, and they pick nothing.
+
+**Same request code for every `PendingIntent`.** Every notification opens the first one's screen.
+
+**No `TaskStackBuilder`.** Back exits the app instead of going to the list.
+
+**Forgetting `POST_NOTIFICATIONS`.** On Android 13 and above nothing appears, silently.
+</Pitfall>
+
+## Practice
+
+1. Create a channel with `IMPORTANCE_LOW`, then try to raise it in code and confirm nothing changes.
+2. Post three notifications with the same request code and watch them all open the same screen.
+3. Add `TaskStackBuilder` and check that Back goes to the list rather than out of the app.
+4. Post five notifications with a group and no summary, then add the summary and compare.
+5. Send a long message with and without `BigTextStyle`.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Channel | Required since Android 8; the user owns its settings |
+| Importance | Read once, at creation — changing it needs a new channel id |
+| Several channels | Lets a user silence one thing instead of everything |
+| `setPriority` | The pre-Android-8 equivalent; set both |
+| Notification id | Constant replaces, per-subject accumulates |
+| Request code | Part of `PendingIntent` matching; extras are not |
+| Data URI | Also part of the match, and shared with deep links |
+| `TaskStackBuilder` | Gives Back somewhere sensible to go |
+| `BigTextStyle` | Or a long message is truncated unreadably |
+| Group summary | Without it, four or more show an empty grey header |
+
+<Interview title="A question whose good answer mentions PendingIntent matching">
+"Why might every notification open the same screen?"
+
+Because `PendingIntent`s are matched on package, request code, action, data and type — and
+deliberately not on extras. Two notifications built with the same request code therefore look
+identical to the system, so the second reuses the first one's `PendingIntent` and its original
+extras. `FLAG_UPDATE_CURRENT` does not fix it, because it only updates the extras of one already
+judged equal.
+
+I would fix it by putting the id in the intent's data URI rather than in extras, since data *is* part
+of the match — and that has a second benefit, which is that the notification and an external deep
+link then land on the same screen through the same code path. A distinct request code per
+notification works too, and I would use the same value as the notification id so that updating an
+item replaces exactly the right notification.
+</Interview>
