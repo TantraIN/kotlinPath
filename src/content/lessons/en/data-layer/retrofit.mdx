@@ -1,0 +1,240 @@
+---
+title: "Retrofit: turning an API into an interface"
+description: You describe the API as Kotlin functions and Retrofit writes the client. The real win is not less code — it is that the server contract becomes something the compiler can hold you to.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Retrofit takes an `interface` full of annotated functions and hands back a working implementation.
+Every URL, method, query parameter and body from the last lesson is still there — it has just moved
+into **types the compiler checks**, instead of strings you get right by remembering.
+</KeyIdea>
+
+## Why this matters
+
+Here is one endpoint, called by hand:
+
+```kotlin title="ByHand.kt" numbered
+suspend fun orders(status: String, limit: Int): List<OrderDto> = withContext(Dispatchers.IO) {
+    val url = "https://api.example.com/v1/orders?status=$status&limit=$limit"   // encoding?
+    val request = Request.Builder().url(url).addHeader("Accept", "application/json").build()
+    client.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) throw HttpException(response.code)          // and 204?
+        json.decodeFromString(response.body!!.string())                         // and null?
+    }
+}
+```
+
+Ten more endpoints means ten more copies of the threading, the status check and the parsing, each
+with its own small variation. And a `status` of `"in progress"` silently produces a broken URL,
+because nothing encoded the space.
+
+The same endpoint, described rather than performed:
+
+```kotlin title="OrderApi.kt" numbered
+interface OrderApi {
+    @GET("v1/orders")
+    suspend fun orders(
+        @Query("status") status: String,
+        @Query("limit") limit: Int = 20,
+    ): List<OrderDto>
+}
+```
+
+Retrofit generates the rest. The URL is built and encoded for you, the response body is parsed by a
+converter, and `suspend` means the call already moves off the main thread.
+
+## The annotations, and what each one changes
+
+```kotlin title="OrderApi.kt" numbered
+interface OrderApi {
+
+    @GET("v1/orders/{id}")                                   // {id} is filled by @Path
+    suspend fun order(@Path("id") id: String): OrderDto
+
+    @GET("v1/orders")
+    suspend fun orders(@QueryMap filters: Map<String, String>): List<OrderDto>
+
+    @POST("v1/orders")
+    suspend fun create(@Body order: NewOrderDto): OrderDto    // serialised into the body
+
+    @PATCH("v1/orders/{id}")
+    suspend fun rename(@Path("id") id: String, @Body patch: RenameDto): OrderDto
+
+    @DELETE("v1/orders/{id}")
+    suspend fun delete(@Path("id") id: String): Response<Unit>
+
+    @GET("v1/orders")                                        // per-call header
+    suspend fun orders(@Header("Accept-Language") locale: String): List<OrderDto>
+}
+```
+
+| Annotation | Puts the value | Note |
+| --- | --- | --- |
+| `@Path` | Into a `{placeholder}` in the URL | Encoded as a path segment |
+| `@Query` | Into the query string | A `null` value drops the parameter entirely |
+| `@QueryMap` | Many query parameters at once | For filters that vary |
+| `@Body` | Into the request body | Converted by your converter factory |
+| `@Header` | Into one request header | Per call |
+| `@Headers` | Fixed headers on the function | Static strings only |
+| `@Field` | Into a form body | Requires `@FormUrlEncoded` |
+| `@Part` | Into a multipart body | Requires `@Multipart`, for uploads |
+
+The distinction that bites is `@Path` versus `@Query`: `@Path` encodes for a path segment and
+`@Query` for a query string, and they escape different characters. Using `@Path` for something that
+belongs after the `?` produces a URL that looks almost right and 404s.
+
+<Note>
+A `@Query` parameter with a `null` value is left out of the URL rather than sent as empty. That is
+usually what you want — an optional filter — and it means a nullable parameter is how you express
+"only send this sometimes", with no string building anywhere.
+</Note>
+
+## Three return types, three error behaviours
+
+This is the choice that decides your whole error-handling story, and it is easy to make by accident.
+
+<Compare
+  left={{
+    title: "suspend fun ...: OrderDto",
+    subtitle: "The body, directly",
+    accent: "emerald",
+    points: [
+      "+ Reads like an ordinary function call",
+      "+ The happy path has no unwrapping",
+      "- A non-2xx throws HttpException",
+      "- The status code is only reachable from the exception",
+    ],
+  }}
+  right={{
+    title: "suspend fun ...: Response<OrderDto>",
+    subtitle: "The whole response",
+    accent: "sky",
+    points: [
+      "+ Status code, headers and body all available",
+      "+ A 404 or 304 is a value, not an exception",
+      "- Every call site has to check isSuccessful",
+      "- body() is nullable, so unwrapping is on you",
+    ],
+  }}
+/>
+
+The old third option, `Call<T>`, is the pre-coroutines API with `enqueue` and a callback. You will
+meet it in existing code; do not write new code with it.
+
+Pick per endpoint, not per project. A create call where any failure is exceptional reads best as the
+bare type. An endpoint where `404` means "no results" or where you need the `ETag` needs
+`Response<T>` — and this is where the repository translates both shapes into your own error type,
+so nothing above it ever sees `retrofit2.HttpException`.
+
+<Quiz
+  question="An app builds its Retrofit instance inside the repository function, so a fresh one is created on every call. Nothing breaks in testing. What is actually wrong?"
+  options={[
+    "Nothing — Retrofit instances are cheap and stateless",
+    "Every instance carries its own OkHttp client, so each call opens a new connection pool, cache and thread pool instead of reusing them",
+    "Retrofit instances are not thread-safe",
+  ]}
+  answer={1}
+  explanation="Retrofit itself is thread-safe and its instances are not expensive to hold, so nothing crashes and a test with three calls looks fine. The cost is underneath it: unless you pass one in, each Retrofit builds its own OkHttpClient, and an OkHttpClient owns a connection pool, a dispatcher thread pool and the response cache. A new one per call means no connection is ever reused, so every request pays a fresh TCP and TLS handshake — hundreds of milliseconds on mobile — and the HTTP cache is empty every time because it lives in the client you just threw away. Build one OkHttpClient and one Retrofit for the app, and if you genuinely need a variation, derive it with newBuilder() so the pools are shared."
+/>
+
+## Building the instance
+
+```kotlin title="NetworkModule.kt" numbered
+private val json = Json { ignoreUnknownKeys = true }
+
+val retrofit: Retrofit = Retrofit.Builder()
+    .baseUrl("https://api.example.com/")                     // must end in a slash
+    .client(okHttpClient)                                    // one per app
+    .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+    .build()
+
+val orderApi: OrderApi = retrofit.create(OrderApi::class.java)
+```
+
+Three rules live in those five lines.
+
+**The base URL ends in `/`.** Without it Retrofit throws at build time, which is the kind one. The
+unkind one is the endpoint path: `"v1/orders"` appends to the base path, while `"/v1/orders"`
+replaces it. Against `https://api.example.com/api/` the first gives you `/api/v1/orders` and the
+second `/v1/orders` — a `404` from a server that is working perfectly.
+
+**One converter decides how bodies become objects.** `kotlinx.serialization` and Moshi are the two
+current choices, covered properly two lessons from now. `ignoreUnknownKeys` matters more than it
+looks: without it, the day the server adds a field, your app starts throwing on a response it could
+have read.
+
+**The OkHttp client is passed in, not built implicitly.** That is where timeouts, logging, auth and
+caching go — the next lesson.
+
+<Detail summary="There is no generated code, and that has consequences">
+`retrofit.create()` returns a `java.lang.reflect.Proxy`. Retrofit parses the annotations once per
+method, caches a plan for it, and every call runs that plan. No annotation processor, no generated
+class, nothing in your build folder to look at.
+
+Two things follow. The first is that a mistake in an annotation is a **runtime** error, not a
+compile error — `IllegalArgumentException` naming the offending method, thrown the first time you
+call it. This is the seam where "the compiler checks the contract" stops: the compiler checks the
+Kotlin types, and Retrofit checks the annotations when it meets them.
+
+The second is R8. The interfaces, their annotations and their generic return types must survive
+minification, or a release build fails with errors no debug build ever showed. Recent Retrofit
+versions ship their own `consumer-rules.pro`, so this is usually handled — but if a release build
+breaks and debug does not, this is the first place to look.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five that produce a 404 against a healthy server">
+**A leading slash on the endpoint path.** It replaces the base path instead of extending it. Pair
+this with a base URL that has no trailing slash and you can be wrong twice.
+
+**`@Path` for something that belongs in the query.** The value gets path encoding, so a space or a
+slash inside it escapes differently and the URL silently changes meaning.
+
+**Building Retrofit per call.** No connection reuse, no cache. See the quiz above.
+
+**Returning `Response<T>` and never checking it.** `body()` is nullable precisely because a `204`
+or an error response has none, so `body()!!` turns a handled status into a crash.
+
+**Letting Retrofit types leave the data layer.** A repository that returns `Response<OrderDto>` has
+made every caller depend on Retrofit — the exact coupling the repository existed to prevent.
+</Pitfall>
+
+## Practice
+
+1. Describe three endpoints of a public API as one interface, and call them from a test.
+2. Give a `@Query` parameter a `null` and confirm with logging that it vanishes from the URL.
+3. Change one function from `OrderDto` to `Response<OrderDto>` and handle `404` as an empty result
+   rather than an exception.
+4. Remove the trailing slash from the base URL, then add a leading slash to a path, and read the
+   exact URL that each produces.
+5. Delete `ignoreUnknownKeys`, add an unexpected field to a response, and watch where it fails.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Retrofit | An annotated interface becomes an HTTP client |
+| `@GET` … `@DELETE` | The method and the relative path |
+| `@Path` vs `@Query` | Into the URL path vs after the `?` — different encoding |
+| `@Body` | Serialised by the converter factory |
+| `null` `@Query` | Dropped from the URL, not sent empty |
+| `suspend fun: T` | The body; a non-2xx throws |
+| `suspend fun: Response<T>` | Status, headers and a nullable body |
+| Base URL | Ends in `/`; a leading `/` on a path replaces the base path |
+| One instance | Share the client so connections and cache are reused |
+| Under the hood | A reflection proxy — annotation errors appear at runtime |
+
+<Interview title="A question about a boundary, wearing a library costume">
+"How do you handle errors with Retrofit?"
+
+By deciding per endpoint whether a failure is exceptional. The bare return type throws on any
+non-2xx, which is right when nothing but success is meaningful; `Response<T>` gives me the status
+code as a value, which is what I want when `404` means "no results" or when I need a header.
+
+The part that matters more than either is that neither shape leaves the data layer. The repository
+catches `IOException` and `HttpException` and maps them onto my own error type, so the `ViewModel`
+decides what "offline" looks like on screen without knowing that Retrofit exists. Otherwise
+swapping the network library becomes a change to every screen.
+</Interview>
