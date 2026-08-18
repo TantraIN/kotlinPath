@@ -1,0 +1,198 @@
+---
+title: Stability, skipping aur recomposition ki jaanch-padtaal
+description: Compose ki performance ek hi sawal hai, baar-baar pucha hua — kya ye call chhodi ja sakti hai? Baaki sab stability se, state kahan padhi ja rahi hai isse, aur andaza lagane ke bajaye napne se nikalta hai.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+Composable ki koi call tab **chhodi jati hai** jab uska har argument stable ho aur pichhli baar
+jaisa hi ho. Compose mein performance ka kaam lagbhag poora isi mein hai ki ye zyada baar sach ho,
+aur ye ki state jitni der se aur ped mein jitna neeche padhi ja sake utna achha.
+</KeyIdea>
+
+## Ye kyun zaruri hai
+
+Jo screen har keystroke par apna poora content recompose karti hai wo isliye dheemi nahi hai ki
+Compose dheema hai. Wo isliye dheemi hai ki kisi ek unstable parameter ne, ya ped mein upar ki taraf
+padhi gayi kisi ek state ne, ek bade hisse ko chhode jane layak nahi rehne diya.
+
+Achhi baat ye hai ki ye pasand-napasand ka mamla nahi, napi ja sakne wali cheez hai.
+
+## Koi type stable kisse hota hai
+
+| Type | Stable | Kyun |
+| --- | --- | --- |
+| `Int`, `String`, `Boolean` | Haan | Badalte nahi, aur `equals` ka matlab hai |
+| Stable types wala `data class`, sab `val` | Haan | Compiler khud samajh leta hai |
+| Wahi class ek `var` ke saath | Nahi | Andar ki cheez bina khabar badal sakti hai |
+| `List<T>`, `Map<K, V>`, `Set<T>` | Nahi | Interfaces, jinhe koi badalne wali class lagu kar sakti hai |
+| `ImmutableList<T>` | Haan | `kotlinx.collections.immutable` se |
+| Aise module ki class jismein Compose compiler nahi | Nahi | Uski jaanch ho hi nahi sakti |
+| `State<T>` | Haan | Badalti hai, par uske badlaav dikhte hain |
+
+<Quiz
+  question="Koi composable `orders: List<Order>` leta hai, jahan `Order` ek na badalne wala data class hai. Compiler use unstable batata hai. Kyun, aur kya strong skipping ise theek kar deta hai?"
+  options={[
+    "`Order` par `@Immutable` lagana chahiye; list to theek hi hai",
+    "`List` ek interface hai, to compiler badalne wale kisi roop se inkar nahi kar sakta — strong skipping madad karta hai, par tabhi jab wahi instance dobara bheji jaye",
+    "Lists kabhi milai hi nahi ja saktin, to list wala parameter kabhi chhoda nahi ja sakta",
+  ]}
+  answer={1}
+  explanation="Dikkat items mein nahi, List mein hai. Wo ek interface hai, aur ArrayList use lagu karti hai, to compiler ye wada nahi kar sakta ki uske andar ki cheezein uske neeche se badlengi nahi. Strong skipping, jo aaj ke versions mein default se chalu hai, unstable parameters ko instance se milakar composable ko phir bhi chhode jane layak bana deta hai. Ye sach mein sudhar hai, par wo tabhi chhodta hai jab aap bilkul wahi cheez dobara bhejein, to har baar composition mein dobara bani list use phir bhi hara deti hai. Tikau ilaaj wahi purane hain: ImmutableList ya persistentListOf dijiye, ya list ko kisi stable state mein rakhiye taki har baar wahi instance jaye."
+/>
+
+## Strong skipping ne salah badli hai, maksad nahi
+
+Aaj ke Compose compiler versions **strong skipping** default se chalu rakhte hain. Isse do baatein
+nikalti hain:
+
+- Unstable parameters wale composables bhi chhode jane layak ho jate hain, instance se milakar.
+- Parameter ki tarah bheji gayi lambdas aapke liye yaad rakh li jati hain, to wahin likhi lambda
+  apne aap mein skipping nahi todti.
+
+Jo ye **nahi** karta, wo hai taza bani kisi cheez ko pichhli wali ke barabar bana dena. Composable
+ke andar koi list, koi `Modifier` ya koi lapetne wali cheez banana bachche ko har baar kuch naya hi
+thamata hai.
+
+```kotlin title="Rebuilt.kt"
+// Skipping hara deta hai: har recomposition par nai list
+OrderList(orders = uiState.orders.filter { it.isOpen })
+
+// Chhoot jata hai: ek baar nikala, wahi instance dobara bheji
+val openOrders = remember(uiState.orders) { uiState.orders.filter { it.isOpen } }
+OrderList(orders = openOrders)
+```
+
+## State der se padhiye, aur neeche padhiye
+
+```kotlin title="Reads.kt" numbered
+// Scroll ke har frame par poora Box recompose hota hai
+val offset = scrollState.value
+Box(Modifier.offset(y = offset.dp)) { Content() }
+
+// Layout wale charan mein padhta hai — recomposition hoti hi nahi
+Box(Modifier.offset { IntOffset(0, scrollState.value) }) { Content() }
+```
+
+Lambda wala roop padhne ko composition se hatakar layout mein le jata hai. Kuch recompose nahi
+hota; sirf jagah badalti hai. Yahi tarkeeb `graphicsLayer`, `drawBehind` aur har us modifier par
+chalti hai jiska lambda wala roop maujood hai.
+
+<Tip>
+`Float` ke bajaye `() -> Float` bhejne se padhna bachche ke andar chala jata hai. Phir parent us
+value se judta hi nahi, to tezi se badalta koi aankda sirf usi composable ko bekar karta hai jo use
+dikhata hai.
+</Tip>
+
+## Pehle napiye, phir theek kijiye
+
+<Timeline>
+  <TimelineItem title="Layout Inspector" meta="recomposition ki ginti">
+    Android Studio har composable ki compositions aur skips ki ginti chalte-chalte dikhata hai. Jab
+    dikhne mein kuch nahi badal raha aur ginti chadhti ja rahi hai, wahin poori pehchan ho jati hai.
+  </TimelineItem>
+  <TimelineItem title="Compose compiler ki reports" meta="stability, likhit mein">
+    Build ka ek flag compiler se ek report nikalwata hai jismein har composable restartable aur
+    skippable hai ya nahi, aur har parameter stable hai ya nahi, likha hota hai.
+  </TimelineItem>
+  <TimelineItem title="Macrobenchmark" meta="frames, andaze nahi">
+    Atkan aur shuru hone ka waqt device par, release build mein napa jata hai. Debug build mein
+    napi hui koi bhi cheez asal mein debugger nap rahi hoti hai.
+  </TimelineItem>
+  <TimelineItem title="Baseline profiles" meta="shuruaat aur pehla scroll">
+    App ke saath bheji gayi ek profile ART ko batati hai ki pehle se kya compile kar lena hai, aur
+    Compose wali screen ke pehle frames ke liye yahi aam taur par sabse bada faayda hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Compiler ki report nikalna">
+```kotlin title="app/build.gradle.kts" numbered
+composeCompiler {
+    reportsDestination = layout.buildDirectory.dir("compose_reports")
+    metricsDestination = layout.buildDirectory.dir("compose_metrics")
+}
+```
+
+Nikli hui fehrist mein har composable ke aage `restartable`, `skippable` aur har parameter ki
+stability likhi hoti hai. Scroll hoti list mein aane wale kisi composable ke aage `unstable` dhundh
+lena hi aam taur par kaafi hai, bina kisi profiling ke.
+</Detail>
+
+## Wo wada jo todna nahi hai
+
+Kisi type par `@Stable` ya `@Immutable` lagana compiler se kehta hai ki wo is wade ke bharose chhod
+sakta hai.
+
+```kotlin title="Promise.kt" numbered
+@Immutable                       // "iske andar kuch kabhi nahi badlega"
+data class Money(val amount: Long, val currency: String)
+
+@Stable                          // "badal sakta hai, par badlaav dikhte hain"
+class FormState {
+    var name by mutableStateOf("")
+}
+```
+
+<Warning>
+Kisi type par ye lagakar phir use chupchap badlenge to Compose wo recomposition chhod dega jo sach
+mein zaruri thi, aur screen par baasi data dikhega. Us bug ka na koi stack trace hota hai na crash
+— bas screen par ek galat aankda, aur isiliye ye annotations aakhri upay hain, pehla ilaaj nahi.
+</Warning>
+
+## Common galtiyan
+
+<Pitfall title="Paanch, mote taur par maayne rakhne ke kram mein">
+**Ped mein bahut upar state padhna.** Kisi parent mein ek padhna uske neeche sab kuch bekar kar
+deta hai. Padhna usi composable tak neeche laiye jo use dikhata hai.
+
+**Composition mein collection dobara banana.** Wahin chhaantna ya kram lagana har baar neeche ek
+nai cheez thamata hai. Use `remember(input)` mein lapetiye.
+
+**Composable ki body mein bhaari kaam.** Wo usi dayre ke andar hai jo dobara chalta hai, to use koi
+chhodkar nahi jata.
+
+**Stability ki warning ko annotation se chup karana.** Annotation ek wada hai, ilaaj nahi. Ilaaj
+hai type ko sach mein na badalne wala bana dena.
+
+**Debug build napna.** Debug wale Compose par wo taam-jhaam lada rehta hai jo release mein hota hi
+nahi. R8 chalu rakhkar napiye, warna aap us cheez ko tez kar rahe hain jo user ke paas chalti hi
+nahi.
+</Pitfall>
+
+## Practice
+
+1. Compiler ki reports chalu kijiye aur apni app ke har unstable bataye gaye composable ko
+   dhundhiye.
+2. Scroll hoti screen mein kisi composable ko `List` bhejiye, recomposition ki ginti dekhiye, phir
+   `persistentListOf` bhejiye aur dobara dekhiye.
+3. Kisi filter ko composition se hatakar `remember(input)` mein le jaiye aur ginti milaiye.
+4. Kisi offset ko pehle `Modifier.offset(y = value.dp)` se animate kijiye, phir
+   `Modifier.offset { }` se, aur har frame ki recompositions milaiye.
+5. Kisi class par `@Immutable` lagaiye, use Compose ki peeth peeche badliye, aur baasi screen khud
+   dekhiye. Phir wapas kar dijiye.
+6. Release build par macrobenchmark chalaiye, ek baseline profile jodiye, aur dobara chalaiye.
+
+## Recap
+
+| Cheez | Ek line |
+| --- | --- |
+| Chhodna | Har argument stable aur pichhli baar jaisa |
+| Stable | Na badalne wala, ya badalne wala par jiske badlaav dikhein |
+| `List` | Unstable — wo ek interface hai |
+| `ImmutableList` | Seedha ilaaj |
+| Strong skipping | Default se chalu; unstable parameters instance se milte hain |
+| Har baar nai cheez | Phir bhi skipping hara deti hai; use `remember` mein lapetiye |
+| Der se padhna | Lambda wale modifiers layout ya draw mein padhte hain, composition mein nahi |
+| `@Stable` / `@Immutable` | Ek wada; todne par baasi screen |
+| Napna | Layout Inspector, compiler ki reports, release par macrobenchmark |
+
+<Interview title="Wo sawal jiska jawab log profiler se nahi, kisi blog se dete hain">
+"Bewajah ki recomposition aap dhundhenge aur theek kaise karenge?"
+
+Pehle napenge: kahan ho rahi hai ye Layout Inspector ki recomposition ginti se, phir kaun sa
+parameter unstable hai ye Compose compiler ki report se. Ilaaj isi kram mein — state padhna ped
+mein neeche lana, nikali hui collections ko `remember` mein lapetna, aur uske baad hi type ko sach
+mein na badalne wala banana. Ye jodna kaam ka hai ki strong skipping default se chalu hone ke baad
+lambda ki stability wali purani salah kaafi had tak bekar ho chuki hai, par har recomposition par
+taza bani cheez bhejna aaj bhi skipping hara deta hai — wahi nakami bachi hui hai.
+</Interview>

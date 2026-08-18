@@ -1,0 +1,195 @@
+---
+title: Stability, skipping and debugging recomposition
+description: Compose performance is one question asked repeatedly — can this call be skipped? Everything else follows from stability, from where you read state, and from measuring instead of guessing.
+updated: 2026-08-14
+---
+
+<KeyIdea>
+A composable call is **skipped** when every argument is stable and equal to last time. Performance
+work in Compose is almost entirely about making that true more often, and about reading state as
+late and as low in the tree as possible.
+</KeyIdea>
+
+## Why this matters
+
+A screen that recomposes its whole content on every keystroke is not slow because Compose is slow.
+It is slow because one unstable parameter, or one state read near the top of the tree, made a
+large subtree unskippable.
+
+The good news is that this is measurable rather than a matter of taste.
+
+## What makes a type stable
+
+| Type | Stable | Why |
+| --- | --- | --- |
+| `Int`, `String`, `Boolean` | Yes | Immutable, with a meaningful `equals` |
+| `data class` of stable types, all `val` | Yes | The compiler infers it |
+| The same class with one `var` | No | Its contents can change without notice |
+| `List<T>`, `Map<K, V>`, `Set<T>` | No | Interfaces that a mutable class can implement |
+| `ImmutableList<T>` | Yes | From `kotlinx.collections.immutable` |
+| A class from a module without the Compose compiler | No | It cannot be analysed |
+| `State<T>` | Yes | Mutable, but its changes are observable |
+
+<Quiz
+  question="A composable takes `orders: List<Order>` where `Order` is an immutable data class. The compiler reports it as unstable. Why, and does strong skipping fix it?"
+  options={[
+    "`Order` must be annotated `@Immutable`; the list itself is fine",
+    "`List` is an interface, so the compiler cannot rule out a mutable implementation — strong skipping helps, but only when the same instance is passed again",
+    "Lists are never comparable, so a list parameter can never be skipped",
+  ]}
+  answer={1}
+  explanation="The elements are not the problem — List is. It is an interface, and ArrayList implements it, so the compiler cannot promise the contents will not change under it. Strong skipping, which is on by default in current versions, makes the composable skippable anyway by comparing unstable parameters with instance equality. That is a real improvement, but it only skips when you pass literally the same object again, so a list rebuilt in the composition on every pass still defeats it. The durable fixes are the same as before: expose an ImmutableList or persistentListOf, or hold the list in a stable state object so the same instance is passed each time."
+/>
+
+## Strong skipping changed the advice, but not the goal
+
+Recent Compose compiler versions enable **strong skipping** by default. Two things follow:
+
+- Composables with unstable parameters become skippable, compared by instance equality.
+- Lambdas passed as parameters are remembered for you, so an inline lambda no longer breaks
+  skipping on its own.
+
+What it does **not** do is make a freshly constructed object equal to the last one. Building a list,
+a `Modifier`, or a wrapper object inside a composable still hands the child something new every
+time.
+
+```kotlin title="Rebuilt.kt"
+// Defeats skipping: a new list on every recomposition
+OrderList(orders = uiState.orders.filter { it.isOpen })
+
+// Skips: computed once, the same instance passed again
+val openOrders = remember(uiState.orders) { uiState.orders.filter { it.isOpen } }
+OrderList(orders = openOrders)
+```
+
+## Read state late, and read it low
+
+```kotlin title="Reads.kt" numbered
+// Recomposes the whole Box on every scroll frame
+val offset = scrollState.value
+Box(Modifier.offset(y = offset.dp)) { Content() }
+
+// Reads inside the layout phase — no recomposition at all
+Box(Modifier.offset { IntOffset(0, scrollState.value) }) { Content() }
+```
+
+The lambda version defers the read from composition to layout. Nothing recomposes; only the
+placement changes. The same trick works with `graphicsLayer`, `drawBehind` and any modifier whose
+lambda form exists.
+
+<Tip>
+Passing `() -> Float` instead of `Float` moves the read into the child. The parent then does not
+subscribe to the value at all, so a fast-changing number only invalidates the one composable that
+displays it.
+</Tip>
+
+## Measure, then fix
+
+<Timeline>
+  <TimelineItem title="Layout Inspector" meta="recomposition counts">
+    Android Studio shows a live count of compositions and skips per composable. A count climbing
+    while nothing visible changes is the whole diagnosis.
+  </TimelineItem>
+  <TimelineItem title="Compose compiler reports" meta="stability, in writing">
+    A build flag makes the compiler emit a report listing every composable as restartable and
+    skippable or not, and every parameter as stable or unstable.
+  </TimelineItem>
+  <TimelineItem title="Macrobenchmark" meta="frames, not vibes">
+    Jank and startup are measured on a device, in a release build. Anything measured in a debug
+    build is measuring the debugger.
+  </TimelineItem>
+  <TimelineItem title="Baseline profiles" meta="startup and first scroll">
+    A profile shipped with the app tells ART what to compile ahead of time, which is usually the
+    single largest win available for a Compose screen's first frames.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Getting the compiler report">
+```kotlin title="app/build.gradle.kts" numbered
+composeCompiler {
+    reportsDestination = layout.buildDirectory.dir("compose_reports")
+    metricsDestination = layout.buildDirectory.dir("compose_metrics")
+}
+```
+
+The output lists each composable with `restartable`, `skippable` and each parameter's stability.
+Reading down the list for `unstable` next to a composable that appears in a scrolling list is
+usually enough to find the problem without profiling anything.
+</Detail>
+
+## The promise you must not break
+
+Marking a type `@Stable` or `@Immutable` tells the compiler it may skip based on that promise.
+
+```kotlin title="Promise.kt" numbered
+@Immutable                       // "nothing in here will ever change"
+data class Money(val amount: Long, val currency: String)
+
+@Stable                          // "it may change, but changes are observable"
+class FormState {
+    var name by mutableStateOf("")
+}
+```
+
+<Warning>
+If you annotate a type and then mutate it invisibly, Compose will skip a recomposition that was
+genuinely needed and the screen will show stale data. That bug has no stack trace and no crash —
+it is simply a wrong number on screen, and it is why the annotations are a last resort rather than
+a fix to reach for.
+</Warning>
+
+## Common mistakes
+
+<Pitfall title="Five, roughly in order of how often they matter">
+**Reading state too high in the tree.** One read in a parent invalidates everything under it. Push
+the read down to the composable that displays it.
+
+**Rebuilding a collection in the composition.** Filtering or sorting inline hands a new instance
+down every time. Wrap it in `remember(input)`.
+
+**Heavy work in a composable body.** It runs inside the scope that restarts, so nothing skips it
+for you.
+
+**Annotating away a stability warning.** The annotation is a promise, not a fix. Making the type
+genuinely immutable is.
+
+**Measuring a debug build.** Debug Compose carries tooling overhead that does not exist in release.
+Benchmark with R8 on, or you are optimising something the user never runs.
+</Pitfall>
+
+## Practice
+
+1. Turn on the compiler reports and find every composable in your app marked unstable.
+2. Pass a `List` to a composable in a scrolling screen, watch the recomposition count, then pass a
+   `persistentListOf` and watch it again.
+3. Move a filter from the composition into `remember(input)` and compare the counts.
+4. Animate an offset with `Modifier.offset(y = value.dp)`, then with `Modifier.offset { }`, and
+   compare recompositions per frame.
+5. Mark a class `@Immutable`, mutate it behind Compose's back, and see the stale screen for
+   yourself. Then undo it.
+6. Run a macrobenchmark on a release build, add a baseline profile, and run it again.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Skipping | Every argument stable and equal to last time |
+| Stable | Immutable, or mutable with observable changes |
+| `List` | Unstable — it is an interface |
+| `ImmutableList` | The straightforward fix |
+| Strong skipping | On by default; unstable params compared by instance |
+| New instance each pass | Still defeats skipping; wrap it in `remember` |
+| Deferred reads | Lambda modifiers read in layout or draw, not composition |
+| `@Stable` / `@Immutable` | A promise; breaking it shows stale data |
+| Measuring | Layout Inspector, compiler reports, macrobenchmark on release |
+
+<Interview title="A question people answer from a blog post rather than from a profiler">
+"How would you find and fix an unnecessary recomposition?"
+
+Measure first: recomposition counts in the Layout Inspector to find where, then the Compose
+compiler report to see which parameter is unstable. The fixes in order are moving the state read
+lower in the tree, wrapping derived collections in `remember`, and only then making the type
+genuinely immutable. Worth adding that with strong skipping on by default the old lambda-stability
+advice is largely obsolete, but passing a newly built instance every recomposition still defeats
+skipping — that is the failure that survived.
+</Interview>
