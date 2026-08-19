@@ -1,0 +1,154 @@
+---
+title: Firebase से जोड़ना, और google-services.json असल में करता क्या है
+description: एक सजावट वाली file project में आती है और चीजें चलने लगती हैं। यह कदम उसे खोलता है, देखता है कि build उसका करता क्या है, और वह सवाल निपटाता है जो सब पूछते हैं — क्या वह कोई राज है?
+updated: 2026-08-19
+---
+
+<KeyIdea>
+`google-services.json` कोई राज **नहीं** है। उसमें सार्वजनिक पहचानें हैं जो किसी भी
+लगे हुए APK से करीब एक मिनट में निकाली जा सकती हैं। आपके data की हिफाजत Firestore
+के सुरक्षा नियम करते हैं — जो आप आगे के किसी कदम में लिखेंगे — न कि कोई file छिपाना।
+</KeyIdea>
+
+## Project बनाइए
+
+Firebase के console में: **Add project → Saathi**। Analytics अभी बंद रखिए; वह एक
+और SDK और मंजूरी वाला सवाल जोड़ देता है जिसकी अभी जरूरत नहीं।
+
+फिर **Add app → Android**, और तीन खाने:
+
+| खाना | मान | गलत होने पर क्या टूटता है |
+| --- | --- | --- |
+| Android package name | `com.sujeet.saathi` | `applicationId` से हूबहू मिलना चाहिए, वरना ऐप खुलते ही गिरता है |
+| Nickname | कुछ भी | कुछ नहीं — वह console में सिर्फ एक नाम है |
+| Debug signing certificate SHA-1 | नीचे, Gradle से | Google sign-in नाकाम, और सिर्फ debug वाले builds में |
+
+SHA-1 उस certificate की छाप है जिससे आपके build पर हस्ताक्षर हुए। Google sign-in
+उससे परखता है कि आपका ऐप होने का दावा करती माँग सच में आपके हस्ताक्षर वाले build से
+आई है — तो जो हमलावर आपका `applicationId` नकल कर ले वह भी आपके उपयोगकर्ताओं के tokens
+नहीं पा सकता।
+
+```bash title="Debug वाला SHA-1 पाना"
+./gradlew signingReport
+```
+
+वह हर रूप का एक छापता है। अभी debug वाला चाहिए; release वाला आखिरी कदम में जुड़ेगा,
+और ठीक इसीलिए sign-in बनाते वक्त चलता है और तब नाकाम होता है जब कोई पहली बार release
+वाला build लगाता है।
+
+## File जाती कहाँ है
+
+`google-services.json` उतारकर **`app/`** में रखिए, project की जड़ में नहीं। Plugin
+module वाली directory में देखता है, और एक स्तर ऊपर पड़ी file उसे मिलती ही नहीं — ऐसी
+error के साथ जो कहती है कि plugin को file नहीं मिली, और लोग उसे "plugin टूटा है"
+पढ़ते हैं।
+
+```kotlin title="app/build.gradle.kts" numbered
+plugins {
+    alias(libs.plugins.google.services)      // google-services.json पढ़ता है
+}
+
+dependencies {
+    implementation(platform(libs.firebase.bom))   // versions यहीं से आते हैं
+    implementation(libs.firebase.auth)            // कोई version नहीं — BoM तय करता है
+    implementation(libs.firebase.firestore)
+}
+```
+
+`platform(...)` ही नीचे की बिना version वाली लाइनों को जायज बनाता है। BoM, Firebase
+की उन artifact versions की छपी हुई सूची है जिन्हें साथ में परखा गया है, तो आप एक लाइन
+बदलते हैं और हर Firebase की library एक जत्थे की तरह हिलती है — और यह मायने रखता है
+क्योंकि बेमेल Firebase versions compile वक्त नहीं, चलते वक्त टूटते हैं।
+
+<Quiz
+  question="कोई साथी कहता है कि `google-services.json` commit करना सुरक्षा का छेद है, उसे gitignore करके CI में किसी राज से भरना चाहिए।"
+  options={[
+    "वह सही है — उसमें API की चाबी है, और repository में पड़ी चाबी हमेशा रिसाव है",
+    "वह गलत है। उसमें सब कुछ सार्वजनिक पहचान है जिसे कोई भी लगे हुए APK से निकाल सकता है, तो उसे gitignore करना बचाता कुछ नहीं और हर नई clone पर build तोड़ देता है। किसी अनजान को आपका data पढ़ने से असल में Firestore के सुरक्षा नियम रोकते हैं, और App Check जो माँगों को असली installs से बाँधता है",
+    "सार्वजनिक repositories के लिए वह सही है और निजी के लिए गलत"
+  ]}
+  answer={1}
+  explanation="उस file की API की चाबी Google के सामने आपके Firebase के project की पहचान भर है; वह अपने आप किसी चीज की इजाजत नहीं देती, और इसीलिए Google उसे client के code में रखने लायक बताता है, और इसीलिए वही मान आपके भेजे हर APK के भीतर सबके सामने पड़े होते हैं। उसे repository से हटाना इसलिए हर नए developer और CI के काम के लिए एक चलती हुई checkout की कीमत लेता है और उस हमलावर से कुछ नहीं छीनता जिसके पास आपका APK पहले से है। असली रोकथाम server की तरफ है और हमेशा थी: सुरक्षा के नियम तय करते हैं कि किस document को कौन पढ़-लिख सकता है, और App Check यह सबूत जोड़ता है कि बुलाने वाला आपके ऐप का असली build है, कोई script नहीं। Repository सार्वजनिक है या निजी, इससे बात नहीं बदलती, क्योंकि जिस पल आप ऐप भेजते हैं उस file की सामग्री आपके काबू से बाहर चली जाती है।"
+/>
+
+## वह plugin करता असल में क्या है
+
+यही हिस्सा देखने लायक है, क्योंकि यही बताता है कि बिना आपके कुछ दिए `FirebaseApp`
+अपनी सजावट लाता कहाँ से है।
+
+<Timeline>
+  <TimelineItem title="Gradle का sync और build" meta="google-services plugin">
+    Plugin `app/google-services.json` पढ़ता है, उसमें वह client खोजता है जिसके
+    package का नाम आपके `applicationId` से मेल खाए, और कोई न मिले तो build गिरा देता है।
+  </TimelineItem>
+  <TimelineItem title="String के संसाधन बनते हैं" meta="build/generated/res">
+    वह आम Android के string वाले संसाधन लिख देता है — `google_app_id`,
+    `gcm_defaultSenderId`, `firebase_database_url`, `project_id`,
+    `default_web_client_id`। यहाँ से आगे यह सिर्फ `res/values` है।
+  </TimelineItem>
+  <TimelineItem title="खुलते वक्त कोई ContentProvider चलता है" meta="FirebaseInitProvider">
+    Firebase का SDK अपने manifest में एक provider बताता है, और Android हर provider
+    को `Application.onCreate` से **पहले** चलाता है। वह उन string संसाधनों को पढ़कर
+    आपके लिए `FirebaseApp.initializeApp` बुला देता है।
+  </TimelineItem>
+  <TimelineItem title="आपका code बस माँगता है" meta="Firebase.auth">
+    `Firebase.auth` और `Firebase.firestore` उस ऐप के रूप लौटाते हैं जो पहले ही शुरू
+    हो चुका है, और इसीलिए आपके code में कहीं कोई तैयारी की लाइन नहीं है।
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="यह जिज्ञासा से आगे क्यों मायने रखता है">
+ऊपर के क्रम से सीधे तीन कामकाजी नतीजे निकलते हैं।
+
+**आप Firebase को `Application.onCreate` से आगे टाल नहीं सकते**, क्योंकि provider
+पहले ही चल चुका है। अगर चिंता शुरू होने के समय की है, तो लीवर यह है कि आप कौन से
+Firebase के SDK जोड़ते हैं, यह नहीं कि उन्हें कब शुरू करते हैं।
+
+**Package के नाम का बेमेल खुलते वक्त की crash है, build की error नहीं** — plugin
+build गिराता तो है, पर तभी जब कोई भी client मेल न खाए। किसी build के रूप से दूसरा
+`applicationId` जोड़िए बिना मेल खाते client के, और उस रूप के पहली बार चलते ही crash
+मिलती है।
+
+**`default_web_client_id` एक बना हुआ संसाधन है**, तो Google sign-in के लिए अगले कदम
+को जो web वाली client की पहचान चाहिए वह आपके project में पहले से है। आप उसे कोई मान
+चिपकाकर नहीं, `R.string.default_web_client_id` की तरह पढ़ेंगे।
+</Detail>
+
+## आगे बढ़ने से पहले परख लीजिए
+
+इसे कुछ देर के लिए `MainActivity.onCreate` में डालकर एक बार चलाइए:
+
+```kotlin title="जाँच की एक लाइन" numbered
+Log.d("Saathi", "project = " + Firebase.app.options.projectId)
+```
+
+Logcat में project की पहचान का मतलब है JSON मिली, संसाधन बने और provider चला। बाद
+में वह लाइन हटा दीजिए — वह परख है, सुविधा नहीं।
+
+<Pitfall title="चार तरीके जिनसे यह बिगड़ता है, उसी क्रम में जिसमें लोग टकराते हैं">
+**File project की जड़ में।** वह `app/` की चीज है। Error plugin का नाम लेती है, जगह
+का नहीं।
+
+**Package के नाम का बेमेल।** `applicationId` और console की entry हूबहू एक होनी
+चाहिए। `.debug` वाली पूँछ को अपनी client entry चाहिए, या अपना Firebase का ऐप।
+
+**सिर्फ release वाला SHA-1 दर्ज।** तब Google sign-in आपके यहाँ चलता है और debug वाला
+build लेने वाले हर परखने वाले के लिए नाकाम होता है, जो छूटी हुई छाप नहीं, टूटा हुआ
+खाता लगता है।
+
+**Firebase के versions अलग-अलग बाँधना।** BoM छोड़ने पर दो Firebase की libraries
+अलग-अलग खिसक जाती हैं, और नाकामी चलते वक्त किसी गायब method की तरह आती है।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| JSON `app/` में है | Plugin लगा हुआ होने पर build पूरा होता है |
+| Package मेल खाता है | `signingReport` का package console की entry के बराबर |
+| Debug वाला SHA-1 दर्ज है | वह console की Android app की सजावट में दिखता है |
+| Firebase शुरू होता है | जाँच वाली लाइन project की पहचान छापती है |
+| File commit है | वह `.gitignore` में नहीं है — वह सजावट है, राज नहीं |
+
+आगे: उपयोगकर्ता को sign in कराइए, और "यह है कौन" का जवाब शुरुआत में एक बार पूछा
+गया सवाल नहीं, एक धारा बनाइए।

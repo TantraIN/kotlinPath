@@ -1,0 +1,154 @@
+---
+title: Connecting Firebase, and what google-services.json really does
+description: A config file lands in your project and things start working. This step opens it, follows what the build does with it, and settles the question everyone asks — is it a secret?
+updated: 2026-08-19
+---
+
+<KeyIdea>
+`google-services.json` is **not** a secret. It holds public identifiers that are
+extractable from any installed APK in about a minute. What protects your data is
+Firestore security rules — which you will write in a later step — not hiding a file.
+</KeyIdea>
+
+## Create the project
+
+In the Firebase console: **Add project → Saathi**. Turn Analytics off for now; it
+adds a second SDK and a consent question you do not need yet.
+
+Then **Add app → Android**, and three fields:
+
+| Field | Value | What breaks if it is wrong |
+| --- | --- | --- |
+| Android package name | `com.sujeet.saathi` | Must match `applicationId` exactly, or the app crashes on launch |
+| Nickname | anything | Nothing — it is a label in the console |
+| Debug signing certificate SHA-1 | from Gradle, below | Google sign-in fails, and only in debug builds |
+
+The SHA-1 is the fingerprint of the certificate your build is signed with. Google
+sign-in uses it to check that a request claiming to be your app really came from a
+build signed by you — so an attacker who copies your `applicationId` still cannot
+receive your users' tokens.
+
+```bash title="Getting the debug SHA-1"
+./gradlew signingReport
+```
+
+That prints one per variant. The debug one is what you need now; the release one
+gets added in the last step, which is exactly why sign-in works in development and
+then fails the first time someone installs a release build.
+
+## Where the file goes
+
+Download `google-services.json` and put it in **`app/`**, not the project root.
+The plugin looks in the module directory, and a file one level up is simply not
+found — with an error that says the plugin cannot find the file, which people read
+as "the plugin is broken".
+
+```kotlin title="app/build.gradle.kts" numbered
+plugins {
+    alias(libs.plugins.google.services)      // reads google-services.json
+}
+
+dependencies {
+    implementation(platform(libs.firebase.bom))   // versions come from here
+    implementation(libs.firebase.auth)            // no version — the BoM decides
+    implementation(libs.firebase.firestore)
+}
+```
+
+`platform(...)` is what makes the version-less lines below it legal. The BoM is a
+published list of Firebase artifact versions that are tested together, so you
+upgrade one line and every Firebase library moves as a set — which matters because
+mismatched Firebase versions fail at run time, not at compile time.
+
+<Quiz
+  question="A teammate says committing `google-services.json` is a security hole, and it should be gitignored and injected in CI from a secret."
+  options={[
+    "They are right — it contains an API key, and a key in a repository is always a leak",
+    "They are wrong. Everything in it is a public identifier that anyone can pull out of an installed APK, so gitignoring it protects nothing and breaks the build on every fresh clone. What actually stops a stranger reading your data is Firestore security rules, plus App Check to bind requests to genuine installs",
+    "They are right for public repositories and wrong for private ones"
+  ]}
+  answer={1}
+  explanation="The API key in that file identifies your Firebase project to Google; it does not authorise anything on its own, which is why Google documents it as safe to include in client code, and why the same values sit in plain sight inside every APK you ship. Removing it from the repository therefore costs a working checkout for every new developer and CI job while removing no capability from an attacker who already has your APK. The real access control is server-side and always was: security rules decide who may read and write each document, and App Check adds evidence that the caller is a genuine build of your app rather than a script. Public or private repository does not change the analysis, because the file's contents leave your control the moment you ship."
+/>
+
+## What the plugin actually does
+
+This is the part worth watching, because it explains where `FirebaseApp` gets its
+configuration from without you passing anything.
+
+<Timeline>
+  <TimelineItem title="Gradle sync and build" meta="google-services plugin">
+    The plugin parses `app/google-services.json`, finds the client entry whose
+    package name matches your `applicationId`, and fails the build if there is none.
+  </TimelineItem>
+  <TimelineItem title="String resources are generated" meta="build/generated/res">
+    It writes ordinary Android string resources — `google_app_id`,
+    `gcm_defaultSenderId`, `firebase_database_url`, `project_id`,
+    `default_web_client_id`. From here on, it is just `res/values`.
+  </TimelineItem>
+  <TimelineItem title="A ContentProvider runs at launch" meta="FirebaseInitProvider">
+    The Firebase SDK declares a provider in its manifest, and Android starts every
+    provider **before** `Application.onCreate`. It reads those string resources and
+    calls `FirebaseApp.initializeApp` for you.
+  </TimelineItem>
+  <TimelineItem title="Your code just asks" meta="Firebase.auth">
+    `Firebase.auth` and `Firebase.firestore` return instances of an app that was
+    already initialised, which is why there is no setup line anywhere in your code.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Why that matters beyond curiosity">
+Three practical consequences fall straight out of the sequence above.
+
+**You cannot delay Firebase past `Application.onCreate`**, because the provider
+already ran. If startup time is the concern, the lever is which Firebase SDKs you
+add, not when you initialise them.
+
+**A package-name mismatch is a launch crash, not a build error** — the plugin does
+fail the build, but only if no client matches at all. Add a second `applicationId`
+via a build variant without a matching client entry and you get a crash the first
+time that variant runs.
+
+**`default_web_client_id` is a generated resource**, so the web client id the next
+step needs for Google sign-in is already in your project. You will read it as
+`R.string.default_web_client_id` rather than pasting a value.
+</Detail>
+
+## Check it before moving on
+
+Add this temporarily to `MainActivity.onCreate` and run once:
+
+```kotlin title="Smoke test" numbered
+Log.d("Saathi", "project = " + Firebase.app.options.projectId)
+```
+
+A project id in Logcat means the JSON was found, the resources were generated and
+the provider ran. Delete the line afterwards — it is a check, not a feature.
+
+<Pitfall title="Four ways this goes wrong, in the order people hit them">
+**File in the project root.** It belongs in `app/`. The error names the plugin, not
+the location.
+
+**Package name mismatch.** `applicationId` and the console entry must be identical.
+A `.debug` suffix needs its own client entry, or its own Firebase app.
+
+**Only the release SHA-1 registered.** Google sign-in then works for you and fails
+for every tester on a debug build, which reads as a broken account rather than a
+missing fingerprint.
+
+**Pinning Firebase versions individually.** Skipping the BoM lets two Firebase
+libraries drift apart, and the failure arrives at run time as a missing method.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| The JSON is in `app/` | The build succeeds with the plugin applied |
+| The package matches | `signingReport` package equals the console entry |
+| The debug SHA-1 is registered | It appears in the console's Android app settings |
+| Firebase initialises | The smoke test logs a project id |
+| The file is committed | It is not in `.gitignore` — it is configuration, not a secret |
+
+Next: sign the user in, and make the answer to "who is this" a stream rather than a
+question you ask once at startup.

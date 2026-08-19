@@ -1,0 +1,158 @@
+---
+title: Firebase se jodna, aur google-services.json asal mein karta kya hai
+description: Ek config wali file project mein aati hai aur cheezein chalne lagti hain. Yeh step use kholta hai, dekhta hai ki build uska karta kya hai, aur wo sawaal niptata hai jo sab poochhte hain — kya wo koi raaz hai?
+updated: 2026-08-19
+---
+
+<KeyIdea>
+`google-services.json` koi raaz **nahi** hai. Usmein saarvajanik pehchaanein hain jo
+kisi bhi lage hue APK se kareeb ek minute mein nikaali ja sakti hain. Aapke data ki
+hifaazat Firestore ke suraksha niyam karte hain — jo aap aage ke kisi step mein
+likhenge — na ki koi file chhupana.
+</KeyIdea>
+
+## Project banaiye
+
+Firebase ke console mein: **Add project → Saathi**. Analytics abhi band rakhiye; wo
+ek aur SDK aur manzoori wala sawaal jod deta hai jiski abhi zaroorat nahi.
+
+Phir **Add app → Android**, aur teen khaane:
+
+| Khaana | Maan | Galat hone par kya toot-ta hai |
+| --- | --- | --- |
+| Android package name | `com.sujeet.saathi` | `applicationId` se hubahu milna chahiye, warna app khulte hi girta hai |
+| Nickname | kuchh bhi | Kuchh nahi — wo console mein sirf ek naam hai |
+| Debug signing certificate SHA-1 | neeche, Gradle se | Google sign-in naakaam, aur sirf debug wale builds mein |
+
+SHA-1 us certificate ki chhaap hai jisse aapke build par hastakshar hue. Google
+sign-in usse parakhta hai ki aapka app hone ka daava karti maang sach mein aapke
+hastakshar wale build se aayi hai — to jo hamlaawar aapka `applicationId` nakal kar
+le wo bhi aapke users ke tokens nahi pa sakta.
+
+```bash title="Debug wala SHA-1 paana"
+./gradlew signingReport
+```
+
+Wo har roop ka ek chhapta hai. Abhi debug wala chahiye; release wala aakhri step
+mein judega, aur theek isiliye sign-in banate waqt chalta hai aur tab naakaam hota
+hai jab koi pehli baar release wala build lagata hai.
+
+## File jaati kahan hai
+
+`google-services.json` utaarkar **`app/`** mein rakhiye, project ki jad mein nahi.
+Plugin module wali directory mein dekhta hai, aur ek star oopar padi file use milti
+hi nahi — aisi error ke saath jo kehti hai ki plugin ko file nahi mili, aur log use
+"plugin toota hai" padhte hain.
+
+```kotlin title="app/build.gradle.kts" numbered
+plugins {
+    alias(libs.plugins.google.services)      // google-services.json padhta hai
+}
+
+dependencies {
+    implementation(platform(libs.firebase.bom))   // versions yahin se aate hain
+    implementation(libs.firebase.auth)            // koi version nahi — BoM tay karta hai
+    implementation(libs.firebase.firestore)
+}
+```
+
+`platform(...)` hi neeche ki bina version wali lainon ko jaayaz banata hai. BoM,
+Firebase ki un artifact versions ki chhapi hui soochi hai jinhein saath mein parkha
+gaya hai, to aap ek line badalte hain aur har Firebase ki library ek jatthe ki tarah
+hilti hai — aur yeh maayne rakhta hai kyonki bemel Firebase versions compile waqt
+nahi, chalte waqt tootte hain.
+
+<Quiz
+  question="Koi saathi kehta hai ki `google-services.json` commit karna suraksha ka chhed hai, use gitignore karke CI mein kisi raaz se bharna chahiye."
+  options={[
+    "Wo sahi hai — usmein API ki chaabi hai, aur repository mein padi chaabi hamesha risaav hai",
+    "Wo galat hai. Usmein sab kuchh saarvajanik pehchaan hai jise koi bhi lage hue APK se nikaal sakta hai, to use gitignore karna bachata kuchh nahi aur har nayi clone par build tod deta hai. Kisi anjaan ko aapka data padhne se asal mein Firestore ke suraksha niyam rokte hain, aur App Check jo maangon ko asli installs se baandhta hai",
+    "Saarvajanik repositories ke liye wo sahi hai aur niji ke liye galat"
+  ]}
+  answer={1}
+  explanation="Us file ki API ki chaabi Google ke saamne aapke Firebase ke project ki pehchaan bhar hai; wo apne aap kisi cheez ki ijaazat nahi deti, aur isiliye Google use client ke code mein rakhne layak bataata hai, aur isiliye wahi maan aapke bheje har APK ke bheetar sabke saamne pade hote hain. Use repository se hataana isliye har naye developer aur CI ke kaam ke liye ek chalti hui checkout ki keemat leta hai aur us hamlaawar se kuchh nahi chheenta jiske paas aapka APK pehle se hai. Asli rokthaam server ki taraf hai aur hamesha thi: suraksha ke niyam tay karte hain ki kis document ko kaun padh-likh sakta hai, aur App Check yeh saboot jodta hai ki bulane wala aapke app ka asli build hai, koi script nahi. Repository saarvajanik hai ya niji, isse baat nahi badalti, kyonki jis pal aap app bhejte hain us file ki saamagri aapke kaaboo se bahar chali jaati hai."
+/>
+
+## Wo plugin karta asal mein kya hai
+
+Yahi hissa dekhne layak hai, kyonki yahi bataata hai ki bina aapke kuchh diye
+`FirebaseApp` apni sajaavat laata kahan se hai.
+
+<Timeline>
+  <TimelineItem title="Gradle ka sync aur build" meta="google-services plugin">
+    Plugin `app/google-services.json` padhta hai, usmein wo client khojta hai jiske
+    package ka naam aapke `applicationId` se mel khaaye, aur koi na mile to build
+    gira deta hai.
+  </TimelineItem>
+  <TimelineItem title="String ke sansaadhan bante hain" meta="build/generated/res">
+    Wo aam Android ke string wale sansaadhan likh deta hai — `google_app_id`,
+    `gcm_defaultSenderId`, `firebase_database_url`, `project_id`,
+    `default_web_client_id`. Yahan se aage yeh sirf `res/values` hai.
+  </TimelineItem>
+  <TimelineItem title="Kholte waqt koi ContentProvider chalta hai" meta="FirebaseInitProvider">
+    Firebase ka SDK apne manifest mein ek provider bataata hai, aur Android har
+    provider ko `Application.onCreate` se **pehle** chalata hai. Wo un string
+    sansaadhanon ko padhkar aapke liye `FirebaseApp.initializeApp` bula deta hai.
+  </TimelineItem>
+  <TimelineItem title="Aapka code bas maangta hai" meta="Firebase.auth">
+    `Firebase.auth` aur `Firebase.firestore` us app ke roop lautate hain jo pehle hi
+    shuru ho chuka hai, aur isiliye aapke code mein kahin koi taiyari ki line nahi hai.
+  </TimelineItem>
+</Timeline>
+
+<Detail summary="Yeh jigyasa se aage kyon maayne rakhta hai">
+Oopar ke silsile se seedhe teen kaamkaaji nateeje nikalte hain.
+
+**Aap Firebase ko `Application.onCreate` se aage taal nahi sakte**, kyonki provider
+pehle hi chal chuka hai. Agar chinta shuru hone ke samay ki hai, to lever yeh hai ki
+aap kaun se Firebase ke SDK jodte hain, yeh nahi ki unhein kab shuru karte hain.
+
+**Package ke naam ka bemel kholte waqt ki crash hai, build ki error nahi** — plugin
+build girata to hai, par tabhi jab koi bhi client mel na khaaye. Kisi build ke roop
+se doosra `applicationId` jodiye bina mel khaate client ke, aur us roop ke pehli baar
+chalte hi crash milti hai.
+
+**`default_web_client_id` ek bana hua sansaadhan hai**, to Google sign-in ke liye
+agle step ko jo web wali client ki pehchaan chahiye wo aapke project mein pehle se
+hai. Aap use koi maan chipkakar nahi, `R.string.default_web_client_id` ki tarah
+padhenge.
+</Detail>
+
+## Aage badhne se pehle parakh lijiye
+
+Ise kuchh der ke liye `MainActivity.onCreate` mein daalkar ek baar chalaiye:
+
+```kotlin title="Parakh ki ek line" numbered
+Log.d("Saathi", "project = " + Firebase.app.options.projectId)
+```
+
+Logcat mein project ki pehchaan ka matlab hai JSON mili, sansaadhan bane aur provider
+chala. Baad mein wo line hata dijiye — wo parakh hai, suvidha nahi.
+
+<Pitfall title="Chaar tareeke jinse yeh bigadta hai, usi tarteeb mein jismein log takraate hain">
+**File project ki jad mein.** Wo `app/` ki cheez hai. Error plugin ka naam leti hai,
+jagah ka nahi.
+
+**Package ke naam ka bemel.** `applicationId` aur console ki entry hubahu ek honi
+chahiye. `.debug` wali poonchh ko apni client entry chahiye, ya apna Firebase ka app.
+
+**Sirf release wala SHA-1 darj.** Tab Google sign-in aapke yahan chalta hai aur debug
+wala build lene wale har parakhne wale ke liye naakaam hota hai, jo chhooti hui chhaap
+nahi, toota hua khaata lagta hai.
+
+**Firebase ke versions alag-alag baandhna.** BoM chhodne par do Firebase ki libraries
+alag-alag khisak jaati hain, aur naakami chalte waqt kisi gaayab method ki tarah aati hai.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| JSON `app/` mein hai | Plugin laga hua hone par build poora hota hai |
+| Package mel khaata hai | `signingReport` ka package console ki entry ke baraabar |
+| Debug wala SHA-1 darj hai | Wo console ki Android app ki sajaavat mein dikhta hai |
+| Firebase shuru hota hai | Parakh wali line project ki pehchaan chhapti hai |
+| File commit hai | Wo `.gitignore` mein nahi hai — wo config hai, raaz nahi |
+
+Aage: user ko sign in karaiye, aur "yeh hai kaun" ka jawaab shuruaat mein ek baar
+poochha gaya sawaal nahi, ek dhaara banaiye.
