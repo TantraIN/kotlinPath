@@ -1,0 +1,180 @@
+---
+title: GitHub Actions se CI/CD
+description: Jis pipeline mein bees minute lagte hain uska log intezar karna chhod dete hain. Zyadatar kaam workflow likhna nahi hai — kaam caching, baantna, aur ye tay karna hai ki merge ko rokta asal mein kya hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+CI tabhi kaam ka hai jab wo **rokne layak tez** ho aur **manne layak bharosemand**. Bees minute wali
+pipeline ko log kinare se nikal le jate hain; gair-bharosemand wali ko hara hone tak dobara chalate hain.
+Dono nakamiyan aisi padtal par khatam hoti hain jise koi padhta nahi.
+</KeyIdea>
+
+## Pull request wala workflow
+
+```yaml title=".github/workflows/pr.yml" numbered
+name: PR
+on: pull_request
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+
+      - uses: gradle/actions/setup-gradle@v4     # Gradle aur build ka cache rakhta hai
+
+      - run: ./gradlew ktlintCheck detekt lintDebug testDebugUnitTest
+```
+
+Raftar ke liye sabse zyada maayne `setup-gradle` wali line rakhti hai: wo Gradle ka vitaran, dependencies
+ka cache aur build ka cache lauta deti hai, jisse thanda paanch minute ka configuration secondon mein badal
+jata hai. Uske bina har baar poori duniya utarti hai.
+
+Kaam sabse saste se lagaiye, jaisa static analysis wale lesson ne kaha tha: sajawat secondon mein nakaam
+hoti hai, unit tests minute lete hain, aur instrumented tests usse bhi zyada. Jis developer ko imports ke
+order ka pata baarah minute baad chalta hai wo developer dekhna chhod deta hai.
+
+## Pipeline baantna
+
+```yaml title="Parallel jobs" numbered
+jobs:
+  lint:  { runs-on: ubuntu-latest, steps: [ ... ./gradlew ktlintCheck detekt ] }
+  test:  { runs-on: ubuntu-latest, steps: [ ... ./gradlew testDebugUnitTest ] }
+  build: { runs-on: ubuntu-latest, steps: [ ... ./gradlew assembleDebug ] }
+```
+
+Alag jobs saath-saath chalte hain aur alag-alag batate hain, to koi nakami ek lambe log mein chhupne ke
+bajaye checks ki list mein apna naam leti hai. Keemat ye hai ki har job apna cache alag lautata hai, jo ek
+hi job ke kareeb paanch minute paar karte hi aam taur par iske layak ho jata hai.
+
+Instrumented tests mehnga hissa hain. Unhe har pull request par chalana shayad hi iske layak hai — raat
+mein, ya release wali branch par, PR ka chakkar tez rakhta hai aur phir bhi wo pakad leta hai jo sirf device
+pakad sakta hai.
+
+<Quiz
+  question="Koi release wala workflow kisi secret se keystore kholta hai aur build ki mushkil samajhne ke liye `./gradlew bundleRelease --info` chalata hai. Build safal hota hai. Mushkil kya hai?"
+  options={[
+    "`--info` build ko itna dheema kar deta hai ki job ka samay khatam ho jaye",
+    "`--info` se Gradle configuration ki values chhapta hai, jinmein signing wali settings aa sakti hain — to keystore ke passwords aise build ke log mein pahunch jate hain jise repository tak pahunch rakhne wala koi bhi padh sakta hai, aur wo log job ke baad bhi rakha rehta hai",
+    "Kuch nahi; Actions ke logs mein secrets apne aap dhak diye jate hain"
+  ]}
+  answer={1}
+  explanation="GitHub un values ko dhakta to hai jinhe wo secret janta hai, aur isiliye ye safe lagta hai aur hai nahi: dhakna darj kiye gaye secret ki theek usi string se milta hai, to jo kuch bhi usse nikala gaya, dobara sajaya gaya ya kisi badi banawat ke hisse ki tarah chhapa, wo nikal sakta hai, aur Gradle --info par bahut kuch chhapta hai jo usse kabhi maanga hi nahi gaya. Signing wale lesson ki chetavani seedhe lagu hai — release wala build badhi hui baatooni haalat mein nahi chalana chahiye, aur agar chalana hi pade to asli credentials ke saath nahi. Do aadatein ise log se poori tarah bahar rakhti hain: credentials ko Gradle ki properties ke bajaye environment ki variables ki tarah bhejiye taki wo configuration ki tarah chhapne ki kam sambhavna rakhein, aur build ki mushkilein kisi branch par phenkne layak keystore ke saath samajhiye. Rakha rehna bhi maayne rakhta hai: Actions ke logs tike rehte hain aur repository ko padh sakne wale har kisi ko dikhte hain, to ye pal bhar ka ujagar hona nahi hai."
+/>
+
+## Release karna
+
+```yaml title=".github/workflows/release.yml" numbered
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+      - run: ./gradlew bundleRelease
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT }}
+          packageName: com.example
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: internal
+```
+
+Kisi tag par chalana release ko socha-samjha bana deta hai — `main` mein merge karne se kuch jata nahi, aur
+sameeksha ki der tatha failav ki chadhai ko dekhte hue aap yahi chahte ho.
+
+Default se **internal** wale track par chadhana safe shakal hai. Production tak aage badhana wo faisla bana
+rehta hai jo koi Play Console mein leta hai, jahan dheere-dheere failana aur aankde rehte hain.
+
+`versionCode` haath se badli jane wali file ke bajaye kisi lagatar badhti cheez se aana chahiye:
+
+```kotlin title="Version" numbered
+versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+```
+
+<Detail summary="Secrets, aur fastlane">
+Do chalane wali baatein.
+
+**Secrets us platform ke bhandar ki cheez hain, aur forks se aaye pull requests ko wo milte nahi.** Ye
+jaanbujhkar hai — warna koi bhi aisa PR khol sakta jo aapka keystore chhap de — aur iska matlab hai ki jis
+workflow ko secrets chahiye wo kisi fork ke `pull_request` ke alawa kisi aur cheez se chalna chahiye.
+Padtalein (bina secrets, har jagah chaltin) aur release (secrets ke saath, tags par) alag karna ise apne aap
+sambhal leta hai.
+
+**fastlane** tab sochne layak hai jab release ki vidhi mein do-chaar se zyada kadam hon. Wo aapko banane,
+chadhane, tracks ke beech aage badhane aur listing ki jankari badalne ke liye naam wali lanes deta hai, aur
+wo lanes laptop tatha CI, dono par ek jaisi chalti hain — jo us din maayne rakhta hai jab CI toota ho aur
+release phir bhi jana ho.
+
+```ruby title="Fastfile" numbered
+lane :internal do
+  gradle(task: "bundle", build_type: "Release")
+  upload_to_play_store(track: "internal", aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH])
+end
+```
+
+Doosra raasta bhi theek hai: `upload-google-play` aur kuch `run:` wale kadam. fastlane ke haq mein daleel CI
+ke runner se bahar wahi anjaam dohra pana hai, wo YAML nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli CI ko wo cheez bana deti hai jise log kinare se nikal le jate hain">
+**Gradle ka cache na hona.** Har baar shoonya se utarna aur dobara sajna.
+
+**Pehle dheemi padtalein.** Jo pipeline sajawat sabse baad mein batati hai use log dekhna chhod dete hain.
+
+**Release wale build par `--info`.** Configuration ki values, signing samet, tike hue log mein utarti hain.
+
+**`main` mein har merge par bhejna.** Release socha-samjha kaam hona chahiye, kisi tag par.
+
+**Seedhe production par chhapna.** Internal par chadhaiye; Console mein aage badhaiye, jahan aankde hain.
+</Pitfall>
+
+## Abhyaas
+
+1. `setup-gradle` jodiye aur thande tatha garam, dono chalanon ko milaiye.
+2. Ek job ko lint, test aur build mein baantiye aur ghadi ka samay milaiye.
+3. Kisi fork se pull request kholiye aur pakka kijiye ki secrets nahi milte.
+4. Kisi tag se release chalaiye aur use internal wale track par aate dekhiye.
+5. `versionCode` ko chalne ki ginti se nikaliye aur pakka kijiye ki wo apne aap badhta hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Itna tez | Warna log kinare se nikal jate hain |
+| Itna bharosemand | Warna log hara hone tak dobara chalate hain |
+| `setup-gradle` | Vitaran, dependencies aur build ka cache lautata hai |
+| Sabse sasta pehle | Sajawat, phir tests, phir instrumented |
+| Saath-saath jobs | Ek saath chalte aur checks ki list mein alag naam lete |
+| Instrumented tests | Raat mein ya release par, har PR par nahi |
+| Tag se chalna | Release ko socha-samjha banata hai |
+| Internal wala track | Wahin chadhaiye; Console mein aage badhaiye |
+| Release par `--info` | Configuration chhapta hai, signing samet |
+| Fork ke PRs | Unhe koi secrets nahi, jaanbujhkar |
+
+<Interview title="Ek sawal, aisi pipeline ka jis par log bharosa karna chhod dete hain">
+"Aapki CI bees minute leti hai aur log bina intezar kiye merge kar dete hain. Aap kya badloge?"
+
+Pehle order aur caching, kyunki wo saste hain. `setup-gradle` dependencies aur build ka cache lautata hai,
+jisse aam taur par thande configuration ke kai minute hat jate hain, aur tests se pehle sajawat tatha sthir
+padtal chalane ka matlab hai ki aam nakamiyan aakhir mein nahi, ek minute ke andar bata di jati hain.
+
+Phir main kaam ko saath-saath chalte jobs mein baantunga taki nakamiyan checks ki list mein apna naam lein,
+aur instrumented tests ko pull request se hatakar raat wale ya release wali branch ke chalne par le jaunga —
+wo mehnga hissa hain aur wo shayad hi kuch aisa pakadte hain jo unit test na pakadta. Neeche ki baat ye hai
+ki pipeline ki do nakamiyan hoti hain: rokne ke liye bahut dheemi, aur manne ke liye bahut gair-bharosemand.
+Dono aisi padtal par khatam hoti hain jise koi padhta nahi, to jo test hara hone tak dobara chalaya jata hai
+use theek karna dheemi pipeline jitna hi zaruri hai.
+</Interview>

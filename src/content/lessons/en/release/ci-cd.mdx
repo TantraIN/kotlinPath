@@ -1,0 +1,178 @@
+---
+title: CI/CD with GitHub Actions
+description: A pipeline that takes twenty minutes is a pipeline people stop waiting for. Most of the work is not writing the workflow — it is caching, splitting and deciding what actually blocks a merge.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+CI is only useful if it is **fast enough to block on** and **trusted enough to believe**. A twenty-minute
+pipeline gets merged around; a flaky one gets re-run until green. Both failures end with a check nobody
+reads.
+</KeyIdea>
+
+## A pull request workflow
+
+```yaml title=".github/workflows/pr.yml" numbered
+name: PR
+on: pull_request
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+
+      - uses: gradle/actions/setup-gradle@v4     # caches Gradle and the build cache
+
+      - run: ./gradlew ktlintCheck detekt lintDebug testDebugUnitTest
+```
+
+`setup-gradle` is the line that matters most for speed: it restores the Gradle distribution, the
+dependency cache and the build cache, which turns a cold five-minute configuration phase into seconds.
+Without it every run downloads the world.
+
+Order the tasks cheapest-first, as the static analysis lesson argued: formatting fails in seconds, unit
+tests take minutes, and instrumented tests take longer still. A developer finding out about an import
+order after twelve minutes is a developer who stops watching.
+
+## Splitting the pipeline
+
+```yaml title="Parallel jobs" numbered
+jobs:
+  lint:  { runs-on: ubuntu-latest, steps: [ ... ./gradlew ktlintCheck detekt ] }
+  test:  { runs-on: ubuntu-latest, steps: [ ... ./gradlew testDebugUnitTest ] }
+  build: { runs-on: ubuntu-latest, steps: [ ... ./gradlew assembleDebug ] }
+```
+
+Separate jobs run concurrently and report separately, so a failure names itself in the checks list
+rather than hiding in one long log. The cost is that each job restores its own cache, which is usually
+worth it once a single job passes about five minutes.
+
+Instrumented tests are the expensive part. Running them on every pull request is rarely worth it —
+nightly, or on the release branch, keeps the PR loop fast while still catching what only a device can.
+
+<Quiz
+  question="A release workflow decodes a keystore from a secret and runs `./gradlew bundleRelease --info` to help debug a build issue. The build succeeds. What is the problem?"
+  options={[
+    "`--info` slows the build enough to hit the job timeout",
+    "`--info` makes Gradle log configuration values, which can include the signing config — so the keystore passwords end up in a build log readable by anyone with repository access, and that log is retained after the job",
+    "Nothing; secrets are automatically masked in Actions logs"
+  ]}
+  answer={1}
+  explanation="GitHub does mask values it knows are secrets, which is why this feels safe and is not: masking matches the exact string of a registered secret, so anything derived, reformatted or logged as part of a larger structure can slip through, and Gradle at --info prints a great deal it was never asked to. The signing lesson's warning applies directly — a release build should not be run at raised verbosity, and if it must be, not with real credentials. Two habits keep this out of the log entirely: pass credentials as environment variables rather than Gradle properties so they are less likely to be printed as configuration, and debug build problems on a branch with a throwaway keystore. The retention matters too: Actions logs persist and are visible to anyone with read access to the repository, so this is not a momentary exposure."
+/>
+
+## Releasing
+
+```yaml title=".github/workflows/release.yml" numbered
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+      - run: ./gradlew bundleRelease
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT }}
+          packageName: com.example
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: internal
+```
+
+Triggering on a tag makes the release deliberate — a merge to `main` does not ship anything, which is
+what you want when review latency and a rollout ramp are involved.
+
+Uploading to the **internal** track by default is the safe shape. Promotion to production stays a
+decision someone makes in the Play Console, where the staged rollout and the metrics live.
+
+`versionCode` should come from something monotonic rather than a hand-edited file:
+
+```kotlin title="Version" numbered
+versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+```
+
+<Detail summary="Secrets, and fastlane">
+Two operational points.
+
+**Secrets belong in the platform's store, and pull requests from forks do not get them.** That is
+deliberate — otherwise anyone could open a PR that prints your keystore — and it means a workflow that
+needs secrets must be triggered by something other than `pull_request` from a fork. Splitting checks
+(no secrets, runs everywhere) from release (secrets, runs on tags) handles it naturally.
+
+**fastlane** is worth considering once the release process has more than a couple of steps. It gives
+you named lanes for building, uploading, promoting between tracks and updating listing metadata, and
+those lanes run identically on a laptop and in CI — which matters the day CI is broken and a release
+still has to go out.
+
+```ruby title="Fastfile" numbered
+lane :internal do
+  gradle(task: "bundle", build_type: "Release")
+  upload_to_play_store(track: "internal", aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH])
+end
+```
+
+The alternative is fine too: `upload-google-play` and a few `run:` steps. The argument for fastlane is
+reproducibility off the CI runner, not the YAML itself.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first makes CI something people work around">
+**No Gradle caching.** Every run downloads and reconfigures from scratch.
+
+**Slow checks first.** People stop watching a pipeline that reports formatting last.
+
+**`--info` on a release build.** Configuration values, including signing, land in a retained log.
+
+**Shipping on every merge to `main`.** Release should be a deliberate act, on a tag.
+
+**Publishing straight to production.** Upload to internal; promote in the Console where the metrics are.
+</Pitfall>
+
+## Practice
+
+1. Add `setup-gradle` and compare a cold run with a warm one.
+2. Split one job into lint, test and build, and compare wall-clock time.
+3. Open a pull request from a fork and confirm the secrets are unavailable.
+4. Trigger a release from a tag and watch it appear on the internal track.
+5. Derive `versionCode` from the run number and confirm it increases automatically.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Fast enough | Or people merge around it |
+| Trusted enough | Or people re-run until green |
+| `setup-gradle` | Caches the distribution, dependencies and build cache |
+| Cheapest first | Formatting, then tests, then instrumented |
+| Parallel jobs | Concurrent and separately named in the checks list |
+| Instrumented tests | Nightly or on release, not every PR |
+| Tag trigger | Makes releasing deliberate |
+| Internal track | Upload there; promote in the Console |
+| `--info` on release | Logs configuration, including signing |
+| Fork PRs | Get no secrets, by design |
+
+<Interview title="A question about a pipeline people stop believing">
+"Your CI takes twenty minutes and people merge without waiting. What do you change?"
+
+First the ordering and the caching, because those are cheap. `setup-gradle` restores the dependency and
+build caches, which usually removes several minutes of a cold configuration phase, and running
+formatting and static analysis before the tests means the common failures report in under a minute
+instead of at the end.
+
+Then I would split the work into parallel jobs so failures name themselves in the checks list, and move
+instrumented tests off the pull request onto a nightly or release-branch run — they are the expensive
+part and they rarely catch what a unit test would not. The underlying point is that a pipeline has two
+failure modes: too slow to block on, and too flaky to believe. Both end with a check nobody reads, so a
+flaky test that gets re-run until green is as urgent to fix as a slow one.
+</Interview>

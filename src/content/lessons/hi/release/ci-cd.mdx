@@ -1,0 +1,177 @@
+---
+title: GitHub Actions से CI/CD
+description: जिस pipeline में बीस मिनट लगते हैं उसका लोग इंतजार करना छोड़ देते हैं। ज्यादातर काम workflow लिखना नहीं है — काम caching, बाँटना, और यह तय करना है कि merge को रोकता असल में क्या है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+CI तभी काम का है जब वह **रोकने लायक तेज** हो और **मानने लायक भरोसेमंद**। बीस मिनट वाली pipeline को लोग
+किनारे से निकाल ले जाते हैं; गैर-भरोसेमंद वाली को हरा होने तक दोबारा चलाते हैं। दोनों नाकामियाँ ऐसी जाँच
+पर खत्म होती हैं जिसे कोई पढ़ता नहीं।
+</KeyIdea>
+
+## Pull request वाला workflow
+
+```yaml title=".github/workflows/pr.yml" numbered
+name: PR
+on: pull_request
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+
+      - uses: gradle/actions/setup-gradle@v4     # Gradle और build का cache रखता है
+
+      - run: ./gradlew ktlintCheck detekt lintDebug testDebugUnitTest
+```
+
+रफ्तार के लिए सबसे ज्यादा मायने `setup-gradle` वाली लाइन रखती है: वह Gradle का वितरण, dependencies का
+cache और build का cache लौटा देती है, जिससे ठंडा पाँच मिनट का configuration सेकंडों में बदल जाता है।
+उसके बिना हर बार पूरी दुनिया उतरती है।
+
+काम सबसे सस्ते से लगाइए, जैसा static analysis वाले पाठ ने कहा था: सजावट सेकंडों में नाकाम होती है, unit
+tests मिनट लेते हैं, और instrumented tests उससे भी ज्यादा। जिस developer को imports के क्रम का पता बारह
+मिनट बाद चलता है वह developer देखना छोड़ देता है।
+
+## Pipeline बाँटना
+
+```yaml title="Parallel jobs" numbered
+jobs:
+  lint:  { runs-on: ubuntu-latest, steps: [ ... ./gradlew ktlintCheck detekt ] }
+  test:  { runs-on: ubuntu-latest, steps: [ ... ./gradlew testDebugUnitTest ] }
+  build: { runs-on: ubuntu-latest, steps: [ ... ./gradlew assembleDebug ] }
+```
+
+अलग jobs साथ-साथ चलते हैं और अलग-अलग बताते हैं, तो कोई नाकामी एक लंबे log में छिपने के बजाय checks की
+सूची में अपना नाम लेती है। कीमत यह है कि हर job अपना cache अलग लौटाता है, जो एक ही job के करीब पाँच
+मिनट पार करते ही आमतौर पर इसके लायक हो जाता है।
+
+Instrumented tests महँगा हिस्सा हैं। उन्हें हर pull request पर चलाना शायद ही इसके लायक है — रात में, या
+release वाली branch पर, PR का चक्कर तेज रखता है और फिर भी वह पकड़ लेता है जो सिर्फ device पकड़ सकता है।
+
+<Quiz
+  question="कोई release वाला workflow किसी secret से keystore खोलता है और build की दिक्कत समझने के लिए `./gradlew bundleRelease --info` चलाता है। Build सफल होता है। दिक्कत क्या है?"
+  options={[
+    "`--info` build को इतना धीमा कर देता है कि job का समय खत्म हो जाए",
+    "`--info` से Gradle configuration की values छापता है, जिनमें signing वाली settings आ सकती हैं — तो keystore के passwords ऐसे build के log में पहुँच जाते हैं जिसे repository तक पहुँच रखने वाला कोई भी पढ़ सकता है, और वह log job के बाद भी रखा रहता है",
+    "कुछ नहीं; Actions के logs में secrets अपने आप ढक दिए जाते हैं"
+  ]}
+  answer={1}
+  explanation="GitHub उन values को ढकता तो है जिन्हें वह secret जानता है, और इसीलिए यह सुरक्षित लगता है और है नहीं: ढकना दर्ज किए गए secret की ठीक उसी string से मिलता है, तो जो कुछ भी उससे निकाला गया, दोबारा सजाया गया या किसी बड़ी बनावट के हिस्से की तरह छपा, वह निकल सकता है, और Gradle --info पर बहुत कुछ छापता है जो उससे कभी माँगा ही नहीं गया। Signing वाले पाठ की चेतावनी सीधे लागू है — release वाला build बढ़ी हुई बातूनी हालत में नहीं चलाना चाहिए, और अगर चलाना ही पड़े तो असली credentials के साथ नहीं। दो आदतें इसे log से पूरी तरह बाहर रखती हैं: credentials को Gradle की properties के बजाय environment की variables की तरह भेजिए ताकि वे configuration की तरह छपने की कम संभावना रखें, और build की दिक्कतें किसी branch पर फेंकने लायक keystore के साथ समझिए। रखा रहना भी मायने रखता है: Actions के logs टिके रहते हैं और repository को पढ़ सकने वाले हर किसी को दिखते हैं, तो यह पल भर का उजागर होना नहीं है।"
+/>
+
+## Release करना
+
+```yaml title=".github/workflows/release.yml" numbered
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+      - run: ./gradlew bundleRelease
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT }}
+          packageName: com.example
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: internal
+```
+
+किसी tag पर चलाना release को सोचा-समझा बना देता है — `main` में merge करने से कुछ जाता नहीं, और समीक्षा
+की देर तथा फैलाव की चढ़ाई को देखते हुए आप यही चाहते हैं।
+
+डिफॉल्ट से **internal** वाले track पर चढ़ाना सुरक्षित शक्ल है। Production तक आगे बढ़ाना वह फैसला बना
+रहता है जो कोई Play Console में लेता है, जहाँ धीरे-धीरे फैलाना और आँकड़े रहते हैं।
+
+`versionCode` हाथ से बदली जाने वाली file के बजाय किसी लगातार बढ़ती चीज से आना चाहिए:
+
+```kotlin title="Version" numbered
+versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+```
+
+<Detail summary="Secrets, और fastlane">
+दो चलाने वाली बातें।
+
+**Secrets उस platform के भंडार की चीज हैं, और forks से आए pull requests को वे मिलते नहीं।** यह जानबूझकर
+है — वरना कोई भी ऐसा PR खोल सकता जो आपका keystore छाप दे — और इसका मतलब है कि जिस workflow को secrets
+चाहिए वह किसी fork के `pull_request` के अलावा किसी और चीज से चलना चाहिए। जाँचें (बिना secrets, हर जगह
+चलतीं) और release (secrets के साथ, tags पर) अलग करना इसे अपने आप सँभाल लेता है।
+
+**fastlane** तब सोचने लायक है जब release की विधि में दो-चार से ज्यादा कदम हों। वह आपको बनाने, चढ़ाने,
+tracks के बीच आगे बढ़ाने और listing की जानकारी बदलने के लिए नाम वाली lanes देता है, और वे lanes laptop
+तथा CI, दोनों पर एक जैसी चलती हैं — जो उस दिन मायने रखता है जब CI टूटा हो और release फिर भी जाना हो।
+
+```ruby title="Fastfile" numbered
+lane :internal do
+  gradle(task: "bundle", build_type: "Release")
+  upload_to_play_store(track: "internal", aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH])
+end
+```
+
+दूसरा रास्ता भी ठीक है: `upload-google-play` और कुछ `run:` वाले कदम। fastlane के हक में दलील CI के runner
+से बाहर वही नतीजा दोहरा पाना है, वह YAML नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली CI को वह चीज बना देती है जिसे लोग किनारे से निकाल ले जाते हैं">
+**Gradle का cache न होना।** हर बार शून्य से उतरना और दोबारा सजना।
+
+**पहले धीमी जाँचें।** जो pipeline सजावट सबसे बाद में बताती है उसे लोग देखना छोड़ देते हैं।
+
+**Release वाले build पर `--info`।** Configuration की values, signing समेत, टिके हुए log में उतरती हैं।
+
+**`main` में हर merge पर भेजना।** Release सोचा-समझा काम होना चाहिए, किसी tag पर।
+
+**सीधे production पर छापना।** Internal पर चढ़ाइए; Console में आगे बढ़ाइए, जहाँ आँकड़े हैं।
+</Pitfall>
+
+## अभ्यास
+
+1. `setup-gradle` जोड़िए और ठंडे तथा गरम, दोनों चलनों को मिलाइए।
+2. एक job को lint, test और build में बाँटिए और घड़ी का समय मिलाइए।
+3. किसी fork से pull request खोलिए और पक्का कीजिए कि secrets नहीं मिलते।
+4. किसी tag से release चलाइए और उसे internal वाले track पर आते देखिए।
+5. `versionCode` को चलने की गिनती से निकालिए और पक्का कीजिए कि वह अपने आप बढ़ता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| इतना तेज | वरना लोग किनारे से निकल जाते हैं |
+| इतना भरोसेमंद | वरना लोग हरा होने तक दोबारा चलाते हैं |
+| `setup-gradle` | वितरण, dependencies और build का cache लौटाता है |
+| सबसे सस्ता पहले | सजावट, फिर tests, फिर instrumented |
+| साथ-साथ jobs | एक साथ चलते और checks की सूची में अलग नाम लेते |
+| Instrumented tests | रात में या release पर, हर PR पर नहीं |
+| Tag से चलना | Release को सोचा-समझा बनाता है |
+| Internal वाला track | वहीं चढ़ाइए; Console में आगे बढ़ाइए |
+| Release पर `--info` | Configuration छापता है, signing समेत |
+| Fork के PRs | उन्हें कोई secrets नहीं, जानबूझकर |
+
+<Interview title="एक सवाल, ऐसी pipeline का जिस पर लोग भरोसा करना छोड़ देते हैं">
+"आपकी CI बीस मिनट लेती है और लोग बिना इंतजार किए merge कर देते हैं। आप क्या बदलेंगे?"
+
+पहले क्रम और caching, क्योंकि वे सस्ते हैं। `setup-gradle` dependencies और build का cache लौटाता है,
+जिससे आमतौर पर ठंडे configuration के कई मिनट हट जाते हैं, और tests से पहले सजावट तथा स्थिर जाँच चलाने का
+मतलब है कि आम नाकामियाँ आखिर में नहीं, एक मिनट के अंदर बता दी जाती हैं।
+
+फिर मैं काम को साथ-साथ चलते jobs में बाँटूँगा ताकि नाकामियाँ checks की सूची में अपना नाम लें, और
+instrumented tests को pull request से हटाकर रात वाले या release वाली branch के चलने पर ले जाऊँगा — वे
+महँगा हिस्सा हैं और वे शायद ही कुछ ऐसा पकड़ते हैं जो unit test न पकड़ता। नीचे की बात यह है कि pipeline
+की दो नाकामियाँ होती हैं: रोकने के लिए बहुत धीमी, और मानने के लिए बहुत गैर-भरोसेमंद। दोनों ऐसी जाँच पर
+खत्म होती हैं जिसे कोई पढ़ता नहीं, तो जो test हरा होने तक दोबारा चलाया जाता है उसे ठीक करना धीमी pipeline
+जितना ही जरूरी है।
+</Interview>
