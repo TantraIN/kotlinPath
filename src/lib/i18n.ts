@@ -153,6 +153,14 @@ type Dict = {
     notWritten: string;
     notWrittenBody: string;
   };
+  footer: {
+    tagline: string;
+    learn: string;
+    startHere: string;
+    languages: string;
+    course: string;
+    privacy: string;
+  };
   quiz: {
     label: string;
     correct: string;
@@ -275,6 +283,14 @@ export const DICT: Record<Lang, Dict> = {
       backToProject: "Back to the project",
       notWritten: "This step is not written yet",
       notWrittenBody: "Its place in the build and what it covers are already fixed — the walkthrough lands in the next writing pass.",
+    },
+    footer: {
+      tagline: "One curriculum, three languages, and a project at the end of it that runs on a real phone.",
+      learn: "Learn",
+      startHere: "Start at lesson one",
+      languages: "Languages",
+      course: "The course",
+      privacy: "No account, no tracking. Your progress stays in this browser and nowhere else.",
     },
     quiz: {
       label: "Check yourself",
@@ -402,6 +418,14 @@ export const DICT: Record<Lang, Dict> = {
       notWritten: "यह कदम अभी लिखा नहीं गया है",
       notWrittenBody: "बनाने के क्रम में इसकी जगह और इसमें आने वाली बातें तय हो चुकी हैं — पूरा रास्ता अगले लेखन चरण में आएगा।",
     },
+    footer: {
+      tagline: "एक पाठ्यक्रम, तीन भाषाएँ, और आखिर में एक ऐसा project जो असली फोन पर चलता है।",
+      learn: "सीखिए",
+      startHere: "पहले पाठ से शुरू कीजिए",
+      languages: "भाषाएँ",
+      course: "पाठ्यक्रम",
+      privacy: "कोई खाता नहीं, कोई नजर नहीं। आपकी प्रगति इसी browser में रहती है, और कहीं नहीं।",
+    },
     quiz: {
       label: "खुद जाँचिए",
       correct: "सही",
@@ -528,6 +552,14 @@ export const DICT: Record<Lang, Dict> = {
       backToProject: "Project par wapas",
       notWritten: "Yeh step abhi likha nahi gaya hai",
       notWrittenBody: "Banane ke silsile mein iski jagah aur ismein aane wali baatein tay ho chuki hain — poora raasta agle writing pass mein aayega.",
+    },
+    footer: {
+      tagline: "Ek curriculum, teen bhashaayein, aur aakhir mein ek aisa project jo asli phone par chalta hai.",
+      learn: "Seekhiye",
+      startHere: "Pehle lesson se shuru kijiye",
+      languages: "Bhashaayein",
+      course: "Course",
+      privacy: "Koi khaata nahi, koi nazar nahi. Aapki pragati isi browser mein rehti hai, aur kahin nahi.",
     },
     quiz: {
       label: "Khud jaancho",

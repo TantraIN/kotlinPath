@@ -24,10 +24,16 @@ const NAV_LINKS = [
 export function AppShell({
   lang,
   searchDocs,
+  footer,
   children,
 }: {
   lang: Lang;
   searchDocs: SearchDoc[];
+  /**
+   * Passed in from the layout rather than imported here, so the footer stays a
+   * server component and its links never reach the client bundle.
+   */
+  footer?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -45,7 +51,8 @@ export function AppShell({
   }, [drawer]);
 
   return (
-    <div className="min-h-dvh">
+    // A column so a short page still pushes the footer to the bottom of the viewport.
+    <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-50 border-b border-line bg-bg/80 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-3 sm:px-5">
           {!isLanding && (
@@ -64,19 +71,23 @@ export function AppShell({
             className="flex shrink-0 items-center gap-2.5 rounded-lg transition-opacity hover:opacity-85"
           >
             <Logo size={28} />
-            <span className="hidden flex-col leading-none sm:flex">
+            {/* The tagline is the widest thing in the header; it only earns its
+                place once there is room for the nav links beside it. */}
+            <span className="hidden min-w-0 flex-col leading-none sm:flex">
               <span className="text-[15px] font-semibold tracking-tight text-fg">KotlinPath</span>
-              <span className="mt-0.5 text-[10.5px] text-muted">{copy.brandTagline}</span>
+              <span className="mt-0.5 hidden truncate text-[10.5px] text-muted xl:block">
+                {copy.brandTagline}
+              </span>
             </span>
           </Link>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             <SearchDialog docs={searchDocs} lang={lang} />
             {NAV_LINKS.map(({ href, label }) => (
               <Link
                 key={href}
                 href={`/${lang}/${href}`}
-                className="hidden rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg md:block"
+                className="hidden shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg lg:block"
               >
                 {label(copy)}
               </Link>
@@ -88,9 +99,9 @@ export function AppShell({
       </header>
 
       {isLanding ? (
-        <main>{children}</main>
+        <main className="flex-1">{children}</main>
       ) : (
-        <div className="mx-auto flex max-w-[1600px] gap-0 px-0 sm:px-5">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-1 gap-0 px-0 sm:px-5">
           <aside className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] w-[17.5rem] shrink-0 overflow-y-auto overscroll-contain pr-3 lg:block">
             <Sidebar lang={lang} />
           </aside>
@@ -98,6 +109,8 @@ export function AppShell({
           <main className="min-w-0 flex-1 border-line lg:border-l lg:pl-8">{children}</main>
         </div>
       )}
+
+      {footer}
 
       <AnimatePresence>
         {drawer && (

@@ -259,7 +259,7 @@ export function SearchDialog({
         type="button"
         onClick={openDialog}
         aria-label={copy.nav.search}
-        className="flex items-center gap-2 rounded-lg border border-line bg-surface-2 py-1.5 pl-2.5 pr-2 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-fg sm:w-60 lg:w-72"
+        className="flex min-w-0 shrink items-center gap-2 rounded-lg border border-line bg-surface-2 py-1.5 pl-2.5 pr-2 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-fg sm:w-52 lg:w-64"
       >
         <Search size={15} className="shrink-0" />
         <span className="hidden truncate sm:inline">

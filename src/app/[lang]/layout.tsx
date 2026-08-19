@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/AppShell";
 import { GlossaryLayer } from "@/components/GlossaryLayer";
+import { SiteFooter } from "@/components/SiteFooter";
 import { HtmlLangSync } from "@/components/HtmlLangSync";
 import { projectGlossary } from "@/lib/glossary";
 import { isLang, LANGS } from "@/lib/i18n";
@@ -30,7 +31,7 @@ export default async function LangLayout({
   return (
     <>
       <HtmlLangSync lang={lang} />
-      <AppShell lang={lang} searchDocs={searchDocs}>
+      <AppShell lang={lang} searchDocs={searchDocs} footer={<SiteFooter lang={lang} />}>
         {children}
       </AppShell>
       <GlossaryLayer glossary={glossary} lang={lang} />
