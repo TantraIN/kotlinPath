@@ -1,0 +1,179 @@
+---
+title: "Inviting the other person: share sheet and deep links"
+description: A shared list with one member is a notes app. This step is the one that makes the whole project make sense — a link you send, and a second phone editing the same data.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+A deep link is an **intent filter plus a route**. Android matches the URL against your
+manifest and hands your Activity the intent; Navigation matches the same URL against a
+route and opens the right screen. Both halves are needed, and each fails differently.
+</KeyIdea>
+
+## Making a list joinable
+
+Joining needs something to join with, and that something must be unguessable — a
+sequential id would let anyone walk into every list in the database.
+
+```kotlin title="data/ListRepository.kt" numbered
+suspend fun createInvite(listId: String): String {
+    val code = UUID.randomUUID().toString().take(12)   // random, not sequential
+    firestore.collection("invites").document(code)
+        .set(mapOf("listId" to listId, "expiresAt" to expiryMillis()))
+        .await()
+    return "https://saathi.example.com/join/$code"
+}
+```
+
+The invite is a separate document rather than the list id in the URL, and that
+indirection buys two things: the link can expire, and it can be revoked without
+changing the list.
+
+## Sending it
+
+```kotlin title="ui/list/ShareInvite.kt" numbered
+val context = LocalContext.current
+
+fun share(url: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.invite_body, url))
+    }
+    context.startActivity(Intent.createChooser(intent, null))
+}
+```
+
+`ACTION_SEND` inside `createChooser` is the whole share sheet: WhatsApp, Messages,
+email, everything the user has installed, with no per-app integration from you.
+`createChooser` rather than `startActivity` directly is what stops Android
+short-circuiting to a previously chosen default, which matters because the person you
+want to send a list to is rarely the person you last shared anything with.
+
+## Receiving it
+
+```xml title="AndroidManifest.xml" numbered
+<activity android:name=".MainActivity" android:exported="true">
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" android:host="saathi.example.com"
+              android:pathPrefix="/join" />
+    </intent-filter>
+</activity>
+```
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+composable<JoinRoute>(
+    deepLinks = listOf(navDeepLink<JoinRoute>(basePath = "https://saathi.example.com/join")),
+) {
+    JoinScreen()
+}
+```
+
+Both are required and they answer different questions. The manifest tells the operating
+system that this URL should open your app at all. The `navDeepLink` tells Navigation
+which screen inside your app the URL means.
+
+`android:autoVerify="true"` is the part with an external dependency: it makes Android
+fetch `https://saathi.example.com/.well-known/assetlinks.json` at install time and
+check that it lists your package name and signing fingerprint. If it does, your app
+opens the link silently. If it does not, the link opens in a browser — which is the
+correct, safe default, because otherwise any app could claim any website.
+
+<Quiz
+  question="Deep links work perfectly in development. After the first release build goes to a tester, tapping the invite link opens the browser instead of the app. The manifest, the assetlinks.json file and the domain are all unchanged."
+  options={[
+    "The release build needs a different `pathPrefix` because the URL is now public",
+    "`assetlinks.json` lists the debug signing fingerprint. The release APK is signed with a different key, so verification fails and Android correctly refuses to open the app — the file must list the SHA-256 of every key that ships, debug and release, or of the Play App Signing key when Play re-signs",
+    "App Links only work for apps installed from Play, not from a shared APK"
+  ]}
+  answer={1}
+  explanation="Verification is a check that the website vouches for this exact app, and the app's identity is its package name plus its signing certificate fingerprint — so changing the signing key changes the identity, and a file that only vouches for the debug key no longer matches what is installed. Android's response is to fall back to the browser rather than trust an unverified claim, which is exactly the behaviour that stops another app from hijacking your domain, so this is the system working rather than failing. The fix is to add every fingerprint that will ever ship to the same `assetlinks.json` — it accepts a list — and to remember that with Play App Signing the fingerprint Google shows you is the one that matters, not your upload key. Path and install source are irrelevant: App Links verify identically for a sideloaded APK."
+/>
+
+## Joining
+
+```kotlin title="ui/join/JoinViewModel.kt" numbered
+fun join(code: String) = viewModelScope.launch {
+    val invite = firestore.collection("invites").document(code).get().await()
+    val listId = invite.getString("listId") ?: return@launch fail(UiText.InviteInvalid)
+    if (invite.getLong("expiresAt")!! < now()) return@launch fail(UiText.InviteExpired)
+
+    firestore.collection("lists").document(listId)
+        .update("members", FieldValue.arrayUnion(uid))    // atomic; no read-then-write
+        .await()
+}
+```
+
+`FieldValue.arrayUnion` is the detail worth stealing. Reading the members array,
+appending, and writing it back would drop a member whenever two people joined at the
+same moment. `arrayUnion` is applied on the server as a single operation and is
+idempotent, so joining twice is harmless.
+
+This also needs a rule of its own, because the rules from the sync step deliberately
+only let existing members write:
+
+```js title="firestore.rules" numbered
+match /invites/{code} {
+  allow read: if request.auth != null;      // reading a code you already possess
+  allow write: if false;                    // only the server or an owner creates these
+}
+```
+
+<Detail summary="The three states of the receiving phone">
+Design for all three, because the tester will hit all three within ten minutes.
+
+**The app is installed and verified.** The link opens the join screen directly. The
+back stack is empty behind it, which is why the toolbar arrow must call `navigateUp()`
+— it synthesises the parent screen — while back returns to WhatsApp.
+
+**The app is not installed.** The link opens the browser. That page should say what
+the app is and offer the APK or the Play listing, and it should keep the code in the
+URL so the link still works after installing.
+
+**The app is installed but not verified.** Android shows a disambiguation dialog, or
+goes straight to the browser. This is the state you will spend the most time on, and
+`adb shell pm get-app-links com.sujeet.saathi` prints exactly why verification failed
+rather than leaving you guessing.
+</Detail>
+
+## Sending the APK itself
+
+Before the last step builds a proper release, it is worth knowing what the recipient
+experiences, because it surprises people.
+
+An APK sent over WhatsApp arrives as a file. Opening it prompts *Install unknown apps*,
+which the user must allow for WhatsApp specifically — a per-source permission, not a
+global switch. Then Play Protect scans it and may warn. None of that is a problem with
+your build; it is Android being reasonable about a file from a chat, and the person you
+are sending it to needs to be told what to expect.
+
+<Pitfall title="Five, and the second is the one that reaches production">
+**Sequential or guessable invite codes.** Anyone can walk into every list. Use a random
+code.
+
+**`assetlinks.json` with only the debug fingerprint.** Links work for you and open a
+browser for everyone else.
+
+**Read-modify-write on `members`.** Two people joining at once, and one of them
+disappears.
+
+**No rule for the invites collection.** Either nobody can read a code, or anybody can
+mint one.
+
+**Assuming a back stack exists.** A deep-linked screen has nothing behind it; use
+`navigateUp()` for Up.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| Invites are random | Two codes share no visible pattern |
+| The share sheet opens | Every messaging app the tester has appears |
+| The link opens the app | Tapping it in WhatsApp does not open a browser |
+| Joining is atomic | Two phones joining together both end up as members |
+| Both phones see the list | An edit on one appears on the other |
+
+Next: signing, shrinking, and turning this into an APK you can actually send.

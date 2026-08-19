@@ -1,0 +1,181 @@
+---
+title: "Doosre ko bulana: share ki chaadar aur deep links"
+description: Ek sadasya wali shared list to notes ka app hai. Yahi wo step hai jo poore project ko matlab deta hai — ek link jo aap bhejte hain, aur doosra phone usi data ko badalta hua.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Deep link ek **intent filter aur ek route** hai. Android us URL ko aapke manifest se
+milakar aapki Activity ko intent thamata hai; Navigation usi URL ko kisi route se milakar
+sahi screen kholta hai. Donon aadhe chahiye, aur donon alag-alag tarah se girte hain.
+</KeyIdea>
+
+## List ko judne layak banana
+
+Judne ke liye kuchh chahiye, aur wo kuchh aisa hona chahiye jiska andaaza na lagaya ja
+sake — silsile mein chalti pehchaan kisi ko bhi database ki har list mein ghusne deti.
+
+```kotlin title="data/ListRepository.kt" numbered
+suspend fun createInvite(listId: String): String {
+    val code = UUID.randomUUID().toString().take(12)   // betarteeb, silsile mein nahi
+    firestore.collection("invites").document(code)
+        .set(mapOf("listId" to listId, "expiresAt" to expiryMillis()))
+        .await()
+    return "https://saathi.example.com/join/$code"
+}
+```
+
+Nimantran URL mein list ki pehchaan rakhne ke bajay alag document hai, aur wo ghumaav do
+cheezein deta hai: link ki umar tay ho sakti hai, aur use list badle bina radd kiya ja
+sakta hai.
+
+## Bhejna
+
+```kotlin title="ui/list/ShareInvite.kt" numbered
+val context = LocalContext.current
+
+fun share(url: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.invite_body, url))
+    }
+    context.startActivity(Intent.createChooser(intent, null))
+}
+```
+
+`createChooser` ke bheetar `ACTION_SEND` hi poori share wali chaadar hai: WhatsApp,
+Messages, email, jo kuchh user ne laga rakha hai, aur aapki taraf se har app ke liye alag
+kuchh jode bina. Seedhe `startActivity` ke bajay `createChooser` hi Android ko pehle chune
+gaye tayshuda app par seedhe koodne se rokta hai, aur yeh maayne rakhta hai kyonki jise
+aap list bhejna chahte hain wo kam hi wahi hota hai jise aapne pichhli baar kuchh bheja tha.
+
+## Paana
+
+```xml title="AndroidManifest.xml" numbered
+<activity android:name=".MainActivity" android:exported="true">
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" android:host="saathi.example.com"
+              android:pathPrefix="/join" />
+    </intent-filter>
+</activity>
+```
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+composable<JoinRoute>(
+    deepLinks = listOf(navDeepLink<JoinRoute>(basePath = "https://saathi.example.com/join")),
+) {
+    JoinScreen()
+}
+```
+
+Donon zaroori hain aur donon alag sawaalon ka jawaab dete hain. Manifest operating system
+ko bataata hai ki yeh URL aapka app khole hi. `navDeepLink` Navigation ko bataata hai ki us
+URL ka matlab aapke app ke bheetar kaun si screen hai.
+
+`android:autoVerify="true"` wo hissa hai jiski nirbharta bahar hai: wo Android se install
+ke waqt `https://saathi.example.com/.well-known/assetlinks.json` mangwata hai aur parakhwata
+hai ki usmein aapke package ka naam aur hastakshar ki chhaap likhi hai ya nahi. Likhi ho to
+aapka app wo link chupchaap khol deta hai. Na ho to link browser mein khulta hai — aur yahi
+sahi, surakshit tayshuda bartaav hai, kyonki warna koi bhi app kisi bhi website par daava
+kar sakta.
+
+<Quiz
+  question="Deep links banate waqt poori tarah chalte hain. Pehla release wala build kisi parakhne wale tak jaane ke baad nimantran ka link chhoone par app nahi, browser khulta hai. Manifest, assetlinks.json wali file aur domain, teenon mein koi badlaav nahi hua."
+  options={[
+    "Release wale build ko alag `pathPrefix` chahiye kyonki ab wo URL saarvajanik hai",
+    "`assetlinks.json` mein debug wale hastakshar ki chhaap likhi hai. Release ka APK doosri chaabi se hastaksharit hai, to parakh naakaam hoti hai aur Android theek hi app kholne se mana kar deta hai — us file mein har us chaabi ki SHA-256 honi chahiye jo bheji jaayegi, debug aur release, ya Play App Signing wali chaabi ki jab Play dobara hastakshar karta hai",
+    "App Links sirf Play se lage app ke liye chalte hain, baante gaye APK ke liye nahi"
+  ]}
+  answer={1}
+  explanation="Wo parakh yeh padtal hai ki website theek isi app ki zamaanat leti hai, aur app ki pehchaan uske package ka naam aur hastakshar wale certificate ki chhaap hai — to hastakshar ki chaabi badalna pehchaan badal deta hai, aur sirf debug wali chaabi ki zamaanat leti file ab lage hue app se mel nahi khaati. Android ka jawaab hai bina parkhe daave par bharosa karne ke bajay browser par laut jaana, aur theek yahi bartaav kisi doosre app ko aapka domain hadapne se rokta hai, to yeh tantra ka chalna hai, girna nahi. Hal yeh hai ki jo bhi chhaap kabhi bheji jaayegi wo sab usi `assetlinks.json` mein jod dijiye — wo kataar leti hai — aur yeh yaad rakhiye ki Play App Signing ke saath jo chhaap Google dikhata hai wahi maayne rakhti hai, aapki upload wali chaabi nahi. Raasta aur kahan se laga, donon bematlab hain: App Links haath se lagaye APK ke liye bhi usi tarah parkhe jaate hain."
+/>
+
+## Judna
+
+```kotlin title="ui/join/JoinViewModel.kt" numbered
+fun join(code: String) = viewModelScope.launch {
+    val invite = firestore.collection("invites").document(code).get().await()
+    val listId = invite.getString("listId") ?: return@launch fail(UiText.InviteInvalid)
+    if (invite.getLong("expiresAt")!! < now()) return@launch fail(UiText.InviteExpired)
+
+    firestore.collection("lists").document(listId)
+        .update("members", FieldValue.arrayUnion(uid))    // ek hi jhatke mein; padho-phir-likho nahi
+        .await()
+}
+```
+
+`FieldValue.arrayUnion` wo byora hai jo chura lene layak hai. Members ki kataar padhkar,
+jodkar, wapas likhna us waqt ek sadasya gira deta jab do log ek hi pal judein. `arrayUnion`
+server par ek hi kaam ki tarah lagta hai aur dobara lagane se kuchh nahi bigadta, to do baar
+judna beasar hai.
+
+Ise apna ek niyam bhi chahiye, kyonki sync wale step ke niyam jaanboojhkar sirf maujooda
+sadasyon ko likhne dete hain:
+
+```js title="firestore.rules" numbered
+match /invites/{code} {
+  allow read: if request.auth != null;      // wo code padhna jo aapke paas pehle se hai
+  allow write: if false;                    // ye sirf server ya maalik banata hai
+}
+```
+
+<Detail summary="Paane wale phone ki teen haalatein">
+Teenon ke liye gadhiye, kyonki parakhne wala das minute mein teenon se takra jaayega.
+
+**App laga hai aur parkha hua hai.** Link seedhe judne wali screen kholta hai. Uske peechhe
+back ka dher khaali hai, aur isiliye toolbar ke teer ko `navigateUp()` bulana hi padta hai —
+wo oopar wali screen gadh deta hai — jabki back WhatsApp par lautata hai.
+
+**App laga hi nahi hai.** Link browser kholta hai. Us panne ko batana chahiye ki app hai kya
+aur APK ya Play ki listing deni chahiye, aur code URL mein rakhna chahiye taki lagane ke baad
+bhi link chale.
+
+**App laga hai par parkha nahi gaya.** Android chunne wala dialog dikhata hai, ya seedhe
+browser par chala jaata hai. Sabse zyada waqt aapka isi haalat mein jaayega, aur
+`adb shell pm get-app-links com.sujeet.saathi` theek-theek chhaap deta hai ki parakh kyon
+naakaam hui, andaaza lagane ke liye chhodne ke bajay.
+</Detail>
+
+## Khud APK bhejna
+
+Aakhri step ke asli release banane se pehle yeh jaan lena kaam ka hai ki paane wala kya
+jhelta hai, kyonki yeh logon ko chaunkata hai.
+
+WhatsApp par bheja APK ek file ki tarah pahunchta hai. Use kholna *Install unknown apps* ki
+manzoori maangta hai, jo user ko khaas WhatsApp ke liye deni padti hai — har srot ki alag
+ijaazat, koi ek jagah wala button nahi. Phir Play Protect use jaanchta hai aur chetavani de
+sakta hai. Ismein se kuchh bhi aapke build ki gadbadi nahi hai; yeh Android ka kisi chat se
+aayi file ke baare mein samajhdaar hona hai, aur jise aap bhej rahe hain use yeh batana
+padega ki kya hone wala hai.
+
+<Pitfall title="Paanch, aur doosri wo hai jo utpaadan tak pahunchti hai">
+**Silsile mein ya andaaze layak nimantran ke code.** Koi bhi har list mein ghus sakta hai.
+Betarteeb code lijiye.
+
+**Sirf debug wali chhaap wala `assetlinks.json`.** Links aapke yahan chalte hain aur baaki
+sabke yahan browser kholte hain.
+
+**`members` par padho-badlo-likho.** Do log ek saath judte hain, aur unmein se ek gaayab ho
+jaata hai.
+
+**Invites wale collection ka koi niyam na hona.** Ya to koi code padh hi nahi sakta, ya koi
+bhi gadh sakta hai.
+
+**Back ka dher maan lena.** Deep link se khuli screen ke peechhe kuchh nahi hota; Up ke liye
+`navigateUp()` lijiye.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Nimantran betarteeb hain | Do codes mein koi dikhta silsila nahi |
+| Share ki chaadar khulti hai | Parakhne wale ke har messaging app dikhte hain |
+| Link app kholta hai | WhatsApp mein use chhoone par browser nahi khulta |
+| Judna ek hi jhatke ka hai | Saath judte do phone, donon sadasya ban jaate hain |
+| Donon phone list dekhte hain | Ek par kiya badlaav doosre par dikhta hai |
+
+Aage: hastakshar, chhantai, aur ise aisa APK banana jo aap sach mein bhej sakein.

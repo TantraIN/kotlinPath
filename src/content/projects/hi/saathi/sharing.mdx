@@ -1,0 +1,175 @@
+---
+title: "दूसरे को बुलाना: share की चादर और deep links"
+description: एक सदस्य वाली साझा सूची तो notes का ऐप है। यही वह कदम है जो पूरे project को मतलब देता है — एक link जो आप भेजते हैं, और दूसरा फोन उसी data को बदलता हुआ।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Deep link एक **intent filter और एक route** है। Android उस URL को आपके manifest से
+मिलाकर आपकी Activity को intent थमाता है; Navigation उसी URL को किसी route से मिलाकर सही
+screen खोलता है। दोनों आधे चाहिए, और दोनों अलग-अलग तरह से गिरते हैं।
+</KeyIdea>
+
+## सूची को जुड़ने लायक बनाना
+
+जुड़ने के लिए कुछ चाहिए, और वह कुछ ऐसा होना चाहिए जिसका अंदाजा न लगाया जा सके — क्रम में
+चलती पहचान किसी को भी database की हर सूची में घुसने देती।
+
+```kotlin title="data/ListRepository.kt" numbered
+suspend fun createInvite(listId: String): String {
+    val code = UUID.randomUUID().toString().take(12)   // बेतरतीब, क्रम में नहीं
+    firestore.collection("invites").document(code)
+        .set(mapOf("listId" to listId, "expiresAt" to expiryMillis()))
+        .await()
+    return "https://saathi.example.com/join/$code"
+}
+```
+
+निमंत्रण URL में सूची की पहचान रखने के बजाय अलग document है, और वह घुमाव दो चीजें देता
+है: link की उम्र तय हो सकती है, और उसे सूची बदले बिना रद्द किया जा सकता है।
+
+## भेजना
+
+```kotlin title="ui/list/ShareInvite.kt" numbered
+val context = LocalContext.current
+
+fun share(url: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.invite_body, url))
+    }
+    context.startActivity(Intent.createChooser(intent, null))
+}
+```
+
+`createChooser` के भीतर `ACTION_SEND` ही पूरी share वाली चादर है: WhatsApp, Messages,
+email, जो कुछ उपयोगकर्ता ने लगा रखा है, और आपकी तरफ से हर ऐप के लिए अलग कुछ जोड़े बिना।
+सीधे `startActivity` के बजाय `createChooser` ही Android को पहले चुने गए तयशुदा ऐप पर सीधे
+कूदने से रोकता है, और यह मायने रखता है क्योंकि जिसे आप सूची भेजना चाहते हैं वह कम ही वही
+होता है जिसे आपने पिछली बार कुछ भेजा था।
+
+## पाना
+
+```xml title="AndroidManifest.xml" numbered
+<activity android:name=".MainActivity" android:exported="true">
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="https" android:host="saathi.example.com"
+              android:pathPrefix="/join" />
+    </intent-filter>
+</activity>
+```
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+composable<JoinRoute>(
+    deepLinks = listOf(navDeepLink<JoinRoute>(basePath = "https://saathi.example.com/join")),
+) {
+    JoinScreen()
+}
+```
+
+दोनों जरूरी हैं और दोनों अलग सवालों का जवाब देते हैं। Manifest operating system को बताता
+है कि यह URL आपका ऐप खोले ही। `navDeepLink` Navigation को बताता है कि उस URL का मतलब आपके
+ऐप के भीतर कौन सी screen है।
+
+`android:autoVerify="true"` वह हिस्सा है जिसकी निर्भरता बाहर है: वह Android से install के
+वक्त `https://saathi.example.com/.well-known/assetlinks.json` मँगवाता है और परखवाता है कि
+उसमें आपके package का नाम और हस्ताक्षर की छाप लिखी है या नहीं। लिखी हो तो आपका ऐप वह link
+चुपचाप खोल देता है। न हो तो link browser में खुलता है — और यही सही, सुरक्षित तयशुदा बर्ताव
+है, क्योंकि वरना कोई भी ऐप किसी भी website पर दावा कर सकता।
+
+<Quiz
+  question="Deep links बनाते वक्त पूरी तरह चलते हैं। पहला release वाला build किसी परखने वाले तक जाने के बाद निमंत्रण का link छूने पर ऐप नहीं, browser खुलता है। Manifest, assetlinks.json वाली file और domain, तीनों में कोई बदलाव नहीं हुआ।"
+  options={[
+    "Release वाले build को अलग `pathPrefix` चाहिए क्योंकि अब वह URL सार्वजनिक है",
+    "`assetlinks.json` में debug वाले हस्ताक्षर की छाप लिखी है। Release का APK दूसरी चाबी से हस्ताक्षरित है, तो परख नाकाम होती है और Android ठीक ही ऐप खोलने से मना कर देता है — उस file में हर उस चाबी की SHA-256 होनी चाहिए जो भेजी जाएगी, debug और release, या Play App Signing वाली चाबी की जब Play दोबारा हस्ताक्षर करता है",
+    "App Links सिर्फ Play से लगे ऐप के लिए चलते हैं, बाँटे गए APK के लिए नहीं"
+  ]}
+  answer={1}
+  explanation="वह परख यह जाँच है कि website ठीक इसी ऐप की जमानत लेती है, और ऐप की पहचान उसके package का नाम और हस्ताक्षर वाले certificate की छाप है — तो हस्ताक्षर की चाबी बदलना पहचान बदल देता है, और सिर्फ debug वाली चाबी की जमानत लेती file अब लगे हुए ऐप से मेल नहीं खाती। Android का जवाब है बिना परखे दावे पर भरोसा करने के बजाय browser पर लौट जाना, और ठीक यही बर्ताव किसी दूसरे ऐप को आपका domain हड़पने से रोकता है, तो यह तंत्र का चलना है, गिरना नहीं। हल यह है कि जो भी छाप कभी भेजी जाएगी वह सब उसी `assetlinks.json` में जोड़ दीजिए — वह कतार लेती है — और यह याद रखिए कि Play App Signing के साथ जो छाप Google दिखाता है वही मायने रखती है, आपकी upload वाली चाबी नहीं। रास्ता और कहाँ से लगा, दोनों बेमतलब हैं: App Links हाथ से लगाए APK के लिए भी उसी तरह परखे जाते हैं।"
+/>
+
+## जुड़ना
+
+```kotlin title="ui/join/JoinViewModel.kt" numbered
+fun join(code: String) = viewModelScope.launch {
+    val invite = firestore.collection("invites").document(code).get().await()
+    val listId = invite.getString("listId") ?: return@launch fail(UiText.InviteInvalid)
+    if (invite.getLong("expiresAt")!! < now()) return@launch fail(UiText.InviteExpired)
+
+    firestore.collection("lists").document(listId)
+        .update("members", FieldValue.arrayUnion(uid))    // एक ही झटके में; पढ़ो-फिर-लिखो नहीं
+        .await()
+}
+```
+
+`FieldValue.arrayUnion` वह ब्योरा है जो चुरा लेने लायक है। Members की कतार पढ़कर, जोड़कर,
+वापस लिखना उस वक्त एक सदस्य गिरा देता जब दो लोग एक ही पल जुड़ें। `arrayUnion` server पर
+एक ही काम की तरह लगता है और दोबारा लगाने से कुछ नहीं बिगड़ता, तो दो बार जुड़ना बेअसर है।
+
+इसे अपना एक नियम भी चाहिए, क्योंकि sync वाले कदम के नियम जानबूझकर सिर्फ मौजूदा सदस्यों को
+लिखने देते हैं:
+
+```js title="firestore.rules" numbered
+match /invites/{code} {
+  allow read: if request.auth != null;      // वह code पढ़ना जो आपके पास पहले से है
+  allow write: if false;                    // ये सिर्फ server या मालिक बनाता है
+}
+```
+
+<Detail summary="पाने वाले फोन की तीन हालतें">
+तीनों के लिए गढ़िए, क्योंकि परखने वाला दस मिनट में तीनों से टकरा जाएगा।
+
+**ऐप लगा है और परखा हुआ है।** Link सीधे जुड़ने वाली screen खोलता है। उसके पीछे back का ढेर
+खाली है, और इसीलिए toolbar के तीर को `navigateUp()` बुलाना ही पड़ता है — वह ऊपर वाली screen
+गढ़ देता है — जबकि back WhatsApp पर लौटाता है।
+
+**ऐप लगा ही नहीं है।** Link browser खोलता है। उस पन्ने को बताना चाहिए कि ऐप है क्या और APK
+या Play की listing देनी चाहिए, और code URL में रखना चाहिए ताकि लगाने के बाद भी link चले।
+
+**ऐप लगा है पर परखा नहीं गया।** Android चुनने वाला dialog दिखाता है, या सीधे browser पर चला
+जाता है। सबसे ज्यादा वक्त आपका इसी हालत में जाएगा, और
+`adb shell pm get-app-links com.sujeet.saathi` ठीक-ठीक छाप देता है कि परख क्यों नाकाम हुई,
+अंदाजा लगाने के लिए छोड़ने के बजाय।
+</Detail>
+
+## खुद APK भेजना
+
+आखिरी कदम के असली release बनाने से पहले यह जान लेना काम का है कि पाने वाला क्या झेलता है,
+क्योंकि यह लोगों को चौंकाता है।
+
+WhatsApp पर भेजा APK एक file की तरह पहुँचता है। उसे खोलना *Install unknown apps* की मंजूरी
+माँगता है, जो उपयोगकर्ता को खास WhatsApp के लिए देनी पड़ती है — हर स्रोत की अलग इजाजत, कोई
+एक जगह वाला बटन नहीं। फिर Play Protect उसे जाँचता है और चेतावनी दे सकता है। इसमें से कुछ भी
+आपके build की गड़बड़ी नहीं है; यह Android का किसी chat से आई file के बारे में समझदार होना है,
+और जिसे आप भेज रहे हैं उसे यह बताना पड़ेगा कि क्या होने वाला है।
+
+<Pitfall title="पाँच, और दूसरी वह है जो उत्पादन तक पहुँचती है">
+**क्रम में या अंदाजे लायक निमंत्रण के code।** कोई भी हर सूची में घुस सकता है। बेतरतीब code
+लीजिए।
+
+**सिर्फ debug वाली छाप वाला `assetlinks.json`।** Links आपके यहाँ चलते हैं और बाकी सबके यहाँ
+browser खोलते हैं।
+
+**`members` पर पढ़ो-बदलो-लिखो।** दो लोग एक साथ जुड़ते हैं, और उनमें से एक गायब हो जाता है।
+
+**Invites वाले collection का कोई नियम न होना।** या तो कोई code पढ़ ही नहीं सकता, या कोई भी
+गढ़ सकता है।
+
+**Back का ढेर मान लेना।** Deep link से खुली screen के पीछे कुछ नहीं होता; Up के लिए
+`navigateUp()` लीजिए।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| निमंत्रण बेतरतीब हैं | दो codes में कोई दिखता क्रम नहीं |
+| Share की चादर खुलती है | परखने वाले के हर messaging ऐप दिखते हैं |
+| Link ऐप खोलता है | WhatsApp में उसे छूने पर browser नहीं खुलता |
+| जुड़ना एक ही झटके का है | साथ जुड़ते दो फोन, दोनों सदस्य बन जाते हैं |
+| दोनों फोन सूची देखते हैं | एक पर किया बदलाव दूसरे पर दिखता है |
+
+आगे: हस्ताक्षर, छँटाई, और इसे ऐसा APK बनाना जो आप सच में भेज सकें।
