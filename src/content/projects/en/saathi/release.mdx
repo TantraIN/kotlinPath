@@ -1,0 +1,211 @@
+---
+title: Signing, R8, and an APK you can actually send
+description: The last step, and the one where an app that worked perfectly all week starts crashing. Everything here exists because the release build is a different build, not the same one with a different name.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+A release build is **not your debug build with a flag flipped**. R8 has removed a third
+of the code, renamed most of what is left, and a different key signed the result. Every
+bug in this step is a bug that can only exist after those three things happen.
+</KeyIdea>
+
+## The keystore
+
+```bash title="Create it once, keep it forever"
+keytool -genkey -v -keystore saathi-release.jks -keyalg RSA \
+  -keysize 2048 -validity 10000 -alias saathi
+```
+
+That file is the app's identity. Lose it and you cannot update your own app — not on
+Play, not for the friend who already installed the APK, because an update signed with a
+different key is a different app to Android. Back it up somewhere that is not this
+laptop, today.
+
+```properties title="keystore.properties — gitignored"
+storeFile=/Users/you/keys/saathi-release.jks
+storePassword=…
+keyAlias=saathi
+keyPassword=…
+```
+
+```kotlin title="app/build.gradle.kts" numbered
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) load(file.inputStream())      // absent on a fresh clone; do not crash
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String?
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
+The `if (file.exists())` matters more than it looks. Without it, anyone cloning the
+repository cannot even open the project, because configuration fails before any task
+runs — and the debug build they wanted needs none of this.
+
+Add `keystore.properties` and `*.jks` to `.gitignore` before the first commit that
+touches them. A password committed once stays in history after the line is deleted, and
+the only real fix at that point is a new key.
+
+## R8, and the bug it is about to give you
+
+```kotlin title="proguard-rules.pro" numbered
+# Firestore reads and writes these by reflection, so R8 cannot see the field names
+-keep class com.sujeet.saathi.data.remote.** { *; }
+-keepclassmembers class com.sujeet.saathi.data.remote.** {
+    <init>();          # Firestore needs a no-argument constructor
+}
+```
+
+<Quiz
+  question="The release build installs and runs. Sign-in works, the list loads from Room, and adding an item works offline. But every item that syncs down from Firestore has an empty title and `done` set to false. The debug build is perfect."
+  options={[
+    "The release build is hitting a different Firestore project, so the documents really are empty",
+    "R8 renamed the DTO's fields. Firestore maps a document by matching field names to property names using reflection, and after obfuscation `text` is called `a` — so no document field matches, every property gets its default, and nothing throws because a missing field is not an error. Keeping the DTO classes fixes it",
+    "`SetOptions.merge()` in the sync worker is overwriting the fields with nulls"
+  ]}
+  answer={1}
+  explanation="Firestore's object mapping is name-based reflection, so it depends on the compiled property names still being the ones the documents were written with — and R8's whole job is to shorten those names, which it does safely for everything it can see being called and unsafely for everything reached by reflection, because reflection is invisible to it. The failure is quiet rather than loud precisely because a name that does not match reads as a field the document simply does not have, so the mapper fills in defaults and returns a perfectly valid object full of nothing. That silence is what makes this a release-only bug people ship: nothing in the debug build, where no renaming happens, can reveal it. A different project would fail authentication or the security rules instead, and `merge()` writes only the fields present, so it cannot null anything out."
+/>
+
+This is the single most common release-only crash class in Android, and the shape
+generalises: anything reached by name at run time — a Gson or Moshi model, a
+`Class.forName`, a resource looked up with `getIdentifier`, a Room type converter
+referenced only by annotation — must be kept, because R8 cannot see the call.
+
+Test the release build before sending it. Not the debug build one more time — the
+release build, installed on a real device, with sync exercised.
+
+## Building it
+
+```bash title="The APK to send"
+./gradlew assembleRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
+```bash title="The bundle for Play"
+./gradlew bundleRelease
+```
+
+Both, and for different reasons. Play wants an `.aab` so it can generate a
+device-specific APK per user, which is smaller. A person you message wants an `.apk`,
+because a bundle is not installable. Sending someone an `.aab` and telling them to
+install it is a small, very common embarrassment.
+
+<Detail summary="Crash reports you can read">
+```kotlin title="app/build.gradle.kts" numbered
+plugins { alias(libs.plugins.crashlytics) }
+
+android {
+    buildTypes {
+        release {
+            configure<CrashlyticsExtension> { nativeSymbolUploadEnabled = false }
+        }
+    }
+}
+```
+
+The Crashlytics Gradle plugin uploads the R8 `mapping.txt` automatically, and without
+it every release stack trace is a wall of `a.b.c` — technically a stack trace, and
+useless. That file is generated per build and overwritten by the next one, so keep the
+build output as a CI artifact if you build anywhere but your own machine.
+
+Two more lines make reports actually diagnosable, and both are from the Firebase step:
+
+```kotlin title="Context on every crash" numbered
+FirebaseCrashlytics.getInstance().apply {
+    setUserId(uid)                              // an opaque id, never an email
+    setCustomKey("listId", currentListId)
+    setCustomKey("pendingItems", pendingCount)
+}
+```
+
+A crash with a `pendingItems` count of 400 and a crash with a count of 2 are almost
+certainly different bugs, and without the key they are one line in the same report.
+</Detail>
+
+## Versioning, before the first send
+
+```kotlin title="app/build.gradle.kts" numbered
+defaultConfig {
+    versionCode = 1        // an integer; Play refuses an upload that does not increase it
+    versionName = "1.0"    // what the user sees; anything you like
+}
+```
+
+`versionCode` is the only thing Android compares when deciding whether an APK is an
+update. Send a friend version 1, fix a bug, forget to bump, and their phone reports
+"app not installed" with no explanation — because from its point of view you are
+reinstalling the same version over itself with a different content hash.
+
+## The last checks before you send it
+
+<Timeline>
+  <TimelineItem title="Install the release APK on a clean device" meta="not an update">
+    Uninstall the debug build first. Two builds with different keys cannot coexist under
+    the same `applicationId` anyway, and this is when you find that out.
+  </TimelineItem>
+  <TimelineItem title="Sign in, and add the release SHA-1 first" meta="Firebase console">
+    Google sign-in checks the signing fingerprint. The release key is a different key,
+    so it needs its own entry — and this is the most common "it worked yesterday".
+  </TimelineItem>
+  <TimelineItem title="Sync, offline, and back online" meta="the whole loop">
+    Add an item in aeroplane mode, force-stop the app, reconnect, and confirm it arrives
+    on the second phone.
+  </TimelineItem>
+  <TimelineItem title="Send it, and say what they will see" meta="the human part">
+    The recipient must allow installs from their messaging app and may see a Play Protect
+    warning. Tell them beforehand.
+  </TimelineItem>
+</Timeline>
+
+<Pitfall title="Five, and every one of them is release-only">
+**Reflection-reached classes not kept.** Empty models, silently, only in release.
+
+**The release SHA-1 not in Firebase.** Sign-in works for you and fails for everyone.
+
+**No `mapping.txt` uploaded.** Every crash report is unreadable.
+
+**`versionCode` not increased.** The update refuses to install, with no useful message.
+
+**Sending an `.aab` to a person.** It is for Play; a person needs an `.apk`.
+</Pitfall>
+
+## You are done
+
+Take a moment with what this is. The list on your phone and the list on theirs are the
+same list. It renders before you can see it load, because the database answered rather
+than the network. It works in a basement, and catches up when it comes out. Back does
+what a person expects, including under a thumb halfway through a swipe. And it is signed
+with a key that means the next version can replace this one.
+
+That is not a tutorial app. Every phase of the course is in it, doing a job — and the
+honest way to find the next thing to learn is to open it in a week and notice what
+annoys you.
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| The keystore is safe | It is backed up off this machine and gitignored |
+| Release runs | Installed from `assembleRelease`, not from Studio |
+| R8 rules are right | Synced items have their text in the release build |
+| Crashes are readable | A forced crash appears in Crashlytics with real names |
+| It installs for someone else | A second person has it running from your link |

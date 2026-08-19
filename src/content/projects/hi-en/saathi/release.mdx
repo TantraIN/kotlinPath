@@ -1,0 +1,214 @@
+---
+title: Hastakshar, R8, aur aisa APK jo aap sach mein bhej sakein
+description: Aakhri step, aur wahi jahan poore hafte badhiya chalta app girne lagta hai. Yahan ki har cheez isliye hai ki release wala build ek alag build hai, wahi build naye naam ke saath nahi.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Release wala build **aapka debug wala build nahi hai jiska ek jhanda palat diya gaya ho**.
+R8 ek-tihaai code hata chuka hai, bache hue mein se zyadatar ke naam badal chuka hai, aur
+nateeje par kisi aur chaabi se hastakshar hue hain. Is step ki har gadbadi wahi gadbadi hai
+jo un teen cheezon ke baad hi maujood ho sakti hai.
+</KeyIdea>
+
+## Keystore
+
+```bash title="Ek baar banaiye, hamesha rakhiye"
+keytool -genkey -v -keystore saathi-release.jks -keyalg RSA \
+  -keysize 2048 -validity 10000 -alias saathi
+```
+
+Wo file app ki pehchaan hai. Use kho dijiye aur aap apne hi app ko update nahi kar sakte —
+na Play par, na us dost ke liye jo APK pehle hi laga chuka hai, kyonki kisi doosri chaabi se
+hastaksharit update Android ke liye alag app hai. Use aaj hi kahin aisi jagah sahejiye jo
+yeh laptop na ho.
+
+```properties title="keystore.properties — gitignore ki hui"
+storeFile=/Users/you/keys/saathi-release.jks
+storePassword=…
+keyAlias=saathi
+keyPassword=…
+```
+
+```kotlin title="app/build.gradle.kts" numbered
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) load(file.inputStream())      // nayi clone par nahi hoti; giriye mat
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String?
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
+`if (file.exists())` dikhne se zyada maayne rakhta hai. Uske bina repository clone karne
+wala koi bhi project khol tak nahi sakta, kyonki kisi task ke chalne se pehle hi sajaavat
+gir jaati hai — aur jo debug wala build wo chahta tha use ismein se kuchh bhi nahi chahiye.
+
+`keystore.properties` aur `*.jks` ko unhein chhoone wale pehle commit se pehle `.gitignore`
+mein daaliye. Ek baar commit hua password line mitne ke baad bhi itihaas mein rehta hai, aur
+us mod par akela asli hal nayi chaabi hai.
+
+## R8, aur wo gadbadi jo wo abhi aapko dene wala hai
+
+```kotlin title="proguard-rules.pro" numbered
+# Firestore inhein reflection se padhta-likhta hai, to R8 ko khaanon ke naam dikhte hi nahi
+-keep class com.sujeet.saathi.data.remote.** { *; }
+-keepclassmembers class com.sujeet.saathi.data.remote.** {
+    <init>();          # Firestore ko bina argument wala constructor chahiye
+}
+```
+
+<Quiz
+  question="Release wala build lag jaata hai aur chalta hai. Sign-in chalta hai, list Room se aati hai, aur bina net cheez jodna bhi chalta hai. Par Firestore se neeche aati har cheez ka sheershak khaali hai aur `done` galat. Debug wala build bilkul sahi hai."
+  options={[
+    "Release wala build kisi doosre Firestore ke project se baat kar raha hai, to wo documents sach mein khaali hain",
+    "R8 ne DTO ke khaanon ke naam badal diye. Firestore kisi document ko reflection se khaanon ke naam aur khoobiyon ke naam milakar bithata hai, aur naam uljhne ke baad `text` ka naam `a` hai — to document ka koi khaana mel nahi khaata, har khoobi ko uska tayshuda maan milta hai, aur kuchh girta bhi nahi kyonki chhoota hua khaana koi error nahi hai. DTO wali classes rakh lena ise theek kar deta hai",
+    "Sync wale worker ka `SetOptions.merge()` un khaanon ki jagah null likh raha hai"
+  ]}
+  answer={1}
+  explanation="Firestore ka cheezon ko bithana naam ke sahare reflection hai, to wo is par tika hai ki compile hui khoobiyon ke naam wahi rahein jinse wo documents likhe gaye the — aur R8 ka poora kaam unhi naamon ko chhota karna hai, jo wo har us cheez ke liye surakshit tareeke se karta hai jise bulaya jaata dikhta hai aur har us cheez ke liye asurakshit tareeke se jo reflection se pahunchi jaati hai, kyonki reflection use dikhta hi nahi. Naakami zor se nahi, chupchaap aati hai, theek isiliye ki jo naam mel nahi khaata wo aisa khaana padha jaata hai jo us document mein hai hi nahi, to bithane wala tayshuda maan bhar deta hai aur poori tarah jaayaz par khaali cheez lauta deta hai. Wahi chuppi ise sirf release mein dikhne wali, bhej di jaane wali gadbadi banati hai: debug wale build mein, jahan koi naam badalta hi nahi, ise kholne layak kuchh hai hi nahi. Doosra project pehchaan ya suraksha ke niyamon par girta, aur `merge()` sirf maujood khaane likhta hai, to wo kuchh null kar hi nahi sakta."
+/>
+
+Android mein sirf release mein girne wali gadbadiyon ka yeh sabse aam kism hai, aur shakl
+aage bhi wahi rehti hai: chalte waqt naam se pahunchi har cheez — koi Gson ya Moshi ka model,
+koi `Class.forName`, `getIdentifier` se dhoondha gaya koi sansaadhan, sirf annotation se
+bulaya gaya Room ka koi converter — rakhni padegi, kyonki R8 ko wo call dikhti hi nahi.
+
+Release wala build bhejne se pehle parkhiye. Debug wala ek baar aur nahi — release wala,
+asli upkaran par laga hua, sync chalakar.
+
+## Ise banana
+
+```bash title="Bhejne wala APK"
+./gradlew assembleRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
+```bash title="Play ke liye bundle"
+./gradlew bundleRelease
+```
+
+Donon, aur alag-alag wajahon se. Play ko `.aab` chahiye taki wo har user ke liye uske upkaran
+ka APK bana sake, jo chhota hota hai. Jise aap message karte hain use `.apk` chahiye, kyonki
+bundle lagaya hi nahi ja sakta. Kisi ko `.aab` bhejkar lagane ko kehna chhoti aur bahut aam
+sharmindagi hai.
+
+<Detail summary="Padhi ja sakne wali crash ki reportein">
+```kotlin title="app/build.gradle.kts" numbered
+plugins { alias(libs.plugins.crashlytics) }
+
+android {
+    buildTypes {
+        release {
+            configure<CrashlyticsExtension> { nativeSymbolUploadEnabled = false }
+        }
+    }
+}
+```
+
+Crashlytics ka Gradle wala plugin R8 ki `mapping.txt` apne aap bhej deta hai, aur uske bina
+har release ki stack trace `a.b.c` ki deewar hai — takneeki taur par stack trace, aur bekaar.
+Wo file har build par banti hai aur agle se mit jaati hai, to agar aap apni machine ke alawa
+kahin build karte hain to us nateeje ko CI ke saamaan ki tarah rakhiye.
+
+Do aur lainein reportein ko sach mein suljhane layak banati hain, aur donon Firebase wale
+step se hain:
+
+```kotlin title="Har crash par kuchh khabar" numbered
+FirebaseCrashlytics.getInstance().apply {
+    setUserId(uid)                              // apaardarshi pehchaan, kabhi email nahi
+    setCustomKey("listId", currentListId)
+    setCustomKey("pendingItems", pendingCount)
+}
+```
+
+400 bakaya cheezon wali crash aur 2 wali crash lagbhag pakke taur par alag gadbadiyan hain,
+aur us chaabi ke bina wo usi ek report ki ek line hain.
+</Detail>
+
+## Pehli baar bhejne se pehle, versions
+
+```kotlin title="app/build.gradle.kts" numbered
+defaultConfig {
+    versionCode = 1        // poornaank; na badhne wala upload Play thukra deta hai
+    versionName = "1.0"    // user ko dikhne wala; jo chahein
+}
+```
+
+Koi APK update hai ya nahi, yeh tay karte waqt Android sirf `versionCode` milata hai. Kisi
+dost ko version 1 bhejiye, koi gadbadi theek kijiye, badhana bhool jaaiye, aur uska phone bina
+kisi wajah ke "app not installed" keh deta hai — kyonki uski nazar mein aap wahi version usi
+ke oopar dobara laga rahe hain, bas alag saamagri ke saath.
+
+## Bhejne se pehle aakhri parakhein
+
+<Timeline>
+  <TimelineItem title="Saaf upkaran par release ka APK lagaiye" meta="update nahi">
+    Pehle debug wala build hataiye. Ek hi `applicationId` ke neeche alag chaabiyon wale do
+    build waise bhi saath nahi reh sakte, aur pata yahin chalta hai.
+  </TimelineItem>
+  <TimelineItem title="Pehle release ka SHA-1 jodiye, phir sign in kijiye" meta="Firebase ka console">
+    Google sign-in hastakshar ki chhaap parakhta hai. Release ki chaabi alag chaabi hai, to
+    use apni entry chahiye — aur "kal to chal raha tha" ki yahi sabse aam wajah hai.
+  </TimelineItem>
+  <TimelineItem title="Sync, bina net, phir net ke saath" meta="poora chakkar">
+    Aeroplane mode mein cheez jodiye, app jabran band kijiye, net laiye, aur pakka kijiye ki
+    wo doosre phone par pahunchti hai.
+  </TimelineItem>
+  <TimelineItem title="Bhejiye, aur bata dijiye ki unhein kya dikhega" meta="insaani hissa">
+    Paane wale ko apne messaging app se lagane ki ijaazat deni hogi aur Play Protect ki
+    chetavani dikh sakti hai. Unhein pehle hi bata dijiye.
+  </TimelineItem>
+</Timeline>
+
+<Pitfall title="Paanch, aur har ek sirf release mein hoti hai">
+**Reflection se pahunchi classes na rakhna.** Khaali models, chupchaap, sirf release mein.
+
+**Release ka SHA-1 Firebase mein na hona.** Sign-in aapke yahan chalta hai aur baaki sabke
+yahan nahi.
+
+**`mapping.txt` na bhejna.** Har crash ki report padhi hi nahi jaati.
+
+**`versionCode` na badhana.** Update lagne se mana kar deta hai, bina kisi kaam ke sandesh ke.
+
+**Kisi insaan ko `.aab` bhejna.** Wo Play ke liye hai; insaan ko `.apk` chahiye.
+</Pitfall>
+
+## Aap poora kar chuke hain
+
+Ek pal rukkar dekhiye ki yeh hai kya. Aapke phone ki list aur unke phone ki list, ek hi list
+hai. Wo aapke use ladte dekh paane se pehle ban jaati hai, kyonki jawaab net ne nahi, database
+ne diya. Wo tehkhane mein chalti hai, aur bahar aakar pichhda hua poora kar leti hai. Back
+wahi karta hai jo insaan ummeed karta hai, aadhi khinchaai par pade angoothe ke neeche bhi.
+Aur us par aisi chaabi ke hastakshar hain jiska matlab hai ki agla version iski jagah le sakega.
+
+Yeh koi sikhane wala app nahi hai. Course ka har charan usmein hai, koi kaam karta hua — aur
+aage kya seekhna hai yeh dhoondhne ka imaandaar tareeka yeh hai ki use hafte bhar baad kholiye
+aur dekhiye ki kya khatakta hai.
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Keystore surakshit hai | Wo is machine ke bahar saheji hai aur gitignore ki hui hai |
+| Release chalta hai | `assembleRelease` se laga hua, Studio se nahi |
+| R8 ke niyam sahi hain | Release wale build mein sync hui cheezon ka text maujood hai |
+| Crashes padhi ja sakti hain | Jabran karai crash Crashlytics mein asli naamon ke saath dikhti hai |
+| Yeh kisi aur ke yahan lagta hai | Aapke link se doosra vyakti use chala raha hai |

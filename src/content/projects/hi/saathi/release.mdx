@@ -1,0 +1,210 @@
+---
+title: हस्ताक्षर, R8, और ऐसा APK जो आप सच में भेज सकें
+description: आखिरी कदम, और वही जहाँ पूरे हफ्ते बढ़िया चलता ऐप गिरने लगता है। यहाँ की हर चीज इसलिए है कि release वाला build एक अलग build है, वही build नए नाम के साथ नहीं।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Release वाला build **आपका debug वाला build नहीं है जिसका एक झंडा पलट दिया गया हो**। R8
+एक-तिहाई code हटा चुका है, बचे हुए में से ज्यादातर के नाम बदल चुका है, और नतीजे पर किसी
+और चाबी से हस्ताक्षर हुए हैं। इस कदम की हर गड़बड़ी वही गड़बड़ी है जो उन तीन चीजों के बाद
+ही मौजूद हो सकती है।
+</KeyIdea>
+
+## Keystore
+
+```bash title="एक बार बनाइए, हमेशा रखिए"
+keytool -genkey -v -keystore saathi-release.jks -keyalg RSA \
+  -keysize 2048 -validity 10000 -alias saathi
+```
+
+वह file ऐप की पहचान है। उसे खो दीजिए और आप अपने ही ऐप को update नहीं कर सकते — न Play
+पर, न उस दोस्त के लिए जो APK पहले ही लगा चुका है, क्योंकि किसी दूसरी चाबी से हस्ताक्षरित
+update Android के लिए अलग ऐप है। उसे आज ही कहीं ऐसी जगह सहेजिए जो यह laptop न हो।
+
+```properties title="keystore.properties — gitignore की हुई"
+storeFile=/Users/you/keys/saathi-release.jks
+storePassword=…
+keyAlias=saathi
+keyPassword=…
+```
+
+```kotlin title="app/build.gradle.kts" numbered
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) load(file.inputStream())      // नई clone पर नहीं होती; गिरिए मत
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String?
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
+`if (file.exists())` दिखने से ज्यादा मायने रखता है। उसके बिना repository clone करने वाला
+कोई भी project खोल तक नहीं सकता, क्योंकि किसी task के चलने से पहले ही सजावट गिर जाती है —
+और जो debug वाला build वह चाहता था उसे इसमें से कुछ भी नहीं चाहिए।
+
+`keystore.properties` और `*.jks` को उन्हें छूने वाले पहले commit से पहले `.gitignore` में
+डालिए। एक बार commit हुआ password लाइन मिटने के बाद भी इतिहास में रहता है, और उस मोड़ पर
+अकेला असली हल नई चाबी है।
+
+## R8, और वह गड़बड़ी जो वह अभी आपको देने वाला है
+
+```kotlin title="proguard-rules.pro" numbered
+# Firestore इन्हें reflection से पढ़ता-लिखता है, तो R8 को खानों के नाम दिखते ही नहीं
+-keep class com.sujeet.saathi.data.remote.** { *; }
+-keepclassmembers class com.sujeet.saathi.data.remote.** {
+    <init>();          # Firestore को बिना argument वाला constructor चाहिए
+}
+```
+
+<Quiz
+  question="Release वाला build लग जाता है और चलता है। Sign-in चलता है, सूची Room से आती है, और बिना नेट चीज जोड़ना भी चलता है। पर Firestore से नीचे आती हर चीज का शीर्षक खाली है और `done` गलत। Debug वाला build बिलकुल सही है।"
+  options={[
+    "Release वाला build किसी दूसरे Firestore के project से बात कर रहा है, तो वे documents सच में खाली हैं",
+    "R8 ने DTO के खानों के नाम बदल दिए। Firestore किसी document को reflection से खानों के नाम और खूबियों के नाम मिलाकर बिठाता है, और नाम उलझने के बाद `text` का नाम `a` है — तो document का कोई खाना मेल नहीं खाता, हर खूबी को उसका तयशुदा मान मिलता है, और कुछ गिरता भी नहीं क्योंकि छूटा हुआ खाना कोई error नहीं है। DTO वाली classes रख लेना इसे ठीक कर देता है",
+    "Sync वाले worker का `SetOptions.merge()` उन खानों की जगह null लिख रहा है"
+  ]}
+  answer={1}
+  explanation="Firestore का चीजों को बिठाना नाम के सहारे reflection है, तो वह इस पर टिका है कि compile हुई खूबियों के नाम वही रहें जिनसे वे documents लिखे गए थे — और R8 का पूरा काम उन्हीं नामों को छोटा करना है, जो वह हर उस चीज के लिए सुरक्षित तरीके से करता है जिसे बुलाया जाता दिखता है और हर उस चीज के लिए असुरक्षित तरीके से जो reflection से पहुँची जाती है, क्योंकि reflection उसे दिखता ही नहीं। नाकामी जोर से नहीं, चुपचाप आती है, ठीक इसीलिए कि जो नाम मेल नहीं खाता वह ऐसा खाना पढ़ा जाता है जो उस document में है ही नहीं, तो बिठाने वाला तयशुदा मान भर देता है और पूरी तरह जायज पर खाली चीज लौटा देता है। वही चुप्पी इसे सिर्फ release में दिखने वाली, भेज दी जाने वाली गड़बड़ी बनाती है: debug वाले build में, जहाँ कोई नाम बदलता ही नहीं, इसे खोलने लायक कुछ है ही नहीं। दूसरा project पहचान या सुरक्षा के नियमों पर गिरता, और `merge()` सिर्फ मौजूद खाने लिखता है, तो वह कुछ null कर ही नहीं सकता।"
+/>
+
+Android में सिर्फ release में गिरने वाली गड़बड़ियों का यह सबसे आम किस्म है, और शक्ल आगे भी
+वही रहती है: चलते वक्त नाम से पहुँची हर चीज — कोई Gson या Moshi का model, कोई
+`Class.forName`, `getIdentifier` से ढूँढ़ा गया कोई संसाधन, सिर्फ annotation से बुलाया गया
+Room का कोई converter — रखनी पड़ेगी, क्योंकि R8 को वह call दिखती ही नहीं।
+
+Release वाला build भेजने से पहले परखिए। Debug वाला एक बार और नहीं — release वाला, असली
+उपकरण पर लगा हुआ, sync चलाकर।
+
+## इसे बनाना
+
+```bash title="भेजने वाला APK"
+./gradlew assembleRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
+```bash title="Play के लिए bundle"
+./gradlew bundleRelease
+```
+
+दोनों, और अलग-अलग वजहों से। Play को `.aab` चाहिए ताकि वह हर उपयोगकर्ता के लिए उसके उपकरण
+का APK बना सके, जो छोटा होता है। जिसे आप message करते हैं उसे `.apk` चाहिए, क्योंकि bundle
+लगाया ही नहीं जा सकता। किसी को `.aab` भेजकर लगाने को कहना छोटी और बहुत आम शर्मिंदगी है।
+
+<Detail summary="पढ़ी जा सकने वाली crash की रिपोर्टें">
+```kotlin title="app/build.gradle.kts" numbered
+plugins { alias(libs.plugins.crashlytics) }
+
+android {
+    buildTypes {
+        release {
+            configure<CrashlyticsExtension> { nativeSymbolUploadEnabled = false }
+        }
+    }
+}
+```
+
+Crashlytics का Gradle वाला plugin R8 की `mapping.txt` अपने आप भेज देता है, और उसके बिना हर
+release की stack trace `a.b.c` की दीवार है — तकनीकी तौर पर stack trace, और बेकार। वह file
+हर build पर बनती है और अगले से मिट जाती है, तो अगर आप अपनी मशीन के अलावा कहीं build करते
+हैं तो उस नतीजे को CI के सामान की तरह रखिए।
+
+दो और लाइनें रिपोर्टों को सच में सुलझाने लायक बनाती हैं, और दोनों Firebase वाले कदम से हैं:
+
+```kotlin title="हर crash पर कुछ खबर" numbered
+FirebaseCrashlytics.getInstance().apply {
+    setUserId(uid)                              // अपारदर्शी पहचान, कभी email नहीं
+    setCustomKey("listId", currentListId)
+    setCustomKey("pendingItems", pendingCount)
+}
+```
+
+400 बकाया चीजों वाली crash और 2 वाली crash लगभग पक्के तौर पर अलग गड़बड़ियाँ हैं, और उस
+चाबी के बिना वे उसी एक रिपोर्ट की एक लाइन हैं।
+</Detail>
+
+## पहली बार भेजने से पहले, versions
+
+```kotlin title="app/build.gradle.kts" numbered
+defaultConfig {
+    versionCode = 1        // पूर्णांक; न बढ़ने वाला upload Play ठुकरा देता है
+    versionName = "1.0"    // उपयोगकर्ता को दिखने वाला; जो चाहें
+}
+```
+
+कोई APK update है या नहीं, यह तय करते वक्त Android सिर्फ `versionCode` मिलाता है। किसी
+दोस्त को version 1 भेजिए, कोई गड़बड़ी ठीक कीजिए, बढ़ाना भूल जाइए, और उसका फोन बिना किसी
+वजह के "app not installed" कह देता है — क्योंकि उसकी नजर में आप वही version उसी के ऊपर
+दोबारा लगा रहे हैं, बस अलग सामग्री के साथ।
+
+## भेजने से पहले आखिरी परखें
+
+<Timeline>
+  <TimelineItem title="साफ उपकरण पर release का APK लगाइए" meta="update नहीं">
+    पहले debug वाला build हटाइए। एक ही `applicationId` के नीचे अलग चाबियों वाले दो build
+    वैसे भी साथ नहीं रह सकते, और पता यहीं चलता है।
+  </TimelineItem>
+  <TimelineItem title="पहले release का SHA-1 जोड़िए, फिर sign in कीजिए" meta="Firebase का console">
+    Google sign-in हस्ताक्षर की छाप परखता है। Release की चाबी अलग चाबी है, तो उसे अपनी
+    entry चाहिए — और "कल तो चल रहा था" की यही सबसे आम वजह है।
+  </TimelineItem>
+  <TimelineItem title="Sync, बिना नेट, फिर नेट के साथ" meta="पूरा चक्कर">
+    Aeroplane mode में चीज जोड़िए, ऐप जबरन बंद कीजिए, नेट लाइए, और पक्का कीजिए कि वह दूसरे
+    फोन पर पहुँचती है।
+  </TimelineItem>
+  <TimelineItem title="भेजिए, और बता दीजिए कि उन्हें क्या दिखेगा" meta="इंसानी हिस्सा">
+    पाने वाले को अपने messaging ऐप से लगाने की इजाजत देनी होगी और Play Protect की चेतावनी
+    दिख सकती है। उन्हें पहले ही बता दीजिए।
+  </TimelineItem>
+</Timeline>
+
+<Pitfall title="पाँच, और हर एक सिर्फ release में होती है">
+**Reflection से पहुँची classes न रखना।** खाली models, चुपचाप, सिर्फ release में।
+
+**Release का SHA-1 Firebase में न होना।** Sign-in आपके यहाँ चलता है और बाकी सबके यहाँ नहीं।
+
+**`mapping.txt` न भेजना।** हर crash की रिपोर्ट पढ़ी ही नहीं जाती।
+
+**`versionCode` न बढ़ाना।** Update लगने से मना कर देता है, बिना किसी काम के संदेश के।
+
+**किसी इंसान को `.aab` भेजना।** वह Play के लिए है; इंसान को `.apk` चाहिए।
+</Pitfall>
+
+## आप पूरा कर चुके हैं
+
+एक पल रुककर देखिए कि यह है क्या। आपके फोन की सूची और उनके फोन की सूची, एक ही सूची है। वह
+आपके उसे लदते देख पाने से पहले बन जाती है, क्योंकि जवाब नेट ने नहीं, database ने दिया। वह
+तहखाने में चलती है, और बाहर आकर पिछड़ा हुआ पूरा कर लेती है। Back वही करता है जो इंसान
+उम्मीद करता है, आधी खिंचाई पर पड़े अँगूठे के नीचे भी। और उस पर ऐसी चाबी के हस्ताक्षर हैं
+जिसका मतलब है कि अगला version इसकी जगह ले सकेगा।
+
+यह कोई सिखाने वाला ऐप नहीं है। Course का हर चरण उसमें है, कोई काम करता हुआ — और आगे क्या
+सीखना है यह ढूँढ़ने का ईमानदार तरीका यह है कि उसे हफ्ते भर बाद खोलिए और देखिए कि क्या
+खटकता है।
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| Keystore सुरक्षित है | वह इस मशीन के बाहर सहेजी है और gitignore की हुई है |
+| Release चलता है | `assembleRelease` से लगा हुआ, Studio से नहीं |
+| R8 के नियम सही हैं | Release वाले build में sync हुई चीजों का text मौजूद है |
+| Crashes पढ़ी जा सकती हैं | जबरन कराई crash Crashlytics में असली नामों के साथ दिखती है |
+| यह किसी और के यहाँ लगता है | आपके link से दूसरा व्यक्ति उसे चला रहा है |
