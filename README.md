@@ -73,10 +73,11 @@ Hover any underlined token above to see where it comes from.
 
 ### Code fences
 
-````markdown
-```kotlin title="MainActivity.kt" numbered runnable
+
+```kotlin
+title="MainActivity.kt" numbered runnable
 ```
-````
+
 
 | Flag | Effect |
 | --- | --- |
