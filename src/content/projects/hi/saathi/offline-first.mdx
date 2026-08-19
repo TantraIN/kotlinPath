@@ -1,0 +1,163 @@
+---
+title: Room, सच का स्रोत
+description: बिना नेट पहले चलना कोई सुविधा नहीं जो आप आखिर में जोड़ते हैं। वह एक नियम है कि UI किससे पढ़ती है, और बाकी सब उसी से निकलता है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+UI **सिर्फ Room** से collect करती है। नेट database में लिखने वाला है, कोई दूसरी चीज
+नहीं जिसे screen भी पढ़े। वही एक नियम ऐप को तुरंत खोलता है, ट्रेन में चलाता है, और हर
+screen की अपनी loading वाली हालत के बजाय ठीक एक हालत देता है।
+</KeyIdea>
+
+## इसकी शक्ल
+
+<LayerStack
+  title="बिना नेट पहले चलने वाले ऐप में data बहता कहाँ है"
+  description="UI सिर्फ Room से पढ़ती है। Firestore नीचे से Room में लिखता है और सीधे UI तक कभी नहीं पहुँचता, तो बिना नेट होना खास मामला नहीं, आम रास्ता है।"
+  youWriteThis="सच का स्रोत"
+  layers={[
+    { label: "Firestore", sub: "Room में लिखता है, और UI उसे कभी नहीं पढ़ती", accent: "amber" },
+    { label: "Repository", sub: "अकेली चीज जिसे दोनों तरफ का पता है", accent: "sky" },
+    { label: "Room", sub: "screen की हर पढ़ाई यहीं खत्म होती है", accent: "emerald", highlight: true },
+    { label: "ViewModel", sub: "entities को UI की हालत में बदलता है", accent: "violet" },
+    { label: "Composable", sub: "बनाता है, और नेट की किसी call का इंतजार कभी नहीं करता", accent: "violet" },
+  ]}
+/>
+
+इसे नीचे से पढ़िए और देखिए कि क्या गायब है: Firestore से ViewModel तक कोई कदम है ही
+नहीं। Screen तक का हर रास्ता database से होकर जाता है।
+
+## DAO कोई Flow लौटाता है
+
+```kotlin title="data/local/ItemDao.kt" numbered
+@Dao
+interface ItemDao {
+    @Query("SELECT * FROM items WHERE listId = :listId ORDER BY done, updatedAt DESC")
+    fun observeItems(listId: String): Flow<List<ItemEntity>>   // suspend नहीं — यह दोबारा बोलता है
+
+    @Upsert
+    suspend fun upsert(items: List<ItemEntity>)
+
+    @Query("SELECT * FROM items WHERE pendingSync = 1")
+    suspend fun pending(): List<ItemEntity>
+
+    @Query("DELETE FROM items WHERE listId = :listId AND id NOT IN (:keep)")
+    suspend fun deleteMissing(listId: String, keep: List<String>)
+}
+```
+
+पहला function ही जरूरी है, और ध्यान देने की बात यह है कि वह `suspend` **नहीं** है।
+रुकने वाली query एक बार जवाब देती है। `Flow` वाली query Room के बदलाव पर नजर रखने
+वाले से जुड़ जाती है और हर बार जब `items` की table में कुछ लिखा जाए तब दोबारा बोलती है
+— उस लिखने समेत जो Firestore से आया हो, किसी बिलकुल अलग coroutine में, कुछ सेकंड बाद।
+
+पूरी चालाकी यही है। Screen नेट की सदस्यता नहीं लेती; वह table की सदस्यता लेती है, और
+नेट बस उसी में लिख देता है।
+
+`@Upsert` इसी वजह से मायने रखता है। Sync ऐसे documents लाता है जो यहाँ पहले से हो भी
+सकते हैं और नहीं भी, और एक ही वाक्य में डालो-या-बदलो, sync लिखने वाले और उसी पल छूते
+उपयोगकर्ता के बीच पढ़ो-फिर-तय-करो वाली दौड़ से बचा लेता है।
+
+## लिखना
+
+```kotlin title="data/ItemRepository.kt" numbered
+class ItemRepository @Inject constructor(
+    private val dao: ItemDao,
+    private val workManager: WorkManager,
+) {
+    fun items(listId: String): Flow<List<Item>> =
+        dao.observeItems(listId).map { entities -> entities.map(ItemEntity::toDomain) }
+
+    suspend fun add(listId: String, text: String, uid: String) {
+        dao.upsert(listOf(
+            ItemEntity(
+                id = UUID.randomUUID().toString(),
+                listId = listId,
+                text = text,
+                done = false,
+                addedBy = uid,
+                updatedAt = System.currentTimeMillis(),
+                pendingSync = true,                    // server को अभी खबर नहीं
+            ),
+        ))
+        SyncWorker.enqueue(workManager)                // कहिए; इंतजार मत कीजिए
+    }
+}
+```
+
+`add` Room में लिखकर लौट आता है। वह नेट को छूता नहीं, कोई `Result` लौटाता नहीं, और
+बुलाने वाले के पास इंतजार करने को कुछ है ही नहीं — क्योंकि वह चीज database में पहुँच
+चुकी है, तो `Flow` दोबारा बोल चुका है और screen बदल चुकी है।
+
+Firestore को सीधे बुलाने के बजाय worker कतार में डालना ही इसे उस हाल में बचाता है जब
+उपयोगकर्ता एक सेकंड बाद ऐप बंद कर दे।
+
+<Quiz
+  question="कोई developer list वाली screen को सीधे Firestore के `addSnapshotListener` से collect कराता है, और बिना नेट के लिए साथ-साथ Room में भी लिखता है। नेट के साथ सूची सही है। बिना नेट, ऐप दो-तीन सेकंड खाली screen पर खुलता है, फिर चीजें दिखाता है।"
+  options={[
+    "Room का लिखना गलत dispatcher पर हो रहा है, तो वह देर से होता है",
+    "Screen नेट की सदस्य है, तो ठंडी शुरुआत पर वह कुछ नहीं बनाती जब तक listener कुछ न दे — और बिना नेट वह तभी होता है जब Firestore अपने भंडार पर लौटकर समय बीतने देता है। उसकी जगह Room से collect करने का मतलब है पहली आवाज स्थानीय database की पढ़ाई है, जो नेट हो या न हो, milliseconds में पूरी होती है",
+    "Firestore का बिना नेट वाला भंडार बंद है, तो पढ़ने को कुछ है ही नहीं"
+  ]}
+  answer={1}
+  explanation="Screen जिससे collect करती है वही उसका पहला frame तय करता है, तो नेट के listener की सदस्य होना खाली हालत को बनावट से ही नेट की देर की समस्या बना देता है — और बिना नेट उस देर में वह इंतजार भी शामिल है जो SDK के हार मानकर भंडार से जवाब देने तक चलता है। साथ-साथ Room में लिखना मदद नहीं करता, क्योंकि screen पर कुछ भी Room से पढ़ ही नहीं रहा; data सही आता है और दोनों रास्तों में से धीमा वाला उसे दिखाता है। उसे उलटकर Room को अकेली सदस्यता बनाना पहली आवाज को ऐसी स्थानीय पढ़ाई बना देता है जो धीमी हो ही नहीं सकती, और नेट को उसके पीछे अपनी रफ्तार से लिखने देता है। Dispatchers कई सेकंड की देर नहीं बनाते, और Firestore का भंडार चालू होना उस इंतजार को छोटा तो करता पर उस निर्भरता को नहीं हटाता कि UI नेट वाले रास्ते का इंतजार कर रही है।"
+/>
+
+## इसे साबित कीजिए
+
+यही वह कदम है जहाँ आप दावा सच में परख सकते हैं, तो परखिए।
+
+1. ऐप चलाइए और तीन चीजें जोड़िए।
+2. Aeroplane mode चालू कीजिए।
+3. हाल वाली सूची से ऐप मारिए और दोबारा खोलिए।
+
+सूची screen पर तब होनी चाहिए जब तक आप उसे आते देख भी न पाएँ — database की पढ़ाई, कोई
+माँग नहीं। बिना नेट रहते हुए चौथी चीज जोड़िए; वह तुरंत दिखती है, अभी न भेजी हुई के
+निशान के साथ। वह चौथी चीज Room में `pendingSync = true` के साथ पड़ी है और नेट की शर्त
+के पीछे `WorkManager` की एक माँग कतार में है।
+
+<Detail summary="दो चीजें जो database में असली data आते ही काटेंगी">
+**Migrations।** ऐप भेजते ही `fallbackToDestructiveMigration()` का मतलब है कि update
+उपयोगकर्ता का बिना नेट वाला data मिटा देगा। असली `Migration` लिखिए, और schema बाहर
+भेजिए ताकि Room उसका फर्क बता सके:
+
+```kotlin title="Schema बाहर भेजना" numbered
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+```
+
+`schemas/` वाली directory commit कीजिए। उसके बिना Room आपको यह बता ही नहीं सकता कि
+क्या बदला, और आप migrations याददाश्त से लिख रहे होंगे।
+
+**कौन सा धागा।** DAO का `suspend` वाला function किसी भी coroutine से बुलाना सुरक्षित
+है; Room उसे मुख्य धागे से खुद हटा लेता है। `Flow` वाली query भी सुरक्षित है।
+असुरक्षित वह DAO का function है जो न suspend है न Flow — Room उसे वहीं चलाएगा जहाँ
+आपने बुलाया, और मुख्य धागे पर वह तयशुदा तौर पर गिरता है, जो framework का आप पर एहसान है।
+</Detail>
+
+<Pitfall title="चार, और पहली वह है जो चुपचाप पूरा कदम पलट देती है">
+**ViewModel में नेट से collect करना।** बिना नेट होना फिर खास मामला बन जाता है, और हर
+screen अपनी loading वाली हालत उगा लेती है।
+
+**सूची के लिए `suspend` वाली DAO query।** वह एक बार जवाब देती है, तो sync का लिखा
+screen तक कभी नहीं पहुँचता और सूची तब तक बासी दिखती है जब तक आप जाकर लौट न आएँ।
+
+**`add` के भीतर नेट का इंतजार।** ट्रेन में बटन घूमता रहता है। यहीं लिखिए, कतार में
+डालिए, लौट आइए।
+
+**भेजे हुए build में `fallbackToDestructiveMigration()`।** Update चुपचाप वह सब मिटा
+देता है जो उपयोगकर्ता ने बिना नेट जोड़ा था।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| UI सिर्फ Room पढ़ती है | कोई ViewModel Firestore import नहीं करता |
+| Query एक `Flow` है | Sync के लिखते ही बिना refresh दोबारा बोलती है |
+| जोड़ना तुरंत है | नेट बंद रहते चीज दिखती है |
+| बकाया दिखता है | बिना भेजी चीज UI में निशान वाली है |
+| Migrations असली हैं | `schemas/` commit है, कोई मिटाने वाला fallback नहीं |
+
+आगे: दीवार की दूसरी तरफ — Firestore, वे सुरक्षा नियम जो आपका अकेला server हैं, और
+वह चक्कर जो बदलाव दोनों तरफ ले जाता है।

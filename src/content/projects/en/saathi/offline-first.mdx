@@ -1,0 +1,167 @@
+---
+title: Room as the source of truth
+description: Offline-first is not a feature you add at the end. It is one rule about who the UI reads from, and everything else follows from it.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+The UI collects from **Room and only Room**. The network is a writer into the
+database, never a second thing the screen also reads. That single rule is what makes
+the app open instantly, work on a train, and have exactly one loading state instead
+of one per screen.
+</KeyIdea>
+
+## The shape of it
+
+<LayerStack
+  title="Where data flows in an offline-first app"
+  description="The UI reads only from Room. Firestore writes into Room from below and never reaches the UI directly, so offline is the normal path rather than a special case."
+  youWriteThis="the source of truth"
+  layers={[
+    { label: "Firestore", sub: "writes into Room, and is never read by the UI", accent: "amber" },
+    { label: "Repository", sub: "the only thing that knows both sides exist", accent: "sky" },
+    { label: "Room", sub: "every read the screen makes ends here", accent: "emerald", highlight: true },
+    { label: "ViewModel", sub: "maps entities to UI state", accent: "violet" },
+    { label: "Composable", sub: "renders, and never waits for a network call", accent: "violet" },
+  ]}
+/>
+
+Read it from the bottom and notice what is missing: there is no step from Firestore
+to the ViewModel. Every path to the screen passes through the database.
+
+## The DAO returns a Flow
+
+```kotlin title="data/local/ItemDao.kt" numbered
+@Dao
+interface ItemDao {
+    @Query("SELECT * FROM items WHERE listId = :listId ORDER BY done, updatedAt DESC")
+    fun observeItems(listId: String): Flow<List<ItemEntity>>   // not suspend — it re-emits
+
+    @Upsert
+    suspend fun upsert(items: List<ItemEntity>)
+
+    @Query("SELECT * FROM items WHERE pendingSync = 1")
+    suspend fun pending(): List<ItemEntity>
+
+    @Query("DELETE FROM items WHERE listId = :listId AND id NOT IN (:keep)")
+    suspend fun deleteMissing(listId: String, keep: List<String>)
+}
+```
+
+The first function is the important one, and the thing to notice is that it is **not**
+`suspend`. A suspending query answers once. A `Flow` query registers with Room's
+invalidation tracker and emits again every time anything writes to the `items` table
+— including a write that came from Firestore, in a completely different coroutine,
+seconds later.
+
+That is the whole trick. The screen does not subscribe to the network; it subscribes
+to the table, and the network happens to write to it.
+
+`@Upsert` matters for the same reason. Sync receives documents that may or may not
+already exist locally, and insert-or-update in one statement avoids a
+read-then-decide race between the sync writer and a user tapping at the same moment.
+
+## Writing
+
+```kotlin title="data/ItemRepository.kt" numbered
+class ItemRepository @Inject constructor(
+    private val dao: ItemDao,
+    private val workManager: WorkManager,
+) {
+    fun items(listId: String): Flow<List<Item>> =
+        dao.observeItems(listId).map { entities -> entities.map(ItemEntity::toDomain) }
+
+    suspend fun add(listId: String, text: String, uid: String) {
+        dao.upsert(listOf(
+            ItemEntity(
+                id = UUID.randomUUID().toString(),
+                listId = listId,
+                text = text,
+                done = false,
+                addedBy = uid,
+                updatedAt = System.currentTimeMillis(),
+                pendingSync = true,                    // the server does not know yet
+            ),
+        ))
+        SyncWorker.enqueue(workManager)                // ask; do not wait
+    }
+}
+```
+
+`add` writes to Room and returns. It does not touch the network, it does not return a
+`Result`, and there is nothing for the caller to await — because the item is already
+in the database, so the `Flow` has already re-emitted and the screen has already
+updated.
+
+Enqueueing the worker rather than calling Firestore directly is what makes this
+survive the user closing the app one second later.
+
+<Quiz
+  question="A developer wires the list screen to collect straight from Firestore's `addSnapshotListener`, and writes to Room in parallel for offline use. The list is correct online. Offline, the app opens to an empty screen for two or three seconds, then shows the items."
+  options={[
+    "The Room write is happening on the wrong dispatcher, so it is delayed",
+    "The screen is subscribed to the network, so on a cold start it renders nothing until the listener produces something — and offline that only happens once Firestore falls back to its own cache and times out. Collecting from Room instead means the first emission is a local database read, which completes in milliseconds whether or not there is a network",
+    "Firestore's offline persistence is disabled, so there is nothing to read"
+  ]}
+  answer={1}
+  explanation="Whatever the screen collects from is what decides its first frame, so subscribing to a network listener makes the empty state a network-latency problem by construction — and offline that latency includes a timeout before the SDK gives up and answers from cache. Writing to Room in parallel does not help, because nothing on the screen is reading from Room; the data arrives correctly and is displayed by the slower of the two paths. Inverting it so Room is the only subscription makes the first emission a local read that cannot be slow, and lets the network write in behind it at whatever pace it manages. Dispatchers do not produce a multi-second delay, and Firestore persistence being on would improve the timeout but not remove the dependency on the network path being the one the UI waits for."
+/>
+
+## Prove it
+
+This is the step where you can actually verify the claim, so do it.
+
+1. Run the app and add three items.
+2. Turn on aeroplane mode.
+3. Kill the app from recents and reopen it.
+
+The list should be on screen before you can see it appear — a database read, not a
+request. Add a fourth item while still offline; it appears instantly, marked as not
+yet synced. That fourth item is sitting in Room with `pendingSync = true` and a
+`WorkManager` request queued behind a network constraint.
+
+<Detail summary="Two things that will bite once the database has real data in it">
+**Migrations.** The moment you ship, `fallbackToDestructiveMigration()` means an
+update wipes the user's offline data. Write a real `Migration`, and export the
+schema so Room can diff it:
+
+```kotlin title="Schema export" numbered
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+```
+
+Commit the `schemas/` directory. Without it, Room cannot tell you what changed and
+you are writing migrations from memory.
+
+**Which thread.** A DAO `suspend` function is safe to call from any coroutine; Room
+moves it off the main thread itself. A `Flow` query is also safe. What is not safe is
+a non-suspend, non-Flow DAO function, which Room will run wherever you called it —
+and it throws on the main thread by default, which is the framework doing you a
+favour.
+</Detail>
+
+<Pitfall title="Four, and the first is the one that quietly undoes the whole step">
+**Collecting from the network in a ViewModel.** Offline becomes a special case again,
+and every screen grows its own loading state.
+
+**A `suspend` DAO query for the list.** It answers once, so a sync write never reaches
+the screen and the list looks stale until you navigate away and back.
+
+**Awaiting the network inside `add`.** The button spins on a train. Write locally,
+enqueue, return.
+
+**`fallbackToDestructiveMigration()` in a shipped build.** An update silently deletes
+everything the user added offline.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| The UI reads only Room | No ViewModel imports Firestore |
+| The query is a `Flow` | It re-emits when sync writes, with no refresh |
+| Adds are instant | The item appears with the network off |
+| Pending is visible | An unsynced item is marked in the UI |
+| Migrations are real | `schemas/` is committed, no destructive fallback |
+
+Next: the other side of the wall — Firestore, the security rules that are the only
+server you have, and the loop that moves edits both ways.

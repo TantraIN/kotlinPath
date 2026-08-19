@@ -1,0 +1,169 @@
+---
+title: Room, sach ka srot
+description: Bina net pehle chalna koi suvidha nahi jo aap aakhir mein jodte hain. Wo ek niyam hai ki UI kisse padhti hai, aur baaki sab usi se nikalta hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+UI **sirf Room** se collect karti hai. Net database mein likhne wala hai, koi doosri
+cheez nahi jise screen bhi padhe. Wahi ek niyam app ko turant kholta hai, train mein
+chalata hai, aur har screen ki apni loading wali haalat ke bajay theek ek haalat deta
+hai.
+</KeyIdea>
+
+## Iski shakl
+
+<LayerStack
+  title="Bina net pehle chalne wale app mein data behta kahan hai"
+  description="UI sirf Room se padhti hai. Firestore neeche se Room mein likhta hai aur seedhe UI tak kabhi nahi pahunchta, to bina net hona khaas maamla nahi, aam raasta hai."
+  youWriteThis="sach ka srot"
+  layers={[
+    { label: "Firestore", sub: "Room mein likhta hai, aur UI use kabhi nahi padhti", accent: "amber" },
+    { label: "Repository", sub: "akeli cheez jise donon taraf ka pata hai", accent: "sky" },
+    { label: "Room", sub: "screen ki har padhai yahin khatam hoti hai", accent: "emerald", highlight: true },
+    { label: "ViewModel", sub: "entities ko UI ki haalat mein badalta hai", accent: "violet" },
+    { label: "Composable", sub: "banata hai, aur net ki kisi call ka intezaar kabhi nahi karta", accent: "violet" },
+  ]}
+/>
+
+Ise neeche se padhiye aur dekhiye ki kya gaayab hai: Firestore se ViewModel tak koi
+kadam hai hi nahi. Screen tak ka har raasta database se hokar jaata hai.
+
+## DAO koi Flow lautata hai
+
+```kotlin title="data/local/ItemDao.kt" numbered
+@Dao
+interface ItemDao {
+    @Query("SELECT * FROM items WHERE listId = :listId ORDER BY done, updatedAt DESC")
+    fun observeItems(listId: String): Flow<List<ItemEntity>>   // suspend nahi — yeh dobara bolta hai
+
+    @Upsert
+    suspend fun upsert(items: List<ItemEntity>)
+
+    @Query("SELECT * FROM items WHERE pendingSync = 1")
+    suspend fun pending(): List<ItemEntity>
+
+    @Query("DELETE FROM items WHERE listId = :listId AND id NOT IN (:keep)")
+    suspend fun deleteMissing(listId: String, keep: List<String>)
+}
+```
+
+Pehla function hi zaroori hai, aur dhyaan dene ki baat yeh hai ki wo `suspend`
+**nahi** hai. Rukne wali query ek baar jawaab deti hai. `Flow` wali query Room ke
+badlaav par nazar rakhne wale se jud jaati hai aur har baar jab `items` ki table mein
+kuchh likha jaaye tab dobara bolti hai — us likhne samet jo Firestore se aaya ho, kisi
+bilkul alag coroutine mein, kuchh second baad.
+
+Poori chalaaki yahi hai. Screen net ki sadasyata nahi leti; wo table ki sadasyata leti
+hai, aur net bas usi mein likh deta hai.
+
+`@Upsert` isi wajah se maayne rakhta hai. Sync aise documents laata hai jo yahan pehle
+se ho bhi sakte hain aur nahi bhi, aur ek hi vaakya mein daalo-ya-badlo, sync likhne
+wale aur usi pal chhoote user ke beech padho-phir-tay-karo wali daud se bacha leta hai.
+
+## Likhna
+
+```kotlin title="data/ItemRepository.kt" numbered
+class ItemRepository @Inject constructor(
+    private val dao: ItemDao,
+    private val workManager: WorkManager,
+) {
+    fun items(listId: String): Flow<List<Item>> =
+        dao.observeItems(listId).map { entities -> entities.map(ItemEntity::toDomain) }
+
+    suspend fun add(listId: String, text: String, uid: String) {
+        dao.upsert(listOf(
+            ItemEntity(
+                id = UUID.randomUUID().toString(),
+                listId = listId,
+                text = text,
+                done = false,
+                addedBy = uid,
+                updatedAt = System.currentTimeMillis(),
+                pendingSync = true,                    // server ko abhi khabar nahi
+            ),
+        ))
+        SyncWorker.enqueue(workManager)                // kahiye; intezaar mat kijiye
+    }
+}
+```
+
+`add` Room mein likhkar laut aata hai. Wo net ko chhoota nahi, koi `Result` lautata
+nahi, aur bulane wale ke paas intezaar karne ko kuchh hai hi nahi — kyonki wo cheez
+database mein pahunch chuki hai, to `Flow` dobara bol chuka hai aur screen badal chuki
+hai.
+
+Firestore ko seedhe bulane ke bajay worker kataar mein daalna hi ise us haal mein
+bachata hai jab user ek second baad app band kar de.
+
+<Quiz
+  question="Koi developer list wali screen ko seedhe Firestore ke `addSnapshotListener` se collect karata hai, aur bina net ke liye saath-saath Room mein bhi likhta hai. Net ke saath list sahi hai. Bina net, app do-teen second khaali screen par khulta hai, phir cheezein dikhata hai."
+  options={[
+    "Room ka likhna galat dispatcher par ho raha hai, to wo der se hota hai",
+    "Screen net ki sadasya hai, to thandi shuruaat par wo kuchh nahi banati jab tak listener kuchh na de — aur bina net wo tabhi hota hai jab Firestore apne bhandaar par lautkar samay beetne deta hai. Uski jagah Room se collect karne ka matlab hai pehli aawaz sthaaniya database ki padhai hai, jo net ho ya na ho, milliseconds mein poori hoti hai",
+    "Firestore ka bina net wala bhandaar band hai, to padhne ko kuchh hai hi nahi"
+  ]}
+  answer={1}
+  explanation="Screen jisse collect karti hai wahi uska pehla frame tay karta hai, to net ke listener ki sadasya hona khaali haalat ko banaavat se hi net ki der ki samasya bana deta hai — aur bina net us der mein wo intezaar bhi shaamil hai jo SDK ke haar maankar bhandaar se jawaab dene tak chalta hai. Saath-saath Room mein likhna madad nahi karta, kyonki screen par kuchh bhi Room se padh hi nahi raha; data sahi aata hai aur donon raaston mein se dheema wala use dikhata hai. Use ultakar Room ko akeli sadasyata banana pehli aawaz ko aisi sthaaniya padhai bana deta hai jo dheemi ho hi nahi sakti, aur net ko uske peechhe apni raftaar se likhne deta hai. Dispatchers kai second ki der nahi banate, aur Firestore ka bhandaar chaalu hona us intezaar ko chhota to karta par us nirbharta ko nahi hataata ki UI net wale raaste ka intezaar kar rahi hai."
+/>
+
+## Ise saabit kijiye
+
+Yahi wo step hai jahan aap daava sach mein parakh sakte hain, to parakhiye.
+
+1. App chalaiye aur teen cheezein jodiye.
+2. Aeroplane mode chaalu kijiye.
+3. Haal wali soochi se app maariye aur dobara kholiye.
+
+Soochi screen par tab honi chahiye jab tak aap use aate dekh bhi na paayein — database
+ki padhai, koi maang nahi. Bina net rehte hue chauthi cheez jodiye; wo turant dikhti
+hai, abhi na bheji hui ke nishaan ke saath. Wo chauthi cheez Room mein
+`pendingSync = true` ke saath padi hai aur net ki shart ke peechhe `WorkManager` ki ek
+maang kataar mein hai.
+
+<Detail summary="Do cheezein jo database mein asli data aate hi kaatengi">
+**Migrations.** App bhejte hi `fallbackToDestructiveMigration()` ka matlab hai ki
+update user ka bina net wala data mita dega. Asli `Migration` likhiye, aur schema
+bahar bhejiye taki Room uska farak bata sake:
+
+```kotlin title="Schema bahar bhejna" numbered
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+```
+
+`schemas/` wali directory commit kijiye. Uske bina Room aapko yeh bata hi nahi sakta ki
+kya badla, aur aap migrations yaaddaasht se likh rahe honge.
+
+**Kaun sa dhaaga.** DAO ka `suspend` wala function kisi bhi coroutine se bulana
+surakshit hai; Room use mukhya dhaage se khud hata leta hai. `Flow` wali query bhi
+surakshit hai. Asurakshit wo DAO ka function hai jo na suspend hai na Flow — Room use
+wahin chalayega jahan aapne bulaya, aur mukhya dhaage par wo tayshuda taur par girta
+hai, jo framework ka aap par ehsaan hai.
+</Detail>
+
+<Pitfall title="Chaar, aur pehli wo hai jo chupchaap poora step palat deti hai">
+**ViewModel mein net se collect karna.** Bina net hona phir khaas maamla ban jaata hai,
+aur har screen apni loading wali haalat uga leti hai.
+
+**Soochi ke liye `suspend` wali DAO query.** Wo ek baar jawaab deti hai, to sync ka
+likha screen tak kabhi nahi pahunchta aur soochi tab tak baasi dikhti hai jab tak aap
+jaakar laut na aayein.
+
+**`add` ke bheetar net ka intezaar.** Train mein button ghoomta rehta hai. Yahin
+likhiye, kataar mein daaliye, laut aaiye.
+
+**Bheje hue build mein `fallbackToDestructiveMigration()`.** Update chupchaap wo sab
+mita deta hai jo user ne bina net joda tha.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| UI sirf Room padhti hai | Koi ViewModel Firestore import nahi karta |
+| Query ek `Flow` hai | Sync ke likhte hi bina refresh dobara bolti hai |
+| Jodna turant hai | Net band rehte cheez dikhti hai |
+| Bakaya dikhta hai | Bina bheji cheez UI mein nishaan wali hai |
+| Migrations asli hain | `schemas/` commit hai, koi mitaane wala fallback nahi |
+
+Aage: deewar ki doosri taraf — Firestore, wo suraksha niyam jo aapka akela server hain,
+aur wo chakkar jo badlaav donon taraf le jaata hai.
