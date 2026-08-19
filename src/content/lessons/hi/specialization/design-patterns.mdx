@@ -1,0 +1,164 @@
+---
+title: वे design patterns जो सच में Android में दिखते हैं
+description: ज्यादातर पुराने patterns या तो framework के भीतर पहले से हैं या Kotlin की भाषा में घुल चुके हैं। हुनर यह पहचानना है कि आप कौन सा पहले से इस्तेमाल कर रहे हैं, कोई नया जोड़ना नहीं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Pattern **पहले से मौजूद किसी शक्ल का नाम** है, कोई चीज नहीं जिसे आप लगाते हैं। Kotlin में कई पुराने
+patterns एक ही भाषाई सुविधा में सिमट जाते हैं, तो उन्हें हाथ से लिखना घुमाव जोड़ता है और बदले में कुछ
+नहीं देता।
+</KeyIdea>
+
+## जो आप पहले से इस्तेमाल करते हैं
+
+| Pattern | पहले से कहाँ है | आप क्या लिखते हैं |
+| --- | --- | --- |
+| Observer | `Flow`, `StateFlow`, Compose का दोबारा बनना | कुछ नहीं — आप collect करते हैं |
+| Strategy | Function वाला किस्म, parameter में | `(Item) -> Boolean`, कोई interface नहीं |
+| Factory | `ViewModelProvider.Factory`, `WorkerFactory` | सिर्फ वहाँ जहाँ framework माँगे |
+| Builder | `Retrofit.Builder`, `NotificationCompat.Builder` | तयशुदा arguments, या कोई DSL |
+| Adapter | `RecyclerView.Adapter`; DTO से domain तक | हर सरहद पर बैठा mapper |
+| Singleton | `object`, या graph में `@Singleton` | Graph को चुनिए |
+
+Observer सबसे साफ मामला है। आप कभी सुनने वालों की सूची नहीं लिखेंगे, क्योंकि `StateFlow` खुद वही है, और
+Compose उससे आगे जाता है — किसी composable के भीतर `State` पढ़ना बिना एक भी callback के उसकी सदस्यता ले
+लेता है।
+
+Strategy वह मामला है जहाँ Kotlin चुपचाप सारी रस्म मिटा देता है:
+
+```kotlin title="Strategy, दो बार" numbered
+// किताबी रूप: एक interface, तीन classes, एक field
+interface SortStrategy { fun sort(items: List<Item>): List<Item> }
+class ByName : SortStrategy { override fun sort(items: List<Item>) = items.sortedBy { it.name } }
+
+// Kotlin वाला रूप: strategy खुद एक function है
+class ItemList(private val sort: (List<Item>) -> List<Item>)
+val byName = ItemList(sort = { items -> items.sortedBy { it.name } })
+```
+
+दोनों Strategy हैं। दूसरा वही pattern है, बस भरती हटाकर, और वही बेहतर चुनाव बना रहता है जब तक उस strategy
+में दूसरा method न उगे या उसे किसी dependency के graph में नाम न चाहिए हो — उस घड़ी वह interface रस्म
+नहीं, वही चीज है जिसकी सच में जरूरत थी।
+
+<Quiz
+  question="कोई team अपने analytics वाले client को Kotlin का `object` बना देती है ताकि ठीक एक ही instance रहे। घटनाएँ लिखने वाली feature की tests अब एक-दूसरे में दखल देती हैं और यह नहीं जाँच पातीं कि क्या लिखा गया।"
+  options={[
+    "Kotlin का `object` कई धागों के लिए सुरक्षित नहीं है, तो साथ चलती tests उसकी हालत बिगाड़ देती हैं",
+    "`object` एक ऐसा global है जिस तक बुलाने वाले सीधे पहुँचते हैं, तो कोई नकली रखने की जगह ही नहीं बचती, और उसकी हालत साझा JVM में हर test के बाद भी जिंदा रहती है। हल कोई बेहतर singleton नहीं, उलटाव है: किसी `Analytics` interface पर टिकिए और graph में एक ही instance बाँधिए, जिससे एक instance भी मिलता है और tests में नकली भी",
+    "Object की शुरुआत दोबारा होने के लिए हर test को अलग process में चलना चाहिए"
+  ]}
+  answer={1}
+  explanation="किसी class को `object` बनाना दो अलग फैसलों को एक में वेल्ड कर देता है: एक ही instance है, और हर बुलाने वाला उसी instance का नाम सीधे लेता है, और testing को दूसरा आधा तोड़ता है, क्योंकि जिस call वाली जगह पर बदलने को कोई parameter ही नहीं, वहाँ कोई test के पहुँचने लायक जोड़ नहीं बचता। हालत वाला हिस्सा उसी जड़ से निकलता है — instance हर JVM में एक ही बार शुरू होता है, तो एक test की लिखी घटनाएँ अगली के लिए भी पड़ी रहती हैं, और यही उन्हें आपस में उलझाता है। उलटाव उन दोनों को अलग कर देता है: constructor के parameter में `Analytics` interface वह जोड़ देता है, और graph में `@Singleton` का बंधन उत्पादन में एक ही instance की जमानत रखता है जबकि test सीधे कोई नकली थमा देता है। Kotlin में object की शुरुआत कई धागों के लिए सुरक्षित है, तो नाकामी वह नहीं, और हर test को अपनी अलग process में चलाना बनावट की गड़बड़ी को बहुत धीमी test suite के पीछे छिपाने का तरीका है।"
+/>
+
+## Builder, Kotlin की समस्या का Java वाला जवाब
+
+आपकी इस्तेमाल की हर Android library में builders हैं — `Retrofit.Builder`, `OkHttpClient.Builder`,
+`ExoPlayer.Builder`, `NotificationCompat.Builder` — क्योंकि Java में न तयशुदा arguments हैं न नाम वाले,
+तो पंद्रह वैकल्पिक parameters वाला constructor वहाँ इस्तेमाल के लायक ही नहीं।
+
+Kotlin में दोनों हैं। आपके अपने code में वह builder पहले से लिखा हुआ है:
+
+```kotlin title="Builder की जरूरत नहीं" numbered
+data class RetryPolicy(
+    val attempts: Int = 3,
+    val initialDelay: Duration = 1.seconds,
+    val multiplier: Double = 2.0,
+    val jitter: Boolean = true,
+)
+
+val policy = RetryPolicy(attempts = 5, jitter = false)
+```
+
+अपवाद है भीतर-भीतर, पेड़ जैसी शक्ल वाली सजावट, जहाँ दायरे वाला कोई DSL data classes को एक-दूसरे के भीतर
+रखने से बेहतर पढ़ा जाता है — Compose, Gradle की Kotlin DSL और `buildList`, सब वही हैं, और `@DslMarker`
+भीतरी दायरों को एक-दूसरे में रिसने से रोकता है।
+
+<Detail summary="Adapter, और वह सरहद जहाँ वह बैठता है">
+`RecyclerView.Adapter` ने इस pattern को Android में नाम दिया, पर जो रूप आप रोज लिखते हैं वह छोटा और
+ज्यादा जरूरी है: किसी परत के किनारे पर एक किस्म को दूसरे में बदलना।
+
+```kotlin title="सरहद पर mapping" numbered
+fun UserDto.toDomain() = User(
+    id = UserId(id),
+    name = displayName?.takeIf { it.isNotBlank() } ?: "Unknown",
+    joined = Instant.ofEpochSecond(createdAt),
+)
+```
+
+यह अपनी कीमत इसलिए वसूल लेता है कि यह server की शक्ल — खाली हो सकने वाली strings, epoch के seconds, ढीले
+ids — एक ही file में समेट देता है। इसके बिना हर screen को पता चल जाता है कि `displayName` खाली हो सकता
+है, और backend पर एक नाम बदलना चालीस जगह का बदलाव बन जाता है, एक जगह का नहीं।
+
+वही दलील दूसरी सरहद पर भी लगती है: domain का model UI का model नहीं है। जब screen को सजाई हुई तारीख और
+कोई रंग चाहिए, तो उसे ViewModel में एक बार बदल देना सजावट को composable से बाहर रखता है और domain को
+Android के किस्मों से मुक्त।
+
+छोटे ऐप में हर परत पर दो mappers फालतू काम लगते हैं, और हैं भी। वे उस पहली बार के बाद ऐसा लगना छोड़ देते
+हैं जब कोई API अपनी शक्ल बदलती है और compiler आपको ठीक एक ही function तक ले जाता है।
+</Detail>
+
+## नाम, एक जाँच के औजार की तरह
+
+`Manager`, `Helper`, `Util`, `Handler`, `Processor` — इन नामों में इस बारे में कोई खबर नहीं कि वह class
+करती क्या है, और जिस class का नाम रखना मुश्किल हो वह आमतौर पर कई बेजोड़ काम कर रही होती है।
+
+पूछिए कि वह class *है* क्या, यह नहीं कि वह सँभालती क्या है। `NotificationManager` बनता है
+`NotificationScheduler`। `UserHelper` टूटकर `UserRepository` और `UserFormatter` बनता है। यह नाम बदलना
+ऊपरी नहीं है: यही वह पल है जब छूटी हुई सरहद दिखने लगती है।
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और इनकी जड़ एक ही है — ऐसी लचक की कीमत चुकाना जो कभी आती नहीं">
+**सिर्फ Kotlin में कोई builder।** तयशुदा और नाम वाले arguments यह पहले से करते हैं, कम पुर्जों में।
+
+**एक ही रूप वाला interface।** आज घुमाव, उस दूसरे रूप के लिए जो शायद कभी आए ही नहीं।
+
+**हालत या I/O रखने वाली चीज के लिए `object`।** बिना जोड़ वाला global; पता tests में चलता है।
+
+**Function से बनता काम interface वाली strategy से।** जो एक lambda के parameter में कहा जाता, उसके लिए तीन files।
+
+**`Manager` और `Helper` नाम।** ये इस बात को छिपाते हैं कि किसी ने तय ही नहीं किया वह class है क्या।
+</Pitfall>
+
+## अभ्यास
+
+1. अपने code में कोई `Manager` या `Helper` ढूँढ़िए और तब तक तोड़िए जब तक हर हिस्से का असली नाम न हो।
+2. एक method वाली strategy की interface को function वाले किस्म से बदलिए और बुलाने की जगहें मिलाइए।
+3. हाथ से लिखे किसी builder को तयशुदा arguments वाली data class की तरह दोबारा लिखिए।
+4. किसी `object` singleton को graph में बँधी interface में बदलिए और नकली के साथ एक test लिखिए।
+5. DTO से domain का mapper जोड़िए और वे screens गिनिए जिन्हें अब server के खाली हो सकने वाले खानों की खबर नहीं रहती।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Pattern | किसी शक्ल का नाम, लगाने की चीज नहीं |
+| Observer | पहले से `Flow`, `StateFlow` और दोबारा बनना |
+| Strategy | तब तक function वाला किस्म, जब तक दूसरा method न चाहिए |
+| Builder | Java से बुलाने वालों के लिए; Kotlin में तयशुदा arguments हैं |
+| DSL | वह builder जो कीमत वसूलता है: भीतर-भीतर सजावट |
+| Adapter | सरहद पर mapping, शक्ल बदलने पर एक ही file |
+| Singleton | Graph में एक instance बाँधिए, `object` नहीं |
+| `object` | बिना हालत वाली तयशुदा चीजों के लिए ठीक; I/O के लिए जाल |
+| Interface | असली जोड़ पर कीमत वसूलती है, अंदाजे से नहीं |
+| `Manager` | नाम की वह बू जो बताती है कि बनावट तय ही नहीं हुई |
+
+<Interview title="काम में patterns पर एक सवाल">
+"Android में आप कौन से design patterns इस्तेमाल करते हैं?"
+
+ज्यादातर वे जो मैं लिखता ही नहीं। Observer, `StateFlow` और Compose का दोबारा बनना है, तो मैं उसे बनाता
+नहीं, collect करता हूँ। Strategy आमतौर पर function वाला किस्म है — lambda का एक parameter वही कहता है जो
+interface और तीन classes कहते हैं, और मैं उसे interface तभी बनाता हूँ जब उसमें दूसरा method उगे या
+dependency के graph में उसे नाम चाहिए हो। Builders मैं libraries से लगातार इस्तेमाल करता हूँ पर लिखता कम
+ही हूँ, क्योंकि Kotlin के तयशुदा और नाम वाले arguments वही सुविधा हैं जिसका नाटक करने को Java को builder
+चाहिए था।
+
+जो दो मैं जानबूझकर लिखता हूँ वे Adapter और निर्भरता का उलटाव हैं। DTO से domain और फिर UI के model तक
+mapping server की शक्ल एक file में रखती है, तो किसी खाने का नाम बदलना चालीस नहीं, एक बदलाव है। और Kotlin
+के `object` के बजाय मैं constructor में interface रखता हूँ और graph में एक instance बाँधता हूँ — एक ही
+instance की वही जमानत, ऊपर से test के पहुँचने लायक एक जोड़। मैं जो आम नियम मानता हूँ वह यह है कि pattern
+पहले से मौजूद code में पहचाना जाना चाहिए, किसी जरूरत से पहले जोड़ा नहीं, क्योंकि एक ही रूप वाला interface
+आज चुकाया गया घुमाव है उस लचक के बदले जो अक्सर कभी आती ही नहीं।
+</Interview>

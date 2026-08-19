@@ -1,0 +1,168 @@
+---
+title: Wo design patterns jo sach mein Android mein dikhte hain
+description: Zyadatar purane patterns ya to framework ke bheetar pehle se hain ya Kotlin ki bhasha mein ghul chuke hain. Hunar yeh pehchanna hai ki aap kaun sa pehle se istemaal kar rahe hain, koi naya jodna nahi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Pattern **pehle se maujood kisi shakl ka naam** hai, koi cheez nahi jise aap lagate hain. Kotlin mein kai
+purane patterns ek hi bhashai suvidha mein simat jaate hain, to unhein haath se likhna ghumaav jodta hai
+aur badle mein kuchh nahi deta.
+</KeyIdea>
+
+## Jo aap pehle se istemaal karte hain
+
+| Pattern | Pehle se kahan hai | Aap kya likhte hain |
+| --- | --- | --- |
+| Observer | `Flow`, `StateFlow`, Compose ka dobara banna | Kuchh nahi — aap collect karte hain |
+| Strategy | Function wala kism, parameter mein | `(Item) -> Boolean`, koi interface nahi |
+| Factory | `ViewModelProvider.Factory`, `WorkerFactory` | Sirf wahan jahan framework maange |
+| Builder | `Retrofit.Builder`, `NotificationCompat.Builder` | Tayshuda arguments, ya koi DSL |
+| Adapter | `RecyclerView.Adapter`; DTO se domain tak | Har sarhad par baitha mapper |
+| Singleton | `object`, ya graph mein `@Singleton` | Graph ko chuniye |
+
+Observer sabse saaf maamla hai. Aap kabhi sunne walon ki soochi nahi likhenge, kyonki `StateFlow` khud
+wahi hai, aur Compose usse aage jaata hai — kisi composable ke bheetar `State` padhna bina ek bhi
+callback ke uski sadasyata le leta hai.
+
+Strategy wo maamla hai jahan Kotlin chupchaap saari rasm mita deta hai:
+
+```kotlin title="Strategy, do baar" numbered
+// kitaabi roop: ek interface, teen classes, ek field
+interface SortStrategy { fun sort(items: List<Item>): List<Item> }
+class ByName : SortStrategy { override fun sort(items: List<Item>) = items.sortedBy { it.name } }
+
+// Kotlin wala roop: strategy khud ek function hai
+class ItemList(private val sort: (List<Item>) -> List<Item>)
+val byName = ItemList(sort = { items -> items.sortedBy { it.name } })
+```
+
+Donon Strategy hain. Doosra wahi pattern hai, bas bharti hataakar, aur wahi behtar chunaav bana rehta hai
+jab tak us strategy mein doosra method na uge ya use kisi dependency ke graph mein naam na chahiye ho —
+us ghadi wo interface rasm nahi, wahi cheez hai jiski sach mein zaroorat thi.
+
+<Quiz
+  question="Koi team apne analytics wale client ko Kotlin ka `object` bana deti hai taki theek ek hi instance rahe. Ghatnaayein likhne wali feature ki tests ab ek-doosre mein dakhal deti hain aur yeh nahi bata paatin ki kya likha gaya."
+  options={[
+    "Kotlin ka `object` kai dhaagon ke liye surakshit nahi hai, to saath chalti tests uski haalat bigaad deti hain",
+    "`object` ek aisa global hai jis tak bulane wale seedhe pahunchte hain, to koi nakli rakhne ki jagah hi nahi bachti, aur uski haalat saajha JVM mein har test ke baad bhi zinda rehti hai. Hal koi behtar singleton nahi, ultaav hai: kisi `Analytics` interface par tikiye aur graph mein ek hi instance bandhiye, jisse ek instance bhi milta hai aur tests mein nakli bhi",
+    "Object ki shuruaat dobara hone ke liye har test ko alag process mein chalna chahiye"
+  ]}
+  answer={1}
+  explanation="Kisi class ko `object` banana do alag faislon ko ek mein weld kar deta hai: ek hi instance hai, aur har bulane wala usi instance ka naam seedhe leta hai, aur testing ko doosra aadha todta hai, kyonki jis call wali jagah par badalne ko koi parameter hi nahi, wahan koi test ke pahunchne layak jod nahi bachta. Haalat wala hissa usi jad se nikalta hai — instance har JVM mein ek hi baar shuru hota hai, to ek test ki likhi ghatnaayein agli ke liye bhi padi rehti hain, aur yahi unhein aapas mein uljhata hai. Ultaav un donon ko alag kar deta hai: constructor ke parameter mein `Analytics` interface wo jod deta hai, aur graph mein `@Singleton` ka bandhan utpaadan mein ek hi instance ki zamaanat rakhta hai jabki test seedhe koi nakli thama deta hai. Kotlin mein object ki shuruaat kai dhaagon ke liye surakshit hai, to naakami wo nahi, aur har test ko apni alag process mein chalana banaavat ki gadbadi ko bahut dheemi test suite ke peechhe chhupane ka tareeka hai."
+/>
+
+## Builder, Kotlin ki samasya ka Java wala jawaab
+
+Aapki istemaal ki har Android library mein builders hain — `Retrofit.Builder`, `OkHttpClient.Builder`,
+`ExoPlayer.Builder`, `NotificationCompat.Builder` — kyonki Java mein na tayshuda arguments hain na naam
+wale, to pandrah vaikalpik parameters wala constructor wahan istemaal ke layak hi nahi.
+
+Kotlin mein donon hain. Aapke apne code mein wo builder pehle se likha hua hai:
+
+```kotlin title="Builder ki zaroorat nahi" numbered
+data class RetryPolicy(
+    val attempts: Int = 3,
+    val initialDelay: Duration = 1.seconds,
+    val multiplier: Double = 2.0,
+    val jitter: Boolean = true,
+)
+
+val policy = RetryPolicy(attempts = 5, jitter = false)
+```
+
+Apvaad hai bheetar-bheetar, ped jaisi shakl wali sajaavat, jahan daayre wala koi DSL data classes ko
+ek-doosre ke bheetar rakhne se behtar padha jaata hai — Compose, Gradle ki Kotlin DSL aur `buildList`,
+sab wahi hain, aur `@DslMarker` bheetari daayron ko ek-doosre mein risne se rokta hai.
+
+<Detail summary="Adapter, aur wo sarhad jahan wo baithta hai">
+`RecyclerView.Adapter` ne is pattern ko Android mein naam diya, par jo roop aap roz likhte hain wo chhota
+aur zyada zaroori hai: kisi parat ke kinaare par ek kism ko doosre mein badalna.
+
+```kotlin title="Sarhad par mapping" numbered
+fun UserDto.toDomain() = User(
+    id = UserId(id),
+    name = displayName?.takeIf { it.isNotBlank() } ?: "Unknown",
+    joined = Instant.ofEpochSecond(createdAt),
+)
+```
+
+Yeh apni keemat isliye vasool leta hai ki yeh server ki shakl — khaali ho sakne wali strings, epoch ke
+seconds, dheele ids — ek hi file mein samet deta hai. Iske bina har screen ko pata chal jaata hai ki
+`displayName` khaali ho sakta hai, aur backend par ek naam badalna chaalis jagah ka badlaav ban jaata
+hai, ek jagah ka nahi.
+
+Wahi daleel doosri sarhad par bhi lagti hai: domain ka model UI ka model nahi hai. Jab screen ko sajaai
+hui taareekh aur koi rang chahiye, to use ViewModel mein ek baar badal dena sajaavat ko composable se
+bahar rakhta hai aur domain ko Android ke kismon se mukt.
+
+Chhote app mein har parat par do mappers faltu kaam lagte hain, aur hain bhi. Wo us pehli baar ke baad
+aisa lagna chhod dete hain jab koi API apni shakl badalti hai aur compiler aapko theek ek hi function tak
+le jaata hai.
+</Detail>
+
+## Naam, ek padtal ke auzaar ki tarah
+
+`Manager`, `Helper`, `Util`, `Handler`, `Processor` — in naamon mein is baare mein koi khabar nahi ki wo
+class karti kya hai, aur jis class ka naam rakhna mushkil ho wo aamtaur par kai bejod kaam kar rahi hoti
+hai.
+
+Poochhiye ki wo class *hai* kya, yeh nahi ki wo sambhalti kya hai. `NotificationManager` banta hai
+`NotificationScheduler`. `UserHelper` tootkar `UserRepository` aur `UserFormatter` banta hai. Yeh naam
+badalna oopri nahi hai: yahi wo pal hai jab chhooti hui sarhad dikhne lagti hai.
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur inki jad ek hi hai — aisi lachak ki keemat chukana jo kabhi aati nahi">
+**Sirf Kotlin mein koi builder.** Tayshuda aur naam wale arguments yeh pehle se karte hain, kam purzon mein.
+
+**Ek hi roop wala interface.** Aaj ghumaav, us doosre roop ke liye jo shayad kabhi aaye hi nahi.
+
+**Haalat ya I/O rakhne wali cheez ke liye `object`.** Bina jod wala global; pata tests mein chalta hai.
+
+**Function se banta kaam interface wali strategy se.** Jo ek lambda ke parameter mein kaha jaata, uske liye teen files.
+
+**`Manager` aur `Helper` naam.** Ye is baat ko chhupate hain ki kisi ne tay hi nahi kiya wo class hai kya.
+</Pitfall>
+
+## Abhyaas
+
+1. Apne code mein koi `Manager` ya `Helper` dhoondhiye aur tab tak todiye jab tak har hisse ka asli naam na ho.
+2. Ek method wali strategy ki interface ko function wale kism se badaliye aur bulane ki jagahein milaiye.
+3. Haath se likhe kisi builder ko tayshuda arguments wali data class ki tarah dobara likhiye.
+4. Kisi `object` singleton ko graph mein bandhi interface mein badaliye aur nakli ke saath ek test likhiye.
+5. DTO se domain ka mapper jodiye aur wo screens giniye jinhein ab server ke khaali ho sakne wale khaanon ki khabar nahi rehti.
+
+## Dohraav
+
+| Cheez | Ek line |
+| --- | --- |
+| Pattern | Kisi shakl ka naam, lagane ki cheez nahi |
+| Observer | Pehle se `Flow`, `StateFlow` aur dobara banna |
+| Strategy | Tab tak function wala kism, jab tak doosra method na chahiye |
+| Builder | Java se bulane walon ke liye; Kotlin mein tayshuda arguments hain |
+| DSL | Wo builder jo keemat vasoolta hai: bheetar-bheetar sajaavat |
+| Adapter | Sarhad par mapping, shakl badalne par ek hi file |
+| Singleton | Graph mein ek instance bandhiye, `object` nahi |
+| `object` | Bina haalat wali tayshuda cheezon ke liye theek; I/O ke liye jaal |
+| Interface | Asli jod par keemat vasoolti hai, andaaze se nahi |
+| `Manager` | Naam ki wo boo jo bataati hai ki banaavat tay hi nahi hui |
+
+<Interview title="Kaam mein patterns par ek sawaal">
+"Android mein aap kaun se design patterns istemaal karte hain?"
+
+Zyadatar wo jo main likhta hi nahi. Observer, `StateFlow` aur Compose ka dobara banna hai, to main use
+banata nahi, collect karta hoon. Strategy aamtaur par function wala kism hai — lambda ka ek parameter
+wahi kehta hai jo interface aur teen classes kehte hain, aur main use interface tabhi banata hoon jab
+usmein doosra method uge ya dependency ke graph mein use naam chahiye ho. Builders main libraries se
+lagataar istemaal karta hoon par likhta kam hi hoon, kyonki Kotlin ke tayshuda aur naam wale arguments
+wahi suvidha hain jiska naatak karne ko Java ko builder chahiye tha.
+
+Jo do main jaanboojhkar likhta hoon wo Adapter aur nirbharta ka ultaav hain. DTO se domain aur phir UI ke
+model tak mapping server ki shakl ek file mein rakhti hai, to kisi khaane ka naam badalna chaalis nahi,
+ek badlaav hai. Aur Kotlin ke `object` ke bajay main constructor mein interface rakhta hoon aur graph mein
+ek instance bandhta hoon — ek hi instance ki wahi zamaanat, oopar se test ke pahunchne layak ek jod. Main
+jo aam niyam maanta hoon wo yeh hai ki pattern pehle se maujood code mein pehchana jaana chahiye, kisi
+zaroorat se pehle joda nahi, kyonki ek hi roop wala interface aaj chukaya gaya ghumaav hai us lachak ke
+badle jo aksar kabhi aati hi nahi.
+</Interview>

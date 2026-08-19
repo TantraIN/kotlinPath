@@ -1,0 +1,162 @@
+---
+title: Design patterns that actually appear in Android
+description: Most of the classic patterns are already inside the framework or dissolved into Kotlin syntax. The skill is recognising the one you are already using, not adding a new one.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A pattern is **a name for a shape that already exists**, not a thing you install. In Kotlin several of
+the classic patterns collapse into one language feature, so writing them out by hand adds indirection
+and buys nothing.
+</KeyIdea>
+
+## The ones you already use
+
+| Pattern | Where it already lives | What you write |
+| --- | --- | --- |
+| Observer | `Flow`, `StateFlow`, Compose recomposition | Nothing — you collect |
+| Strategy | A function type parameter | `(Item) -> Boolean`, not an interface |
+| Factory | `ViewModelProvider.Factory`, `WorkerFactory` | Only where a framework demands one |
+| Builder | `Retrofit.Builder`, `NotificationCompat.Builder` | Default arguments, or a DSL |
+| Adapter | `RecyclerView.Adapter`; DTO to domain mapping | The mapper at each boundary |
+| Singleton | `object`, or `@Singleton` in a graph | Prefer the graph |
+
+Observer is the clearest case. You will never write a listener list, because `StateFlow` is one, and
+Compose goes further — reading a `State` inside a composable subscribes to it without a single callback.
+
+Strategy is the case where Kotlin quietly deletes the ceremony:
+
+```kotlin title="Strategy, twice" numbered
+// The textbook version: an interface, three classes, a field
+interface SortStrategy { fun sort(items: List<Item>): List<Item> }
+class ByName : SortStrategy { override fun sort(items: List<Item>) = items.sortedBy { it.name } }
+
+// The Kotlin version: the strategy is a function
+class ItemList(private val sort: (List<Item>) -> List<Item>)
+val byName = ItemList(sort = { items -> items.sortedBy { it.name } })
+```
+
+Both are Strategy. The second is the same pattern with the boilerplate removed, and it stays the better
+choice until the strategy grows a second method or needs a name in a dependency graph — at which point
+the interface is not ceremony, it is the thing you actually needed.
+
+<Quiz
+  question="A team makes their analytics client a Kotlin `object` so that exactly one instance exists. Feature tests that log events now interfere with each other and cannot assert what was logged."
+  options={[
+    "A Kotlin `object` is not thread-safe, so concurrent tests corrupt its state",
+    "An `object` is a global that callers reach directly, so there is no seam to substitute a fake, and its state outlives each test in a shared JVM. The fix is not a better singleton but inversion: depend on an `Analytics` interface and bind a single instance in the dependency graph, which gives one instance and a fake in tests",
+    "Tests must run in separate processes for object initialisation to reset"
+  ]}
+  answer={1}
+  explanation="Making a class an `object` welds two separate decisions together: there is one instance, and every caller names that instance directly, and it is the second half that breaks testing, because a call site with no parameter to change has no seam a test can reach. The state part follows from the same root — the instance is initialised once per JVM, so events logged by one test are still there for the next, which is what makes them interfere. Inverting it separates the two: an `Analytics` interface as a constructor parameter gives the seam, and a `@Singleton` binding in the graph still guarantees one instance in production while a test simply passes a fake. Kotlin's object initialisation is thread-safe, so that is not the failure, and running each test in its own process is a way to hide a design problem behind a very slow test suite."
+/>
+
+## Builder is a Java answer to a Kotlin problem
+
+Every Android library you use has builders — `Retrofit.Builder`, `OkHttpClient.Builder`,
+`ExoPlayer.Builder`, `NotificationCompat.Builder` — because Java has no default arguments and no named
+arguments, so a constructor with fifteen optional parameters is unusable there.
+
+Kotlin has both. In your own code, the builder is already written for you:
+
+```kotlin title="No builder needed" numbered
+data class RetryPolicy(
+    val attempts: Int = 3,
+    val initialDelay: Duration = 1.seconds,
+    val multiplier: Double = 2.0,
+    val jitter: Boolean = true,
+)
+
+val policy = RetryPolicy(attempts = 5, jitter = false)
+```
+
+The exception is a nested, tree-shaped configuration, where a scoped DSL reads better than nesting data
+classes — that is what Compose, Gradle's Kotlin DSL and `buildList` all are, and `@DslMarker` keeps the
+inner scopes from leaking into each other.
+
+<Detail summary="Adapter, and the boundary it belongs on">
+`RecyclerView.Adapter` gave the pattern its Android reputation, but the version you write every day is
+smaller and more important: converting a type at the edge of a layer.
+
+```kotlin title="Mapping at a boundary" numbered
+fun UserDto.toDomain() = User(
+    id = UserId(id),
+    name = displayName?.takeIf { it.isNotBlank() } ?: "Unknown",
+    joined = Instant.ofEpochSecond(createdAt),
+)
+```
+
+The reason this earns its keep is that it moves the server's shape — nullable strings, epoch seconds,
+loose ids — into one file. Without it, every screen learns that `displayName` can be blank, and a
+backend rename becomes a change in forty places instead of one.
+
+The same argument applies to the other boundary: a domain model is not a UI model. When the screen needs
+a formatted date and a colour, mapping it once in the ViewModel keeps formatting out of the composable
+and keeps the domain free of Android types.
+
+Two mappers per layer feels like extra work in a small app, and it is. It stops feeling that way the
+first time an API changes shape and the compiler leads you to exactly one function.
+</Detail>
+
+## Naming as a diagnostic
+
+`Manager`, `Helper`, `Util`, `Handler`, `Processor` — these names carry no information about what a
+class does, and a class that resists being named is usually one doing several unrelated things.
+
+Ask what the class *is*, not what it manages. `NotificationManager` becomes `NotificationScheduler`.
+`UserHelper` splits into `UserRepository` and `UserFormatter`. The rename is not cosmetic: it is the
+moment the missing boundary becomes visible.
+
+## Pitfalls
+
+<Pitfall title="Five, and they share one root — paying for flexibility that never arrives">
+**A builder in pure Kotlin.** Default and named arguments already do it, with fewer moving parts.
+
+**An interface with one implementation.** Indirection now for a second implementation that may never exist.
+
+**`object` for anything with state or I/O.** A global with no seam; you find out in the tests.
+
+**Strategy as an interface when a function fits.** Three files for what a lambda parameter expresses.
+
+**`Manager` and `Helper` names.** They hide the fact that no one decided what the class is.
+</Pitfall>
+
+## Practice
+
+1. Find a `Manager` or `Helper` in your code and split it until every part has a real name.
+2. Replace a one-method strategy interface with a function type and compare the call sites.
+3. Rewrite a hand-written builder as a data class with default arguments.
+4. Convert an `object` singleton into an interface bound in the dependency graph and write a test with a fake.
+5. Add a DTO-to-domain mapper and count the screens that stop knowing about nullable server fields.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Pattern | A name for a shape, not a thing to install |
+| Observer | Already `Flow`, `StateFlow` and recomposition |
+| Strategy | A function type until it needs a second method |
+| Builder | For Java callers; Kotlin has default arguments |
+| DSL | The builder that earns its keep: nested configuration |
+| Adapter | Mapping at a boundary, one file per shape change |
+| Singleton | Bind one instance in the graph, not `object` |
+| `object` | Fine for stateless constants; a trap for I/O |
+| Interface | Earns its keep at a real seam, not speculatively |
+| `Manager` | A naming smell that marks an undecided design |
+
+<Interview title="One question about patterns in practice">
+"Which design patterns do you use in Android?"
+
+Mostly ones I do not write. Observer is `StateFlow` and Compose recomposition, so I collect rather than
+implement it. Strategy is usually a function type — a lambda parameter says the same thing as an
+interface and three classes, and I only promote it to an interface when it grows a second method or
+needs a name in the dependency graph. Builders I consume constantly from libraries but rarely write,
+because Kotlin's default and named arguments are the same feature Java needed a builder to fake.
+
+The two I write deliberately are Adapter and dependency inversion. Mapping DTO to domain to UI model
+keeps the server's shape in one file, so a field rename is one change rather than forty. And rather than
+a Kotlin `object`, I put an interface in the constructor and bind a single instance in the graph — same
+one-instance guarantee, plus a seam a test can reach. The general rule I follow is that a pattern should
+be recognised in code that already exists rather than added ahead of a need, because an interface with
+one implementation is indirection paid for now against flexibility that usually never arrives.
+</Interview>
