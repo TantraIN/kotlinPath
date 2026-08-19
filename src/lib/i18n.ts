@@ -69,6 +69,7 @@ type Dict = {
   brandTagline: string;
   nav: {
     curriculum: string;
+    projects: string;
     glossary: string;
     playground: string;
     search: string;
@@ -132,6 +133,26 @@ type Dict = {
     roadmapTitle: string;
     roadmapSubtitle: string;
   };
+  projects: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    more: string;
+    moreBody: string;
+    afterPhase: string;
+    steps: string;
+    step: string;
+    youBuild: string;
+    stack: string;
+    startBuilding: string;
+    overview: string;
+    outcome: string;
+    prevStep: string;
+    nextStep: string;
+    backToProject: string;
+    notWritten: string;
+    notWrittenBody: string;
+  };
   quiz: {
     label: string;
     correct: string;
@@ -163,6 +184,7 @@ export const DICT: Record<Lang, Dict> = {
     brandTagline: "Kotlin & Android, from zero to production",
     nav: {
       curriculum: "Curriculum",
+      projects: "Projects",
       glossary: "Glossary",
       playground: "Playground",
       search: "Search",
@@ -234,6 +256,26 @@ export const DICT: Record<Lang, Dict> = {
       roadmapSubtitle:
         "Sixteen phases, ordered so nothing is ever used before it is taught.",
     },
+    projects: {
+      eyebrow: "Build along",
+      title: "Projects",
+      subtitle: "The course teaches one idea at a time. A project is where they have to work together — and where the questions that only appear in real code get answered.",
+      more: "More projects are coming",
+      moreBody: "Each one takes a different shape of app from an empty window to something you can install on a phone. They land here as they are written.",
+      afterPhase: "Start after Phase",
+      steps: "steps",
+      step: "Step",
+      youBuild: "What you end up with",
+      stack: "What it uses, and why",
+      startBuilding: "Start building",
+      overview: "Project overview",
+      outcome: "After this step",
+      prevStep: "Previous step",
+      nextStep: "Next step",
+      backToProject: "Back to the project",
+      notWritten: "This step is not written yet",
+      notWrittenBody: "Its place in the build and what it covers are already fixed — the walkthrough lands in the next writing pass.",
+    },
     quiz: {
       label: "Check yourself",
       correct: "Correct",
@@ -268,6 +310,7 @@ export const DICT: Record<Lang, Dict> = {
     brandTagline: "Kotlin और Android — शुरुआत से production तक",
     nav: {
       curriculum: "पाठ्यक्रम",
+      projects: "प्रोजेक्ट",
       glossary: "शब्दकोश",
       playground: "प्लेग्राउंड",
       search: "खोजें",
@@ -339,6 +382,26 @@ export const DICT: Record<Lang, Dict> = {
       roadmapSubtitle:
         "सोलह चरण, ऐसे क्रम में कि कोई चीज पढ़ाने से पहले इस्तेमाल न हो।",
     },
+    projects: {
+      eyebrow: "साथ में बनाइए",
+      title: "प्रोजेक्ट",
+      subtitle: "पाठ्यक्रम एक बार में एक विचार सिखाता है। प्रोजेक्ट वह जगह है जहाँ उन सबको साथ मिलकर चलना पड़ता है — और जहाँ वे सवाल जवाब पाते हैं जो सिर्फ असली code में उठते हैं।",
+      more: "और प्रोजेक्ट आ रहे हैं",
+      moreBody: "हर एक ऐप की अलग शक्ल को खाली window से उठाकर उस चीज तक ले जाता है जो फोन पर लग सके। लिखे जाने के साथ-साथ वे यहीं आते जाएँगे।",
+      afterPhase: "शुरू कीजिए Phase",
+      steps: "कदम",
+      step: "कदम",
+      youBuild: "आखिर में आपके हाथ में क्या होगा",
+      stack: "इसमें क्या लगता है, और क्यों",
+      startBuilding: "बनाना शुरू कीजिए",
+      overview: "प्रोजेक्ट की झलक",
+      outcome: "इस कदम के बाद",
+      prevStep: "पिछला कदम",
+      nextStep: "अगला कदम",
+      backToProject: "प्रोजेक्ट पर वापस",
+      notWritten: "यह कदम अभी लिखा नहीं गया है",
+      notWrittenBody: "बनाने के क्रम में इसकी जगह और इसमें आने वाली बातें तय हो चुकी हैं — पूरा रास्ता अगले लेखन चरण में आएगा।",
+    },
     quiz: {
       label: "खुद जाँचिए",
       correct: "सही",
@@ -373,6 +436,7 @@ export const DICT: Record<Lang, Dict> = {
     brandTagline: "Kotlin aur Android — zero se production tak",
     nav: {
       curriculum: "Curriculum",
+      projects: "Projects",
       glossary: "Glossary",
       playground: "Playground",
       search: "Search",
@@ -444,6 +508,26 @@ export const DICT: Record<Lang, Dict> = {
       roadmapTitle: "Poora roadmap",
       roadmapSubtitle:
         "Solah phases, aise order mein ki koi cheez padhaye bina use na ho.",
+    },
+    projects: {
+      eyebrow: "Saath mein banaiye",
+      title: "Projects",
+      subtitle: "Course ek baar mein ek idea sikhata hai. Project wo jagah hai jahan un sabko saath milkar chalna padta hai — aur jahan wo sawaal jawaab paate hain jo sirf asli code mein uthte hain.",
+      more: "Aur projects aa rahe hain",
+      moreBody: "Har ek app ki alag shakl ko khaali window se uthakar us cheez tak le jaata hai jo phone par lag sake. Likhe jaane ke saath-saath wo yahin aate jaayenge.",
+      afterPhase: "Shuru kijiye Phase",
+      steps: "steps",
+      step: "Step",
+      youBuild: "Aakhir mein aapke haath mein kya hoga",
+      stack: "Ismein kya lagta hai, aur kyon",
+      startBuilding: "Banana shuru kijiye",
+      overview: "Project ki jhalak",
+      outcome: "Is step ke baad",
+      prevStep: "Pichhla step",
+      nextStep: "Agla step",
+      backToProject: "Project par wapas",
+      notWritten: "Yeh step abhi likha nahi gaya hai",
+      notWrittenBody: "Banane ke silsile mein iski jagah aur ismein aane wali baatein tay ho chuki hain — poora raasta agle writing pass mein aayega.",
     },
     quiz: {
       label: "Khud jaancho",

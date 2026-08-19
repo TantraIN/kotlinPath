@@ -1,0 +1,232 @@
+---
+title: खाली project, और उसकी हर file
+description: New Project का wizard चार सेकंड में आपकी तरफ से करीब एक दर्जन फैसले ले लेता है। यह कदम उन्हें पढ़कर सुनाता है, क्योंकि उनमें से हर एक आगे चलकर बंदिश बन जाता है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+बने-बनाए project में कुछ भी भरती नहीं है। हर file उस सवाल का जवाब है जो build का
+तंत्र, operating system या Play Store आपसे आगे पूछेगा — और Android से डरना छोड़ने
+का सबसे तेज रास्ता यह जानना है कि कौन सी file किस सवाल का जवाब देती है।
+</KeyIdea>
+
+## हम बना क्या रहे हैं
+
+**Saathi** एक साझा सूची है। आप अपने फोन पर ब्रेड और दूध जोड़ते हैं; जिसे आपने APK
+भेजा था उसे दोनों अपने फोन पर दिखने लगते हैं। यह बिना signal वाली दुकान में चलता
+है, और signal लौटने पर sync कर लेता है।
+
+वही एक वाक्य ज्यादातर बनावट तय कर देता है, और हम बार-बार उसी पर लौटेंगे। बिना नेट
+चलने का मतलब है सच का स्रोत नेट नहीं, database है। साझा होने का मतलब है कोई
+उपयोगकर्ता है, और नियम हैं कि कौन क्या पढ़ सकता है।
+
+## इसे बनाना
+
+Android Studio में: **New Project → Empty Activity**। चार खाने, और हर एक ऐसा फैसला
+है जिसे सस्ते में पलटा नहीं जा सकता।
+
+| खाना | क्या रखिए | आगे क्यों मायने रखता है |
+| --- | --- | --- |
+| Name | `Saathi` | Icon के नीचे लिखा नाम। कभी भी बदला जा सकता है। |
+| Package name | `com.sujeet.saathi` | यही `applicationId` बनता है — ऐप की पक्की पहचान |
+| Save location | कहीं भी, बिना space वाले रास्ते पर | कुछ native औजार आज भी रास्ते के space पर लड़खड़ाते हैं |
+| Minimum SDK | `API 24` | सबसे पुराना Android जिस पर चलने का आप वादा करते हैं |
+
+**Package name** चलन के मुताबिक उलटे domain जैसा होता है क्योंकि उसे दुनिया भर में
+अलग होना है — एक ही नाम वाले दो ऐप न किसी उपकरण पर साथ रह सकते हैं न Play पर। कोई
+ऐसा domain लीजिए जो आपका हो, या ऐसा नाम जो कोई और न चुने।
+
+**Minimum SDK** असली सौदा है। Android Studio हर स्तर के लिए दिखाता है कि वह कितने
+उपकरणों तक पहुँचता है, और आप जितना नीचे जाते हैं उतनी APIs खोते हैं। API 24 आरामदेह
+फर्श है: चलन में लगभग हर फोन उसमें आता है और फिर भी आप ज्यादातर आजके Jetpack को बिना
+अलग-अलग शाखाओं के इस्तेमाल कर सकते हैं।
+
+<Quiz
+  question="आप ऐप भेज देते हैं, दोस्त APK लगा लेते हैं, और फिर आपको लगता है कि `com.sujeet.saathi` की जगह `com.sujeet.saathilist` होना चाहिए था। आप `applicationId` बदलकर नया APK भेजते हैं।"
+  options={[
+    "वह पुराने के ऊपर आम update की तरह लग जाता है",
+    "Android उसे बिलकुल अलग ऐप मानता है। पुराना साथ-साथ लगा रहता है, उससे कोई update का रास्ता नहीं है, और Play पर वह शून्य installs और शून्य रायों वाली नई listing होती",
+    "Build गिर जाता है क्योंकि package का नाम अब folders से मेल नहीं खाता"
+  ]}
+  answer={1}
+  explanation="`applicationId` वही पहचान है जिससे Android तय करता है कि दो APK एक ही ऐप हैं या नहीं, तो उसे बदलना किसी का नाम नहीं बदलता — वह दूसरा ऐप बना देता है जो देखने में वैसा ही है, पहले के बगल में बैठा, अपने ही data, अपने ही icon के साथ, और आने का कोई रास्ता नहीं। Play पर नतीजा बेतरतीबी से कहीं बुरा है: listing, installs की गिनती, रायें और update का रास्ता, सब पुरानी पहचान के हैं और उनमें से कुछ भी आपके साथ नहीं आता। Build नहीं गिरता, क्योंकि Kotlin का package और `applicationId` अलग चीजें हैं और उनका अलग होना जायज है — और ठीक इसीलिए यह गलती compile हो जाती है। वह पहचान एक बार चुनिए, किसी के कुछ भी लगाने से पहले।"
+/>
+
+## आपको मिला क्या
+
+<FileTree
+  caption="बना हुआ project। app/ से ऊपर सब कुछ बनाने के बारे में है; उसके भीतर सब कुछ आपका ऐप है।"
+  entries={[
+    { name: "Saathi", depth: 0, kind: "folder" },
+    { name: "settings.gradle.kts", depth: 1, kind: "gradle", note: "कौन से modules हैं, और plugins कहाँ से उतरते हैं", highlight: true },
+    { name: "build.gradle.kts", depth: 1, kind: "gradle", note: "जड़ वाली build file — plugins बताती है, लगाती किसी को नहीं" },
+    { name: "gradle.properties", depth: 1, kind: "text", note: "JVM की memory, AndroidX का झंडा, पूरे build के बटन" },
+    { name: "gradle/libs.versions.toml", depth: 1, kind: "text", note: "version का catalog — हर निर्भरता का version यहीं रहता है", highlight: true },
+    { name: "gradle/wrapper/", depth: 1, kind: "folder", note: "Gradle का version बाँध देता है ताकि हर मशीन एक जैसा बनाए" },
+    { name: "app/", depth: 1, kind: "folder" },
+    { name: "build.gradle.kts", depth: 2, kind: "gradle", note: "यही module: SDK के स्तर, निर्भरताएँ, build types", highlight: true },
+    { name: "proguard-rules.pro", depth: 2, kind: "text", note: "अभी खाली; release वाले कदम पर मायने रखेगी" },
+    { name: "src/main/AndroidManifest.xml", depth: 2, kind: "xml", note: "ऐप चलने से पहले OS को उसके बारे में जो बताया जाता है" },
+    { name: "src/main/java/…/MainActivity.kt", depth: 2, kind: "kotlin", note: "वही एक screen जो आपको मिली" },
+    { name: "src/main/res/", depth: 2, kind: "folder", note: "icons, strings, themes — जो कुछ OS को आपके code के बिना चाहिए हो" },
+  ]}
+/>
+
+इनमें से तीन अभी खोलने लायक हैं।
+
+### `settings.gradle.kts` — चीजें आती कहाँ से हैं
+
+```kotlin title="settings.gradle.kts" numbered
+pluginManagement {
+    repositories {
+        google()          // Android Gradle Plugin, Jetpack
+        mavenCentral()    // बाकी सब कुछ
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+include(":app")
+```
+
+यह file उसी सवाल का जवाब है — *यह आता कहाँ से है*। जब आप कोई निर्भरता लिखते हैं,
+Gradle यहाँ लिखे हर repository से क्रम से पूछता है, और पहला मिलता हुआ
+`~/.gradle/caches` में उतार लेता है। कुछ भी Android Studio के साथ नहीं आता।
+
+`include(":app")` आपके project के modules की पूरी सूची है। जो module आप बनाकर यहाँ
+लिखना भूल जाएँ वह Gradle के लिए है ही नहीं, और जो error मिलती है वह इस file के बारे
+में कुछ नहीं कहती।
+
+### `gradle/libs.versions.toml` — version का catalog
+
+```toml title="gradle/libs.versions.toml" numbered
+[versions]
+kotlin = "2.1.0"
+composeBom = "2025.01.00"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+```
+
+जब कोई build file `implementation(libs.androidx.core.ktx)` कहती है, तो वह `libs`
+यही file है, और बिंदुओं वाला रास्ता वही नाम है जिसमें हाइफन बिंदुओं में बदल गए। तो
+code की एक लाइन का पूरा सफर यह है:
+
+<PipelineDiagram
+  title="कोई निर्भरता आती कहाँ से है"
+  description="Build file में लिखा निर्भरता का उपनाम version के catalog से होते हुए किसी पते तक पहुँचता है, जिसे Gradle repository से उतारकर अपने स्थानीय भंडार में रखता है और compile के रास्ते पर लगा देता है।"
+  stages={[
+    { label: "libs.androidx.core.ktx", sub: "build.gradle.kts", accent: "violet" },
+    { label: "androidx.core:core-ktx:1.15.0", sub: "libs.versions.toml", accent: "sky" },
+    { label: "google()", sub: "repository", accent: "emerald" },
+    { label: "~/.gradle/caches", sub: "एक बार उतरा", accent: "amber" },
+    { label: "compile classpath", sub: "अब आपका code import कर सकता है", accent: "violet" },
+  ]}
+/>
+
+यह कड़ी जान लेना ही "unresolved reference" को पहेली से तीन जाँचने लायक चीजों में बदल
+देता है, इसी क्रम में: catalog में है क्या, build file में है क्या, sync पूरा हुआ क्या।
+
+### `app/build.gradle.kts` — यही module
+
+```kotlin title="app/build.gradle.kts" numbered
+android {
+    namespace = "com.sujeet.saathi"        // R और BuildConfig कहाँ बनते हैं
+    compileSdk = 36                         // कौन सी APIs आप बुला सकते हैं
+
+    defaultConfig {
+        applicationId = "com.sujeet.saathi" // पक्की पहचान
+        minSdk = 24                         // सबसे पुराना उपकरण जिसे आप सहारा देते हैं
+        targetSdk = 36                      // वह बर्ताव जिस पर आपने परख की है
+        versionCode = 1                     // Play यही मिलाता है; बढ़ना ही चाहिए
+        versionName = "1.0"                 // उपयोगकर्ता को दिखने वाला
+    }
+}
+```
+
+`compileSdk`, `minSdk` और `targetSdk` तीन अलग सवाल हैं और लगातार आपस में गड्डमड्ड
+किए जाते हैं। `compileSdk` यह है कि compiler आपको कौन सी APIs लिखने देता है।
+`minSdk` सबसे पुराना उपकरण है जिस पर ऐप लग सकता है। `targetSdk` एक वादा है: *मैंने
+इस version के बर्ताव के बदलावों पर परख कर ली है* — और उसे बढ़ाना आपको पीछे चलते काम
+की सख्त हदों जैसी चीजों में शामिल कर देता है, चाहे आप तैयार हों या नहीं।
+
+<Detail summary="`namespace` और `applicationId` अलग क्यों हैं">
+वे शुरू में एक जैसे होते हैं, तो दोहराव लगते हैं। हैं नहीं।
+
+`namespace` compile वक्त की चीज है: वह तय करता है कि बनी हुई `R` और `BuildConfig`
+classes किस package में जाएँगी, तो आपकी Kotlin की `import` लाइनें उसी की बात करती
+हैं। `applicationId` चलते वक्त की चीज है: वही पहचान है जिससे operating system और
+Play लगे हुए ऐप को पहचानते हैं।
+
+वे अलग इसलिए हैं कि build के रूपों को एक बदलना पड़ता है और दूसरा नहीं। Release वाले
+कदम में हम debug वाले build को `applicationIdSuffix = ".debug"` देंगे ताकि वह
+परखने वाले के फोन पर release वाले के *साथ-साथ* लगे — Android के लिए दो ऐप, compiler
+के लिए एक namespace, और कहीं कोई code का बदलाव नहीं।
+</Detail>
+
+## वह एक screen जो आपको मिली
+
+```kotlin title="MainActivity.kt" numbered
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            SaathiTheme {
+                Scaffold { padding -> Greeting(Modifier.padding(padding)) }
+            }
+        }
+    }
+}
+```
+
+`ComponentActivity` छोटा, Compose से मेल खाता आधार class है — वह lifecycle,
+`ViewModel` का भंडार और back दबाने वाला dispatcher लाता है जिन पर हम आगे के कदम में
+टिकेंगे, और कुछ नहीं। `setContent` वह पुल है: उस लाइन से नीचे आप Compose में हैं और
+कहीं कोई XML का layout नहीं है।
+
+`enableEdgeToEdge()` आपके ऐप को status और navigation की पट्टियों के पीछे तक बनाता
+है, जो Android 15 और उससे आगे जरूरी है। इसीलिए `Scaffold` आपको `padding` का मान
+थमाता है — उसे छोड़िए और आपकी सामग्री की पहली पंक्ति घड़ी के नीचे बैठ जाएगी।
+
+## एक बार चलाइए
+
+Run दबाइए। तीन चीजें होती हैं जिन्हें दिमाग में अलग रखना काम का है: Gradle निर्भरताएँ
+सुलझाकर compile करता है, APK पर उस **debug की चाबी** से हस्ताक्षर होते हैं जो Android
+Studio ने आपके लिए बनाई, और `adb` उसे लगा देता है।
+
+वही debug की चाबी है जिसकी वजह से ऐप लगता ही है — Android बिना हस्ताक्षर वाले APK
+ठुकरा देता है — और उसी वजह से आप यह build किसी दोस्त को भेजकर बाद में release वाले
+build से update नहीं कर सकते। अलग चाबी, अलग ऐप। इसे हम आखिरी कदम में ठीक से सुलझाएँगे।
+
+<Pitfall title="तीन चीजें जो पहले ही दिन काटती हैं">
+**`libs.versions.toml` बदलकर sync न करना।** Catalog sync के वक्त पढ़ा जाता है, तो
+नई entry sync तक दिखती ही नहीं — और error कहती है "unresolved reference", जो code
+की गड़बड़ी जैसी लगती है।
+
+**Build बाँट देने के बाद `applicationId` बदलना।** वह हमेशा नया ऐप है। किसी के कुछ
+लगाने से पहले उसे चुन लीजिए।
+
+**`local.properties` commit कर देना।** उसमें *आपके* SDK का पूरा रास्ता है। बनी हुई
+`.gitignore` उसे पहले ही छोड़ देती है; उसे "ठीक" मत कीजिए।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+अगले कदम से पहले, यह सब सही होना चाहिए।
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| Project बनता है | Run पूरा होता है, ऐप उपकरण पर खुलता है |
+| जड़ की हर file का नाम बता सकते हैं | `settings`, `build`, `libs.versions.toml`, wrapper |
+| निर्भरता कहाँ से आती है, पता है | Catalog से पता, पते से repository, फिर भंडार |
+| `applicationId` आखिरी है | आप उसे हमेशा के लिए रखने को तैयार हैं |
+| Git शुरू हो चुका है | `git init`, और बनी हुई `.gitignore` बिना छेड़े |
+
+आगे: इस project को Firebase से जोड़िए, और ठीक-ठीक देखिए कि `google-services.json`
+करता क्या है — यह भी कि उसे commit करना सुरक्षित क्यों है, जो लगभग सबको चौंकाता है।

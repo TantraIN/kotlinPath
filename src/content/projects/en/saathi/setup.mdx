@@ -1,0 +1,235 @@
+---
+title: The empty project, and every file in it
+description: The New Project wizard makes about a dozen decisions on your behalf in four seconds. This step reads them back, because every one of them turns into a constraint later.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Nothing in a generated project is boilerplate. Every file answers a question the
+build system, the operating system or the Play Store will ask you later — and the
+fastest way to stop being afraid of Android is to know which file answers which.
+</KeyIdea>
+
+## What we are building
+
+**Saathi** is a shared list. You add bread and milk on your phone; the person you
+sent the APK to sees both appear on theirs. It works in a shop with no signal,
+and syncs when the signal comes back.
+
+That one sentence decides most of the architecture, and we will keep coming back
+to it. Offline means the database — not the network — is the source of truth.
+Shared means there is a user, and rules about who may read what.
+
+## Creating it
+
+In Android Studio: **New Project → Empty Activity**. Four fields, and each one is
+a decision you cannot cheaply undo.
+
+| Field | Put | Why it matters later |
+| --- | --- | --- |
+| Name | `Saathi` | The label under the icon. Changeable any time. |
+| Package name | `com.sujeet.saathi` | Becomes `applicationId` — the app's permanent identity |
+| Save location | anywhere with no spaces | Some native tools still trip on spaces in paths |
+| Minimum SDK | `API 24` | The oldest Android you promise to run on |
+
+**Package name** is reverse-domain by convention because it has to be globally
+unique — two apps with the same one cannot both exist on a device or in Play. Use
+a domain you control, or any name nobody else would pick.
+
+**Minimum SDK** is the honest trade. Android Studio shows what share of devices
+each level reaches, and every level you drop costs you APIs. API 24 is a
+comfortable floor: it covers almost every phone in use and still lets you use
+most of the modern Jetpack surface without compatibility branches.
+
+<Quiz
+  question="You publish, friends install the APK, and then you decide `com.sujeet.saathi` should have been `com.sujeet.saathilist`. You change `applicationId` and send the new APK."
+  options={[
+    "It installs over the old one as a normal update",
+    "Android treats it as a completely different app. The old one stays installed side by side, there is no update path from it, and on Play it would be a new listing with zero installs and zero reviews",
+    "The build fails because the package name no longer matches the folders"
+  ]}
+  answer={1}
+  explanation="`applicationId` is the identity Android uses to decide whether two APKs are the same app, so changing it does not rename anything — it creates a second app that happens to look identical, sitting next to the first with its own data, its own icon and no way to migrate. On Play the consequence is worse than untidy: the listing, the install count, the reviews and the update path all belong to the old id and none of them follow you. The build does not fail, because the Kotlin package and `applicationId` are separate things and are allowed to differ — which is exactly why this mistake compiles. Pick the id once, before anyone installs anything."
+/>
+
+## What you were given
+
+<FileTree
+  caption="The generated project. Everything above app/ is about building; everything inside is your app."
+  entries={[
+    { name: "Saathi", depth: 0, kind: "folder" },
+    { name: "settings.gradle.kts", depth: 1, kind: "gradle", note: "which modules exist, and where plugins are downloaded from", highlight: true },
+    { name: "build.gradle.kts", depth: 1, kind: "gradle", note: "root build file — declares plugins, applies none" },
+    { name: "gradle.properties", depth: 1, kind: "text", note: "JVM memory, AndroidX flag, build-wide switches" },
+    { name: "gradle/libs.versions.toml", depth: 1, kind: "text", note: "the version catalog — every dependency version lives here", highlight: true },
+    { name: "gradle/wrapper/", depth: 1, kind: "folder", note: "pins the Gradle version so every machine builds the same" },
+    { name: "app/", depth: 1, kind: "folder" },
+    { name: "build.gradle.kts", depth: 2, kind: "gradle", note: "this module: SDK levels, dependencies, build types", highlight: true },
+    { name: "proguard-rules.pro", depth: 2, kind: "text", note: "empty for now; matters in the release step" },
+    { name: "src/main/AndroidManifest.xml", depth: 2, kind: "xml", note: "what the OS is told about your app before it runs" },
+    { name: "src/main/java/…/MainActivity.kt", depth: 2, kind: "kotlin", note: "the one screen you were given" },
+    { name: "src/main/res/", depth: 2, kind: "folder", note: "icons, strings, themes — anything the OS may need without your code" },
+  ]}
+/>
+
+Three of those are worth opening now.
+
+### `settings.gradle.kts` — where things come from
+
+```kotlin title="settings.gradle.kts" numbered
+pluginManagement {
+    repositories {
+        google()          // Android Gradle Plugin, Jetpack
+        mavenCentral()    // everything else
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+include(":app")
+```
+
+This file answers *where does this come from*. When you write a dependency,
+Gradle asks each repository listed here, in order, and downloads the first match
+into `~/.gradle/caches`. Nothing is bundled with Android Studio.
+
+`include(":app")` is the entire list of modules in your project. A module you
+create but forget to include here simply does not exist as far as Gradle is
+concerned, and the error you get says nothing about this file.
+
+### `gradle/libs.versions.toml` — the version catalog
+
+```toml title="gradle/libs.versions.toml" numbered
+[versions]
+kotlin = "2.1.0"
+composeBom = "2025.01.00"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+```
+
+When a build file says `implementation(libs.androidx.core.ktx)`, that `libs` is
+this file, and the dot-path is the entry name with hyphens turned into dots. So
+the full journey of a single line of code is:
+
+<PipelineDiagram
+  title="Where a dependency comes from"
+  description="A dependency alias in a build file resolves through the version catalog to a coordinate, which Gradle downloads from a repository into its local cache and puts on the compile classpath."
+  stages={[
+    { label: "libs.androidx.core.ktx", sub: "build.gradle.kts", accent: "violet" },
+    { label: "androidx.core:core-ktx:1.15.0", sub: "libs.versions.toml", accent: "sky" },
+    { label: "google()", sub: "repository", accent: "emerald" },
+    { label: "~/.gradle/caches", sub: "downloaded once", accent: "amber" },
+    { label: "compile classpath", sub: "your code can import it", accent: "violet" },
+  ]}
+/>
+
+Knowing this chain is what turns "unresolved reference" from a mystery into three
+things to check, in order: is it in the catalog, is it in the build file, did the
+sync finish.
+
+### `app/build.gradle.kts` — this module
+
+```kotlin title="app/build.gradle.kts" numbered
+android {
+    namespace = "com.sujeet.saathi"        // where R and BuildConfig are generated
+    compileSdk = 36                         // which APIs you may call
+
+    defaultConfig {
+        applicationId = "com.sujeet.saathi" // the permanent identity
+        minSdk = 24                         // the oldest device you support
+        targetSdk = 36                      // the behaviour you have tested against
+        versionCode = 1                     // what Play compares; must go up
+        versionName = "1.0"                 // what the user sees
+    }
+}
+```
+
+`compileSdk`, `minSdk` and `targetSdk` are three different questions and are
+confused constantly. `compileSdk` is which APIs the compiler lets you type.
+`minSdk` is the oldest device that may install. `targetSdk` is a promise: *I have
+tested against this version's behaviour changes* — and raising it opts you into
+things like stricter background limits, whether you are ready or not.
+
+<Detail summary="Why `namespace` and `applicationId` are separate">
+They start identical, so they look like duplication. They are not.
+
+`namespace` is a compile-time thing: it decides the package of the generated `R`
+and `BuildConfig` classes, so it is what your Kotlin `import` lines refer to.
+`applicationId` is a runtime thing: it is the id the operating system and Play
+use to identify the installed app.
+
+They are separate because build variants need to change one without the other. In
+the release step we give the debug build `applicationIdSuffix = ".debug"` so it
+installs *alongside* the release build on a tester's phone — two apps to Android,
+one namespace to the compiler, and no code changes anywhere.
+</Detail>
+
+## The one screen you were given
+
+```kotlin title="MainActivity.kt" numbered
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            SaathiTheme {
+                Scaffold { padding -> Greeting(Modifier.padding(padding)) }
+            }
+        }
+    }
+}
+```
+
+`ComponentActivity` is the small, Compose-friendly base class — it brings the
+lifecycle, the `ViewModel` store and the back-press dispatcher we rely on in a
+later step, and nothing else. `setContent` is the bridge: from that line down,
+you are in Compose and there is no XML layout anywhere.
+
+`enableEdgeToEdge()` draws your app behind the status and navigation bars, which
+is mandatory on Android 15 and above. That is why `Scaffold` hands you a
+`padding` value — ignore it and your first row of content sits underneath the
+clock.
+
+## Run it once
+
+Press Run. Three things happen that are worth separating in your head: Gradle
+resolves and compiles, the APK is signed with a **debug key** that Android Studio
+generated for you, and `adb` installs it.
+
+That debug key is why the app installs at all — Android refuses unsigned APKs —
+and it is also why you cannot send this build to a friend and later update it
+from a release build. Different key, different app. We fix that properly in the
+last step.
+
+<Pitfall title="Three things that bite on day one">
+**Editing `libs.versions.toml` without syncing.** The catalog is read at sync
+time, so a new entry is invisible until you sync — and the error says "unresolved
+reference", which sounds like a code problem.
+
+**Changing `applicationId` after sharing a build.** It is a new app, always. Pick
+it before anyone installs anything.
+
+**Committing `local.properties`.** It contains the absolute path to *your* SDK.
+The generated `.gitignore` already excludes it; do not "fix" that.
+</Pitfall>
+
+## Checkpoint
+
+Before the next step, all of this should be true.
+
+| Check | How you know |
+| --- | --- |
+| The project builds | Run finishes, the app opens on a device |
+| You can name every root file | `settings`, `build`, `libs.versions.toml`, wrapper |
+| You know where a dependency comes from | Catalog to coordinate to repository to cache |
+| `applicationId` is final | You are willing to keep it forever |
+| Git is initialised | `git init`, and the generated `.gitignore` untouched |
+
+Next: connect this project to Firebase, and see exactly what `google-services.json`
+does — including why it is safe to commit, which surprises almost everyone.

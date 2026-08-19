@@ -14,6 +14,13 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { t, type Lang } from "@/lib/i18n";
 import type { SearchDoc } from "@/lib/search-types";
 
+/** The three top-level destinations, shared by the header and the mobile drawer. */
+const NAV_LINKS = [
+  { href: "curriculum", label: (copy: ReturnType<typeof t>) => copy.nav.curriculum },
+  { href: "projects", label: (copy: ReturnType<typeof t>) => copy.nav.projects },
+  { href: "glossary", label: (copy: ReturnType<typeof t>) => copy.nav.glossary },
+] as const;
+
 export function AppShell({
   lang,
   searchDocs,
@@ -65,18 +72,15 @@ export function AppShell({
 
           <div className="ml-auto flex items-center gap-2">
             <SearchDialog docs={searchDocs} lang={lang} />
-            <Link
-              href={`/${lang}/curriculum`}
-              className="hidden rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg md:block"
-            >
-              {copy.nav.curriculum}
-            </Link>
-            <Link
-              href={`/${lang}/glossary`}
-              className="hidden rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg md:block"
-            >
-              {copy.nav.glossary}
-            </Link>
+            {NAV_LINKS.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={`/${lang}/${href}`}
+                className="hidden rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg md:block"
+              >
+                {label(copy)}
+              </Link>
+            ))}
             <LangSwitcher lang={lang} />
             <ThemeToggle lang={lang} />
           </div>
@@ -128,6 +132,19 @@ export function AppShell({
                 >
                   <X size={18} />
                 </button>
+              </div>
+              {/* The header links are hidden below md, so the drawer carries them. */}
+              <div className="flex shrink-0 gap-1.5 border-b border-line px-3 py-2">
+                {NAV_LINKS.map(({ href, label }) => (
+                  <Link
+                    key={href}
+                    href={`/${lang}/${href}`}
+                    onClick={() => setDrawer(false)}
+                    className="rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[12.5px] font-medium text-body transition-colors hover:border-violet hover:text-violet"
+                  >
+                    {label(copy)}
+                  </Link>
+                ))}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-2">
                 <Sidebar lang={lang} onNavigate={() => setDrawer(false)} />

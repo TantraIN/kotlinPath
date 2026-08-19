@@ -12,7 +12,7 @@ import type { Lang } from "@/lib/i18n";
 
 export type SearchDoc = {
   id: string;
-  kind: "lesson" | "phase" | "glossary" | "heading";
+  kind: "lesson" | "phase" | "glossary" | "heading" | "project";
   title: string;
   /** Where this result lives, shown under the title. */
   context: string;

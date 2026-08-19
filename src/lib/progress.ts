@@ -3,6 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 import { ALL_LESSONS, CURRICULUM } from "@/content/curriculum";
+import { findProject, stepProgressKey } from "@/content/projects";
 
 /**
  * Which lessons the learner has marked complete.
@@ -106,6 +107,25 @@ export function usePhaseProgress(phaseSlug: string): { done: number; total: numb
     if (progress[`${phaseSlug}/${lesson.slug}`]) done += 1;
   }
   return { done, total: phase.lessons.length };
+}
+
+/**
+ * Completed / total for one guided project.
+ *
+ * Project steps are stored under a `project:` prefix so they share the same
+ * store and the same reset button, while `useCourseProgress` below still counts
+ * only lessons — a finished project must not read as course progress.
+ */
+export function useProjectProgress(projectSlug: string): { done: number; total: number } {
+  const progress = useProgress();
+  const project = findProject(projectSlug);
+  if (!project) return { done: 0, total: 0 };
+
+  let done = 0;
+  for (const step of project.steps) {
+    if (progress[stepProgressKey(`${projectSlug}/${step.slug}`)]) done += 1;
+  }
+  return { done, total: project.steps.length };
 }
 
 /** Completed / total across the whole course. */

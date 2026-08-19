@@ -6,6 +6,7 @@ import matter from "gray-matter";
 import { DEFAULT_LANG, type Lang } from "@/lib/i18n";
 
 const CONTENT_ROOT = path.join(process.cwd(), "src", "content", "lessons");
+const PROJECT_ROOT = path.join(process.cwd(), "src", "content", "projects");
 
 export type LessonFrontmatter = {
   /** Localized lesson title. Falls back to the English title in curriculum.ts. */
@@ -26,8 +27,8 @@ export type LoadedLesson = {
   resolvedLang: Lang;
 };
 
-function filePath(lang: Lang, lessonPath: string): string {
-  return path.join(CONTENT_ROOT, lang, `${lessonPath}.mdx`);
+function filePath(root: string, lang: Lang, docPath: string): string {
+  return path.join(root, lang, `${docPath}.mdx`);
 }
 
 async function readIfExists(file: string): Promise<string | null> {
@@ -39,16 +40,16 @@ async function readIfExists(file: string): Promise<string | null> {
 }
 
 /**
- * Loads a lesson in the requested language, falling back to English so a
- * partially translated course never renders an empty page.
+ * Reads one MDX document in the requested language, falling back to English so
+ * a partially translated course never renders an empty page.
  */
-export async function loadLesson(lang: Lang, lessonPath: string): Promise<LoadedLesson | null> {
-  let raw = await readIfExists(filePath(lang, lessonPath));
+async function loadDoc(root: string, lang: Lang, docPath: string): Promise<LoadedLesson | null> {
+  let raw = await readIfExists(filePath(root, lang, docPath));
   let resolvedLang = lang;
   let fallback = false;
 
   if (raw === null && lang !== DEFAULT_LANG) {
-    raw = await readIfExists(filePath(DEFAULT_LANG, lessonPath));
+    raw = await readIfExists(filePath(root, DEFAULT_LANG, docPath));
     resolvedLang = DEFAULT_LANG;
     fallback = true;
   }
@@ -62,6 +63,15 @@ export async function loadLesson(lang: Lang, lessonPath: string): Promise<Loaded
     fallback,
     resolvedLang,
   };
+}
+
+export function loadLesson(lang: Lang, lessonPath: string): Promise<LoadedLesson | null> {
+  return loadDoc(CONTENT_ROOT, lang, lessonPath);
+}
+
+/** One step of a guided project, at `<projectSlug>/<stepSlug>`. */
+export function loadProjectStep(lang: Lang, stepPath: string): Promise<LoadedLesson | null> {
+  return loadDoc(PROJECT_ROOT, lang, stepPath);
 }
 
 /** Plain-text extraction for the search index — strips MDX syntax, keeps prose. */
@@ -113,5 +123,5 @@ export function slugify(text: string): string {
 }
 
 export async function lessonExists(lang: Lang, lessonPath: string): Promise<boolean> {
-  return (await readIfExists(filePath(lang, lessonPath))) !== null;
+  return (await readIfExists(filePath(CONTENT_ROOT, lang, lessonPath))) !== null;
 }

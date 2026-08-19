@@ -1,0 +1,242 @@
+---
+title: Khaali project, aur uski har file
+description: New Project ka wizard chaar second mein aapki taraf se kareeb ek darjan faisle le leta hai. Yeh step unhein padhkar sunata hai, kyonki unmein se har ek aage chalkar bandish ban jaata hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Bane-banaye project mein kuchh bhi bharti nahi hai. Har file us sawaal ka jawaab
+hai jo build ka tantra, operating system ya Play Store aapse aage poochhega — aur
+Android se darna chhodne ka sabse tez raasta yeh jaanna hai ki kaun si file kis
+sawaal ka jawaab deti hai.
+</KeyIdea>
+
+## Hum bana kya rahe hain
+
+**Saathi** ek shared list hai. Aap apne phone par bread aur doodh jodte hain; jise
+aapne APK bheja tha use donon apne phone par dikhne lagte hain. Yeh bina signal
+wali dukaan mein chalta hai, aur signal lautne par sync kar leta hai.
+
+Wahi ek vaakya zyadatar banaavat tay kar deta hai, aur hum baar-baar usi par
+lautenge. Bina net chalne ka matlab hai sach ka srot net nahi, database hai. Shared
+hone ka matlab hai koi user hai, aur niyam hain ki kaun kya padh sakta hai.
+
+## Ise banana
+
+Android Studio mein: **New Project → Empty Activity**. Chaar khaane, aur har ek
+aisa faisla hai jise saste mein palta nahi ja sakta.
+
+| Khaana | Kya rakhiye | Aage kyon maayne rakhta hai |
+| --- | --- | --- |
+| Name | `Saathi` | Icon ke neeche likha naam. Kabhi bhi badla ja sakta hai. |
+| Package name | `com.sujeet.saathi` | Yahi `applicationId` banta hai — app ki pakki pehchaan |
+| Save location | kahin bhi, bina space wale raaste par | Kuchh native auzaar aaj bhi raaste ke space par ladkhadate hain |
+| Minimum SDK | `API 24` | Sabse purana Android jis par chalne ka aap waada karte hain |
+
+**Package name** chalan ke mutaabik ulte domain jaisa hota hai kyonki use duniya
+bhar mein alag hona hai — ek hi naam wale do app na kisi upkaran par saath reh sakte
+hain na Play par. Koi aisa domain lijiye jo aapka ho, ya aisa naam jo koi aur na
+chune.
+
+**Minimum SDK** asli sauda hai. Android Studio har star ke liye dikhata hai ki wo
+kitne upkaranon tak pahunchta hai, aur aap jitna neeche jaate hain utni APIs khote
+hain. API 24 aaraamdeh farsh hai: chalan mein lagbhag har phone usmein aata hai aur
+phir bhi aap zyadatar aaj ke Jetpack ko bina alag-alag shaakhaon ke istemaal kar
+sakte hain.
+
+<Quiz
+  question="Aap app bhej dete hain, dost APK laga lete hain, aur phir aapko lagta hai ki `com.sujeet.saathi` ki jagah `com.sujeet.saathilist` hona chahiye tha. Aap `applicationId` badalkar naya APK bhejte hain."
+  options={[
+    "Wo purane ke oopar aam update ki tarah lag jaata hai",
+    "Android use bilkul alag app maanta hai. Purana saath-saath laga rehta hai, usse koi update ka raasta nahi hai, aur Play par wo shoonya installs aur shoonya raayon wali nayi listing hoti",
+    "Build gir jaata hai kyonki package ka naam ab folders se mel nahi khata"
+  ]}
+  answer={1}
+  explanation="`applicationId` wahi pehchaan hai jisse Android tay karta hai ki do APK ek hi app hain ya nahi, to use badalna kisi ka naam nahi badalta — wo doosra app bana deta hai jo dekhne mein waisa hi hai, pehle ke bagal mein baitha, apne hi data, apne hi icon ke saath, aur aane ka koi raasta nahi. Play par nateeja betarteebi se kahin bura hai: listing, installs ki ginti, raayein aur update ka raasta, sab purani pehchaan ke hain aur unmein se kuchh bhi aapke saath nahi aata. Build nahi girta, kyonki Kotlin ka package aur `applicationId` alag cheezein hain aur unka alag hona jaayaz hai — aur theek isiliye yeh galti compile ho jaati hai. Wo pehchaan ek baar chuniye, kisi ke kuchh bhi lagane se pehle."
+/>
+
+## Aapko mila kya
+
+<FileTree
+  caption="Bana hua project. app/ se oopar sab kuchh banane ke baare mein hai; uske bheetar sab kuchh aapka app hai."
+  entries={[
+    { name: "Saathi", depth: 0, kind: "folder" },
+    { name: "settings.gradle.kts", depth: 1, kind: "gradle", note: "kaun se modules hain, aur plugins kahan se utarte hain", highlight: true },
+    { name: "build.gradle.kts", depth: 1, kind: "gradle", note: "jad wali build file — plugins batati hai, lagati kisi ko nahi" },
+    { name: "gradle.properties", depth: 1, kind: "text", note: "JVM ki memory, AndroidX ka jhanda, poore build ke button" },
+    { name: "gradle/libs.versions.toml", depth: 1, kind: "text", note: "version ka catalog — har dependency ka version yahin rehta hai", highlight: true },
+    { name: "gradle/wrapper/", depth: 1, kind: "folder", note: "Gradle ka version baandh deta hai taki har machine ek jaisa banaye" },
+    { name: "app/", depth: 1, kind: "folder" },
+    { name: "build.gradle.kts", depth: 2, kind: "gradle", note: "yahi module: SDK ke star, dependencies, build types", highlight: true },
+    { name: "proguard-rules.pro", depth: 2, kind: "text", note: "abhi khaali; release wale step par maayne rakhegi" },
+    { name: "src/main/AndroidManifest.xml", depth: 2, kind: "xml", note: "app chalne se pehle OS ko uske baare mein jo bataya jaata hai" },
+    { name: "src/main/java/…/MainActivity.kt", depth: 2, kind: "kotlin", note: "wahi ek screen jo aapko mili" },
+    { name: "src/main/res/", depth: 2, kind: "folder", note: "icons, strings, themes — jo kuchh OS ko aapke code ke bina chahiye ho" },
+  ]}
+/>
+
+Inmein se teen abhi kholne layak hain.
+
+### `settings.gradle.kts` — cheezein aati kahan se hain
+
+```kotlin title="settings.gradle.kts" numbered
+pluginManagement {
+    repositories {
+        google()          // Android Gradle Plugin, Jetpack
+        mavenCentral()    // baaki sab kuchh
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+include(":app")
+```
+
+Yeh file usi sawaal ka jawaab hai — *yeh aata kahan se hai*. Jab aap koi dependency
+likhte hain, Gradle yahan likhe har repository se tarteeb se poochhta hai, aur pehla
+milta hua `~/.gradle/caches` mein utaar leta hai. Kuchh bhi Android Studio ke saath
+nahi aata.
+
+`include(":app")` aapke project ke modules ki poori soochi hai. Jo module aap
+banakar yahan likhna bhool jaayein wo Gradle ke liye hai hi nahi, aur jo error milti
+hai wo is file ke baare mein kuchh nahi kehti.
+
+### `gradle/libs.versions.toml` — version ka catalog
+
+```toml title="gradle/libs.versions.toml" numbered
+[versions]
+kotlin = "2.1.0"
+composeBom = "2025.01.00"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+```
+
+Jab koi build file `implementation(libs.androidx.core.ktx)` kehti hai, to wo `libs`
+yahi file hai, aur binduon wala raasta wahi naam hai jismein hyphen binduon mein
+badal gaye. To code ki ek line ka poora safar yeh hai:
+
+<PipelineDiagram
+  title="Koi dependency aati kahan se hai"
+  description="Build file mein likha dependency ka upnaam version ke catalog se hote hue kisi pate tak pahunchta hai, jise Gradle repository se utaarkar apne sthaaniya bhandaar mein rakhta hai aur compile ke raaste par laga deta hai."
+  stages={[
+    { label: "libs.androidx.core.ktx", sub: "build.gradle.kts", accent: "violet" },
+    { label: "androidx.core:core-ktx:1.15.0", sub: "libs.versions.toml", accent: "sky" },
+    { label: "google()", sub: "repository", accent: "emerald" },
+    { label: "~/.gradle/caches", sub: "ek baar utra", accent: "amber" },
+    { label: "compile classpath", sub: "ab aapka code import kar sakta hai", accent: "violet" },
+  ]}
+/>
+
+Yeh kadi jaan lena hi "unresolved reference" ko paheli se teen parakhne layak cheezon
+mein badal deta hai, isi tarteeb mein: catalog mein hai kya, build file mein hai kya,
+sync poora hua kya.
+
+### `app/build.gradle.kts` — yahi module
+
+```kotlin title="app/build.gradle.kts" numbered
+android {
+    namespace = "com.sujeet.saathi"        // R aur BuildConfig kahan bante hain
+    compileSdk = 36                         // kaun si APIs aap bula sakte hain
+
+    defaultConfig {
+        applicationId = "com.sujeet.saathi" // pakki pehchaan
+        minSdk = 24                         // sabse purana upkaran jise aap sahara dete hain
+        targetSdk = 36                      // wo bartaav jis par aapne parakh ki hai
+        versionCode = 1                     // Play yahi milata hai; badhna hi chahiye
+        versionName = "1.0"                 // user ko dikhne wala
+    }
+}
+```
+
+`compileSdk`, `minSdk` aur `targetSdk` teen alag sawaal hain aur lagataar aapas mein
+gaddmadd kiye jaate hain. `compileSdk` yeh hai ki compiler aapko kaun si APIs likhne
+deta hai. `minSdk` sabse purana upkaran hai jis par app lag sakta hai. `targetSdk`
+ek waada hai: *maine is version ke bartaav ke badlaavon par parakh kar li hai* — aur
+use badhana aapko peechhe chalte kaam ki sakht hadon jaisi cheezon mein shaamil kar
+deta hai, chahe aap taiyar hon ya nahi.
+
+<Detail summary="`namespace` aur `applicationId` alag kyon hain">
+Wo shuru mein ek jaise hote hain, to dohraav lagte hain. Hain nahi.
+
+`namespace` compile waqt ki cheez hai: wo tay karta hai ki bani hui `R` aur
+`BuildConfig` classes kis package mein jaayengi, to aapki Kotlin ki `import` lainein
+usi ki baat karti hain. `applicationId` chalte waqt ki cheez hai: wahi pehchaan hai
+jisse operating system aur Play lage hue app ko pehchante hain.
+
+Wo alag isliye hain ki build ke roopon ko ek badalna padta hai aur doosra nahi.
+Release wale step mein hum debug wale build ko `applicationIdSuffix = ".debug"`
+denge taki wo parakhne wale ke phone par release wale ke *saath-saath* lage — Android
+ke liye do app, compiler ke liye ek namespace, aur kahin koi code ka badlaav nahi.
+</Detail>
+
+## Wo ek screen jo aapko mili
+
+```kotlin title="MainActivity.kt" numbered
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            SaathiTheme {
+                Scaffold { padding -> Greeting(Modifier.padding(padding)) }
+            }
+        }
+    }
+}
+```
+
+`ComponentActivity` chhota, Compose se mel khaata aadhaar class hai — wo lifecycle,
+`ViewModel` ka bhandaar aur back dabane wala dispatcher laata hai jin par hum aage ke
+step mein tikenge, aur kuchh nahi. `setContent` wo pul hai: us line se neeche aap
+Compose mein hain aur kahin koi XML ka layout nahi hai.
+
+`enableEdgeToEdge()` aapke app ko status aur navigation ki pattiyon ke peechhe tak
+banata hai, jo Android 15 aur usse aage zaroori hai. Isiliye `Scaffold` aapko
+`padding` ka maan thamata hai — use chhodiye aur aapki saamagri ki pehli pankti ghadi
+ke neeche baith jaayegi.
+
+## Ek baar chalaiye
+
+Run dabaiye. Teen cheezein hoti hain jinhein dimaag mein alag rakhna kaam ka hai:
+Gradle dependencies suljhakar compile karta hai, APK par us **debug ki chaabi** se
+hastakshar hote hain jo Android Studio ne aapke liye banai, aur `adb` use laga deta
+hai.
+
+Wahi debug ki chaabi hai jiski wajah se app lagta hi hai — Android bina hastakshar
+wale APK thukra deta hai — aur usi wajah se aap yeh build kisi dost ko bhejkar baad
+mein release wale build se update nahi kar sakte. Alag chaabi, alag app. Ise hum
+aakhri step mein theek se suljhaayenge.
+
+<Pitfall title="Teen cheezein jo pehle hi din kaat-ti hain">
+**`libs.versions.toml` badalkar sync na karna.** Catalog sync ke waqt padha jaata
+hai, to nayi entry sync tak dikhti hi nahi — aur error kehti hai "unresolved
+reference", jo code ki gadbadi jaisi lagti hai.
+
+**Build baant dene ke baad `applicationId` badalna.** Wo hamesha naya app hai. Kisi
+ke kuchh lagane se pehle use chun lijiye.
+
+**`local.properties` commit kar dena.** Usmein *aapke* SDK ka poora raasta hai. Bani
+hui `.gitignore` use pehle hi chhod deti hai; use "theek" mat kijiye.
+</Pitfall>
+
+## Parakh ka padaav
+
+Agle step se pehle, yeh sab sahi hona chahiye.
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Project banta hai | Run poora hota hai, app upkaran par khulta hai |
+| Jad ki har file ka naam bata sakte hain | `settings`, `build`, `libs.versions.toml`, wrapper |
+| Dependency kahan se aati hai, pata hai | Catalog se pata, pate se repository, phir bhandaar |
+| `applicationId` aakhri hai | Aap use hamesha ke liye rakhne ko taiyar hain |
+| Git shuru ho chuka hai | `git init`, aur bani hui `.gitignore` bina chhede |
+
+Aage: is project ko Firebase se jodiye, aur theek-theek dekhiye ki
+`google-services.json` karta kya hai — yeh bhi ki use commit karna surakshit kyon
+hai, jo lagbhag sabko chaunkata hai.

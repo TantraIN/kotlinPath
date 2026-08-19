@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import {
   BookOpen,
   CornerDownLeft,
+  Hammer,
   Hash,
   Layers,
   Search,
@@ -23,6 +24,7 @@ const KIND_ICON = {
   phase: Layers,
   heading: Hash,
   glossary: Tag,
+  project: Hammer,
 } as const;
 
 const KIND_ACCENT = {
@@ -30,6 +32,7 @@ const KIND_ACCENT = {
   phase: "text-emerald",
   heading: "text-muted",
   glossary: "text-amber",
+  project: "text-emerald",
 } as const;
 
 export function SearchDialog({
