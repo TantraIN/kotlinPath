@@ -1,0 +1,160 @@
+---
+title: List wali screen, aur ghumane par bachi rehne wali haalat
+description: Ek na badalne wali cheez bata deti hai ki screen kya-kya dikha sakti hai. Phir phone ghumana, app peechhe bhejna aur process ka mar jaana, teen alag samasyaayein hain jinke teen alag jawaab hain.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Screen ko **ek haalat wali cheez ka function** hona chahiye. Aise sahi-galat khaanon ka
+jattha nahi jo aapas mein ulti baat keh sakein — `isLoading` sahi aur saath mein `error`
+bhi bhara — balki ek aisa maan jismein naamumkin jod kahe hi na ja sakein.
+</KeyIdea>
+
+## Haalat
+
+```kotlin title="ui/list/ListUiState.kt" numbered
+data class ListUiState(
+    val items: List<Item> = emptyList(),
+    val isSyncing: Boolean = false,
+    val input: String = "",
+    val error: UiText? = null,
+) {
+    val canAdd: Boolean get() = input.isNotBlank()      // nikala hua, kabhi rakha hua nahi
+}
+```
+
+`canAdd` gina jaata hai, rakha nahi jaata, aur yahi niyam rakhne layak hai: jo kuchh aap
+*nikaal sakte hain*, nikaaliye. Rakha hua `canAdd` sach ka doosra srot hai jo aakhirkaar
+`input` se alag baat kahega, aamtaur par tab jab koi "clear" wala button jodkar ek line
+bhool jaaye.
+
+`error` koi `String` nahi, `UiText` hai, kyonki ViewModel ko screen ke liye text sajana
+nahi chahiye — teen bhashaon ki poori baat yahi hai ki string tab chuni jaaye jab wo
+banai ja rahi ho, tab nahi jab wo gadhi ja rahi ho.
+
+## ViewModel
+
+```kotlin title="ui/list/ListViewModel.kt" numbered
+@HiltViewModel
+class ListViewModel @Inject constructor(
+    private val repository: ItemRepository,
+    savedStateHandle: SavedStateHandle,
+) : ViewModel() {
+
+    private val listId: String = savedStateHandle.toRoute<ListRoute>().listId
+    private val input = MutableStateFlow("")
+
+    val state: StateFlow<ListUiState> =
+        combine(repository.items(listId), input) { items, text ->
+            ListUiState(items = items, input = text)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = ListUiState(),
+        )
+
+    fun onInputChange(text: String) { input.value = text }
+
+    fun onAdd() = viewModelScope.launch {
+        val text = input.value.trim()
+        if (text.isEmpty()) return@launch
+        input.value = ""                     // pehle khaali kijiye: jodna to turant hai hi
+        repository.add(listId, text)
+    }
+}
+```
+
+Ismein teen lainein bhaar utha rahi hain.
+
+`savedStateHandle.toRoute<ListRoute>()` navigation ka argument padhta hai. Use kisi
+constructor ke parameter ke bajay handle se lena hi Hilt ko ViewModel banane deta hai
+bina navigation ke baare mein kuchh jaane, aur wahi process ke marne par bhi bachta hai.
+
+`stateIn` thande `Flow` ko garam `StateFlow` bana deta hai jiska maan hamesha haazir
+rehta hai, to screen ke paas apne pehle hi frame par banane ko kuchh hota hai.
+
+`WhileSubscribed(5_000)` wahi ank hai jise log bina wajah jaane nakal karte hain.
+
+<Quiz
+  question="Koi team `SharingStarted.WhileSubscribed(5_000)` ko `SharingStarted.Lazily` kar deti hai kyonki wo paanch second bewajah lage. Sab kuchh ab bhi chalta hai. Hafte bhar baad un users ki battery ki report bigadne lagti hai jo app peechhe khula chhod dete hain."
+  options={[
+    "`Lazily` database ko baar-baar poochhta hai, jabki `WhileSubscribed` badlaav ka intezaar karta hai",
+    "`Lazily` pehle sadasya par shuru hokar phir kabhi rukta hi nahi, to app ke peechhe rehte hue bhi Firestore ka listener aur database ki query chalte rehte hain. `WhileSubscribed(5_000)` unhein aakhri collect karne wale ke jaane ke paanch second baad rok deta hai — itna lamba ki ghumane par kaam dobara shuru na ho, itna chhota ki app chhodne par ho jaaye",
+    "`Lazily` ko `viewModelScope` ke saath istemaal kiya hi nahi ja sakta aur wo chupchaap us daayre ko leak kar deta hai"
+  ]}
+  answer={1}
+  explanation="Donon tareekon mein farak sirf itna hai ki oopar wala flow kab roka jaata hai, aur `Lazily` use kabhi rokta hi nahi — to oopar ki har cheez, us Firestore ke snapshot wale listener samet jo padhne ke paise katwata hai aur ek socket pakde rehta hai, tab tak chalti rehti hai jab tak ViewModel zinda hai, yaani poore us waqt jab app peechhe pada hai. Wo paanch second bewajah nahi hain: sajaavat badalne par collect karne wala girkar kuchh sau milliseconds mein dobara banta hai, to us khaai ko paatne layak lamba intezaar har ghumaav par query dobara chalane se bachata hai, aur phir bhi itna chhota rehta hai ki sach mein jaane par kaam ruk jaaye. Koi bhi tareeka baar-baar poochhta nahi — donon oopar ki aawaazon se chalte hain — aur `Lazily` `viewModelScope` ke saath bilkul jaayaz hai, aur theek isiliye yeh galti compile hoti hai aur hafte bhar chhupi rehti hai."
+/>
+
+## Screen
+
+```kotlin title="ui/list/ListScreen.kt" numbered
+@Composable
+fun ListScreen(viewModel: ListViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
+    LazyColumn {
+        items(state.items, key = { it.id }) { item ->       // key: pakki pehchaan
+            ItemRow(item = item, onToggle = { viewModel.onToggle(item.id) })
+        }
+    }
+}
+```
+
+`collectAsStateWithLifecycle`, na ki `collectAsState`. Saada wala app ke peechhe rehte
+hue bhi collect karta rehta hai, aur theek wahi `WhileSubscribed` rokne ki koshish kar
+raha tha — ye donon jodi mein chalte hain, aur ek ko doosre ke bina lena chupchaap use
+palat deta hai.
+
+`items` mein wo `key` us list aur ismein farak hai jo sahi tarah hilti-dulti hai banaam
+wo jahan doosri cheez par nishaan lagane se teesri jhapakti hai. Bina key ke Compose
+cheezon ko jagah se pehchanta hai, to oopar ek cheez judte hi har pankti ki haalat ek
+jagah neeche khisak jaati hai.
+
+<Detail summary="Ghumana, peechhe jaana aur process ka marna, teen alag samasyaayein hain">
+Inki baat saath mein hoti hai aur jawaab alag-alag hain, isiliye "ghumane par bachta hai
+kya" adhoora sawaal hai.
+
+**Ghumana** Activity ko maarta hai aur ViewModel ko rakhta hai. `state` wahin hai, bina
+chhua, aur screen usi se dobara ban jaati hai. Kuchh karne ko nahi.
+
+**Peechhe jaana** sab kuchh rakhta hai aur sirf collect karna rokta hai,
+`collectAsStateWithLifecycle` aur `WhileSubscribed` ki jodi ki badaulat. Lautne par
+dobara collect hota hai aur abhi wala maan turant mil jaata hai.
+
+**Process ka marna** — app ke peechhe rehte hue tantra ka uski memory wapas le lena —
+ViewModel ko bhi maar deta hai. Sirf `SavedStateHandle` bachta hai, kyonki wo disk par
+likha jaata hai. Isiliye `listId` wahin se aata hai: uske bina user kisi phone call se
+lautkar aisi screen paata hai jise ab pata hi nahi ki wo kaun si list dikha rahi hai.
+
+`input` mein aadha likha text yahan process ke marne par nahi bachta, aur yeh chook nahi,
+jaanboojhkar kiya gaya sasta sauda hai. Agar wo maayne rakhta, to wo
+`savedStateHandle.getStateFlow("input", "")` mein chala jaata — ek line, aur yeh jaanna
+kaam ka hai ki aap kar sakte hain.
+</Detail>
+
+<Pitfall title="Chaar, aur inmein se koi bhi zor se nahi girti">
+**`collectAsStateWithLifecycle` ki jagah `collectAsState`.** Peechhe rehte hue bhi
+collect chalta rehta hai, aur `WhileSubscribed` kabhi chalta hi nahi.
+
+**`SharingStarted.Lazily`.** Listeners kabhi rukte nahi, aur hafte bhar baad battery ki
+report bigadti hai.
+
+**Bina `key` ke `items()`.** Galat panktiyan hilti hain, aur kuchh judne ke baad haalat
+galat cheez se chipak jaati hai.
+
+**ViewModel mein strings sajana.** Bhasha tab chun li jaati hai jab screen ko pata hi
+nahi ki wo kismein ban rahi hai.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Ek hi haalat wali cheez | Screen theek ek `state` ka maan padhti hai |
+| Ghumane par bachti hai | Likhte-likhte ghumaiye; list dobara nahi ladti |
+| Peechhe jaane par rukti hai | Chhodne ke kuchh second baad Firestore ki padhai ruk jaati hai |
+| Process ke marne par bachti hai | Studio se process maariye; sahi list dobara khulti hai |
+| Panktiyon ki key hai | Oopar kuchh jodne se neeche ki panktiyan nahi hiltin |
+
+Aage: ek ke bajay teen screens, aur unhein jodne wala back ka dher.

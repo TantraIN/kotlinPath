@@ -1,0 +1,156 @@
+---
+title: List वाली screen, और घुमाने पर बची रहने वाली हालत
+description: एक न बदलने वाली चीज बता देती है कि screen क्या-क्या दिखा सकती है। फिर फोन घुमाना, ऐप पीछे भेजना और process का मर जाना, तीन अलग समस्याएँ हैं जिनके तीन अलग जवाब हैं।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Screen को **एक हालत वाली चीज का function** होना चाहिए। ऐसे सही-गलत खानों का जत्था
+नहीं जो आपस में उलटी बात कह सकें — `isLoading` सही और साथ में `error` भी भरा — बल्कि
+एक ऐसा मान जिसमें नामुमकिन जोड़ कहे ही न जा सकें।
+</KeyIdea>
+
+## हालत
+
+```kotlin title="ui/list/ListUiState.kt" numbered
+data class ListUiState(
+    val items: List<Item> = emptyList(),
+    val isSyncing: Boolean = false,
+    val input: String = "",
+    val error: UiText? = null,
+) {
+    val canAdd: Boolean get() = input.isNotBlank()      // निकाला हुआ, कभी रखा हुआ नहीं
+}
+```
+
+`canAdd` गिना जाता है, रखा नहीं जाता, और यही नियम रखने लायक है: जो कुछ आप *निकाल सकते
+हैं*, निकालिए। रखा हुआ `canAdd` सच का दूसरा स्रोत है जो आखिरकार `input` से अलग बात
+कहेगा, आमतौर पर तब जब कोई "clear" वाला बटन जोड़कर एक लाइन भूल जाए।
+
+`error` कोई `String` नहीं, `UiText` है, क्योंकि ViewModel को screen के लिए text सजाना
+नहीं चाहिए — तीन भाषाओं की पूरी बात यही है कि string तब चुनी जाए जब वह बनाई जा रही हो,
+तब नहीं जब वह गढ़ी जा रही हो।
+
+## ViewModel
+
+```kotlin title="ui/list/ListViewModel.kt" numbered
+@HiltViewModel
+class ListViewModel @Inject constructor(
+    private val repository: ItemRepository,
+    savedStateHandle: SavedStateHandle,
+) : ViewModel() {
+
+    private val listId: String = savedStateHandle.toRoute<ListRoute>().listId
+    private val input = MutableStateFlow("")
+
+    val state: StateFlow<ListUiState> =
+        combine(repository.items(listId), input) { items, text ->
+            ListUiState(items = items, input = text)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = ListUiState(),
+        )
+
+    fun onInputChange(text: String) { input.value = text }
+
+    fun onAdd() = viewModelScope.launch {
+        val text = input.value.trim()
+        if (text.isEmpty()) return@launch
+        input.value = ""                     // पहले खाली कीजिए: जोड़ना तो तुरंत है ही
+        repository.add(listId, text)
+    }
+}
+```
+
+इसमें तीन लाइनें भार उठा रही हैं।
+
+`savedStateHandle.toRoute<ListRoute>()` navigation का argument पढ़ता है। उसे किसी
+constructor के parameter के बजाय handle से लेना ही Hilt को ViewModel बनाने देता है
+बिना navigation के बारे में कुछ जाने, और वही process के मरने पर भी बचता है।
+
+`stateIn` ठंडे `Flow` को गरम `StateFlow` बना देता है जिसका मान हमेशा हाजिर रहता है, तो
+screen के पास अपने पहले ही frame पर बनाने को कुछ होता है।
+
+`WhileSubscribed(5_000)` वही अंक है जिसे लोग बिना वजह जाने नकल करते हैं।
+
+<Quiz
+  question="कोई team `SharingStarted.WhileSubscribed(5_000)` को `SharingStarted.Lazily` कर देती है क्योंकि वे पाँच सेकंड बेवजह लगे। सब कुछ अब भी चलता है। हफ्ते भर बाद उन उपयोगकर्ताओं की बैटरी की रिपोर्ट बिगड़ने लगती है जो ऐप पीछे खुला छोड़ देते हैं।"
+  options={[
+    "`Lazily` database को बार-बार पूछता है, जबकि `WhileSubscribed` बदलाव का इंतजार करता है",
+    "`Lazily` पहले सदस्य पर शुरू होकर फिर कभी रुकता ही नहीं, तो ऐप के पीछे रहते हुए भी Firestore का listener और database की query चलते रहते हैं। `WhileSubscribed(5_000)` उन्हें आखिरी collect करने वाले के जाने के पाँच सेकंड बाद रोक देता है — इतना लंबा कि घुमाने पर काम दोबारा शुरू न हो, इतना छोटा कि ऐप छोड़ने पर हो जाए",
+    "`Lazily` को `viewModelScope` के साथ इस्तेमाल किया ही नहीं जा सकता और वह चुपचाप उस दायरे को leak कर देता है"
+  ]}
+  answer={1}
+  explanation="दोनों तरीकों में फर्क सिर्फ इतना है कि ऊपर वाला flow कब रोका जाता है, और `Lazily` उसे कभी रोकता ही नहीं — तो ऊपर की हर चीज, उस Firestore के snapshot वाले listener समेत जो पढ़ने के पैसे कटवाता है और एक socket पकड़े रहता है, तब तक चलती रहती है जब तक ViewModel जिंदा है, यानी पूरे उस वक्त जब ऐप पीछे पड़ा है। वे पाँच सेकंड बेवजह नहीं हैं: सजावट बदलने पर collect करने वाला गिरकर कुछ सौ milliseconds में दोबारा बनता है, तो उस खाई को पाटने लायक लंबा इंतजार हर घुमाव पर query दोबारा चलाने से बचाता है, और फिर भी इतना छोटा रहता है कि सच में जाने पर काम रुक जाए। कोई भी तरीका बार-बार पूछता नहीं — दोनों ऊपर की आवाजों से चलते हैं — और `Lazily` `viewModelScope` के साथ बिलकुल जायज है, और ठीक इसीलिए यह गलती compile होती है और हफ्ते भर छिपी रहती है।"
+/>
+
+## Screen
+
+```kotlin title="ui/list/ListScreen.kt" numbered
+@Composable
+fun ListScreen(viewModel: ListViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
+    LazyColumn {
+        items(state.items, key = { it.id }) { item ->       // key: पक्की पहचान
+            ItemRow(item = item, onToggle = { viewModel.onToggle(item.id) })
+        }
+    }
+}
+```
+
+`collectAsStateWithLifecycle`, न कि `collectAsState`। सादा वाला ऐप के पीछे रहते हुए
+भी collect करता रहता है, और ठीक वही `WhileSubscribed` रोकने की कोशिश कर रहा था — ये
+दोनों जोड़ी में चलते हैं, और एक को दूसरे के बिना लेना चुपचाप उसे पलट देता है।
+
+`items` में वह `key` उस सूची और इसमें फर्क है जो सही तरह हिलती-डुलती है बनाम वह जहाँ
+दूसरी चीज पर निशान लगाने से तीसरी झपकती है। बिना key के Compose चीजों को जगह से
+पहचानता है, तो ऊपर एक चीज जुड़ते ही हर पंक्ति की हालत एक जगह नीचे खिसक जाती है।
+
+<Detail summary="घुमाना, पीछे जाना और process का मरना, तीन अलग समस्याएँ हैं">
+इनकी बात साथ में होती है और जवाब अलग-अलग हैं, इसीलिए "घुमाने पर बचता है क्या" अधूरा
+सवाल है।
+
+**घुमाना** Activity को मारता है और ViewModel को रखता है। `state` वहीं है, बिना छुआ,
+और screen उसी से दोबारा बन जाती है। कुछ करने को नहीं।
+
+**पीछे जाना** सब कुछ रखता है और सिर्फ collect करना रोकता है, `collectAsStateWithLifecycle`
+और `WhileSubscribed` की जोड़ी की बदौलत। लौटने पर दोबारा collect होता है और अभी वाला मान
+तुरंत मिल जाता है।
+
+**Process का मरना** — ऐप के पीछे रहते हुए तंत्र का उसकी memory वापस ले लेना — ViewModel
+को भी मार देता है। सिर्फ `SavedStateHandle` बचता है, क्योंकि वह disk पर लिखा जाता है।
+इसीलिए `listId` वहीं से आता है: उसके बिना उपयोगकर्ता किसी फोन call से लौटकर ऐसी screen
+पाता है जिसे अब पता ही नहीं कि वह कौन सी सूची दिखा रही है।
+
+`input` में आधा लिखा text यहाँ process के मरने पर नहीं बचता, और यह चूक नहीं, जानबूझकर
+किया गया सस्ता सौदा है। अगर वह मायने रखता, तो वह `savedStateHandle.getStateFlow("input", "")`
+में चला जाता — एक लाइन, और यह जानना काम का है कि आप कर सकते हैं।
+</Detail>
+
+<Pitfall title="चार, और इनमें से कोई भी जोर से नहीं गिरती">
+**`collectAsStateWithLifecycle` की जगह `collectAsState`।** पीछे रहते हुए भी collect
+चलता रहता है, और `WhileSubscribed` कभी चलता ही नहीं।
+
+**`SharingStarted.Lazily`।** Listeners कभी रुकते नहीं, और हफ्ते भर बाद बैटरी की रिपोर्ट
+बिगड़ती है।
+
+**बिना `key` के `items()`।** गलत पंक्तियाँ हिलती हैं, और कुछ जुड़ने के बाद हालत गलत चीज
+से चिपक जाती है।
+
+**ViewModel में strings सजाना।** भाषा तब चुन ली जाती है जब screen को पता ही नहीं कि वह
+किसमें बन रही है।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| एक ही हालत वाली चीज | Screen ठीक एक `state` का मान पढ़ती है |
+| घुमाने पर बचती है | लिखते-लिखते घुमाइए; सूची दोबारा नहीं लदती |
+| पीछे जाने पर रुकती है | छोड़ने के कुछ सेकंड बाद Firestore की पढ़ाई रुक जाती है |
+| Process के मरने पर बचती है | Studio से process मारिए; सही सूची दोबारा खुलती है |
+| पंक्तियों की key है | ऊपर कुछ जोड़ने से नीचे की पंक्तियाँ नहीं हिलतीं |
+
+आगे: एक के बजाय तीन screens, और उन्हें जोड़ने वाला back का ढेर।

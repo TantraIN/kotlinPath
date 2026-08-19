@@ -1,0 +1,159 @@
+---
+title: The list screen, and state that survives rotation
+description: One immutable object describes everything the screen can show. Rotating the phone, backgrounding the app and losing the process are then three different problems with three different answers.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+A screen should be a **function of one state object**. Not a set of booleans that can
+contradict each other — `isLoading` true while `error` is also set — but a single
+value where the impossible combinations cannot be expressed.
+</KeyIdea>
+
+## The state
+
+```kotlin title="ui/list/ListUiState.kt" numbered
+data class ListUiState(
+    val items: List<Item> = emptyList(),
+    val isSyncing: Boolean = false,
+    val input: String = "",
+    val error: UiText? = null,
+) {
+    val canAdd: Boolean get() = input.isNotBlank()      // derived, never stored
+}
+```
+
+`canAdd` is computed, not stored, and that is the rule worth keeping: anything you
+*could* derive, derive. A stored `canAdd` is a second source of truth that will
+eventually disagree with `input`, usually after someone adds a "clear" button and
+forgets one line.
+
+`error` is a `UiText`, not a `String`, because the ViewModel must not format text for
+the screen — the whole point of three languages is that the string is chosen when it
+is drawn, not when it is produced.
+
+## The ViewModel
+
+```kotlin title="ui/list/ListViewModel.kt" numbered
+@HiltViewModel
+class ListViewModel @Inject constructor(
+    private val repository: ItemRepository,
+    savedStateHandle: SavedStateHandle,
+) : ViewModel() {
+
+    private val listId: String = savedStateHandle.toRoute<ListRoute>().listId
+    private val input = MutableStateFlow("")
+
+    val state: StateFlow<ListUiState> =
+        combine(repository.items(listId), input) { items, text ->
+            ListUiState(items = items, input = text)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = ListUiState(),
+        )
+
+    fun onInputChange(text: String) { input.value = text }
+
+    fun onAdd() = viewModelScope.launch {
+        val text = input.value.trim()
+        if (text.isEmpty()) return@launch
+        input.value = ""                     // clear first: the add is already instant
+        repository.add(listId, text)
+    }
+}
+```
+
+Three lines in there are load-bearing.
+
+`savedStateHandle.toRoute<ListRoute>()` reads the navigation argument. Taking it from
+the handle rather than a constructor parameter is what lets Hilt build the ViewModel
+without knowing anything about navigation, and it is also what survives process death.
+
+`stateIn` turns a cold `Flow` into a hot `StateFlow` with a value always available, so
+the screen has something to draw on its very first frame.
+
+`WhileSubscribed(5_000)` is the number people copy without knowing why.
+
+<Quiz
+  question="A team changes `SharingStarted.WhileSubscribed(5_000)` to `SharingStarted.Lazily` because the five seconds looked arbitrary. Everything still works. A week later, battery reports get worse for users who leave the app open in the background."
+  options={[
+    "`Lazily` polls the database, while `WhileSubscribed` waits for changes",
+    "`Lazily` starts on the first subscriber and then never stops, so the Firestore listener and the database query keep running while the app is in the background. `WhileSubscribed(5_000)` stops them five seconds after the last collector goes away — long enough that a rotation does not restart the work, short enough that leaving the app does",
+    "`Lazily` is not allowed with `viewModelScope` and silently leaks the scope"
+  ]}
+  answer={1}
+  explanation="The two strategies differ only in when the upstream flow is stopped, and `Lazily` never stops it — so everything upstream, including a Firestore snapshot listener that bills reads and holds a socket, keeps running for as long as the ViewModel lives, which is the whole time the app sits in the background. The five seconds is not arbitrary: a configuration change tears the collector down and rebuilds it within a few hundred milliseconds, so a timeout long enough to span that gap avoids re-running the query on every rotation, while still being short enough that a real departure stops the work. Neither strategy polls — both are driven by upstream emissions — and `Lazily` is perfectly legal with `viewModelScope`, which is exactly why the mistake compiles and hides for a week."
+/>
+
+## The screen
+
+```kotlin title="ui/list/ListScreen.kt" numbered
+@Composable
+fun ListScreen(viewModel: ListViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
+    LazyColumn {
+        items(state.items, key = { it.id }) { item ->       // key: stable identity
+            ItemRow(item = item, onToggle = { viewModel.onToggle(item.id) })
+        }
+    }
+}
+```
+
+`collectAsStateWithLifecycle` and not `collectAsState`. The plain version keeps
+collecting while the app is in the background, which is exactly what
+`WhileSubscribed` was trying to prevent — the two work as a pair, and using one
+without the other silently undoes it.
+
+The `key` in `items` is the difference between a list that animates correctly and one
+where ticking the second item makes the third one blink. Without a key, Compose
+identifies items by position, so an insertion at the top reuses every row's state one
+place down.
+
+<Detail summary="Rotation, background and process death are three different problems">
+They get discussed together and have different answers, which is why "does it survive
+rotation" is an incomplete question.
+
+**Rotation** destroys the Activity and keeps the ViewModel. `state` is still there,
+untouched, and the screen redraws from it. Nothing to do.
+
+**Backgrounding** keeps everything and only stops collection, thanks to
+`collectAsStateWithLifecycle` plus `WhileSubscribed`. Returning re-collects and the
+current value is delivered immediately.
+
+**Process death** — the system reclaiming your app's memory while it is in the
+background — destroys the ViewModel too. Only `SavedStateHandle` survives, because it
+is written to disk. That is why `listId` comes from there: without it, the user
+returns from a phone call to a screen that no longer knows which list it is showing.
+
+The half-typed text in `input` does *not* survive process death here, and that is a
+deliberate, cheap trade rather than an oversight. If it mattered, it would move into
+`savedStateHandle.getStateFlow("input", "")` — one line, and worth knowing you can.
+</Detail>
+
+<Pitfall title="Four, and none of them fail loudly">
+**`collectAsState` instead of `collectAsStateWithLifecycle`.** Collection continues in
+the background, and `WhileSubscribed` never fires.
+
+**`SharingStarted.Lazily`.** Listeners never stop, and battery reports get worse a week
+later.
+
+**`items()` without a `key`.** Wrong rows animate, and state attaches to the wrong item
+after an insertion.
+
+**Formatting strings in the ViewModel.** The language is chosen before the screen
+knows which one it is drawing in.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| One state object | The screen reads exactly one `state` value |
+| Survives rotation | Rotate mid-typing; the list does not reload |
+| Stops in the background | Firestore reads stop a few seconds after leaving |
+| Survives process death | Kill the process from Studio; the right list reopens |
+| Rows are keyed | Inserting at the top does not disturb rows below |
+
+Next: three screens instead of one, and the back stack that connects them.
