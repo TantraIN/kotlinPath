@@ -1,0 +1,160 @@
+---
+title: AdMob, in-app खरीद और subscriptions
+description: कौन पैसे दे चुका है, यह तय करने के लिए client पर भरोसा नहीं किया जा सकता। हर billing का जोड़ जो यह गलत करता है, तब तक बढ़िया चलता है जब तक कोई बदला हुआ build न चलाए।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+कोई खरीद तब तक दावा भर है जब तक आपका **server** उसे Google से न परखे। Client के कहने पर कि खरीद सफल हुई,
+कोई सुविधा खोल देना वही गलती है जो किसी header में `uid` पर भरोसा करना — ऐसा दावा जिसके पीछे कुछ नहीं,
+उस device पर जो user के अख्तियार में है।
+</KeyIdea>
+
+## खरीद का बहाव
+
+```kotlin title="Billing.kt" numbered
+billingClient.startConnection(object : BillingClientStateListener {
+    override fun onBillingSetupFinished(result: BillingResult) { queryPurchases() }
+    override fun onBillingServiceDisconnected() { retryWithBackoff() }   // यह टूटता है
+})
+
+// 1. शुरू कीजिए
+billingClient.launchBillingFlow(activity, params)
+
+// 2. नतीजा आपके दर्ज किए listener में आता है, लौटाई गई value की तरह नहीं
+override fun onPurchasesUpdated(result: BillingResult, purchases: List<Purchase>?) {
+    when (result.responseCode) {
+        OK -> purchases?.forEach { handle(it) }
+        USER_CANCELED -> Unit
+        ITEM_ALREADY_OWNED -> queryPurchases()      // लौटाइए, error मत बनाइए
+    }
+}
+
+// 3. अपने server पर परखिए, फिर 3 दिन के अंदर acknowledge कीजिए
+suspend fun handle(purchase: Purchase) {
+    if (purchase.purchaseState != PurchaseState.PURCHASED) return
+    if (!api.verify(purchase.purchaseToken, purchase.products.first())) return   // server की तरफ
+    if (!purchase.isAcknowledged) billingClient.acknowledgePurchase(...)
+}
+```
+
+असली नतीजों वाले दो नियम।
+
+**तीन दिन के अंदर acknowledge कीजिए**, वरना Google अपने आप पैसे लौटाकर वह खरीद रद्द कर देता है। जिस
+user ने पैसे दिए, सुविधा पाई, और फिर दोनों गँवा दिए, वह ऐसा support का मामला है जिससे आप बहस नहीं कर
+सकते — और यह तब होता है जब acknowledge किसी ऐसी screen से बँधा हो जिसे user छोड़ सकता है।
+
+**शुरू में हमेशा पूछिए।** खरीदें बाहर से आती हैं — कोई card जो बाद में चला, किसी दूसरे device पर की गई
+खरीद, subscription का नवीनीकरण — तो launch पर `queryPurchasesAsync` ही हक को सही बनाता है, न कि "पिछली
+बार जो हमने देखा था"।
+
+<Quiz
+  question="कोई team Billing Library की लौटाई `Purchase` वाली चीज जाँचकर खरीद परखती है, फिर सुविधा स्थानीय रूप से खोलकर एक निशान रख देती है। यह टूटता कहाँ है?"
+  options={[
+    "टूटता नहीं — Billing Library की वह चीज Google Play से आती है और भरोसे लायक है",
+    "वह जाँच पूरी तरह उस device पर चलती है जो user के अख्तियार में है, तो बदला हुआ build या hooking वाला framework वह नतीजा गढ़ सकता है। `purchaseToken` आपके server तक जाना चाहिए, जो Google की Play Developer API बुलाए, और हक server से वापस आना चाहिए",
+    "यह सिर्फ subscriptions के लिए टूटता है, क्योंकि एक बार की खरीद नकली नहीं बनाई जा सकती"
+  ]}
+  answer={1}
+  explanation="Billing Library को हस्ताक्षरित जवाब मिलता तो है, और वह हस्ताक्षर असली है — पर उसे जाँचने का हर हिस्सा आपके process के अंदर होता है, उस hardware पर जो user का है, और यह वही सरहद वाली दिक्कत है जो biometric वाले पाठ का सफलता वाला callback और header में भेजी Firebase की uid थी। बदली हुई APK उस परखने वाले function से जो चाहे लौटा सकती है, और मशहूर ऐप्स के लिए ठीक यही करने वाले औजार मौजूद हैं। Server की तरफ परखना उस फैसले को बाहर ले जाता है: ऐप purchaseToken भेजता है, आपका server किसी service account से Play Developer API पर purchases.products.get या purchases.subscriptions.get बुलाता है, और Google पक्का जवाब देता है। हक फिर आपके server से लौटता है, जिससे आपको वह रिकॉर्ड भी मिलता है जो दोबारा install करने पर बचता है और दूसरे platforms पर भी चलता है। Subscriptions इसे ज्यादा जरूरी बनाते हैं क्योंकि उनकी हालत समय के साथ बदलती है, पर एक बार की खरीद उतनी ही गढ़ी जा सकती है।"
+/>
+
+## Subscriptions
+
+Subscription एक state machine है, कोई boolean नहीं:
+
+| हालत | मतलब |
+| --- | --- |
+| Active | पैसे दिए हुए और चालू |
+| छूट की अवधि में | भुगतान नाकाम; Google दोबारा कोशिश करता है और पहुँच चलती रहती है |
+| रुका हुआ | भुगतान अब भी नाकाम; पहुँच रुकनी चाहिए, खाता रद्द नहीं हुआ |
+| ठहराया हुआ | User ने जानबूझकर रोका |
+| रद्द | दोबारा नहीं लगेगा; अवधि खत्म होने तक चालू |
+| खत्म | हो गया |
+
+इसे "subscription है: हाँ/नहीं" मानने से दो बुरे नतीजे आते हैं: छूट की अवधि वाले उस user को काट देना
+जिसका card कल चल जाएगा, और रुके हुए किसी को हफ्तों परोसते रहना।
+
+**Real-time developer notifications** ये बदलाव आपके server तक Pub/Sub से पहुँचाती हैं, और इसी से हक
+बिना ऐप के बार-बार पूछे सही बना रहता है। उनके बिना कोई रद्द होना तब तक अदृश्य है जब तक user अगली बार ऐप
+न खोले।
+
+रद्द होना ही लोगों को चौंकाता है: उसका मतलब है "दोबारा नहीं लगेगा", और पहुँच उस चुकाई हुई अवधि के खत्म
+होने तक चलती है। रद्द होते ही पहुँच छीन लेना गलत भी है और पैसे वापस माँगे जाने की वजह भी।
+
+<Detail summary="Ads, और वे हिस्से जिनसे ऐप हटते हैं">
+```kotlin title="AdMob" numbered
+MobileAds.initialize(context)                       // भारी; startup के रास्ते पर नहीं
+val adRequest = AdRequest.Builder().build()
+```
+
+तीन चीजें उस जोड़ से ज्यादा मायने रखती हैं।
+
+**कहाँ रखा है, इसकी नीति।** Ads छूने वाली चीजों के इतने पास नहीं हो सकते कि गलती से tap हो जाए, अचानक
+पूरी screen पर नहीं आ सकते, और ऐसी screen पर नहीं दिख सकते जहाँ user गया ही नहीं। गलती से click वाले
+ढाँचे AdMob का खाता बंद होने की सबसे आम वजह हैं, और उसके साथ कमाई भी जाती है।
+
+**परिवारों वाली नीति।** अगर ऐप बच्चों के लिए है, तो ads का सामान परिवार के लायक होना चाहिए और बर्ताव
+देखकर निशाना लगाना मना है। Play की नीतियों वाले पाठ की लक्षित लोगों वाली घोषणा गलत होना यहाँ तक फैलता
+है।
+
+**सहमति।** EEA और UK में निजी ads के लिए किसी प्रमाणित CMP से सहमति चाहिए, और Firebase वाले पाठ की
+Analytics वाली बात फिर लागू है: वह SDK जमा करती है, तो घोषणा और सहमति का बहाव, दोनों होने चाहिए।
+
+Performance की बात यह है कि `MobileAds.initialize` महँगा है और, startup वाले पाठ के हिसाब से, असली रास्ते
+की चीज नहीं है — उसे पहले frame के बाद शुरू कीजिए।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली ही वह है जिसका फायदा उठाया जाता है">
+**Client की तरफ परखना।** वह फैसला उस hardware पर होता है जो user के अख्तियार में है।
+
+**तीन दिन में acknowledge न करना।** Google अपने आप पैसे लौटाकर रद्द कर देता है।
+
+**शुरू में खरीदें न पूछना।** बाहर से आई खरीदें और नवीनीकरण छूट जाते हैं।
+
+**Subscription को boolean मानना।** छूट की अवधि और रुके होने को अलग बर्ताव चाहिए।
+
+**रद्द होते ही छीन लेना।** रद्द का मतलब "दोबारा नहीं लगेगा"; पहुँच अवधि के अंत तक चलती है।
+</Pitfall>
+
+## अभ्यास
+
+1. जाँच वाली खरीद कीजिए और अपने ऐप को मिले `purchaseToken` को देखिए।
+2. किसी server से उस token के साथ Play Developer API बुलाइए और मिलाइए कि वह क्या लौटाता है।
+3. जाँच वाली खरीद पर तीन दिन acknowledge मत कीजिए और उसे रद्द होते देखिए।
+4. जाँच वाले खाते से छूट की अवधि बनाइए और देखिए कि आपका ऐप क्या करता है।
+5. जाँच वाला subscription रद्द कीजिए और पक्का कीजिए कि पहुँच अवधि के अंत तक चलती है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| परखना | Server की तरफ, Play Developer API से |
+| `purchaseToken` | जिसे server परखता है; client उसे सिर्फ ढोता है |
+| Acknowledge | तीन दिन के अंदर, वरना Google पैसे लौटा देता है |
+| `queryPurchasesAsync` | शुरू में; खरीदें बाहर से आती हैं |
+| `ITEM_ALREADY_OWNED` | लौटाइए, error नहीं |
+| Subscriptions | State machine, boolean नहीं |
+| छूट की अवधि | पहुँच रहने दीजिए; भुगतान दोबारा आजमाया जा रहा है |
+| रुका हुआ | पहुँच रोकिए; खाता रद्द नहीं हुआ |
+| रद्द | पहुँच चुकाई हुई अवधि के अंत तक चलती है |
+| Ads | कहाँ रखा है, यह नीति किसी भी चीज से ज्यादा खाते बंद कराती है |
+
+<Interview title="एक सवाल, जिसकी शक्ल पहले वाले तीन सवालों जैसी है">
+"किसी in-app खरीद को आप कैसे परखेंगे?"
+
+Server पर, client पर नहीं। Billing Library ऐप को हस्ताक्षरित खरीद देती है, पर उसे जाँचने का हर कदम आपके
+process के अंदर, उस hardware पर चलता है जो user के अख्तियार में है — तो बदली हुई build उस परखने वाले
+function से जो चाहे लौटा सकती है, और मशहूर ऐप्स के लिए ऐसा करने वाले औजार पहले से मौजूद हैं। यह वही
+सरहद वाली दिक्कत है जो biometric की सफलता वाले callback पर भरोसा करना, या header में भेजी Firebase की
+`uid` थी।
+
+तो ऐप `purchaseToken` मेरे backend को भेजता है, जो किसी service account से Play Developer API बुलाकर
+Google से पक्का जवाब लेता है, और हक मेरे server से वापस आता है। उससे मुझे वह रिकॉर्ड भी मिलता है जो
+दोबारा install करने पर बचता है। उसके साथ मैं तीन दिन के अंदर acknowledge करूँगा, क्योंकि वरना Google खुद
+पैसे लौटा देता है, शुरू में खरीदें पूछूँगा क्योंकि नवीनीकरण और दूसरे device की खरीदें बाहर से आती हैं,
+और subscription को state machine मानूँगा — छूट की अवधि में पहुँच रहती है, रुके होने पर नहीं, और रद्द
+होने पर भी अवधि के अंत तक रहती है।
+</Interview>

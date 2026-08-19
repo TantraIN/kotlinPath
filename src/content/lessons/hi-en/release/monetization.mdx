@@ -1,0 +1,164 @@
+---
+title: AdMob, in-app khareed aur subscriptions
+description: Kaun paise de chuka hai, ye tay karne ke liye client par bharosa nahi kiya ja sakta. Har billing ka jod jo ye galat karta hai, tab tak badhiya chalta hai jab tak koi badla hua build na chalaye.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Koi khareed tab tak dawa bhar hai jab tak aapka **server** use Google se na parakhe. Client ke kehne par
+ki khareed safal hui, koi suvidha khol dena wahi galti hai jo kisi header mein `uid` par bharosa karna —
+aisa dawa jiske peeche kuch nahi, us device par jo user ke akhtiyaar mein hai.
+</KeyIdea>
+
+## Khareed ka bahav
+
+```kotlin title="Billing.kt" numbered
+billingClient.startConnection(object : BillingClientStateListener {
+    override fun onBillingSetupFinished(result: BillingResult) { queryPurchases() }
+    override fun onBillingServiceDisconnected() { retryWithBackoff() }   // ye tootta hai
+})
+
+// 1. shuru kijiye
+billingClient.launchBillingFlow(activity, params)
+
+// 2. result aapke darj kiye listener mein aata hai, lautai gayi value ki tarah nahi
+override fun onPurchasesUpdated(result: BillingResult, purchases: List<Purchase>?) {
+    when (result.responseCode) {
+        OK -> purchases?.forEach { handle(it) }
+        USER_CANCELED -> Unit
+        ITEM_ALREADY_OWNED -> queryPurchases()      // lautaiye, error mat banaiye
+    }
+}
+
+// 3. apne server par parakhiye, phir 3 din ke andar acknowledge kijiye
+suspend fun handle(purchase: Purchase) {
+    if (purchase.purchaseState != PurchaseState.PURCHASED) return
+    if (!api.verify(purchase.purchaseToken, purchase.products.first())) return   // server ki taraf
+    if (!purchase.isAcknowledged) billingClient.acknowledgePurchase(...)
+}
+```
+
+Asli anjaam wale do niyam.
+
+**Teen din ke andar acknowledge kijiye**, warna Google apne aap paise lautakar wo khareed radd kar deta
+hai. Jis user ne paise diye, suvidha payi, aur phir dono ganwa diye, wo aisa support ka maamla hai jisse
+aap behas nahi kar sakte — aur ye tab hota hai jab acknowledge kisi aisi screen se bandha ho jise user
+chhod sakta hai.
+
+**Shuru mein hamesha puchiye.** Khareedein bahar se aati hain — koi card jo baad mein chala, kisi doosre
+device par ki gayi khareed, subscription ka navinikaran — to launch par `queryPurchasesAsync` hi haq ko
+sahi banata hai, na ki "pichhli baar jo humne dekha tha".
+
+<Quiz
+  question="Koi team Billing Library ki lautai `Purchase` wali cheez dekhkar khareed parakhti hai, phir suvidha sthaniya roop se kholkar ek nishan rakh deti hai. Ye tootta kahan hai?"
+  options={[
+    "Tootta nahi — Billing Library ki wo cheez Google Play se aati hai aur bharose layak hai",
+    "Wo padtal poori tarah us device par chalti hai jo user ke akhtiyaar mein hai, to badla hua build ya hooking wala framework wo result gadh sakta hai. `purchaseToken` aapke server tak jana chahiye, jo Google ki Play Developer API bulaye, aur haq server se wapas aana chahiye",
+    "Ye sirf subscriptions ke liye tootta hai, kyunki ek baar ki khareed nakli nahi banai ja sakti"
+  ]}
+  answer={1}
+  explanation="Billing Library ko hastaksharit jawab milta to hai, aur wo hastakshar asli hai — par use dekhne ka har hissa aapke process ke andar hota hai, us hardware par jo user ka hai, aur ye wahi sarhad wali mushkil hai jo biometric wale lesson ka safalta wala callback aur header mein bheji Firebase ki uid thi. Badli hui APK us parakhne wale function se jo chahe lauta sakti hai, aur mashhoor apps ke liye theek yahi karne wale auzar maujood hain. Server ki taraf parakhna us faisle ko bahar le jata hai: app purchaseToken bhejta hai, aapka server kisi service account se Play Developer API par purchases.products.get ya purchases.subscriptions.get bulata hai, aur Google pakka jawab deta hai. Haq phir aapke server se lautta hai, jisse aapko wo record bhi milta hai jo dobara install karne par bachta hai aur doosre platforms par bhi chalta hai. Subscriptions ise zyada zaruri banate hain kyunki unki haalat samay ke saath badalti hai, par ek baar ki khareed utni hi gadhi ja sakti hai."
+/>
+
+## Subscriptions
+
+Subscription ek state machine hai, koi boolean nahi:
+
+| Haalat | Matlab |
+| --- | --- |
+| Active | Paise diye hue aur chalu |
+| Chhoot ki avadhi mein | Bhugtan nakaam; Google dobara koshish karta hai aur pahunch chalti rehti hai |
+| Ruka hua | Bhugtan ab bhi nakaam; pahunch rukni chahiye, khata radd nahi hua |
+| Thehraya hua | User ne jaanbujhkar roka |
+| Radd | Dobara nahi lagega; avadhi khatam hone tak chalu |
+| Khatam | Ho gaya |
+
+Ise "subscription hai: haan/nahi" manne se do bure anjaam aate hain: chhoot ki avadhi wale us user ko kaat
+dena jiska card kal chal jayega, aur ruke hue kisi ko hafton paroste rehna.
+
+**Real-time developer notifications** ye badlaav aapke server tak Pub/Sub se pahunchati hain, aur isi se haq
+bina app ke baar-baar puche sahi bana rehta hai. Unke bina koi radd hona tab tak adrishya hai jab tak user
+agli baar app na khole.
+
+Radd hona hi logon ko chaunkata hai: uska matlab hai "dobara nahi lagega", aur pahunch us chukai hui avadhi
+ke khatam hone tak chalti hai. Radd hote hi pahunch chheen lena galat bhi hai aur paise wapas maange jane ki
+wajah bhi.
+
+<Detail summary="Ads, aur wo hisse jinse app hatte hain">
+```kotlin title="AdMob" numbered
+MobileAds.initialize(context)                       // bhaari; startup ke raaste par nahi
+val adRequest = AdRequest.Builder().build()
+```
+
+Teen cheezein us jod se zyada maayne rakhti hain.
+
+**Kahan rakha hai, iski neeti.** Ads chhoone wali cheezon ke itne paas nahi ho sakte ki galti se tap ho
+jaye, achanak poori screen par nahi aa sakte, aur aisi screen par nahi dikh sakte jahan user gaya hi nahi.
+Galti se click wale dhanche AdMob ka khata band hone ki sabse aam wajah hain, aur uske saath kamai bhi jati
+hai.
+
+**Parivaron wali neeti.** Agar app bachchon ke liye hai, to ads ka saaman parivar ke layak hona chahiye aur
+behaviour dekhkar nishana lagana mana hai. Play ki neetiyon wale lesson ki lakshit logon wali ghoshna galat
+hona yahan tak failta hai.
+
+**Sehmati.** EEA aur UK mein niji ads ke liye kisi pramanit CMP se sehmati chahiye, aur Firebase wale lesson
+ki Analytics wali baat phir lagu hai: wo SDK jama karti hai, to ghoshna aur sehmati ka bahav, dono hone
+chahiye.
+
+Performance ki baat ye hai ki `MobileAds.initialize` mehnga hai aur, startup wale lesson ke hisab se, asli
+raaste ki cheez nahi hai — use pehle frame ke baad shuru kijiye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli hi wo hai jiska faayda uthaya jata hai">
+**Client ki taraf parakhna.** Wo faisla us hardware par hota hai jo user ke akhtiyaar mein hai.
+
+**Teen din mein acknowledge na karna.** Google apne aap paise lautakar radd kar deta hai.
+
+**Shuru mein khareedein na puchna.** Bahar se aayi khareedein aur navinikaran chhoot jate hain.
+
+**Subscription ko boolean manna.** Chhoot ki avadhi aur ruke hone ko alag behaviour chahiye.
+
+**Radd hote hi chheen lena.** Radd ka matlab "dobara nahi lagega"; pahunch avadhi ke ant tak chalti hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Test wali khareed kijiye aur apne app ko mile `purchaseToken` ko dekhiye.
+2. Kisi server se us token ke saath Play Developer API bulaiye aur milaiye ki wo kya lautata hai.
+3. Test wali khareed par teen din acknowledge mat kijiye aur use radd hote dekhiye.
+4. Test wale khate se chhoot ki avadhi banaiye aur dekhiye ki aapka app kya karta hai.
+5. Test wala subscription radd kijiye aur pakka kijiye ki pahunch avadhi ke ant tak chalti hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Parakhna | Server ki taraf, Play Developer API se |
+| `purchaseToken` | Jise server parakhta hai; client use sirf dhota hai |
+| Acknowledge | Teen din ke andar, warna Google paise lauta deta hai |
+| `queryPurchasesAsync` | Shuru mein; khareedein bahar se aati hain |
+| `ITEM_ALREADY_OWNED` | Lautaiye, error nahi |
+| Subscriptions | State machine, boolean nahi |
+| Chhoot ki avadhi | Pahunch rehne dijiye; bhugtan dobara aazmaya ja raha hai |
+| Ruka hua | Pahunch rokiye; khata radd nahi hua |
+| Radd | Pahunch chukai hui avadhi ke ant tak chalti hai |
+| Ads | Kahan rakha hai, ye neeti kisi bhi cheez se zyada khate band karati hai |
+
+<Interview title="Ek sawal, jiski shakal pehle wale teen sawalon jaisi hai">
+"Kisi in-app khareed ko aap kaise parakhoge?"
+
+Server par, client par nahi. Billing Library app ko hastaksharit khareed deti hai, par use dekhne ka har
+kadam aapke process ke andar, us hardware par chalta hai jo user ke akhtiyaar mein hai — to badli hui build
+us parakhne wale function se jo chahe lauta sakti hai, aur mashhoor apps ke liye aisa karne wale auzar pehle
+se maujood hain. Ye wahi sarhad wali mushkil hai jo biometric ki safalta wale callback par bharosa karna, ya
+header mein bheji Firebase ki `uid` thi.
+
+To app `purchaseToken` mere backend ko bhejta hai, jo kisi service account se Play Developer API bulakar
+Google se pakka jawab leta hai, aur haq mere server se wapas aata hai. Usse mujhe wo record bhi milta hai jo
+dobara install karne par bachta hai. Uske saath main teen din ke andar acknowledge karunga, kyunki warna
+Google khud paise lauta deta hai, shuru mein khareedein puchunga kyunki navinikaran aur doosre device ki
+khareedein bahar se aati hain, aur subscription ko state machine manunga — chhoot ki avadhi mein pahunch
+rehti hai, ruke hone par nahi, aur radd hone par bhi avadhi ke ant tak rehti hai.
+</Interview>

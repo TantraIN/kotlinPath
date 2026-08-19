@@ -1,0 +1,162 @@
+---
+title: AdMob, in-app purchases and subscriptions
+description: The client cannot be trusted to decide who has paid. Every billing integration that gets this wrong works perfectly until someone runs a patched build.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A purchase is a claim until your **server** verifies it with Google. Unlocking a feature because the
+client says a purchase succeeded is the same mistake as trusting a `uid` in a header — an assertion with
+nothing behind it, on a device the user controls.
+</KeyIdea>
+
+## The purchase flow
+
+```kotlin title="Billing.kt" numbered
+billingClient.startConnection(object : BillingClientStateListener {
+    override fun onBillingSetupFinished(result: BillingResult) { queryPurchases() }
+    override fun onBillingServiceDisconnected() { retryWithBackoff() }   // it does disconnect
+})
+
+// 1. launch
+billingClient.launchBillingFlow(activity, params)
+
+// 2. result arrives in the listener you registered, not as a return value
+override fun onPurchasesUpdated(result: BillingResult, purchases: List<Purchase>?) {
+    when (result.responseCode) {
+        OK -> purchases?.forEach { handle(it) }
+        USER_CANCELED -> Unit
+        ITEM_ALREADY_OWNED -> queryPurchases()      // restore, do not error
+    }
+}
+
+// 3. verify on your server, then acknowledge within 3 days
+suspend fun handle(purchase: Purchase) {
+    if (purchase.purchaseState != PurchaseState.PURCHASED) return
+    if (!api.verify(purchase.purchaseToken, purchase.products.first())) return   // server-side
+    if (!purchase.isAcknowledged) billingClient.acknowledgePurchase(...)
+}
+```
+
+Two rules with real consequences.
+
+**Acknowledge within three days** or Google automatically refunds the purchase and revokes it. A user
+who paid, got the feature, and then lost both is a support case you cannot argue with — and it happens
+whenever acknowledgement is tied to a screen the user might leave.
+
+**Always query on startup.** Purchases arrive out of band — a card that cleared later, a purchase made
+on another device, a subscription renewal — so `queryPurchasesAsync` at launch is what makes entitlement
+correct rather than "whatever we saw last time".
+
+<Quiz
+  question="A team verifies purchases by checking the `Purchase` object returned by the Billing Library, then unlocking the feature locally and storing a flag. Where does this break?"
+  options={[
+    "It does not — the Billing Library object comes from Google Play and is trustworthy",
+    "The check runs entirely on a device the user controls, so a patched build or a hooking framework can fabricate the result. The `purchaseToken` must go to your server, which calls Google's Play Developer API, and entitlement must come back from the server",
+    "It breaks only for subscriptions, since one-time purchases cannot be faked"
+  ]}
+  answer={1}
+  explanation="The Billing Library does receive a signed response, and that signature is real — but every part of checking it happens inside your process, on hardware the user owns, which is the same boundary problem as the biometric lesson's success callback and the Firebase uid in a header. A modified APK can return whatever it likes from the verification function, and tools exist that do exactly this for popular apps. Server-side verification moves the decision outside: the app sends the purchaseToken, your server calls purchases.products.get or purchases.subscriptions.get on the Play Developer API with a service account, and Google answers authoritatively. Entitlement then flows back from your server, which also gives you a record that survives reinstalls and works across platforms. Subscriptions make it more urgent because state changes over time, but a one-time purchase is just as forgeable."
+/>
+
+## Subscriptions
+
+Subscriptions are a state machine, not a boolean:
+
+| State | What it means |
+| --- | --- |
+| Active | Paid and current |
+| In grace period | Payment failed; access continues while Google retries |
+| On hold | Payment still failing; access should stop, account is not cancelled |
+| Paused | User paused it deliberately |
+| Cancelled | Will not renew; still active until the period ends |
+| Expired | Over |
+
+Treating this as "has subscription: yes/no" produces two bad outcomes: cutting off a user in a grace
+period whose card will clear tomorrow, and continuing to serve someone on hold for weeks.
+
+**Real-time developer notifications** deliver these transitions to your server over Pub/Sub, which is
+how entitlement stays correct without the app polling. Without them, a cancellation is invisible until
+the user next opens the app.
+
+Cancelled is the one that surprises people: it means "will not renew", and access continues until the
+paid period ends. Revoking immediately on cancellation is both wrong and a refund request.
+
+<Detail summary="Ads, and the parts that get apps removed">
+```kotlin title="AdMob" numbered
+MobileAds.initialize(context)                       // heavy; not on the startup path
+val adRequest = AdRequest.Builder().build()
+```
+
+Three things matter more than the integration itself.
+
+**Placement policy.** Ads must not be adjacent to interactive controls in a way that causes accidental
+taps, must not be full-screen at an unexpected moment, and must not appear on a screen the user did not
+navigate to. Accidental-click patterns are the most common cause of an AdMob account being disabled,
+which takes the revenue with it.
+
+**Families policy.** If the app targets children, ad content must be family-safe and behavioural
+targeting is not allowed. Getting the target-audience declaration wrong from the Play policies lesson
+propagates here.
+
+**Consent.** In the EEA and UK, personalised ads require consent through a certified CMP, and the
+Analytics point from the Firebase lesson applies again: the SDK collects, so the declaration and the
+consent flow both have to exist.
+
+The performance note is that `MobileAds.initialize` is expensive and, per the startup lesson, does not
+belong on the critical path — initialise it after the first frame.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one is what gets exploited">
+**Client-side verification.** The decision happens on hardware the user controls.
+
+**Not acknowledging within three days.** Google refunds and revokes automatically.
+
+**Not querying purchases at startup.** Out-of-band purchases and renewals are missed.
+
+**Treating a subscription as a boolean.** Grace period and on hold need different behaviour.
+
+**Revoking on cancellation.** Cancelled means "will not renew"; access runs to the period end.
+</Pitfall>
+
+## Practice
+
+1. Make a test purchase and inspect the `purchaseToken` your app receives.
+2. Call the Play Developer API with that token from a server and compare what it returns.
+3. Skip acknowledgement for three days on a test purchase and watch it revoke.
+4. Simulate a grace period with a test account and check what your app does.
+5. Cancel a test subscription and confirm access continues until the period ends.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Verification | Server-side, via the Play Developer API |
+| `purchaseToken` | What the server verifies; the client only carries it |
+| Acknowledge | Within three days or Google refunds |
+| `queryPurchasesAsync` | At startup; purchases arrive out of band |
+| `ITEM_ALREADY_OWNED` | Restore, not an error |
+| Subscriptions | A state machine, not a boolean |
+| Grace period | Keep access; the payment is being retried |
+| On hold | Stop access; the account is not cancelled |
+| Cancelled | Access runs to the end of the paid period |
+| Ads | Placement policy disables more accounts than anything else |
+
+<Interview title="A question with the same shape as three earlier ones">
+"How do you verify an in-app purchase?"
+
+On the server, not the client. The Billing Library gives the app a signed purchase, but every step of
+checking it runs inside your process on hardware the user controls — so a patched build can return
+whatever it wants from the verification function, and tools that do this for popular apps already exist.
+It is the same boundary problem as trusting a biometric success callback, or a Firebase `uid` sent in a
+header.
+
+So the app sends the `purchaseToken` to my backend, which calls the Play Developer API with a service
+account and gets an authoritative answer from Google, and entitlement comes back from my server. That
+also gives me a record that survives a reinstall. Alongside it I would acknowledge within three days,
+since Google auto-refunds otherwise, query purchases at startup because renewals and other-device
+purchases arrive out of band, and treat a subscription as a state machine — grace period keeps access,
+on hold does not, and cancelled still has access until the period ends.
+</Interview>
