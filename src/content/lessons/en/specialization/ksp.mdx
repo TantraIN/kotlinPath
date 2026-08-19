@@ -1,0 +1,178 @@
+---
+title: KSP and code generation
+description: Every annotation-processing library in this course runs on KSP. Understanding what it can and cannot see explains most of their error messages, and writing one processor makes the rest legible.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+KSP reads your source as a **Kotlin symbol tree** and writes new files. It cannot modify existing code —
+only add to it — which is why generated classes have suffixes, why Hilt needs `@AndroidEntryPoint` to
+rewrite a superclass through a different mechanism, and why processors report errors rather than fixing
+things.
+</KeyIdea>
+
+## Why it replaced kapt
+
+kapt worked by generating Java stubs for every Kotlin file so Java's annotation processors could read
+them. That stub generation is most of the cost, and it happens even when nothing changed.
+
+| | kapt | KSP |
+| --- | --- | --- |
+| Model | Java stubs, then Java APT | Kotlin symbols directly |
+| Speed | Slow; stubs dominate | Roughly twice as fast |
+| Sees | A Java view of Kotlin | Nullability, `suspend`, default arguments |
+| Multiplatform | JVM only | Works with KMP |
+
+The "sees" row matters more than the speed. kapt shows a processor Kotlin through a Java lens, so
+nullability is gone and a `suspend` function looks like a method taking a `Continuation`. KSP shows the
+Kotlin declaration as written, which is why Room's KSP processor can give better errors than its kapt
+one could.
+
+```kotlin title="build.gradle.kts" numbered
+plugins { id("com.google.devtools.ksp") }
+
+dependencies {
+    ksp(libs.room.compiler)        // was kapt(...)
+    ksp(libs.hilt.compiler)
+}
+```
+
+Migrating is usually this mechanical. What breaks is a library with no KSP processor yet — then kapt and
+KSP coexist in one module, which works and gives you kapt's cost anyway.
+
+## Writing one
+
+```kotlin title="Processor.kt" numbered
+class RouteProcessor(private val generator: CodeGenerator, private val logger: KSPLogger) : SymbolProcessor {
+
+    override fun process(resolver: Resolver): List<KSAnnotated> {
+        val symbols = resolver.getSymbolsWithAnnotation("com.example.Route")
+            .filterIsInstance<KSClassDeclaration>()
+
+        symbols.forEach { klass ->
+            if (klass.classKind != ClassKind.CLASS) {
+                logger.error("@Route only applies to classes", klass)   // report, do not throw
+                return@forEach
+            }
+            generate(klass)
+        }
+
+        return symbols.filterNot { it.validate() }.toList()             // retry these next round
+    }
+}
+```
+
+Two things in that shape are easy to miss.
+
+**`logger.error(message, symbol)`** attaches the error to a source location, so the user sees it on the
+offending declaration rather than as a stack trace from your processor. Throwing gives them the stack
+trace.
+
+**The return value is the deferred list.** KSP runs in rounds, and a symbol referring to a type another
+processor has not generated yet is not an error — returning it asks KSP to try again next round. Getting
+this wrong is why a processor sometimes fails only when two annotation libraries are used together.
+
+<Quiz
+  question="A processor generates a file per annotated class. It works on a clean build. On an incremental build after editing one unrelated file, the build fails with a duplicate declaration error. What is missing?"
+  options={[
+    "The processor should write to a unique file name per build",
+    "The `Dependencies` passed to `CodeGenerator.createNewFile` are wrong — KSP uses them to decide which generated files to delete and regenerate, so a file declared with no dependency on its source is never invalidated and collides with the newly generated one",
+    "Incremental processing must be disabled with `ksp.incremental=false`"
+  ]}
+  answer={1}
+  explanation="KSP's incremental mode needs to know which source files each generated file came from, and that is exactly what the Dependencies argument records. Declaring Dependencies(aggregating = false) with the originating KSFile means KSP can delete and regenerate just that output when its source changes. Passing no dependencies, or the wrong ones, leaves a stale generated file on disk that the next round regenerates alongside — hence a duplicate declaration that only appears incrementally. Setting aggregating = true is the right choice for a processor whose output depends on all annotated symbols, like a registry, because then any change regenerates it. Disabling incremental processing does make the symptom go away and gives back the speed KSP was adopted for, and unique file names would leave the codebase accumulating dead generated files."
+/>
+
+## Reading the tree
+
+```kotlin title="Symbols.kt" numbered
+klass.simpleName.asString()                      // OrderScreen
+klass.packageName.asString()                     // com.example.ui
+klass.getAllFunctions()                          // including inherited
+klass.primaryConstructor?.parameters?.forEach { p ->
+    p.name?.asString()
+    p.type.resolve().declaration.qualifiedName?.asString()
+    p.type.resolve().isMarkedNullable              // kapt could not tell you this
+}
+klass.annotations.first { it.shortName.asString() == "Route" }
+    .arguments.first { it.name?.asString() == "path" }.value
+```
+
+`type.resolve()` is the expensive call — it turns a reference into a resolved declaration — so resolving
+inside a nested loop is the usual reason a processor is slow.
+
+Generating source is almost always done with **KotlinPoet** rather than string templates, because it
+handles imports, nullability and generics for you, and a generated file with a wrong import is a
+confusing error for whoever hits it.
+
+<Detail summary="When to write one, and when not to">
+A processor is worth writing when there is a mechanical mapping from a declaration to code that
+otherwise gets written by hand and drifts — a route table, a set of mappers, a registry of feature
+modules.
+
+Before reaching for one, three cheaper options usually apply:
+
+**Reified generics and inline functions.** Much of what looks like it needs generation is a type
+parameter you can reify.
+
+**A Gradle task.** If the input is a file rather than Kotlin source — a JSON schema, a list of strings —
+a build task writing Kotlin is simpler than a symbol processor and easier to debug.
+
+**Doing nothing.** Generation adds a build step, a debugging boundary and a dependency; for twenty lines
+written twice a year, hand-writing wins.
+
+The debugging note is worth having: generated sources land in `build/generated/ksp/`, and reading them is
+the fastest way to understand any of the processors in this course. When a Hilt or Room error is opaque,
+the generated file usually says plainly what it expected and did not find.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first only appears incrementally">
+**Wrong `Dependencies` on generated files.** Stale outputs collide on an incremental build.
+
+**Throwing instead of `logger.error`.** The user gets your stack trace instead of a source location.
+
+**Not returning deferred symbols.** Fails only when combined with another processor.
+
+**`resolve()` inside a loop.** The usual reason a processor is slow.
+
+**Generating what a reified generic would do.** A build step for something the language handles.
+</Pitfall>
+
+## Practice
+
+1. Migrate one library from kapt to KSP and measure the incremental build.
+2. Read the generated code for Room or Hilt in `build/generated/ksp/`.
+3. Write a processor that generates one function per annotated class.
+4. Pass no `Dependencies`, then edit an unrelated file, and reproduce the duplicate error.
+5. Replace a hand-written mapper with a generated one and compare the maintenance cost.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| KSP | Reads Kotlin symbols; adds files, never modifies |
+| kapt | Java stubs first; roughly half the speed |
+| Nullability and `suspend` | Visible to KSP, invisible to kapt |
+| `logger.error(msg, symbol)` | Attaches the error to a source location |
+| Deferred symbols | Returned so KSP retries them next round |
+| `Dependencies` | How KSP knows what to invalidate |
+| `aggregating = true` | For output derived from all symbols, like a registry |
+| `resolve()` | Expensive; hoist it out of loops |
+| KotlinPoet | Handles imports, nullability and generics |
+| `build/generated/ksp/` | The fastest way to understand any processor's errors |
+
+<Interview title="A question about a failure that only happens the second time">
+"A KSP processor works on a clean build and fails incrementally with a duplicate declaration. Why?"
+
+Because the generated file was not declared with the right `Dependencies`. KSP uses that argument to
+know which source each output came from, so it can delete and regenerate exactly the affected files.
+Declaring none leaves the previous output on disk, the next round generates it again, and the two
+collide — which is why it only shows up incrementally.
+
+The fix is passing the originating `KSFile` in `Dependencies`, or `aggregating = true` if the output
+depends on all annotated symbols, like a registry that must regenerate whenever any of them change. What
+I would avoid is disabling incremental processing to make it go away, since that gives back the speed
+KSP was adopted for in the first place.
+</Interview>

@@ -1,0 +1,181 @@
+---
+title: KSP aur code banana
+description: Is course ki har annotation wali library KSP par chalti hai. Wo kya dekh sakta hai aur kya nahi, ye samajhna unke zyadatar sandesh khol deta hai, aur ek processor likhna baaki sabko padhne layak bana deta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+KSP aapke source ko **Kotlin ke prateekon ke ped** ki tarah padhta hai aur nai files likhta hai. Wo maujooda
+code badal nahi sakta — sirf jod sakta hai — aur isiliye bani hui classes ke naam ke peeche kuch laga hota
+hai, isiliye Hilt ko superclass badalne ke liye `@AndroidEntryPoint` wali alag vyavastha chahiye, aur isiliye
+processors cheezein theek karne ke bajaye errors batate hain.
+</KeyIdea>
+
+## Usne kapt ki jagah kyun li
+
+kapt har Kotlin ki file ke liye Java ke dhanche banakar kaam karta tha taki Java ke annotation wale
+processors unhe padh sakein. Wahi dhanche banana zyadatar keemat hai, aur wo tab bhi hota hai jab kuch badla
+hi na ho.
+
+| | kapt | KSP |
+| --- | --- | --- |
+| Model | Java ke dhanche, phir Java APT | Seedhe Kotlin ke prateek |
+| Raftar | Dheema; dhanche hi haavi | Kareeb dogna tez |
+| Dekhta hai | Kotlin ka Java wala roop | Nullability, `suspend`, default arguments |
+| Multiplatform | Sirf JVM | KMP ke saath chalta hai |
+
+"Dekhta hai" wali pankti raftar se zyada maayne rakhti hai. kapt kisi processor ko Kotlin Java ke chashme se
+dikhata hai, to nullability gayab hai aur `suspend` wala function `Continuation` leta method lagta hai. KSP
+Kotlin ki ghoshna waisi dikhata hai jaisi likhi hai, aur isiliye Room ka KSP wala processor usse behtar errors
+de sakta hai jo uska kapt wala de sakta tha.
+
+```kotlin title="build.gradle.kts" numbered
+plugins { id("com.google.devtools.ksp") }
+
+dependencies {
+    ksp(libs.room.compiler)        // pehle kapt(...) tha
+    ksp(libs.hilt.compiler)
+}
+```
+
+Badalna aam taur par itna hi yantrik hai. Tootta wahan hai jahan kisi library ka KSP wala processor abhi nahi
+hai — tab ek hi module mein kapt aur KSP saath rehte hain, jo chalta hai aur kapt ki keemat waise bhi de deta
+hai.
+
+## Ek likhna
+
+```kotlin title="Processor.kt" numbered
+class RouteProcessor(private val generator: CodeGenerator, private val logger: KSPLogger) : SymbolProcessor {
+
+    override fun process(resolver: Resolver): List<KSAnnotated> {
+        val symbols = resolver.getSymbolsWithAnnotation("com.example.Route")
+            .filterIsInstance<KSClassDeclaration>()
+
+        symbols.forEach { klass ->
+            if (klass.classKind != ClassKind.CLASS) {
+                logger.error("@Route only applies to classes", klass)   // bataiye, phenkiye mat
+                return@forEach
+            }
+            generate(klass)
+        }
+
+        return symbols.filterNot { it.validate() }.toList()             // inhe agle daur mein dobara
+    }
+}
+```
+
+Us shakal ki do cheezein aasani se chhoot jati hain.
+
+**`logger.error(message, symbol)`** us error ko source ki jagah se jod deta hai, to user use galti wali
+ghoshna par dekhta hai, na ki aapke processor ke stack trace ki tarah. Phenkne par use wahi stack trace milta
+hai.
+
+**Lautai gayi cheez taali hui list hai.** KSP dauron mein chalta hai, aur aisa prateek jo kisi aur processor
+ki abhi na bani hui type ki baat karta hai, wo error nahi hai — use lautana KSP se kehta hai ki agle daur mein
+dobara koshish kare. Ise galat karna hi wo wajah hai ki koi processor kabhi-kabhi sirf tab nakaam hota hai jab
+do annotation wali libraries saath li jayein.
+
+<Quiz
+  question="Koi processor har annotate ki gayi class par ek file banata hai. Saaf build par chalta hai. Kisi bematlab file ko badalne ke baad incremental build dohri ghoshna ki error se nakaam hota hai. Kya chhoota hai?"
+  options={[
+    "Us processor ko har build par alag naam wali file likhni chahiye",
+    "`CodeGenerator.createNewFile` ko di gayi `Dependencies` galat hain — KSP unhin se tay karta hai ki kaun si bani hui files mitakar dobara banani hain, to jis file ka uske source se koi rishta nahi bataya gaya wo kabhi amanya nahi hoti aur nai bani hui se takra jati hai",
+    "Incremental processing ko `ksp.incremental=false` se band karna padega"
+  ]}
+  answer={1}
+  explanation="KSP ki incremental haalat ko ye janna padta hai ki har bani hui file kin source ki files se aayi, aur Dependencies wala argument theek wahi darj karta hai. Shuru wali KSFile ke saath Dependencies(aggregating = false) batane ka matlab hai ki KSP us source ke badalne par sirf usi anjaam ko mitakar dobara bana sakta hai. Koi dependency na dena, ya galat dena, disk par purani bani hui file chhod deta hai jise agla daur bagal mein dobara bana deta hai — aur isiliye wo dohri ghoshna sirf incremental mein dikhti hai. aggregating = true us processor ke liye sahi chunaav hai jiska anjaam har annotate kiye prateek par tika hai, jaise koi list, kyunki tab koi bhi badlaav use dobara banata hai. Incremental processing band karne se wo lakshan chala to jata hai aur wahi raftar wapas de deta hai jiske liye KSP liya gaya tha, aur alag naam wali files codebase mein mari hui bani hui files jama karti rehtin."
+/>
+
+## Us ped ko padhna
+
+```kotlin title="Symbols.kt" numbered
+klass.simpleName.asString()                      // OrderScreen
+klass.packageName.asString()                     // com.example.ui
+klass.getAllFunctions()                          // virasat wale bhi
+klass.primaryConstructor?.parameters?.forEach { p ->
+    p.name?.asString()
+    p.type.resolve().declaration.qualifiedName?.asString()
+    p.type.resolve().isMarkedNullable              // kapt ye bata hi nahi sakta tha
+}
+klass.annotations.first { it.shortName.asString() == "Route" }
+    .arguments.first { it.name?.asString() == "path" }.value
+```
+
+`type.resolve()` mehngi call hai — wo kisi hawale ko hal ki gayi ghoshna mein badalti hai — to kisi andaruni
+loop mein resolve karna hi kisi processor ke dheeme hone ki aam wajah hai.
+
+Source banana lagbhag hamesha string ke dhanchon ke bajaye **KotlinPoet** se kiya jata hai, kyunki wo imports,
+nullability aur generics aapke liye sambhalta hai, aur galat import wali bani hui file usse takrane wale ke
+liye uljhane wali error hai.
+
+<Detail summary="Kab likhna chahiye, aur kab nahi">
+Processor tab likhne layak hai jab kisi ghoshna se code tak aisa yantrik naksha ho jo warna haath se likha
+jata hai aur khisak jata hai — routes ki saarni, mappers ka samooh, feature wale modules ki list.
+
+Uski taraf haath badhane se pehle teen saste raaste aam taur par lagu hote hain:
+
+**Reified generics aur inline functions.** Jo cheez generation maangti lagti hai uska zyadatar hissa aisa
+type ka parameter hai jise aap reify kar sakte ho.
+
+**Koi Gradle ka task.** Agar input Kotlin ka source nahi balki koi file hai — koi JSON ka dhancha, strings ki
+koi list — to Kotlin likhta koi build ka task kisi symbol wale processor se aasan hai aur debug karne mein
+bhi sehaj.
+
+**Kuch na karna.** Generation ek build ka kadam, ek debugging ki sarhad aur ek dependency jodta hai; saal mein
+do baar likhi jane wali bees linon ke liye haath se likhna jeetta hai.
+
+Debug wali baat rakhne layak hai: bani hui sources `build/generated/ksp/` mein utarti hain, aur unhe padhna is
+course ke kisi bhi processor ko samajhne ka sabse tez raasta hai. Jab Hilt ya Room ki koi error apardarshi ho,
+to wo bani hui file aam taur par saaf-saaf bata deti hai ki use kya chahiye tha aur mila nahi.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli sirf incremental mein dikhti hai">
+**Bani hui files par galat `Dependencies`.** Incremental build par purane anjaam takrate hain.
+
+**`logger.error` ke bajaye phenkna.** User ko source ki jagah nahi, aapka stack trace milta hai.
+
+**Taale hue prateek na lautana.** Sirf kisi doosre processor ke saath milane par nakaam hota hai.
+
+**Kisi loop ke andar `resolve()`.** Processor ke dheeme hone ki aam wajah.
+
+**Jo reified generic kar deta wo banana.** Bhasha jo sambhalti hai uske liye build ka ek kadam.
+</Pitfall>
+
+## Abhyaas
+
+1. Kisi ek library ko kapt se KSP par laiye aur incremental build naapiye.
+2. `build/generated/ksp/` mein Room ya Hilt ka bana hua code padhiye.
+3. Aisa processor likhiye jo har annotate ki gayi class par ek function banaye.
+4. Koi `Dependencies` mat dijiye, phir kisi bematlab file ko badliye, aur wo dohri error dobara paida kijiye.
+5. Haath se likhe kisi mapper ki jagah bana hua rakhiye aur sambhalne ki keemat milaiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| KSP | Kotlin ke prateek padhta hai; files jodta hai, badalta kabhi nahi |
+| kapt | Pehle Java ke dhanche; kareeb aadhi raftar |
+| Nullability aur `suspend` | KSP ko dikhte hain, kapt ko nahi |
+| `logger.error(msg, symbol)` | Error ko source ki jagah se jodta hai |
+| Taale hue prateek | Lautaiye taki KSP agle daur mein dobara koshish kare |
+| `Dependencies` | KSP isi se janta hai ki kya amanya karna hai |
+| `aggregating = true` | Har prateek se bane anjaam ke liye, jaise koi list |
+| `resolve()` | Mehnga; use loops se bahar nikaliye |
+| KotlinPoet | Imports, nullability aur generics sambhalta hai |
+| `build/generated/ksp/` | Kisi bhi processor ki errors samajhne ka sabse tez raasta |
+
+<Interview title="Ek sawal, aisi nakami ka jo sirf doosri baar hoti hai">
+"Koi KSP wala processor saaf build par chalta hai aur incremental mein dohri ghoshna se nakaam hota hai. Kyun?"
+
+Kyunki wo bani hui file sahi `Dependencies` ke saath nahi batai gayi. KSP usi argument se janta hai ki har
+anjaam kis source se aaya, taki wo theek unhin files ko mitakar dobara bana sake. Koi na batane par pichhla
+anjaam disk par pada rehta hai, agla daur use dobara bana deta hai, aur dono takra jate hain — isiliye wo sirf
+incremental mein dikhta hai.
+
+Ilaaj hai `Dependencies` mein shuru wali `KSFile` dena, ya `aggregating = true` agar wo anjaam har annotate
+kiye prateek par tika hai, jaise koi list jise unmein se kisi ke bhi badalne par dobara banna hai. Jisse main
+bachunga wo hai ise hatane ke liye incremental processing band kar dena, kyunki wo wahi raftar wapas de deta
+hai jiske liye KSP pehli jagah liya gaya tha.
+</Interview>

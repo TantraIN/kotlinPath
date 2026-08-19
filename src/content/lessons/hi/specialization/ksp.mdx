@@ -1,0 +1,178 @@
+---
+title: KSP और code बनाना
+description: इस course की हर annotation वाली library KSP पर चलती है। वह क्या देख सकता है और क्या नहीं, यह समझना उनके ज्यादातर संदेश खोल देता है, और एक processor लिखना बाकी सबको पढ़ने लायक बना देता है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+KSP आपके source को **Kotlin के प्रतीकों के पेड़** की तरह पढ़ता है और नई files लिखता है। वह मौजूदा code
+बदल नहीं सकता — सिर्फ जोड़ सकता है — और इसीलिए बनी हुई classes के नाम के पीछे कुछ लगा होता है, इसीलिए
+Hilt को superclass बदलने के लिए `@AndroidEntryPoint` वाली अलग व्यवस्था चाहिए, और इसीलिए processors चीजें
+ठीक करने के बजाय errors बताते हैं।
+</KeyIdea>
+
+## उसने kapt की जगह क्यों ली
+
+kapt हर Kotlin की file के लिए Java के ढाँचे बनाकर काम करता था ताकि Java के annotation वाले processors
+उन्हें पढ़ सकें। वही ढाँचे बनाना ज्यादातर कीमत है, और वह तब भी होता है जब कुछ बदला ही न हो।
+
+| | kapt | KSP |
+| --- | --- | --- |
+| मॉडल | Java के ढाँचे, फिर Java APT | सीधे Kotlin के प्रतीक |
+| रफ्तार | धीमा; ढाँचे ही हावी | करीब दोगुना तेज |
+| देखता है | Kotlin का Java वाला रूप | Nullability, `suspend`, डिफॉल्ट arguments |
+| Multiplatform | सिर्फ JVM | KMP के साथ चलता है |
+
+"देखता है" वाली पंक्ति रफ्तार से ज्यादा मायने रखती है। kapt किसी processor को Kotlin Java के चश्मे से
+दिखाता है, तो nullability गायब है और `suspend` वाला function `Continuation` लेता method लगता है। KSP
+Kotlin की घोषणा वैसी दिखाता है जैसी लिखी है, और इसीलिए Room का KSP वाला processor उससे बेहतर errors दे
+सकता है जो उसका kapt वाला दे सकता था।
+
+```kotlin title="build.gradle.kts" numbered
+plugins { id("com.google.devtools.ksp") }
+
+dependencies {
+    ksp(libs.room.compiler)        // पहले kapt(...) था
+    ksp(libs.hilt.compiler)
+}
+```
+
+बदलना आमतौर पर इतना ही यांत्रिक है। टूटता वहाँ है जहाँ किसी library का KSP वाला processor अभी नहीं है —
+तब एक ही module में kapt और KSP साथ रहते हैं, जो चलता है और kapt की कीमत वैसे भी दे देता है।
+
+## एक लिखना
+
+```kotlin title="Processor.kt" numbered
+class RouteProcessor(private val generator: CodeGenerator, private val logger: KSPLogger) : SymbolProcessor {
+
+    override fun process(resolver: Resolver): List<KSAnnotated> {
+        val symbols = resolver.getSymbolsWithAnnotation("com.example.Route")
+            .filterIsInstance<KSClassDeclaration>()
+
+        symbols.forEach { klass ->
+            if (klass.classKind != ClassKind.CLASS) {
+                logger.error("@Route only applies to classes", klass)   // बताइए, फेंकिए मत
+                return@forEach
+            }
+            generate(klass)
+        }
+
+        return symbols.filterNot { it.validate() }.toList()             // इन्हें अगले दौर में दोबारा
+    }
+}
+```
+
+उस शक्ल की दो चीजें आसानी से छूट जाती हैं।
+
+**`logger.error(message, symbol)`** उस error को source की जगह से जोड़ देता है, तो user उसे गलती वाली
+घोषणा पर देखता है, न कि आपके processor के stack trace की तरह। फेंकने पर उसे वही stack trace मिलता है।
+
+**लौटाई गई चीज टाली हुई सूची है।** KSP दौरों में चलता है, और ऐसा प्रतीक जो किसी और processor की अभी न
+बनी हुई type की बात करता है, वह error नहीं है — उसे लौटाना KSP से कहता है कि अगले दौर में दोबारा
+कोशिश करे। इसे गलत करना ही वह वजह है कि कोई processor कभी-कभी सिर्फ तब नाकाम होता है जब दो annotation
+वाली libraries साथ ली जाएँ।
+
+<Quiz
+  question="कोई processor हर annotate की गई class पर एक file बनाता है। साफ build पर चलता है। किसी बेमतलब file को बदलने के बाद incremental build दोहरी घोषणा की error से नाकाम होता है। क्या छूटा है?"
+  options={[
+    "उस processor को हर build पर अलग नाम वाली file लिखनी चाहिए",
+    "`CodeGenerator.createNewFile` को दी गई `Dependencies` गलत हैं — KSP उन्हीं से तय करता है कि कौन सी बनी हुई files मिटाकर दोबारा बनानी हैं, तो जिस file का उसके source से कोई रिश्ता नहीं बताया गया वह कभी अमान्य नहीं होती और नई बनी हुई से टकरा जाती है",
+    "Incremental processing को `ksp.incremental=false` से बंद करना पड़ेगा"
+  ]}
+  answer={1}
+  explanation="KSP की incremental हालत को यह जानना पड़ता है कि हर बनी हुई file किन source की files से आई, और Dependencies वाला argument ठीक वही दर्ज करता है। शुरू वाली KSFile के साथ Dependencies(aggregating = false) बताने का मतलब है कि KSP उस source के बदलने पर सिर्फ उसी नतीजे को मिटाकर दोबारा बना सकता है। कोई dependency न देना, या गलत देना, disk पर पुरानी बनी हुई file छोड़ देता है जिसे अगला दौर बगल में दोबारा बना देता है — और इसीलिए वह दोहरी घोषणा सिर्फ incremental में दिखती है। aggregating = true उस processor के लिए सही चुनाव है जिसका नतीजा हर annotate किए प्रतीक पर टिका है, जैसे कोई सूची, क्योंकि तब कोई भी बदलाव उसे दोबारा बनाता है। Incremental processing बंद करने से वह लक्षण चला तो जाता है और वही रफ्तार वापस दे देता है जिसके लिए KSP लिया गया था, और अलग नाम वाली files codebase में मरी हुई बनी हुई files जमा करती रहतीं।"
+/>
+
+## उस पेड़ को पढ़ना
+
+```kotlin title="Symbols.kt" numbered
+klass.simpleName.asString()                      // OrderScreen
+klass.packageName.asString()                     // com.example.ui
+klass.getAllFunctions()                          // विरासत वाले भी
+klass.primaryConstructor?.parameters?.forEach { p ->
+    p.name?.asString()
+    p.type.resolve().declaration.qualifiedName?.asString()
+    p.type.resolve().isMarkedNullable              // kapt यह बता ही नहीं सकता था
+}
+klass.annotations.first { it.shortName.asString() == "Route" }
+    .arguments.first { it.name?.asString() == "path" }.value
+```
+
+`type.resolve()` महँगी call है — वह किसी हवाले को हल की गई घोषणा में बदलती है — तो किसी अंदरूनी loop
+में resolve करना ही किसी processor के धीमे होने की आम वजह है।
+
+Source बनाना लगभग हमेशा string के ढाँचों के बजाय **KotlinPoet** से किया जाता है, क्योंकि वह imports,
+nullability और generics आपके लिए सँभालता है, और गलत import वाली बनी हुई file उससे टकराने वाले के लिए
+उलझाने वाली error है।
+
+<Detail summary="कब लिखना चाहिए, और कब नहीं">
+Processor तब लिखने लायक है जब किसी घोषणा से code तक ऐसा यांत्रिक नक्शा हो जो वरना हाथ से लिखा जाता है
+और खिसक जाता है — routes की सारणी, mappers का समूह, feature वाले modules की सूची।
+
+उसकी तरफ हाथ बढ़ाने से पहले तीन सस्ते रास्ते आमतौर पर लागू होते हैं:
+
+**Reified generics और inline functions।** जो चीज generation माँगती लगती है उसका ज्यादातर हिस्सा ऐसा
+type का parameter है जिसे आप reify कर सकते हैं।
+
+**कोई Gradle का task।** अगर input Kotlin का source नहीं बल्कि कोई file है — कोई JSON का ढाँचा, strings
+की कोई सूची — तो Kotlin लिखता कोई build का task किसी symbol वाले processor से आसान है और debug करने में
+भी सहज।
+
+**कुछ न करना।** Generation एक build का कदम, एक debugging की सरहद और एक dependency जोड़ता है; साल में
+दो बार लिखी जाने वाली बीस लाइनों के लिए हाथ से लिखना जीतता है।
+
+Debug वाली बात रखने लायक है: बनी हुई sources `build/generated/ksp/` में उतरती हैं, और उन्हें पढ़ना इस
+course के किसी भी processor को समझने का सबसे तेज रास्ता है। जब Hilt या Room की कोई error अपारदर्शी हो, तो
+वह बनी हुई file आमतौर पर साफ-साफ बता देती है कि उसे क्या चाहिए था और मिला नहीं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली सिर्फ incremental में दिखती है">
+**बनी हुई files पर गलत `Dependencies`।** Incremental build पर पुराने नतीजे टकराते हैं।
+
+**`logger.error` के बजाय फेंकना।** User को source की जगह नहीं, आपका stack trace मिलता है।
+
+**टाले हुए प्रतीक न लौटाना।** सिर्फ किसी दूसरे processor के साथ मिलाने पर नाकाम होता है।
+
+**किसी loop के अंदर `resolve()`।** Processor के धीमे होने की आम वजह।
+
+**जो reified generic कर देता वह बनाना।** भाषा जो सँभालती है उसके लिए build का एक कदम।
+</Pitfall>
+
+## अभ्यास
+
+1. किसी एक library को kapt से KSP पर लाइए और incremental build नापिए।
+2. `build/generated/ksp/` में Room या Hilt का बना हुआ code पढ़िए।
+3. ऐसा processor लिखिए जो हर annotate की गई class पर एक function बनाए।
+4. कोई `Dependencies` मत दीजिए, फिर किसी बेमतलब file को बदलिए, और वह दोहरी error दोबारा पैदा कीजिए।
+5. हाथ से लिखे किसी mapper की जगह बना हुआ रखिए और सँभालने की कीमत मिलाइए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| KSP | Kotlin के प्रतीक पढ़ता है; files जोड़ता है, बदलता कभी नहीं |
+| kapt | पहले Java के ढाँचे; करीब आधी रफ्तार |
+| Nullability और `suspend` | KSP को दिखते हैं, kapt को नहीं |
+| `logger.error(msg, symbol)` | Error को source की जगह से जोड़ता है |
+| टाले हुए प्रतीक | लौटाइए ताकि KSP अगले दौर में दोबारा कोशिश करे |
+| `Dependencies` | KSP इसी से जानता है कि क्या अमान्य करना है |
+| `aggregating = true` | हर प्रतीक से बने नतीजे के लिए, जैसे कोई सूची |
+| `resolve()` | महँगा; उसे loops से बाहर निकालिए |
+| KotlinPoet | Imports, nullability और generics सँभालता है |
+| `build/generated/ksp/` | किसी भी processor की errors समझने का सबसे तेज रास्ता |
+
+<Interview title="एक सवाल, ऐसी नाकामी का जो सिर्फ दूसरी बार होती है">
+"कोई KSP वाला processor साफ build पर चलता है और incremental में दोहरी घोषणा से नाकाम होता है। क्यों?"
+
+क्योंकि वह बनी हुई file सही `Dependencies` के साथ नहीं बताई गई। KSP उसी argument से जानता है कि हर
+नतीजा किस source से आया, ताकि वह ठीक उन्हीं files को मिटाकर दोबारा बना सके। कोई न बताने पर पिछला नतीजा
+disk पर पड़ा रहता है, अगला दौर उसे दोबारा बना देता है, और दोनों टकरा जाते हैं — इसीलिए वह सिर्फ
+incremental में दिखता है।
+
+इलाज है `Dependencies` में शुरू वाली `KSFile` देना, या `aggregating = true` अगर वह नतीजा हर annotate
+किए प्रतीक पर टिका है, जैसे कोई सूची जिसे उनमें से किसी के भी बदलने पर दोबारा बनना है। जिससे मैं बचूँगा
+वह है इसे हटाने के लिए incremental processing बंद कर देना, क्योंकि वह वही रफ्तार वापस दे देता है जिसके
+लिए KSP पहली जगह लिया गया था।
+</Interview>
