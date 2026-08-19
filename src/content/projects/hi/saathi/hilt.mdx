@@ -1,0 +1,183 @@
+---
+title: Hilt से सब जोड़ना
+description: अब आपके पास एक DAO, Firestore का एक रूप, auth का repository और एक worker है, और हर एक को वही बना रहा है जिसे उसकी जरूरत पड़ जाए। यह कदम वह काम एक जगह को सौंप देता है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+निर्भरता भीतर भेजना `new` से बचने के बारे में नहीं है। यह इस बारे में है कि **एक जगह
+तय करे कि क्या मौजूद है और वह कितनी देर जिएगा** — ताकि कोई screen गलती से दूसरा
+database न खोल दे, और कोई test उसी class को नकली चीज थमा सके बिना class को खबर हुए।
+</KeyIdea>
+
+## समस्या, ईमानदारी से
+
+अभी किसी को `ItemRepository` बनाना है, जिसे `ItemDao` चाहिए, जिसे `AppDatabase` चाहिए,
+जिसे `Context` चाहिए। यह किसी ViewModel के भीतर कीजिए और दो चीजें मिलती हैं जो आप
+नहीं चाहते थे: ऐसा ViewModel जो बिना असली database के test में बन ही नहीं सकता, और —
+चूँकि `Room.databaseBuilder` वहीं बुलाया जाता है जहाँ ViewModel बनता है — उसी एक file
+पर लड़ते दो database वाले रूपों का सच्चा खतरा।
+
+<Compare
+  left={{
+    title: "जहाँ जरूरत हो वहीं बना लेना",
+    accent: "rose",
+    points: [
+      "- हर ViewModel को database तक पहुँचने के लिए Context चाहिए",
+      "- एक ही database होने की कोई जमानत नहीं",
+      "- Test में कुछ भी बनाने के लिए असली Room चाहिए",
+      "+ कोई annotations नहीं, कोई बना हुआ code नहीं",
+    ],
+  }}
+  right={{
+    title: "एक graph",
+    accent: "emerald",
+    points: [
+      "+ उम्रें बताई हुई हैं, इत्तेफाकन नहीं",
+      "+ Constructors interfaces लेते हैं, तो नकली चीजें सीधे बैठ जाती हैं",
+      "+ कोई निर्भरता जोड़ना एक parameter है, बदलावों की कड़ी नहीं",
+      "- Annotation की प्रोसेसिंग, और थोड़ा लंबा build",
+    ],
+  }}
+/>
+
+## इसे चालू करना
+
+```kotlin title="SaathiApp.kt" numbered
+@HiltAndroidApp
+class SaathiApp : Application()
+```
+
+```xml title="AndroidManifest.xml"
+<application android:name=".SaathiApp" ... >
+```
+
+`@HiltAndroidApp` जड़ वाला component बनाता है। Manifest की वह लाइन भूलना सबसे आम पहली
+नाकामी है, और वह दिखती नहीं: class compile होती है, ऐप खुलता है, और हर injection
+चलते वक्त ऐसे संदेश से गिरता है जो किसी गायब component की बात करता है।
+
+```kotlin title="MainActivity.kt" numbered
+@AndroidEntryPoint
+class MainActivity : ComponentActivity()
+```
+
+`@AndroidEntryPoint` उस Activity पर चाहिए भले ही हम खुद Activity में कुछ भी भीतर न
+भेजें, क्योंकि Compose के भीतर `hiltViewModel()` जुड़ने के लिए ऊपर की तरफ कोई Hilt का
+दरवाजा ढूँढ़ता है।
+
+## Modules
+
+```kotlin title="di/DataModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)      // पूरे process के लिए एक ही रूप
+object DataModule {
+
+    @Provides @Singleton
+    fun database(@ApplicationContext context: Context): AppDatabase =
+        Room.databaseBuilder(context, AppDatabase::class.java, "saathi.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
+
+    @Provides
+    fun itemDao(db: AppDatabase): ItemDao = db.itemDao()   // सस्ता: कोई दायरा नहीं चाहिए
+
+    @Provides @Singleton
+    fun firestore(): FirebaseFirestore = Firebase.firestore
+
+    @Provides @Singleton
+    fun auth(): FirebaseAuth = Firebase.auth
+
+    @Provides @Singleton
+    fun workManager(@ApplicationContext context: Context): WorkManager =
+        WorkManager.getInstance(context)
+}
+```
+
+यहाँ `@Singleton` कोई design का pattern नहीं, एक **उम्र** है: हर
+`SingletonComponent` में एक रूप, और वह component process जितना जीता है। Database को वह
+इसलिए मिलती है कि एक ही file पर दो Room के रूप असली गड़बड़ी हैं। DAO को नहीं, क्योंकि
+database से उसे माँगना मुफ्त है और दूसरा DAO का रूप किसी का कुछ नहीं बिगाड़ता।
+
+`@ApplicationContext` एक पहचान देने वाला निशान है, और लंबी उम्र वाली हर चीज के लिए वही
+सही है। किसी `@Singleton` में Activity का context भेजना उस Activity को पूरे process
+भर जिंदा रखेगा, जो निर्भरता भीतर भेजने की टोपी पहने वही किताबी leak है।
+
+<Quiz
+  question="किसी repository पर `@Singleton` लगा है और उसका constructor `@ActivityContext context: Context` लेता है। यह compile होता है, और ऐप तब तक चलता है जब तक उपयोगकर्ता screen को कुछ बार न घुमाए।"
+  options={[
+    "घुमाने पर repository दोबारा बनता है, तो उसकी जमा हालत खो जाती है",
+    "यह compile होता ही नहीं — Hilt Activity के दायरे वाले बंधन को Singleton में भेजने से मना कर देता है, क्योंकि Singleton हर Activity से ज्यादा जीता है और मरी हुई Activity को हमेशा पकड़े रहता। यही बेमेल पकड़ने के लिए दायरे वाले annotations हैं",
+    "यह सही चलता है; Hilt हर घुमाव पर नया Activity का context बदल देता है"
+  ]}
+  answer={1}
+  explanation="दायरे बताते हैं कि कोई बंधन कितनी देर जी सकता है, और Hilt graph को compile वक्त ठीक इसीलिए परखता है ताकि लंबी उम्र वाली चीज छोटी उम्र वाली को पकड़ न सके — Activity का context पकड़े कोई `@Singleton` हर घुमाकर छोड़ी गई Activity को process के मरने तक memory में टाँके रखता। तो यह चलते वक्त का धोखा नहीं, दोनों दायरों का नाम लेती build की नाकामी है, और उम्रें उगने देने के बजाय बताने का पूरा फायदा यही है। Hilt बाद में कोई context बदल भी नहीं सकता, क्योंकि constructor एक बार चला और खाने में वही है जो उसे दिया गया। अगर repository को सच में Context चाहिए, तो जवाब `@ApplicationContext` है, जो ठीक उतना ही जीता है जितना Singleton।"
+/>
+
+## Worker में भीतर भेजना
+
+`WorkManager` workers खुद बनाता है, तो कोई worker सीधे constructor के parameters ले
+ही नहीं सकता। Hilt उस खाई को assisted factory से पाटता है:
+
+```kotlin title="SaathiApp.kt" numbered
+@HiltAndroidApp
+class SaathiApp : Application(), Configuration.Provider {
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
+}
+```
+
+```xml title="AndroidManifest.xml"
+<!-- WorkManager का अपना शुरू करने वाला बंद कीजिए ताकि हमारा चले -->
+<provider
+    android:name="androidx.startup.InitializationProvider"
+    android:authorities="${applicationId}.androidx-startup"
+    tools:node="remove" />
+```
+
+Manifest का वह हिस्सा दिखने में मामूली है और पूरा भार उठाता है। WorkManager तयशुदा
+तौर पर App Startup से खुद को शुरू करता है, और अगर आपने वह शुरू करने वाला हटाया नहीं
+तो वही दौड़ जीत जाता है, आपकी factory कभी लगती ही नहीं, और हर `@HiltWorker` ऐसी error
+से बनना नाकाम होता है जो provider की नहीं, worker की class की बात करती है।
+
+<Detail summary="कौन सा दायरा, एक तालिका में">
+| Annotation | कितनी देर जीता है | किसके लिए |
+| --- | --- | --- |
+| `@Singleton` | Process जितना | Database, Firestore, OkHttp, `WorkManager` |
+| `@ViewModelScoped` | एक ViewModel | हर screen की वह हालत जो repository को साझा करनी है |
+| `@ActivityRetainedScoped` | घुमाव के आर-पार, process के मरने तक नहीं | कम ही; आमतौर पर ViewModel ज्यादा साफ है |
+| बिना दायरे | हर बार नया | बाकी सब कुछ, और यही सही तयशुदा है |
+
+तयशुदा कोई दायरा ही नहीं होना चाहिए। दायरा यह वादा है कि कोई रूप साझा है, और हर साझा
+रूप वह जगह है जहाँ दो screens एक-दूसरे में दखल दे सकती हैं। दायरा तब जोड़िए जब आप उस
+चीज का नाम ले सकें जो उसके बिना टूटेगी — कोई database की file, कोई connections का
+तालाब, memory में जमा कोई चीज — उससे पहले नहीं।
+</Detail>
+
+<Pitfall title="चार, और चारों वहाँ नहीं, चलते वक्त गिरती हैं जहाँ आप देखते हैं">
+**Manifest में `android:name` भूलना।** `@HiltAndroidApp` वाली class कभी इस्तेमाल ही
+नहीं होती, और हर injection गिरता है।
+
+**Activity पर `@AndroidEntryPoint` छूटना।** `hiltViewModel()` को कोई component नहीं
+मिलता, और सिर्फ वही screen टूटती है।
+
+**WorkManager का तयशुदा शुरू करने वाला छोड़ देना।** Hilt की worker वाली factory कभी
+लगती ही नहीं, और `@HiltWorker` वाली classes बन ही नहीं पातीं।
+
+**आदत से दायरा लगाना।** हर चीज पर `@Singleton` हर वस्तु को process जितना जिला देता है
+और जमा करने की गड़बड़ी को memory की leak बना देता है।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| Graph बनता है | कोई `@Provides` छूटे बिना ऐप compile होता है |
+| एक ही database | `@Singleton` वाला database एक बार दिया जाता है |
+| ViewModels भीतर आते हैं | `hiltViewModel()` चलता हुआ रूप लौटाता है |
+| Worker चलता है | कतार में डाला sync सच में चलता है |
+| दायरे सोचकर लगे हैं | आप हर `@Singleton` की वजह बता सकते हैं |
+
+आगे: list वाली screen — एक ViewModel, एक न बदलने वाली हालत, और ऐसी हालत जो बिना आपके
+हाथ से कुछ सहेजे घुमाने पर बची रहे।

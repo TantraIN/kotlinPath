@@ -1,0 +1,187 @@
+---
+title: Hilt se sab jodna
+description: Ab aapke paas ek DAO, Firestore ka ek roop, auth ka repository aur ek worker hai, aur har ek ko wahi bana raha hai jise uski zaroorat pad jaaye. Yeh step wo kaam ek jagah ko saunp deta hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Dependency injection `new` se bachne ke baare mein nahi hai. Yeh is baare mein hai ki
+**ek jagah tay kare ki kya maujood hai aur wo kitni der jiyega** — taki koi screen
+galti se doosra database na khol de, aur koi test usi class ko nakli cheez thama sake
+bina class ko khabar hue.
+</KeyIdea>
+
+## Samasya, imaandaari se
+
+Abhi kisi ko `ItemRepository` banana hai, jise `ItemDao` chahiye, jise `AppDatabase`
+chahiye, jise `Context` chahiye. Yeh kisi ViewModel ke bheetar kijiye aur do cheezein
+milti hain jo aap nahi chaahte the: aisa ViewModel jo bina asli database ke test mein
+ban hi nahi sakta, aur — chunki `Room.databaseBuilder` wahin bulaya jaata hai jahan
+ViewModel banta hai — usi ek file par ladte do database wale roopon ka saccha khatra.
+
+<Compare
+  left={{
+    title: "Jahan zaroorat ho wahin bana lena",
+    accent: "rose",
+    points: [
+      "- Har ViewModel ko database tak pahunchne ke liye Context chahiye",
+      "- Ek hi database hone ki koi zamaanat nahi",
+      "- Test mein kuchh bhi banane ke liye asli Room chahiye",
+      "+ Koi annotations nahi, koi bana hua code nahi",
+    ],
+  }}
+  right={{
+    title: "Ek graph",
+    accent: "emerald",
+    points: [
+      "+ Umrein batai hui hain, ittefaakan nahi",
+      "+ Constructors interfaces lete hain, to nakli cheezein seedhe baith jaati hain",
+      "+ Koi dependency jodna ek parameter hai, badlaavon ki kadi nahi",
+      "- Annotation ki processing, aur thoda lamba build",
+    ],
+  }}
+/>
+
+## Ise chaalu karna
+
+```kotlin title="SaathiApp.kt" numbered
+@HiltAndroidApp
+class SaathiApp : Application()
+```
+
+```xml title="AndroidManifest.xml"
+<application android:name=".SaathiApp" ... >
+```
+
+`@HiltAndroidApp` jad wala component banata hai. Manifest ki wo line bhoolna sabse aam
+pehli naakami hai, aur wo dikhti nahi: class compile hoti hai, app khulta hai, aur har
+injection chalte waqt aise sandesh se girta hai jo kisi gaayab component ki baat karta
+hai.
+
+```kotlin title="MainActivity.kt" numbered
+@AndroidEntryPoint
+class MainActivity : ComponentActivity()
+```
+
+`@AndroidEntryPoint` us Activity par chahiye bhale hi hum khud Activity mein kuchh bhi
+bheetar na bhejein, kyonki Compose ke bheetar `hiltViewModel()` judne ke liye oopar ki
+taraf koi Hilt ka darwaza dhoondhta hai.
+
+## Modules
+
+```kotlin title="di/DataModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)      // poore process ke liye ek hi roop
+object DataModule {
+
+    @Provides @Singleton
+    fun database(@ApplicationContext context: Context): AppDatabase =
+        Room.databaseBuilder(context, AppDatabase::class.java, "saathi.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
+
+    @Provides
+    fun itemDao(db: AppDatabase): ItemDao = db.itemDao()   // sasta: koi daayra nahi chahiye
+
+    @Provides @Singleton
+    fun firestore(): FirebaseFirestore = Firebase.firestore
+
+    @Provides @Singleton
+    fun auth(): FirebaseAuth = Firebase.auth
+
+    @Provides @Singleton
+    fun workManager(@ApplicationContext context: Context): WorkManager =
+        WorkManager.getInstance(context)
+}
+```
+
+Yahan `@Singleton` koi design ka pattern nahi, ek **umar** hai: har `SingletonComponent`
+mein ek roop, aur wo component process jitna jeeta hai. Database ko wo isliye milti hai
+ki ek hi file par do Room ke roop asli gadbadi hain. DAO ko nahi, kyonki database se
+use maangna muft hai aur doosra DAO ka roop kisi ka kuchh nahi bigaadta.
+
+`@ApplicationContext` ek pehchaan dene wala nishaan hai, aur lambi umar wali har cheez
+ke liye wahi sahi hai. Kisi `@Singleton` mein Activity ka context bhejna us Activity ko
+poore process bhar zinda rakhega, jo dependency injection ki topi pehne wahi kitaabi
+leak hai.
+
+<Quiz
+  question="Kisi repository par `@Singleton` laga hai aur uska constructor `@ActivityContext context: Context` leta hai. Yeh compile hota hai, aur app tab tak chalta hai jab tak user screen ko kuchh baar na ghumaye."
+  options={[
+    "Ghumane par repository dobara banta hai, to uski jama haalat kho jaati hai",
+    "Yeh compile hota hi nahi — Hilt Activity ke daayre wale bandhan ko Singleton mein bhejne se mana kar deta hai, kyonki Singleton har Activity se zyada jeeta hai aur mari hui Activity ko hamesha pakde rehta. Yahi bemel pakadne ke liye daayre wale annotations hain",
+    "Yeh sahi chalta hai; Hilt har ghumaav par naya Activity ka context badal deta hai"
+  ]}
+  answer={1}
+  explanation="Daayre bataate hain ki koi bandhan kitni der ji sakta hai, aur Hilt graph ko compile waqt theek isiliye parakhta hai taki lambi umar wali cheez chhoti umar wali ko pakad na sake — Activity ka context pakde koi `@Singleton` har ghumakar chhodi gayi Activity ko process ke marne tak memory mein taanke rakhta. To yeh chalte waqt ka dhokha nahi, donon daayron ka naam leti build ki naakami hai, aur umrein ugne dene ke bajay batane ka poora faayda yahi hai. Hilt baad mein koi context badal bhi nahi sakta, kyonki constructor ek baar chala aur khaane mein wahi hai jo use diya gaya. Agar repository ko sach mein Context chahiye, to jawaab `@ApplicationContext` hai, jo theek utna hi jeeta hai jitna Singleton."
+/>
+
+## Worker mein bheetar bhejna
+
+`WorkManager` workers khud banata hai, to koi worker seedhe constructor ke parameters le
+hi nahi sakta. Hilt us khaai ko assisted factory se paatta hai:
+
+```kotlin title="SaathiApp.kt" numbered
+@HiltAndroidApp
+class SaathiApp : Application(), Configuration.Provider {
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
+}
+```
+
+```xml title="AndroidManifest.xml"
+<!-- WorkManager ka apna shuru karne wala band kijiye taki hamara chale -->
+<provider
+    android:name="androidx.startup.InitializationProvider"
+    android:authorities="${applicationId}.androidx-startup"
+    tools:node="remove" />
+```
+
+Manifest ka wo hissa dikhne mein maamuli hai aur poora bhaar uthata hai. WorkManager
+tayshuda taur par App Startup se khud ko shuru karta hai, aur agar aapne wo shuru karne
+wala hataya nahi to wahi daud jeet jaata hai, aapki factory kabhi lagti hi nahi, aur har
+`@HiltWorker` aisi error se banna naakaam hota hai jo provider ki nahi, worker ki class
+ki baat karti hai.
+
+<Detail summary="Kaun sa daayra, ek taalika mein">
+| Annotation | Kitni der jeeta hai | Kiske liye |
+| --- | --- | --- |
+| `@Singleton` | Process jitna | Database, Firestore, OkHttp, `WorkManager` |
+| `@ViewModelScoped` | Ek ViewModel | Har screen ki wo haalat jo repository ko saajha karni hai |
+| `@ActivityRetainedScoped` | Ghumaav ke aar-paar, process ke marne tak nahi | Kam hi; aamtaur par ViewModel zyada saaf hai |
+| Bina daayre | Har baar naya | Baaki sab kuchh, aur yahi sahi tayshuda hai |
+
+Tayshuda koi daayra hi nahi hona chahiye. Daayra yeh waada hai ki koi roop saajha hai,
+aur har saajha roop wo jagah hai jahan do screens ek-doosre mein dakhal de sakti hain.
+Daayra tab jodiye jab aap us cheez ka naam le sakein jo uske bina tootegi — koi database
+ki file, koi connections ka taalab, memory mein jama koi cheez — usse pehle nahi.
+</Detail>
+
+<Pitfall title="Chaar, aur chaaron wahan nahi, chalte waqt girti hain jahan aap dekhte hain">
+**Manifest mein `android:name` bhoolna.** `@HiltAndroidApp` wali class kabhi istemaal hi
+nahi hoti, aur har injection girta hai.
+
+**Activity par `@AndroidEntryPoint` chhootna.** `hiltViewModel()` ko koi component nahi
+milta, aur sirf wahi screen toot-ti hai.
+
+**WorkManager ka tayshuda shuru karne wala chhod dena.** Hilt ki worker wali factory
+kabhi lagti hi nahi, aur `@HiltWorker` wali classes ban hi nahi paatin.
+
+**Aadat se daayra lagana.** Har cheez par `@Singleton` har vastu ko process jitna jila
+deta hai aur jama karne ki gadbadi ko memory ki leak bana deta hai.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Graph banta hai | Koi `@Provides` chhoote bina app compile hota hai |
+| Ek hi database | `@Singleton` wala database ek baar diya jaata hai |
+| ViewModels bheetar aate hain | `hiltViewModel()` chalta hua roop lautata hai |
+| Worker chalta hai | Kataar mein daala sync sach mein chalta hai |
+| Daayre sochkar lage hain | Aap har `@Singleton` ki wajah bata sakte hain |
+
+Aage: list wali screen — ek ViewModel, ek na badalne wali haalat, aur aisi haalat jo bina
+aapke haath se kuchh sahej ghumane par bachi rahe.

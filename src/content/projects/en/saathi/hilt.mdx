@@ -1,0 +1,184 @@
+---
+title: Wiring it together with Hilt
+description: You now have a DAO, a Firestore instance, an auth repository and a worker, and each one is being constructed by whoever happens to need it. This step gives that job to one place.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Dependency injection is not about avoiding `new`. It is about **one place deciding
+what exists and how long it lives** — so a screen cannot accidentally open a second
+database, and a test can hand the same class a fake without the class knowing.
+</KeyIdea>
+
+## The problem, stated honestly
+
+Right now, something has to build `ItemRepository`, which needs `ItemDao`, which needs
+`AppDatabase`, which needs a `Context`. Do that inside a ViewModel and you get two
+things you did not want: a ViewModel that cannot be constructed in a test without a
+real database, and — because `Room.databaseBuilder` is called wherever the ViewModel
+is created — a real chance of two database instances fighting over the same file.
+
+<Compare
+  left={{
+    title: "Building things where you need them",
+    accent: "rose",
+    points: [
+      "- Every ViewModel needs a Context to reach the database",
+      "- Nothing guarantees one database instance",
+      "- A test needs a real Room instance to construct anything",
+      "+ No annotations, no generated code",
+    ],
+  }}
+  right={{
+    title: "One graph",
+    accent: "emerald",
+    points: [
+      "+ Lifetimes are declared, not accidental",
+      "+ Constructors take interfaces, so fakes drop straight in",
+      "+ Adding a dependency is one parameter, not a chain of edits",
+      "- Annotation processing, and a build that takes slightly longer",
+    ],
+  }}
+/>
+
+## Turning it on
+
+```kotlin title="SaathiApp.kt" numbered
+@HiltAndroidApp
+class SaathiApp : Application()
+```
+
+```xml title="AndroidManifest.xml"
+<application android:name=".SaathiApp" ... >
+```
+
+`@HiltAndroidApp` generates the root component. Forgetting the manifest line is the
+most common first failure, and it is invisible: the class compiles, the app starts,
+and every injection fails at run time with a message about a missing component.
+
+```kotlin title="MainActivity.kt" numbered
+@AndroidEntryPoint
+class MainActivity : ComponentActivity()
+```
+
+`@AndroidEntryPoint` is needed on the Activity even though we inject nothing into the
+Activity itself, because `hiltViewModel()` inside Compose looks upward for a Hilt
+entry point to attach to.
+
+## The modules
+
+```kotlin title="di/DataModule.kt" numbered
+@Module
+@InstallIn(SingletonComponent::class)      // one instance for the whole process
+object DataModule {
+
+    @Provides @Singleton
+    fun database(@ApplicationContext context: Context): AppDatabase =
+        Room.databaseBuilder(context, AppDatabase::class.java, "saathi.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
+
+    @Provides
+    fun itemDao(db: AppDatabase): ItemDao = db.itemDao()   // cheap: no scope needed
+
+    @Provides @Singleton
+    fun firestore(): FirebaseFirestore = Firebase.firestore
+
+    @Provides @Singleton
+    fun auth(): FirebaseAuth = Firebase.auth
+
+    @Provides @Singleton
+    fun workManager(@ApplicationContext context: Context): WorkManager =
+        WorkManager.getInstance(context)
+}
+```
+
+`@Singleton` here is not a design pattern, it is a **lifetime**: one instance per
+`SingletonComponent`, which lives as long as the process. The database gets it because
+two Room instances on one file is a real bug. The DAO does not, because asking the
+database for it is free and a second DAO object harms nothing.
+
+`@ApplicationContext` is a qualifier, and it is the right one for anything long-lived.
+Injecting an Activity context into a `@Singleton` would keep that Activity alive for
+the life of the process, which is the classic leak wearing a dependency-injection hat.
+
+<Quiz
+  question="A repository is annotated `@Singleton` and takes `@ActivityContext context: Context` in its constructor. It compiles, and the app works until the user rotates the screen a few times."
+  options={[
+    "Rotation recreates the repository, so its cached state is lost",
+    "It does not compile — Hilt refuses to inject an Activity-scoped binding into a Singleton, because the Singleton outlives every Activity and would hold a destroyed one forever. That mismatch is exactly what the scope annotations exist to catch",
+    "It works correctly; Hilt swaps in a new Activity context on each rotation"
+  ]}
+  answer={1}
+  explanation="Scopes describe how long a binding may live, and Hilt validates the graph at compile time precisely so a long-lived object cannot capture a short-lived one — a `@Singleton` holding an Activity context would pin every rotated-away Activity in memory until the process died. So this is a build failure with a message naming both scopes, not a runtime surprise, which is the whole payoff of declaring lifetimes rather than letting them emerge. Hilt cannot swap a context in later, because the constructor ran once and the field is whatever it was given. If the repository genuinely needs a Context, the answer is `@ApplicationContext`, which lives exactly as long as the Singleton does."
+/>
+
+## Injecting into the worker
+
+`WorkManager` constructs workers itself, so a worker cannot simply take constructor
+parameters. Hilt bridges that with an assisted factory:
+
+```kotlin title="SaathiApp.kt" numbered
+@HiltAndroidApp
+class SaathiApp : Application(), Configuration.Provider {
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
+}
+```
+
+```xml title="AndroidManifest.xml"
+<!-- turn off WorkManager's own initialiser so ours is used -->
+<provider
+    android:name="androidx.startup.InitializationProvider"
+    android:authorities="${applicationId}.androidx-startup"
+    tools:node="remove" />
+```
+
+That manifest block is unglamorous and completely load-bearing. WorkManager
+initialises itself through App Startup by default, and if you do not remove that
+initialiser it wins the race, your factory is never installed, and every `@HiltWorker`
+fails to construct with an error that talks about the worker class rather than the
+provider.
+
+<Detail summary="Which scope, in one table">
+| Annotation | Lives as long as | Use for |
+| --- | --- | --- |
+| `@Singleton` | The process | Database, Firestore, OkHttp, `WorkManager` |
+| `@ViewModelScoped` | One ViewModel | Per-screen state a repository must share |
+| `@ActivityRetainedScoped` | Across rotation, not process death | Rare; usually a ViewModel is clearer |
+| unscoped | Created each time | Everything else, and it is the right default |
+
+The default should be no scope at all. A scope is a promise that an instance is
+shared, and every shared instance is a place two screens can interfere with each
+other. Add one when you can name the thing that would break without it — a database
+file, a connection pool, an in-memory cache — and not before.
+</Detail>
+
+<Pitfall title="Four, all of which fail at run time rather than where you look">
+**Forgetting `android:name` in the manifest.** The `@HiltAndroidApp` class is never
+used, and every injection fails.
+
+**Missing `@AndroidEntryPoint` on the Activity.** `hiltViewModel()` cannot find a
+component, and only that screen breaks.
+
+**Leaving WorkManager's default initialiser in.** Hilt's worker factory never gets
+installed, and `@HiltWorker` classes cannot be constructed.
+
+**Scoping by habit.** `@Singleton` on everything makes every object process-lived and
+turns a cache bug into a memory leak.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| The graph builds | The app compiles with no `@Provides` missing |
+| One database | The `@Singleton` database is provided once |
+| ViewModels inject | `hiltViewModel()` returns a working instance |
+| The worker runs | A queued sync actually executes |
+| Scopes are deliberate | You can name why each `@Singleton` is one |
+
+Next: the list screen — a ViewModel, one immutable state object, and state that
+survives rotation without you saving anything by hand.
