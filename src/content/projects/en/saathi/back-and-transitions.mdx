@@ -1,0 +1,221 @@
+---
+title: Back press, predictive back and screen transitions
+description: Back is not an event you intercept. It is a chain of callbacks, and since Android 13 it is also an animation the system drives — which is why handling it the obvious way switches that animation off.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Every screen that wants to handle back registers a callback with the
+`OnBackPressedDispatcher`, and **the most recently added enabled one wins**. Two things
+follow: `enabled` is the important parameter, not the lambda, and a callback that is
+always enabled is a screen the user cannot leave.
+</KeyIdea>
+
+## What already works
+
+You have not written any back-handling code, and back already does the right thing.
+`NavHost` registers its own callback: pressing back pops the stack, and when the stack
+is down to the start destination the callback disables itself, the dispatcher finds
+nothing else enabled, and the Activity finishes.
+
+<Timeline>
+  <TimelineItem title="The user presses back or swipes from the edge" meta="system">
+    Android asks the Activity's `OnBackPressedDispatcher` first.
+  </TimelineItem>
+  <TimelineItem title="The dispatcher walks its callbacks" meta="last added first">
+    It calls the most recently added callback whose `isEnabled` is true. Disabled ones
+    are skipped entirely — they are not asked and cannot decline.
+  </TimelineItem>
+  <TimelineItem title="Nothing is enabled" meta="fallback">
+    The Activity finishes and the user is back at the launcher or the previous app.
+  </TimelineItem>
+</Timeline>
+
+So the question is never "how do I intercept back". It is "under exactly which
+condition should this screen take it".
+
+## The condition is the whole answer
+
+```kotlin title="ui/edit/EditItemScreen.kt" numbered
+var showConfirm by remember { mutableStateOf(false) }
+
+BackHandler(enabled = state.hasUnsavedChanges) {   // the flag, not the lambda
+    showConfirm = true
+}
+
+if (showConfirm) {
+    AlertDialog(
+        onDismissRequest = { showConfirm = false },
+        title = { Text(stringResource(R.string.discard_title)) },
+        confirmButton = {
+            TextButton(onClick = { onDiscard() }) { Text(stringResource(R.string.discard)) }
+        },
+        dismissButton = {
+            TextButton(onClick = { showConfirm = false }) { Text(stringResource(R.string.keep_editing)) }
+        },
+    )
+}
+```
+
+Write `BackHandler { showConfirm = true }` with no `enabled` and you have built a
+screen that shows a discard dialog when there is nothing to discard, on every single
+back press, forever. It is the most common `BackHandler` bug and it is entirely in the
+parameter people leave out.
+
+## Predictive back
+
+Since Android 13, and on by default from Android 15, the back gesture is a live
+animation: as the user drags from the edge, the current screen shrinks and what is
+behind it — the previous screen, or the launcher — appears underneath. Let go and it
+completes; drag back and it cancels.
+
+```xml title="AndroidManifest.xml"
+<application
+    android:enableOnBackInvokedCallback="true"
+    ... >
+```
+
+That flag opts the whole app in. But turning it on is not the end of the work, because
+of how the two callback styles differ.
+
+<Quiz
+  question="A team sets `enableOnBackInvokedCallback` to true. The peek animation works on the list screen and the lists screen. On the edit screen — which has `BackHandler(enabled = hasChanges) { showConfirm = true }` — dragging from the edge shows no preview at all while there are unsaved changes."
+  options={[
+    "The edit screen needs its own `enableOnBackInvokedCallback` in the manifest",
+    "An enabled `BackHandler` is a legacy-style callback: it says it will handle back but cannot say what the outcome will be, so the system has nothing to animate towards and falls back to the non-predictive path for that screen. `PredictiveBackHandler` is the API that participates, because it reports progress as the drag happens",
+    "Predictive back is disabled automatically whenever a dialog can appear"
+  ]}
+  answer={1}
+  explanation="The predictive animation is the system drawing the destination behind your screen while the user drags, which it can only do if it knows there is a destination — and a plain `BackHandler` gives it no such information, since all it promises is that some code will run when the gesture completes. So the system honours the callback and skips the preview, which is why the effect is per-screen and appears only while the handler is enabled, exactly matching the report. `PredictiveBackHandler` exists for this case: it hands you a flow of progress events during the drag, so you can shrink or fade your own content in step with the gesture and still decide what happens at the end. The manifest flag is application-wide and already set, and dialogs have nothing to do with it."
+/>
+
+```kotlin title="Participating in the gesture" numbered
+PredictiveBackHandler(enabled = state.hasUnsavedChanges) { progress: Flow<BackEventCompat> ->
+    try {
+        progress.collect { event ->
+            scale = 1f - (event.progress * 0.1f)     // follow the drag
+        }
+        showConfirm = true                            // collection finished = committed
+    } catch (e: CancellationException) {
+        scale = 1f                                    // dragged back = cancelled
+        throw e                                       // always rethrow
+    }
+}
+```
+
+The shape of that block is the API's whole design, and it is unusual enough to be
+worth reading twice. The flow emits while the finger is down. If it **completes**, the
+user committed the gesture and your post-collection code runs. If it **throws
+`CancellationException`**, the user changed their mind — undo whatever you animated,
+and rethrow, because swallowing a `CancellationException` breaks the coroutine that
+owns it.
+
+## Transitions between screens
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+NavHost(
+    navController = navController,
+    startDestination = ListsRoute,
+    enterTransition    = { slideInHorizontally { it } + fadeIn() },
+    exitTransition     = { slideOutHorizontally { -it / 4 } + fadeOut() },
+    popEnterTransition = { slideInHorizontally { -it / 4 } + fadeIn() },
+    popExitTransition  = { slideOutHorizontally { it } + fadeOut() },
+) { /* ... */ }
+```
+
+Four transitions rather than two, because direction carries meaning. Going forward,
+the new screen arrives from the right and the old one drifts slightly left. Coming
+back, the reverse — and the `pop` variants exist so that back does not look identical
+to forward, which is what makes an app feel like it has a place rather than a stack of
+identical slides.
+
+The `/ 4` on the outgoing screen is worth copying: moving the departing screen a
+quarter of the way rather than fully off-screen reads as *staying behind*, which is
+what the user's mental model says is happening.
+
+<Detail summary="Shared elements, and when they are worth it">
+When a list row expands into a detail screen, the title can travel between them rather
+than cross-fading:
+
+```kotlin title="Shared bounds" numbered
+SharedTransitionLayout {
+    NavHost(...) {
+        composable<ListRoute> {
+            Text(item.text, modifier = Modifier.sharedBounds(
+                rememberSharedContentState(key = "item-${item.id}"),
+                animatedVisibilityScope = this@composable,
+            ))
+        }
+        composable<EditItemRoute> {
+            Text(item.text, modifier = Modifier.sharedBounds(
+                rememberSharedContentState(key = "item-${item.id}"),
+                animatedVisibilityScope = this@composable,
+            ))
+        }
+    }
+}
+```
+
+The key must be identical on both sides and unique per item — which is another reason
+the client-generated id from step four is useful, since it exists before the row is
+ever synced.
+
+Where this earns its keep is exactly one situation: the same content appearing on both
+screens, so the animation explains that the two are the same thing seen at different
+sizes. Where it does not is decoration. A shared element between two unrelated screens
+is motion that has to be watched and communicates nothing, and the rule from the course
+applies unchanged — motion explains, or it does not ship.
+</Detail>
+
+## Up is not back
+
+Both leave the screen, and they are different questions.
+
+| | Back | Up |
+| --- | --- | --- |
+| Comes from | Gesture or system button | Your toolbar arrow |
+| Means | Undo my last navigation | Go to this screen's parent |
+| Call | Let the dispatcher handle it | `navController.navigateUp()` |
+| From a deep link | Leaves the app | Walks into your own hierarchy |
+
+The difference shows up in the next step. When a shared link opens Saathi directly onto
+a list, back should return to WhatsApp — that is where the user came from — while Up
+should take them to the lists screen, which is where that list belongs.
+
+<Pitfall title="Five, and the first one traps the user">
+**`BackHandler` with no `enabled`.** A confirm dialog on every back press, including
+when there is nothing to confirm.
+
+**Leaving `enabled` true after saving.** The screen still asks about changes that were
+already written.
+
+**Expecting predictive back with a plain `BackHandler`.** The preview is skipped for
+that screen; use `PredictiveBackHandler` to take part.
+
+**Swallowing `CancellationException`.** The gesture cancels, your coroutine does not,
+and the next one behaves strangely.
+
+**The same transition for forward and back.** Navigation stops telling the user which
+direction they moved.
+</Pitfall>
+
+## Practice on a device
+
+1. Add an unsaved change, press back, and confirm the dialog appears exactly once.
+2. Save, press back, and confirm no dialog appears.
+3. Drag slowly from the left edge and let go halfway — the screen must return, cleanly.
+4. Do the same on a screen with an enabled `BackHandler`, and watch the preview vanish.
+5. Navigate forward and back and check the animations are mirror images.
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| `enabled` is a real condition | Back is only intercepted when there is something to lose |
+| Predictive back is on | The manifest flag is set and the peek works |
+| Guarded screens participate | `PredictiveBackHandler`, not a bare `BackHandler` |
+| Cancellation is handled | A half-drag returns the screen to its resting state |
+| Direction is visible | Forward and back animate as mirror images |
+
+Next: getting the app onto someone else's phone, and a link that puts them into your
+list.

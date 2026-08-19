@@ -1,0 +1,219 @@
+---
+title: Back दबाना, predictive back और screens के बीच बदलाव
+description: Back कोई घटना नहीं जिसे आप बीच में पकड़ लें। वह callbacks की एक कड़ी है, और Android 13 से वह एक ऐसा हिलना-डुलना भी है जिसे तंत्र चलाता है — और इसीलिए उसे सीधे दिखने वाले तरीके से सँभालना उसी हिलने-डुलने को बंद कर देता है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Back सँभालने की चाह रखने वाली हर screen `OnBackPressedDispatcher` में एक callback दर्ज
+कराती है, और **सबसे बाद में जुड़ा चालू callback जीतता है**। इससे दो बातें निकलती हैं:
+जरूरी parameter `enabled` है, वह lambda नहीं, और हमेशा चालू रहने वाला callback ऐसी
+screen है जिससे उपयोगकर्ता निकल ही नहीं सकता।
+</KeyIdea>
+
+## जो पहले से चल रहा है
+
+आपने back सँभालने का एक भी अक्षर नहीं लिखा, और back पहले से सही काम करता है। `NavHost`
+अपना callback खुद दर्ज कराता है: back दबाना ढेर से एक हटाता है, और जब ढेर शुरुआती मंजिल
+तक आ जाता है तो वह callback खुद को बंद कर देता है, dispatcher को कोई चालू callback नहीं
+मिलता, और Activity खत्म हो जाती है।
+
+<Timeline>
+  <TimelineItem title="उपयोगकर्ता back दबाता है या किनारे से खींचता है" meta="तंत्र">
+    Android पहले Activity के `OnBackPressedDispatcher` से पूछता है।
+  </TimelineItem>
+  <TimelineItem title="Dispatcher अपने callbacks पर चलता है" meta="बाद वाला पहले">
+    वह सबसे बाद में जुड़ा वह callback बुलाता है जिसका `isEnabled` सही है। बंद वाले पूरी
+    तरह छोड़ दिए जाते हैं — उनसे पूछा ही नहीं जाता और वे मना भी नहीं कर सकते।
+  </TimelineItem>
+  <TimelineItem title="कोई चालू नहीं है" meta="आखिरी सहारा">
+    Activity खत्म होती है और उपयोगकर्ता launcher या पिछले ऐप पर पहुँच जाता है।
+  </TimelineItem>
+</Timeline>
+
+तो सवाल कभी "back को बीच में कैसे पकड़ूँ" नहीं होता। सवाल यह है कि "ठीक किस शर्त पर यह
+screen उसे ले ले"।
+
+## शर्त ही पूरा जवाब है
+
+```kotlin title="ui/edit/EditItemScreen.kt" numbered
+var showConfirm by remember { mutableStateOf(false) }
+
+BackHandler(enabled = state.hasUnsavedChanges) {   // वह झंडा, वह lambda नहीं
+    showConfirm = true
+}
+
+if (showConfirm) {
+    AlertDialog(
+        onDismissRequest = { showConfirm = false },
+        title = { Text(stringResource(R.string.discard_title)) },
+        confirmButton = {
+            TextButton(onClick = { onDiscard() }) { Text(stringResource(R.string.discard)) }
+        },
+        dismissButton = {
+            TextButton(onClick = { showConfirm = false }) { Text(stringResource(R.string.keep_editing)) }
+        },
+    )
+}
+```
+
+बिना `enabled` के `BackHandler { showConfirm = true }` लिखिए और आपने ऐसी screen बना दी
+जो तब भी फेंकने वाला सवाल दिखाती है जब फेंकने को कुछ है ही नहीं, हर एक back पर, हमेशा।
+यह `BackHandler` की सबसे आम गड़बड़ी है और पूरी की पूरी उसी parameter में है जिसे लोग छोड़
+देते हैं।
+
+## Predictive back
+
+Android 13 से, और Android 15 से तयशुदा तौर पर चालू, back का इशारा एक चलता हुआ बदलाव है:
+जैसे-जैसे उपयोगकर्ता किनारे से खींचता है, अभी वाली screen सिकुड़ती है और उसके पीछे जो है
+— पिछली screen, या launcher — नीचे दिखने लगता है। छोड़ दीजिए तो पूरा हो जाता है; वापस
+खींचिए तो रद्द।
+
+```xml title="AndroidManifest.xml"
+<application
+    android:enableOnBackInvokedCallback="true"
+    ... >
+```
+
+वह झंडा पूरे ऐप को इसमें शामिल कर देता है। पर उसे चालू करना काम का अंत नहीं है, क्योंकि
+दोनों तरह के callbacks में फर्क है।
+
+<Quiz
+  question="कोई team `enableOnBackInvokedCallback` सही कर देती है। झलक वाला बदलाव list और lists, दोनों screens पर चलता है। Edit वाली screen पर — जिस पर `BackHandler(enabled = hasChanges) { showConfirm = true }` है — बिना सहेजे बदलाव रहते हुए किनारे से खींचने पर कोई झलक दिखती ही नहीं।"
+  options={[
+    "Edit वाली screen को manifest में अपना `enableOnBackInvokedCallback` चाहिए",
+    "चालू `BackHandler` पुराने ढंग का callback है: वह कहता है कि वह back सँभालेगा पर यह नहीं बता सकता कि नतीजा क्या होगा, तो तंत्र के पास दिखाने को कोई मंजिल ही नहीं और वह उस screen के लिए बिना झलक वाले रास्ते पर लौट जाता है। जो API इसमें शामिल होती है वह `PredictiveBackHandler` है, क्योंकि वह खिंचाई के दौरान उसकी प्रगति बताती है",
+    "जहाँ कोई dialog आ सकता हो वहाँ predictive back अपने आप बंद हो जाता है"
+  ]}
+  answer={1}
+  explanation="झलक वाला बदलाव तंत्र का आपकी screen के पीछे मंजिल बनाना है जबकि उपयोगकर्ता खींच रहा हो, और वह यह तभी कर सकता है जब उसे पता हो कि कोई मंजिल है — और सादा `BackHandler` उसे ऐसी कोई खबर देता ही नहीं, क्योंकि वह सिर्फ इतना वादा करता है कि इशारा पूरा होने पर कोई code चलेगा। तो तंत्र उस callback की बात मानता है और झलक छोड़ देता है, और इसीलिए असर हर screen का अपना है और सिर्फ तब दिखता है जब वह handler चालू हो, ठीक वैसे ही जैसे बताया गया। `PredictiveBackHandler` इसी मामले के लिए है: वह खिंचाई के दौरान प्रगति की एक धारा आपको थमाता है, ताकि आप अपनी सामग्री को उसी इशारे के साथ सिकोड़ या धुँधला कर सकें और आखिर में क्या हो यह भी तय कर सकें। Manifest वाला झंडा पूरे ऐप का है और पहले से लगा हुआ है, और dialogs का इससे कोई लेना-देना नहीं।"
+/>
+
+```kotlin title="इशारे में शामिल होना" numbered
+PredictiveBackHandler(enabled = state.hasUnsavedChanges) { progress: Flow<BackEventCompat> ->
+    try {
+        progress.collect { event ->
+            scale = 1f - (event.progress * 0.1f)     // खिंचाई के साथ चलिए
+        }
+        showConfirm = true                            // collect पूरा हुआ = इशारा पक्का
+    } catch (e: CancellationException) {
+        scale = 1f                                    // वापस खींचा = रद्द
+        throw e                                       // हमेशा दोबारा फेंकिए
+    }
+}
+```
+
+उस हिस्से की शक्ल ही उस API की पूरी बनावट है, और वह इतनी अनोखी है कि दो बार पढ़ने लायक
+है। उँगली नीचे रहते वह flow बोलता रहता है। अगर वह **पूरा हो जाए**, तो उपयोगकर्ता ने
+इशारा पक्का किया और collect के बाद वाला आपका code चलता है। अगर वह
+**`CancellationException` फेंके**, तो उपयोगकर्ता ने मन बदल लिया — आपने जो हिलाया था उसे
+वापस कीजिए, और दोबारा फेंकिए, क्योंकि `CancellationException` निगल जाना उस coroutine को
+तोड़ देता है जिसकी वह है।
+
+## Screens के बीच बदलाव
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+NavHost(
+    navController = navController,
+    startDestination = ListsRoute,
+    enterTransition    = { slideInHorizontally { it } + fadeIn() },
+    exitTransition     = { slideOutHorizontally { -it / 4 } + fadeOut() },
+    popEnterTransition = { slideInHorizontally { -it / 4 } + fadeIn() },
+    popExitTransition  = { slideOutHorizontally { it } + fadeOut() },
+) { /* ... */ }
+```
+
+दो नहीं, चार बदलाव, क्योंकि दिशा का मतलब होता है। आगे जाते हुए नई screen दाएँ से आती है
+और पुरानी थोड़ा बाएँ खिसकती है। लौटते हुए उलटा — और `pop` वाले रूप इसीलिए हैं कि back
+आगे जाने जैसा न दिखे, और यही ऐप को एक जैसी फिसलनों के ढेर के बजाय कोई जगह होने का एहसास
+देता है।
+
+बाहर जाती screen पर वह `/ 4` नकल करने लायक है: जाती हुई screen को पूरी तरह बाहर करने के
+बजाय चौथाई भर हिलाना *पीछे ही रुके रहने* जैसा पढ़ा जाता है, और उपयोगकर्ता के मन का
+नक्शा यही कहता है।
+
+<Detail summary="साझी चीजें, और वे कब वसूल होती हैं">
+जब सूची की कोई पंक्ति खुलकर ब्योरे वाली screen बनती है, तो शीर्षक धुँधलाकर बदलने के बजाय
+दोनों के बीच सफर कर सकता है:
+
+```kotlin title="Shared bounds" numbered
+SharedTransitionLayout {
+    NavHost(...) {
+        composable<ListRoute> {
+            Text(item.text, modifier = Modifier.sharedBounds(
+                rememberSharedContentState(key = "item-${item.id}"),
+                animatedVisibilityScope = this@composable,
+            ))
+        }
+        composable<EditItemRoute> {
+            Text(item.text, modifier = Modifier.sharedBounds(
+                rememberSharedContentState(key = "item-${item.id}"),
+                animatedVisibilityScope = this@composable,
+            ))
+        }
+    }
+}
+```
+
+वह key दोनों तरफ हूबहू एक और हर चीज के लिए अलग होनी चाहिए — और यह चौथे कदम की client पर
+बनी पहचान के काम आने की एक और वजह है, क्योंकि वह पंक्ति के sync होने से पहले ही मौजूद
+होती है।
+
+यह ठीक एक हालत में अपनी कीमत वसूलती है: वही सामग्री दोनों screens पर दिखे, ताकि वह हिलना
+बताए कि दोनों एक ही चीज हैं, अलग-अलग नाप में देखी हुई। जहाँ यह वसूल नहीं होती वह है
+सजावट। दो बेमतलब screens के बीच कोई साझी चीज ऐसा हिलना है जिसे देखना पड़ता है और जो कुछ
+कहता नहीं, और course वाला नियम यहाँ भी वैसा ही है — motion समझाती है, वरना वह भेजी नहीं
+जाती।
+</Detail>
+
+## Up, back नहीं है
+
+दोनों screen से निकालते हैं, और वे अलग सवाल हैं।
+
+| | Back | Up |
+| --- | --- | --- |
+| आता कहाँ से है | इशारा या तंत्र का बटन | आपका toolbar का तीर |
+| मतलब | मेरा पिछला navigation पलटिए | इस screen के ऊपर वाले पर ले चलिए |
+| Call | Dispatcher को सँभालने दीजिए | `navController.navigateUp()` |
+| Deep link से | ऐप से बाहर ले जाता है | आपकी अपनी बनावट में चलता है |
+
+फर्क अगले कदम में दिखेगा। जब कोई साझा link Saathi को सीधे किसी सूची पर खोले, तो back को
+WhatsApp पर लौटाना चाहिए — उपयोगकर्ता वहीं से आया था — जबकि Up को lists वाली screen पर,
+जहाँ वह सूची रहती है।
+
+<Pitfall title="पाँच, और पहली उपयोगकर्ता को फँसा देती है">
+**बिना `enabled` के `BackHandler`।** हर back पर पूछने वाला dialog, तब भी जब पूछने को कुछ
+है ही नहीं।
+
+**सहेजने के बाद `enabled` सही छोड़ देना।** Screen उन बदलावों के बारे में पूछती रहती है जो
+लिखे जा चुके हैं।
+
+**सादे `BackHandler` के साथ predictive back की उम्मीद।** उस screen के लिए झलक छूट जाती
+है; शामिल होने के लिए `PredictiveBackHandler` लीजिए।
+
+**`CancellationException` निगल जाना।** इशारा रद्द होता है, आपका coroutine नहीं, और अगला
+अजीब बर्ताव करता है।
+
+**आगे और पीछे, दोनों के लिए वही बदलाव।** Navigation उपयोगकर्ता को यह बताना बंद कर देता
+है कि वह किस दिशा में हिला।
+</Pitfall>
+
+## उपकरण पर अभ्यास
+
+1. कोई बिना सहेजा बदलाव कीजिए, back दबाइए, और पक्का कीजिए कि dialog ठीक एक बार आता है।
+2. सहेजिए, back दबाइए, और पक्का कीजिए कि कोई dialog नहीं आता।
+3. बाएँ किनारे से धीरे खींचिए और आधे में छोड़ दीजिए — screen को साफ-सुथरे तरीके से लौटना चाहिए।
+4. वही उस screen पर कीजिए जिस पर चालू `BackHandler` है, और झलक को गायब होते देखिए।
+5. आगे जाइए और लौटिए, और देखिए कि दोनों बदलाव एक-दूसरे के आईने हैं।
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| `enabled` असली शर्त है | Back तभी पकड़ा जाता है जब खोने को कुछ हो |
+| Predictive back चालू है | Manifest का झंडा लगा है और झलक चलती है |
+| पहरे वाली screens शामिल हैं | सूखा `BackHandler` नहीं, `PredictiveBackHandler` |
+| रद्द होना सँभाला गया है | आधी खिंचाई screen को उसकी जगह पर लौटा देती है |
+| दिशा दिखती है | आगे और पीछे आईने की तरह हिलते हैं |
+
+आगे: ऐप को किसी और के फोन तक पहुँचाना, और ऐसा link जो उन्हें आपकी सूची में डाल दे।

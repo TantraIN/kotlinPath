@@ -1,0 +1,220 @@
+---
+title: Back dabana, predictive back aur screens ke beech badlaav
+description: Back koi ghatna nahi jise aap beech mein pakad lein. Wo callbacks ki ek kadi hai, aur Android 13 se wo ek aisa hilna-dulna bhi hai jise tantra chalata hai — aur isiliye use seedhe dikhne wale tareeke se sambhalna usi hilne-dulne ko band kar deta hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Back sambhalne ki chaah rakhne wali har screen `OnBackPressedDispatcher` mein ek callback
+darj karati hai, aur **sabse baad mein juda chaalu callback jeetta hai**. Isse do baatein
+nikalti hain: zaroori parameter `enabled` hai, wo lambda nahi, aur hamesha chaalu rehne
+wala callback aisi screen hai jisse user nikal hi nahi sakta.
+</KeyIdea>
+
+## Jo pehle se chal raha hai
+
+Aapne back sambhalne ka ek bhi akshar nahi likha, aur back pehle se sahi kaam karta hai.
+`NavHost` apna callback khud darj karata hai: back dabana dher se ek hataata hai, aur jab
+dher shuruaati manzil tak aa jaata hai to wo callback khud ko band kar deta hai, dispatcher
+ko koi chaalu callback nahi milta, aur Activity khatam ho jaati hai.
+
+<Timeline>
+  <TimelineItem title="User back dabata hai ya kinaare se kheenchta hai" meta="tantra">
+    Android pehle Activity ke `OnBackPressedDispatcher` se poochhta hai.
+  </TimelineItem>
+  <TimelineItem title="Dispatcher apne callbacks par chalta hai" meta="baad wala pehle">
+    Wo sabse baad mein juda wo callback bulata hai jiska `isEnabled` sahi hai. Band wale
+    poori tarah chhod diye jaate hain — unse poochha hi nahi jaata aur wo mana bhi nahi
+    kar sakte.
+  </TimelineItem>
+  <TimelineItem title="Koi chaalu nahi hai" meta="aakhri sahara">
+    Activity khatam hoti hai aur user launcher ya pichhle app par pahunch jaata hai.
+  </TimelineItem>
+</Timeline>
+
+To sawaal kabhi "back ko beech mein kaise pakdun" nahi hota. Sawaal yeh hai ki "theek kis
+shart par yeh screen use le le".
+
+## Shart hi poora jawaab hai
+
+```kotlin title="ui/edit/EditItemScreen.kt" numbered
+var showConfirm by remember { mutableStateOf(false) }
+
+BackHandler(enabled = state.hasUnsavedChanges) {   // wo jhanda, wo lambda nahi
+    showConfirm = true
+}
+
+if (showConfirm) {
+    AlertDialog(
+        onDismissRequest = { showConfirm = false },
+        title = { Text(stringResource(R.string.discard_title)) },
+        confirmButton = {
+            TextButton(onClick = { onDiscard() }) { Text(stringResource(R.string.discard)) }
+        },
+        dismissButton = {
+            TextButton(onClick = { showConfirm = false }) { Text(stringResource(R.string.keep_editing)) }
+        },
+    )
+}
+```
+
+Bina `enabled` ke `BackHandler { showConfirm = true }` likhiye aur aapne aisi screen bana
+di jo tab bhi phenkne wala sawaal dikhati hai jab phenkne ko kuchh hai hi nahi, har ek
+back par, hamesha. Yeh `BackHandler` ki sabse aam gadbadi hai aur poori ki poori usi
+parameter mein hai jise log chhod dete hain.
+
+## Predictive back
+
+Android 13 se, aur Android 15 se tayshuda taur par chaalu, back ka ishaara ek chalta hua
+badlaav hai: jaise-jaise user kinaare se kheenchta hai, abhi wali screen sikudti hai aur
+uske peechhe jo hai — pichhli screen, ya launcher — neeche dikhne lagta hai. Chhod dijiye
+to poora ho jaata hai; wapas kheenchiye to radd.
+
+```xml title="AndroidManifest.xml"
+<application
+    android:enableOnBackInvokedCallback="true"
+    ... >
+```
+
+Wo jhanda poore app ko ismein shaamil kar deta hai. Par use chaalu karna kaam ka ant nahi
+hai, kyonki donon tarah ke callbacks mein farak hai.
+
+<Quiz
+  question="Koi team `enableOnBackInvokedCallback` sahi kar deti hai. Jhalak wala badlaav list aur lists, donon screens par chalta hai. Edit wali screen par — jis par `BackHandler(enabled = hasChanges) { showConfirm = true }` hai — bina saheje badlaav rehte hue kinaare se kheenchne par koi jhalak dikhti hi nahi."
+  options={[
+    "Edit wali screen ko manifest mein apna `enableOnBackInvokedCallback` chahiye",
+    "Chaalu `BackHandler` purane dhang ka callback hai: wo kehta hai ki wo back sambhalega par yeh nahi bata sakta ki nateeja kya hoga, to tantra ke paas dikhane ko koi manzil hi nahi aur wo us screen ke liye bina jhalak wale raaste par laut jaata hai. Jo API ismein shaamil hoti hai wo `PredictiveBackHandler` hai, kyonki wo khinchaai ke dauraan uski pragati bataati hai",
+    "Jahan koi dialog aa sakta ho wahan predictive back apne aap band ho jaata hai"
+  ]}
+  answer={1}
+  explanation="Jhalak wala badlaav tantra ka aapki screen ke peechhe manzil banana hai jabki user kheench raha ho, aur wo yeh tabhi kar sakta hai jab use pata ho ki koi manzil hai — aur saada `BackHandler` use aisi koi khabar deta hi nahi, kyonki wo sirf itna waada karta hai ki ishaara poora hone par koi code chalega. To tantra us callback ki baat maanta hai aur jhalak chhod deta hai, aur isiliye asar har screen ka apna hai aur sirf tab dikhta hai jab wo handler chaalu ho, theek waise hi jaise bataya gaya. `PredictiveBackHandler` isi maamle ke liye hai: wo khinchaai ke dauraan pragati ki ek dhaara aapko thamata hai, taki aap apni saamagri ko usi ishaare ke saath sikod ya dhundhla kar sakein aur aakhir mein kya ho yeh bhi tay kar sakein. Manifest wala jhanda poore app ka hai aur pehle se laga hua hai, aur dialogs ka isse koi lena-dena nahi."
+/>
+
+```kotlin title="Ishaare mein shaamil hona" numbered
+PredictiveBackHandler(enabled = state.hasUnsavedChanges) { progress: Flow<BackEventCompat> ->
+    try {
+        progress.collect { event ->
+            scale = 1f - (event.progress * 0.1f)     // khinchaai ke saath chaliye
+        }
+        showConfirm = true                            // collect poora hua = ishaara pakka
+    } catch (e: CancellationException) {
+        scale = 1f                                    // wapas kheencha = radd
+        throw e                                       // hamesha dobara phenkiye
+    }
+}
+```
+
+Us hisse ki shakl hi us API ki poori banaavat hai, aur wo itni anokhi hai ki do baar
+padhne layak hai. Ungli neeche rehte wo flow bolta rehta hai. Agar wo **poora ho jaaye**,
+to user ne ishaara pakka kiya aur collect ke baad wala aapka code chalta hai. Agar wo
+**`CancellationException` phenke**, to user ne man badal liya — aapne jo hilaya tha use
+wapas kijiye, aur dobara phenkiye, kyonki `CancellationException` nigal jaana us coroutine
+ko tod deta hai jiski wo hai.
+
+## Screens ke beech badlaav
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+NavHost(
+    navController = navController,
+    startDestination = ListsRoute,
+    enterTransition    = { slideInHorizontally { it } + fadeIn() },
+    exitTransition     = { slideOutHorizontally { -it / 4 } + fadeOut() },
+    popEnterTransition = { slideInHorizontally { -it / 4 } + fadeIn() },
+    popExitTransition  = { slideOutHorizontally { it } + fadeOut() },
+) { /* ... */ }
+```
+
+Do nahi, chaar badlaav, kyonki disha ka matlab hota hai. Aage jaate hue nayi screen daayein
+se aati hai aur purani thoda baayein khisakti hai. Lautte hue ulta — aur `pop` wale roop
+isiliye hain ki back aage jaane jaisa na dikhe, aur yahi app ko ek jaisi phislanon ke dher
+ke bajay koi jagah hone ka ehsaas deta hai.
+
+Bahar jaati screen par wo `/ 4` nakal karne layak hai: jaati hui screen ko poori tarah
+bahar karne ke bajay chauthai bhar hilana *peechhe hi ruke rehne* jaisa padha jaata hai,
+aur user ke man ka naksha yahi kehta hai.
+
+<Detail summary="Saajhi cheezein, aur wo kab vasool hoti hain">
+Jab list ki koi pankti khulkar byore wali screen banti hai, to sheershak dhundhlakar
+badalne ke bajay donon ke beech safar kar sakta hai:
+
+```kotlin title="Shared bounds" numbered
+SharedTransitionLayout {
+    NavHost(...) {
+        composable<ListRoute> {
+            Text(item.text, modifier = Modifier.sharedBounds(
+                rememberSharedContentState(key = "item-${item.id}"),
+                animatedVisibilityScope = this@composable,
+            ))
+        }
+        composable<EditItemRoute> {
+            Text(item.text, modifier = Modifier.sharedBounds(
+                rememberSharedContentState(key = "item-${item.id}"),
+                animatedVisibilityScope = this@composable,
+            ))
+        }
+    }
+}
+```
+
+Wo key donon taraf hubahu ek aur har cheez ke liye alag honi chahiye — aur yeh chauthe
+kadam ki client par bani pehchaan ke kaam aane ki ek aur wajah hai, kyonki wo pankti ke
+sync hone se pehle hi maujood hoti hai.
+
+Yeh theek ek haalat mein apni keemat vasoolti hai: wahi saamagri donon screens par dikhe,
+taki wo hilna bataye ki donon ek hi cheez hain, alag-alag naap mein dekhi hui. Jahan yeh
+vasool nahi hoti wo hai sajaavat. Do bematlab screens ke beech koi saajhi cheez aisa hilna
+hai jise dekhna padta hai aur jo kuchh kehta nahi, aur course wala niyam yahan bhi waisa
+hi hai — motion samjhati hai, warna wo bheji nahi jaati.
+</Detail>
+
+## Up, back nahi hai
+
+Donon screen se nikalte hain, aur wo alag sawaal hain.
+
+| | Back | Up |
+| --- | --- | --- |
+| Aata kahan se hai | Ishaara ya tantra ka button | Aapka toolbar ka teer |
+| Matlab | Mera pichhla navigation paltiye | Is screen ke oopar wale par le chaliye |
+| Call | Dispatcher ko sambhalne dijiye | `navController.navigateUp()` |
+| Deep link se | App se bahar le jaata hai | Aapki apni banaavat mein chalta hai |
+
+Farak agle step mein dikhega. Jab koi saajha link Saathi ko seedhe kisi list par khole, to
+back ko WhatsApp par lautana chahiye — user wahin se aaya tha — jabki Up ko lists wali
+screen par, jahan wo list rehti hai.
+
+<Pitfall title="Paanch, aur pehli user ko phansa deti hai">
+**Bina `enabled` ke `BackHandler`.** Har back par poochhne wala dialog, tab bhi jab
+poochhne ko kuchh hai hi nahi.
+
+**Sahejne ke baad `enabled` sahi chhod dena.** Screen un badlaavon ke baare mein poochhti
+rehti hai jo likhe ja chuke hain.
+
+**Saade `BackHandler` ke saath predictive back ki ummeed.** Us screen ke liye jhalak chhoot
+jaati hai; shaamil hone ke liye `PredictiveBackHandler` lijiye.
+
+**`CancellationException` nigal jaana.** Ishaara radd hota hai, aapka coroutine nahi, aur
+agla ajeeb bartaav karta hai.
+
+**Aage aur peechhe, donon ke liye wahi badlaav.** Navigation user ko yeh batana band kar
+deta hai ki wo kis disha mein hila.
+</Pitfall>
+
+## Upkaran par abhyaas
+
+1. Koi bina saheja badlaav kijiye, back dabaiye, aur pakka kijiye ki dialog theek ek baar aata hai.
+2. Sahejiye, back dabaiye, aur pakka kijiye ki koi dialog nahi aata.
+3. Baayein kinaare se dheere kheenchiye aur aadhe mein chhod dijiye — screen ko saaf-suthre tareeke se lautna chahiye.
+4. Wahi us screen par kijiye jis par chaalu `BackHandler` hai, aur jhalak ko gaayab hote dekhiye.
+5. Aage jaaiye aur lautiye, aur dekhiye ki donon badlaav ek-doosre ke aaine hain.
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| `enabled` asli shart hai | Back tabhi pakda jaata hai jab khone ko kuchh ho |
+| Predictive back chaalu hai | Manifest ka jhanda laga hai aur jhalak chalti hai |
+| Pehre wali screens shaamil hain | Sookha `BackHandler` nahi, `PredictiveBackHandler` |
+| Radd hona sambhala gaya hai | Aadhi khinchaai screen ko uski jagah par lauta deti hai |
+| Disha dikhti hai | Aage aur peechhe aaine ki tarah hilte hain |
+
+Aage: app ko kisi aur ke phone tak pahunchana, aur aisa link jo unhein aapki list mein daal de.
