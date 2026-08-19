@@ -1,0 +1,184 @@
+---
+title: Interview ki taiyari aur system design
+description: Interview yeh parakhta hai ki aap saudon par bolkar soch sakte hain ya nahi, yeh nahi ki aapne API rat rakhi hain. Yeh is course ka aakhri paath hai, to yeh usse pehle ki har cheez ka naksha bhi hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Shuruaati darje se oopar, interview yaad rakhne ki parakh nahi hai. Har daur wahi ek sawaal alag bhes
+mein poochhta hai: **kya aap saude ko naam de sakte hain, ek paksh chun sakte hain, aur bata sakte hain
+ki aapka man kya badlega?**
+</KeyIdea>
+
+## Chaar daur
+
+| Daur | Dikhta kaisa hai | Naap asal mein kya raha hai |
+| --- | --- | --- |
+| Coding | Arrays, strings, maps, koi graph ka chakkar | Aap bolkar sochte hain ya nahi, aur kinaare ke maamle |
+| Android ki gehrai | Coroutines, Compose, lifecycle, memory | Un cheezon mein gehrai jinka daava aapke CV par hai |
+| System design | Bina net chalne wala feed, koi image loader gadhiye | Haalat, sync aur naakami par soch |
+| Behavioural | Takraav, naakami, aapka liya koi faisla | Baariki, aur aap nateejon ke maalik hain ya nahi |
+
+Zyadatar ummeedwaar pehle ki taiyari zaroorat se zyada aur teesre ki zaroorat se kam karte hain. Coding
+ka daur sabse zyada abhyaas kiya hua aur sabse ek jaisa hai, to offer wahan kam hi jeete ya haare jaate
+hain. Design ka daur wo hai jahan varishth ummeedwaar beech wale se alag ho jaata hai, aur usi ko aap
+sabse tezi se sudhaar sakte hain, kyonki uska ek tay tareeka hai jise seekha ja sakta hai.
+
+<Quiz
+  question="Bina net chalne wala feed gadhne ko kehne par koi ummeedwaar Room, Retrofit, Paging 3 aur Hilt ginakar shuru karta hai aur bataata hai ki wo aapas mein kaise judte hain. Poochhne wala baar-baar shuruaat par lauta raha hai."
+  options={[
+    "Unhein pehle paimaane ke baare mein poochhna chahiye tha — roz ke upyogkarta aur maangon ki ginti",
+    "Libraries ke naam yeh bataate hain ki wo kya istemaal karenge, par un do faislon ko chhod dete hain jinhein yeh daur parakh raha hai: sach ka srot kaun hai, aur jab jama hua data aur server alag-alag kahein to kya hoga. Wo chunaav kisi bhi library badalne ke baad bhi bache rehte hain",
+    "Bina net chalne wale feed ke liye Paging 3 galat chunaav hai aur poochhne wala usi ka intezaar kar raha hai"
+  ]}
+  answer={1}
+  explanation="Design ka daur un faislon par naapa jaata hai jo auzaaron se zyada jeete hain, aur bina net chalne wale feed ko gadhne wale do faisle hain ki kaun sa bhandaar aakhri baat hai — database, jismein net likhne wale ki tarah aata hai — aur jab sthaaniya tatha door ki haalat takraaye to app kya karega, chahe wo server ki jeet ho, aakhri likhe ki jeet ho, ya upyogkarta ke saamne rakhna ho. Libraries ginaana donon ko chhod deta hai, aur usse koi khabar nahi milti kyonki poochhne wala wahi chaar naam pehle se jaanta hai aur unmein se koi bhi badla ja sakta hai bina banaavat badle. Server jaise paimaane ke ank yahan galat sahaj bodh hain, kyonki mobile ka design daur kul bahaav par nahi, ek upkaran, ek ladkhadaate connection aur ek battery par tikta hai. Aur `RemoteMediator` ke saath Paging 3 is samasya ke liye bilkul achha chunaav hai, to dikkat chunaav nahi, yeh hai ki uske peechhe ki soch kabhi kahi hi nahi gayi."
+/>
+
+## Design ke daur ka ek tay tareeka
+
+Inhein isi tarteeb mein bolkar kahiye. Yeh kisi feed, chat ke app, image loading ki library, analytics ke
+SDK ya files ke sync karne wale client, sabke liye chalta hai.
+
+1. **Saaf kijiye.** Kya ise bina net chalna chahiye? Data kitna bada hai? Kaun se upkaran aur Android ke
+   kaun se roop? Data ya battery ka koi budget hai? Yahan ke do minute poora jawaab badal dete hain.
+2. **Paratein kheenchiye.** UI ki haalat, ViewModel, domain, repository, phir sthaaniya aur door ke srot.
+   Kahiye ki data kis disha mein behta hai aur kahan badla jaata hai.
+3. **Sach ke srot ko naam dijiye.** Bina net dikhne wali har cheez ke liye wo database hai, aur net usmein
+   likhne wala hai — koi saath-saath chalta raasta nahi jisse UI bhi padhe.
+4. **Sync gadhiye.** Khulne par kheenchiye, badalne par bhejiye, ya donon. Offset nahi, cursor wala
+   pagination, kyonki offset ke neeche se panktiyan khisak jaati hain. Kahiye ki baasi data kab taaza
+   hota hai aur aapko baasi hone ka pata kaise chalta hai.
+5. **Takraav suljhaiye.** Server ki aakhri baat, aakhri likhe ki jeet, ya upyogkarta se poochhna. Yahan
+   kuchh bhi tayshuda nahi hai — ek chuniye aur uski keemat bataiye.
+6. **Naakami sambhaliye.** Net nahi, koi 500, beet chuka token, aadha laga hua likhna. Badhte thehraav
+   aur chheente ke saath dobara koshish; jo kuchh process ke marne ke baad bhi bachna chahiye wo
+   `WorkManager` ko jaata hai.
+7. **Kahiye ki aap ise kaise naapenge.** Thandi shuruaat, pehli saamagri tak ka samay, bina crash wale
+   sessions, sync ki der, roz laga data. Jis banaavat ka koi naap nahi, uska chalna dikhaya nahi ja
+   sakta.
+8. **Aapne jo sauda chuna wo kahiye.** Oopar ke har kadam ka ek vikalp tha. Jise aapne thukraaya use naam
+   dena, aur kyon, yahi zyadatar khabar hai.
+
+<Detail summary="Kaam karke dekha udaharan: bina net chalne wala feed">
+**Saaf kijiye.** Thandi shuruaat par bina net turant dikhna chahiye. Cheezein chhoti hain, hazaaron mein.
+Log kheenchkar taaza karte hain. Likhna sirf pasand aur nishaan lagana hai.
+
+**Sach ka srot.** Room. UI database se koi `Flow` collect karti hai, kabhi seedhe API se nahi, to har
+screen wahi data dikhati hai aur bina net hona koi khaas maamla nahi, bas purani muhar wala aam raasta
+hai.
+
+**Sync.** `RemoteMediator` ke saath Paging 3: pager panne Room se padhta hai aur khatam hone par mediator
+se aur maangta hai, aur mediator UI ko lautane ke bajay Room mein likhta hai. Cursor wala pagination,
+kyonki jis feed mein beech mein cheezein judti hain wahan pannon ke offset cheezein chhodte aur dohraate
+hain.
+
+**Likhna.** Koi pasand Room ko turant badal deti hai aur use bhejne ke liye `WorkManager` ki ek maang
+kataar mein daal deti hai, to wo chhoona turant lagta hai aur app ke maare jaane par bhi bachta hai. Us
+pankti par ek bakaya wala nishaan rehta hai taki UI use abhi na bheja hua dikha sake.
+
+**Takraav.** Saamagri par server ki aakhri baat, aur upyogkarta ke apne kaamon par client ki, jab tak
+manzoori na aaye. Yeh saaf-saaf kahiye; yahi wo vaakya hai jo kisi nakshe ko banaavat bana deta hai.
+
+**Naakami.** Bina net, jama hua feed dikhta hai aur taaza karna khaali screen nahi, ek sandesh dikhata
+hai. Naakaam bhejna thehraav ke saath dobara koshish karta hai, aur gini hui koshishon ke baad chupchaap
+nahi, dikhakar haar maanta hai.
+
+**Naapiye.** Thandi shuruaat par pehli saamagri tak ka samay, kitne sessions jama hue se dikhein, aur koi
+pasand server tak p95 par kitni der mein pahunchti hai.
+
+Un paragraphon mein se har ek is course ka ek paath hai, aur baat yahi hai: design ka jawaab tarteeb se kaha
+gaya paathyakram hi hai.
+</Detail>
+
+## Gehrai wala daur, nakshe par
+
+Sawaal companiyon mein dohraate hain, aur har ek is course ka ek charan hai.
+
+| Sawaal | Kahan padha gaya |
+| --- | --- |
+| Screen band hone ke baad bhi yeh coroutine kyon chal raha hai? | Coroutines aur gadhi hui saath-saath chalan |
+| `StateFlow` ya `SharedFlow`, aur kyon? | Flows aur haalat rakhne wale |
+| Bewajah dobara banna kisse hota hai? | Compose ki raftaar |
+| Isne Activity ko leak kyon kiya? | Memory aur lifecycle |
+| Process ke marne par bhi kaam kaise zinda rakhenge? | Peechhe chalta kaam |
+| R8 ne is stack trace ke saath kya kiya? | Release aur chhantai |
+| Yeh mapping kahan rehni chahiye? | Banaavat aur paratein |
+
+Agar aap inmein se kisi ka jawaab niyam se nahi, tareeke se de paate hain — *kyonki wo daayra ViewModel
+se bandha hai, composition se nahi* — to aap waise hi jawaab de rahe hain jaise koi varishth ummeedwaar
+deta hai.
+
+## Coding aur behavioural, thode mein
+
+Coding ke daur mein Android ki naukriyan aam cheezein poochhti hain: arrays aur strings, hash maps, do
+siron wali chaal, binary search, koi chaudai ya gehrai wala chakkar, kabhi-kabhaar koi aasaan dynamic
+programming. Lagataar thoda-thoda abhyaas kisi ghabraaye hue maheene se behtar hai. Apni soch boliye,
+jatilta poochhe jaane se pehle bataiye, aur khaali tatha ek hi cheez wale maamle bina yaad dilaaye
+sambhaliye.
+
+Behavioural ke daur mein log jo tareeka sikhate hain wo hai haalat, kaam, kadam, nateeja. Wazan asal
+mein teesre aur chauthe mein hai: *aapka* liya koi faisla, jaante-boojhte maana gaya koi sauda, aur ank
+wala koi nateeja. "Humne thandi shuruaat 2.8 se 1.4 second kar di" kahani hai; "maine raftaar sudhaari"
+nahi.
+
+Aur is sabki sabse zyada keemat wali taiyari yeh hai ki aap apni banaai kisi ek cheez par das minute bol
+sakein — wo karti kya hai, aapne har tukda kyon chuna, aaj kya alag karte. Har daur usi kahani se
+pahuncha ja sakta hai.
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli wo hai jisse mazboot ummeedwaar design ka daur sabse zyada haarte hain">
+**Libraries ke naamon se shuru karna.** Wo badle ja sakte hain; unke peechhe ke faisle nahi.
+
+**Yeh kehkar ruk jaana ki nirbhar karta hai.** Hamesha saath kahiye kis par, phir chuniye.
+
+**Bina ank wali rati kahaniyan.** Bina naap wala nateeja gadha hua lagta hai.
+
+**Android ki gehrai patli rakhkar paheliyan ghisna.** Varishth naukriyon mein gehrai wala daur hi tay karta hai.
+
+**Jo sajaaya use banaaya batana.** Doosra up-sawaal hamesha pakad leta hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Bina net chalne wala feed pandrah minute mein bolkar gadhiye, aathon kadam isi tarteeb mein lete hue.
+2. Wahi image loading ki library aur analytics ke SDK ke liye kijiye, aur dekhiye kaun se kadam badalte hain.
+3. Taalika ke teen gehrai wale sawaalon ka jawaab niyam se nahi, tareeke se dijiye.
+4. Teen behavioural kahaniyan likhiye, har ek naape hue nateeje par khatam hoti hui.
+5. Apne sabse achhe project ko kisi anjaan ko das minute mein samjhaiye, phir use teen mein kaatiye.
+
+## Dohraav
+
+| Cheez | Ek line |
+| --- | --- |
+| Har daur | Saude ko naam dijiye, chuniye, kahiye man kya badlega |
+| Design ka daur | Jahan varishth beech wale se alag hota hai, aur jo sabse tezi se sudharta hai |
+| Pehla kadam | Bina net, paimaana, upkaran, budget saaf kijiye |
+| Sach ka srot | Bina net dikhne wali har cheez ke liye database |
+| Pagination | Jahan beech mein cheezein jud sakti hain wahan cursor, offset nahi |
+| Takraav | Ek niyam chuniye aur uski keemat kahiye |
+| Tikaaupan | Process ke marne par bhi bachne wali har cheez `WorkManager` ko |
+| Naap | Jis banaavat ka koi naap nahi, uska chalna dikhaya nahi ja sakta |
+| Behavioural | Aapka liya koi faisla aur nateeje ka koi ank |
+| Taiyari | Apni banaai ek cheez par das minute har daur tak pahunchte hain |
+
+<Interview title="Wo sawaal jo har daur aakhir mein ban jaata hai">
+"Apni banaai koi cheez mujhe samjhaiye."
+
+Sabse bada nahi, sabse zyada faislon wala project chuniye, aur stack se nahi, samasya se shuru kijiye.
+Phir samay chunaavon par lagaiye: yeh bina net pehle wala isliye hai ki log ise train mein kholte hain,
+to Room sach ka srot hai aur net usmein likhta hai; pasand turant maan li jaati hai aur `WorkManager` se
+bheji jaati hai kyonki chhoona turant lagna chahiye aur process ke maare jaane par bhi bachna chahiye;
+feed cursor se bandha hai kyonki oopar nayi cheezein aane par offset cheezein chhod dete hain.
+
+Phir kahiye ki uski keemat kya rahi aur aap kya badalte. Turant maan liye gaye likhne ka matlab tha ek
+bakaya haalat aur ek haar maanne ka raasta gadhna, jo kisi ghoomte pahiye se zyada kaam tha. Thandi
+shuruaat 2.8 second se 1.4 par aayi jab shuruaati kaam ko zaroori raaste se hataaya, aur yeh mujhe isliye
+pata hai ki wo pehle aur baad mein naapa gaya tha. Dobara shuru karta to DTO se domain ki mapping chauthe
+maheene mein jodne ke bajay pehle din se rakhta.
+
+Wo jawaab asal mein poora course chhote roop mein hai — paratein, haalat, saath-saath chalan, bhandaaran,
+peechhe chalta kaam, raftaar, release — aur isiliye wahan kisi bhi daur se pahuncha ja sakta hai, aur
+isiliye use ek baar taiyar karna aapko zyadatar dauron ke liye taiyar kar deta hai.
+</Interview>

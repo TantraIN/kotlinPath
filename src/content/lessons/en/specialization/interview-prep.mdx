@@ -1,0 +1,178 @@
+---
+title: Interview preparation and system design
+description: Interviews test whether you can reason about trade-offs out loud, not whether you memorised APIs. This is the last lesson of the course, so it is also a map of everything before it.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Above junior level, an interview is not a recall test. Every round is asking the same question in a
+different costume: **can you name the trade-off, choose a side, and say what would change your mind?**
+</KeyIdea>
+
+## The four rounds
+
+| Round | What it looks like | What it actually scores |
+| --- | --- | --- |
+| Coding | Arrays, strings, maps, a graph traversal | Whether you think aloud and handle edge cases |
+| Android deep-dive | Coroutines, Compose, lifecycle, memory | Depth in things you claim on your CV |
+| System design | Design an offline-first feed, an image loader | Reasoning about state, sync and failure |
+| Behavioural | Conflict, failure, a decision you made | Specificity, and whether you own outcomes |
+
+Most candidates over-prepare the first and under-prepare the third. The coding round is the most
+practised and the most standardised, so it is rarely where offers are won or lost. The design round is
+where a senior candidate separates from a mid-level one, and it is the one you can improve fastest,
+because it has a structure you can learn.
+
+<Quiz
+  question="Asked to design an offline-first feed, a candidate opens by listing Room, Retrofit, Paging 3 and Hilt, and describes how they wire together. The interviewer keeps steering back to the beginning."
+  options={[
+    "They should have asked about scale first — daily active users and request volume",
+    "Library names answer what they would use, but skip the two decisions the round is testing: what the source of truth is, and what happens when the cached data and the server disagree. Those choices survive any swap of libraries",
+    "Paging 3 is the wrong choice for an offline-first feed and the interviewer is waiting for that"
+  ]}
+  answer={1}
+  explanation="A design round is scored on the decisions that outlive the tools, and the two that define an offline-first feed are which store is authoritative — the database, with the network as a writer into it — and what the app does when local and remote state conflict, whether that is server-wins, last-write-wins, or surfacing it to the user. Naming libraries skips both, and it is uninformative because the interviewer already knows the same four names and any of them could be swapped without changing the design. Backend-style scale numbers are the wrong instinct here, because a mobile design round turns on one device, one flaky connection and one battery rather than aggregate throughput. And Paging 3 with a RemoteMediator is a perfectly good choice for this problem, so the issue is not the pick but that the reasoning behind it was never stated."
+/>
+
+## A template for the design round
+
+Say these out loud, in order. It works for a feed, a chat app, an image loading library, an analytics
+SDK, or a file sync client.
+
+1. **Clarify.** Must it work offline? How large is the dataset? Which devices and which Android versions?
+   Is there a data or battery budget? Two minutes here reframes the whole answer.
+2. **Draw the layers.** UI state, ViewModel, domain, repository, then local and remote sources. Say
+   which direction data flows and where it is transformed.
+3. **Name the source of truth.** For anything visible offline it is the database, and the network is a
+   writer into it — not a parallel path the UI also reads from.
+4. **Design the sync.** Pull on open, push on change, or both. Cursor-based pagination rather than
+   offset, because rows shift underneath an offset. Say when stale data is refreshed and how you know it
+   is stale.
+5. **Resolve conflicts.** Server authoritative, last-write-wins, or ask the user. There is no default —
+   pick one and say what it costs.
+6. **Handle failure.** No network, a 500, an expired token, a partially applied write. Retry with
+   exponential backoff and jitter; anything that must survive process death goes to `WorkManager`.
+7. **Say how you would measure it.** Cold start, time to first content, crash-free sessions, sync
+   latency, data used per day. A design with no metric cannot be shown to work.
+8. **State the trade-off you chose.** Every one of the steps above had an alternative. Naming the one
+   you rejected, and why, is most of the signal.
+
+<Detail summary="Worked example: an offline-first feed">
+**Clarify.** It must render instantly on cold start with no network. Items are small, thousands of them.
+Users pull to refresh. Writes are only likes and bookmarks.
+
+**Source of truth.** Room. The UI collects a `Flow` from the database and never from the API directly,
+so every screen shows the same data and offline is not a special case but the normal path with an older
+timestamp.
+
+**Sync.** Paging 3 with a `RemoteMediator`: the pager reads pages from Room and asks the mediator to
+fetch more when it runs out, and the mediator writes into Room rather than returning to the UI. Cursor
+pagination, because a feed with insertions makes page offsets skip and duplicate items.
+
+**Writes.** A like updates Room immediately and enqueues a `WorkManager` request to push it, so the tap
+feels instant and survives the app being killed. The row carries a pending flag so the UI can show it as
+not yet synced.
+
+**Conflicts.** The server is authoritative for content, the client for the user's own actions until
+acknowledged. Say this explicitly; it is the sentence that turns a diagram into a design.
+
+**Failure.** Offline, the cached feed renders and refresh shows a message rather than an empty screen. A
+failed push retries with backoff, and gives up visibly rather than silently after a bounded number of
+attempts.
+
+**Measure.** Time to first content on a cold start, share of sessions that render from cache, and how
+long a like takes to reach the server at p95.
+
+Each of those paragraphs is one lesson of this course, which is the point: a design answer is the
+curriculum said in sequence.
+</Detail>
+
+## The deep-dive round, mapped
+
+The questions repeat across companies, and each one is a phase of this course.
+
+| Question | Where it was covered |
+| --- | --- |
+| Why does this coroutine keep running after the screen closes? | Coroutines and structured concurrency |
+| `StateFlow` or `SharedFlow`, and why? | Flows and state holders |
+| What causes an unnecessary recomposition? | Compose performance |
+| Why did this leak the Activity? | Memory and lifecycle |
+| How do you keep work alive across process death? | Background work |
+| What did R8 do to this stack trace? | Release and shrinking |
+| Where should this mapping live? | Architecture and layers |
+
+If you can answer one of those with a mechanism rather than a rule — *because the scope is tied to the
+ViewModel, not the composition* — you are answering it the way a senior candidate does.
+
+## Coding and behavioural, briefly
+
+For coding rounds, Android roles ask ordinary things: arrays and strings, hash maps, two pointers,
+binary search, a breadth-first or depth-first traversal, occasionally an easy dynamic programming
+problem. Consistent moderate practice beats a frantic month. Narrate your thinking, state the complexity
+before you are asked, and handle the empty and single-element cases without being prompted.
+
+For behavioural rounds, the structure people teach is situation, task, action, result. The part that
+actually carries weight is the third and fourth: a decision *you* made, a trade-off you accepted
+knowingly, and an outcome with a number attached. "We reduced cold start from 2.8 to 1.4 seconds" is a
+story; "I improved performance" is not.
+
+And the highest-leverage preparation for any of it is to be able to talk for ten minutes about one thing
+you built — what it does, why you chose each piece, what you would do differently. Every round can be
+reached from that story.
+
+## Pitfalls
+
+<Pitfall title="Five, and the first is the most common way a strong candidate loses a design round">
+**Opening with library names.** They are interchangeable; the decisions behind them are not.
+
+**Saying it depends and stopping.** Always follow it with what it depends on, then choose.
+
+**Rehearsed stories with no number.** An outcome without a measurement sounds invented.
+
+**Grinding puzzles while your Android depth is thin.** For senior roles, the deep-dive round decides it.
+
+**Claiming what you configured as what you built.** The second follow-up question always finds it.
+</Pitfall>
+
+## Practice
+
+1. Design an offline-first feed out loud in fifteen minutes, using the eight steps in order.
+2. Do the same for an image loading library and for an analytics SDK, and notice which steps change.
+3. Answer three deep-dive questions from the table with a mechanism, not a rule.
+4. Write three behavioural stories, each ending in a measured outcome.
+5. Explain your best project to someone unfamiliar with it in ten minutes, then cut it to three.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Every round | Name the trade-off, choose, say what would change your mind |
+| Design round | Where senior separates from mid-level, and the fastest to improve |
+| Step one | Clarify offline, scale, devices, budget |
+| Source of truth | The database for anything visible offline |
+| Pagination | Cursor, not offset, when rows can be inserted |
+| Conflicts | Pick a rule and say what it costs |
+| Durability | `WorkManager` for anything that must survive process death |
+| Metric | A design with no metric cannot be shown to work |
+| Behavioural | A decision you made and a number for the outcome |
+| Preparation | Ten minutes on one thing you built reaches every round |
+
+<Interview title="The question every round eventually becomes">
+"Walk me through something you built."
+
+Pick the project with the most decisions in it, not the largest one, and lead with the problem rather
+than the stack. Then spend the time on the choices: this is offline-first because users open it on the
+train, so Room is the source of truth and the network writes into it; likes are optimistic and pushed
+through `WorkManager` because a tap must feel instant and survive the process being killed; the feed is
+cursor-paginated because offsets skip items when new posts arrive at the top.
+
+Then say what it cost and what you would change. Optimistic writes meant designing a pending state and a
+give-up path, which was more work than a spinner would have been. Cold start went from 2.8 seconds to
+1.4 after moving initialisation off the critical path, and I know that because it was measured before
+and after. If I started again I would put the DTO-to-domain mapping in from day one instead of adding it
+in month four.
+
+That answer is really the whole course in miniature — layers, state, concurrency, storage, background
+work, performance, release — and it is why it can be reached from any round, and why preparing it once
+prepares you for most of them.
+</Interview>
