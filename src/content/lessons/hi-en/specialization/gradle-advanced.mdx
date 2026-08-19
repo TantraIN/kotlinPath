@@ -1,0 +1,173 @@
+---
+title: Convention plugins aur build ki raftar
+description: Har module ki build wali file ka alag-alag khiskna wahi mushkil hai jo nakal kiya hua code hai. Convention plugins use theek karte hain, aur bacha hua zyadatar build ka samay configuration ke cache mein chhupa hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Kai modules wale project mein wahi dohrav ki mushkil hai jo kisi bhi codebase mein hoti hai: baarah build
+wali files, wahi bees linein dohrati huin. **Convention plugins** wahi nikal lena hain — asli Kotlin ki
+class, jiske types dekhe jate hain aur jise test kiya ja sakta hai, aur modules use naam se lagate hain.
+</KeyIdea>
+
+## Dohrav
+
+```kotlin title="pehle — har module mein" numbered
+android {
+    compileSdk = 36
+    defaultConfig { minSdk = 24 }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17 /* ... */ }
+    buildFeatures { compose = true }
+}
+dependencies { implementation(libs.androidx.core.ktx) /* ... */ }
+```
+
+Baarah modules, baarah naklein, aur `compileSdk` ka ek badlaav jo har ek ko chhoota hai. Jad wali build ki
+file mein `subprojects { }` purana ilaaj tha aur ab usse mana kiya jata hai: wo configuration-on-demand aur
+configuration ka cache todta hai, kyunki wo configuration ke waqt projects ki sarhadon ke aar-paar haath
+badhata hai.
+
+```kotlin title="build-logic/convention/.../AndroidLibraryConventionPlugin.kt" numbered
+class AndroidLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("com.android.library")
+        pluginManager.apply("org.jetbrains.kotlin.android")
+
+        extensions.configure<LibraryExtension> {
+            compileSdk = 36
+            defaultConfig.minSdk = 24
+            compileOptions { sourceCompatibility = JavaVersion.VERSION_17 }
+        }
+
+        dependencies { add("implementation", libs.findLibrary("androidx.core.ktx").get()) }
+    }
+}
+```
+
+```kotlin title="kisi module ki build ki file, baad mein" numbered
+plugins {
+    id("myapp.android.library")
+    id("myapp.android.hilt")
+}
+android { namespace = "com.example.feature.orders" }
+```
+
+Poora faayda yahi hai: ab module ki build wali file batati hai ki wo kis kism ka module hai, aur share
+settings ek hi, types wali dekhi hui jagah par rehti hain. `build-logic` shamil kiya hua build hai, to wo
+aam Kotlin ki tarah compile hota hai — autocomplete, naam badalne aur test likh pane ke saath.
+
+<Quiz
+  question="Koi team configuration ka cache chalu karti hai. Build `invocation of 'Task.project' at execution time is unsupported` se nakaam hota hai. Koi sujhata hai ki nakaam tasks ko andekha karne wali list mein daal do. Asal mein galat kya hai?"
+  options={[
+    "Configuration ka cache Android Gradle Plugin ke saath chalta hi nahi aur use band kar dena chahiye",
+    "Koi task chalte hue project wali cheez padh raha hai, aur wo cache theek isi ko mana karta hai — us task ko jo chahiye wo configuration ke waqt pakadna chahiye, `@Input` wali properties ya kisi `Provider` ki tarah, na ki chalte waqt `project` tak haath badhana",
+    "Un tasks ko `@DisableCachingByDefault` chahiye"
+  ]}
+  answer={1}
+  explanation="Configuration ka cache is tarah chalta hai ki configuration ke baad poore tasks ke jaal ko sahejkar dobara chala deta hai, aur wo tabhi sahi hai jab koi task chalte hue zinda project ki haalat tak haath na badhaye. Jo task apne kaam ke andar project.buildDir ya project.version bulata hai wo aisi cheez maang raha hai jo cache wale chalne mein maujood hi nahi, to Gradle galat anjaam dene ke bajaye mana kar deta hai. Ilaaj yantrik hai: us task ko jo chahiye use likhe hue inputs ki tarah ya aalas se kisi Provider ki tarah bataiye, configuration ke waqt hal kijiye, aur chalte waqt task ke apne fields se padhiye. Nakaam tasks ko andekha karna poori baat hara deta hai, kyunki wo cache tabhi faayda deta hai jab poora jaal uske layak ho. Use band kar dena sunne se bhi buri salah hai — AGP saalon se configuration ka cache sambhalta hai, aur nakamiyan lagbhag hamesha us project ke apne tasks ya kisi purane bahari plugin mein hoti hain."
+/>
+
+## Build ka samay jata kahan hai
+
+```properties title="gradle.properties" numbered
+org.gradle.caching=true               # tasks ke natije builds aur machinon ke aar-paar dobara lijiye
+org.gradle.configuration-cache=true   # dobara wale build mein configuration poori chhodiye
+org.gradle.parallel=true
+org.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC
+kotlin.incremental=true
+```
+
+Wo chaar linein maujood sabse sasti jeet hain, aur unmein sabse bada **configuration ka cache** hai: wo
+configuration ka anjaam sahej leta hai taki dobara wala build use poori tarah chhod de, jo bade project par
+har build ke kai second hain, har baar.
+
+Flags se aage, dhanche wale lever zyada maayne rakhte hain:
+
+| Lever | Kyun madad karta hai |
+| --- | --- |
+| `api` ke bajaye `implementation` | Library badalne par sirf wahi module dobara compile hota hai |
+| Sankre modules | Ek badlaav kam cheezein amanya karta hai |
+| kapt ke bajaye KSP | Usi kaam ke liye kaafi tez |
+| Kam flavor ki dhuriyan | Har dhuri variants ka guna badhati hai |
+
+Gradle ki glossary wala `api` banam `implementation` kai modules wale project ka sabse bada iklauta bindu
+hai, kyunki `api` us library ko har nirbhar module ke compile wale classpath par daal deta hai — to ek
+version ka badlaav poori duniya dobara compile karata hai.
+
+<Detail summary="Andaze ke bajaye naapna">
+```bash title="Pata kijiye" numbered
+./gradlew assembleDebug --scan          # share ki ja sakne wali report ki samay kahan gaya
+./gradlew assembleDebug --profile       # sthaniya HTML wali report
+./gradlew :app:dependencies             # classpath par sach mein hai kya
+```
+
+Build ka scan imandaar shuruat hai, kyunki build ke samay ke baare mein andaze aam taur par galat hote hain.
+Padhne layak khaas cheezein:
+
+**Configuration ka samay banam chalne ka samay.** Agar har build par configuration mein second lagte hain,
+to aapka ilaaj configuration ka cache hai, aur parallelism nahi.
+
+**Kaun se tasks pehle se taza the, cache se aaye, ya chale.** Jo task kabhi cache se nahi aata uska aam taur
+par koi input har baar badalta hai — koi timestamp, koi poora path, koi file jo har baar dobara banti hai.
+
+**Asli raasta.** Parallelism tabhi madad karta hai jab wo jaal chauda ho; ek-doosre par tike modules ki lambi
+kadi order se hi chalti hai, chahe aapke paas kitne bhi cores hon.
+
+Profiling wale lesson ki baat yahan bhi lagu hai: asli haalat naapiye. Saaf build wo nahi hai jise developers
+bhugatte hain — kisi ek module mein ek line badalne ke baad ka incremental build wo hai, aur wahi aankda
+behtar karne layak hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli wahi hai jo log purane jawabon se nakal karte hain">
+**Jad wali build ki file mein `subprojects { }`.** Configuration-on-demand aur cache todta hai.
+
+**Configuration ke cache ki nakamiyan andekhi karna.** Wo cache tabhi faayda deta hai jab poora jaal uske
+layak ho.
+
+**Jahan `implementation` chalta wahan `api`.** Ek badlaav har nirbhar module dobara compile karata hai.
+
+**KSP hote hue kapt.** Usi annotation wale kaam ke liye kaafi dheema.
+
+**Saaf build ko behtar karna.** Developers incremental builds mein rehte hain; wahi naapiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Teen modules ki share Android wali settings kisi convention plugin mein nikaliye.
+2. Configuration ka cache chalu kijiye aur jo nakaam ho use andekha karne ke bajaye theek kijiye.
+3. Build ka scan chalaiye aur asli raaste ka sabse lamba task dhoondhiye.
+4. Ek `api` ko `implementation` kijiye aur uske baad incremental build naapiye.
+5. Ek line badalne ke baad ka incremental build apne badlavon se pehle aur baad mein naapiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Convention plugin | Share build ki settings asli, dekhi ja sakne wali Kotlin class ki tarah |
+| `build-logic` | Shamil kiya build; aam Kotlin ki tarah compile |
+| `subprojects { }` | Mana kiya gaya; configuration ka cache todta hai |
+| Configuration ka cache | Dobara wale build mein configuration poori chhod deta hai |
+| Uski nakamiyan | Chalte waqt `project` padhta koi task |
+| Ilaaj | Inputs configuration ke waqt pakadiye |
+| Build ka cache | Tasks ke natije builds aur machinon ke aar-paar dobara leta hai |
+| `implementation` | Kai modules wale project ka sabse bada dhanche wala lever |
+| kapt par KSP | Wahi kaam, kaafi tez |
+| Naapiye | Incremental build, saaf wala nahi |
+
+<Interview title="Ek sawal, jahan error ka sandesh hi nirdesh hai">
+"Aapka build `invocation of 'Task.project' at execution time is unsupported` se nakaam hota hai. Ab?"
+
+Wo configuration ka cache aapko bata raha hai ki koi task chalte hue zinda project ki haalat tak haath
+badhata hai. Wo cache configuration ke baad tasks ka jaal sahejkar dobara chalakar kaam karta hai, to jo task
+apne kaam ke andar `project.buildDir` bulata hai wo aisi cheez maang raha hai jo cache wale chalne mein
+maujood hi nahi — aur Gradle ka mana karna uske galat anjaam dene se behtar hai.
+
+Ilaaj yantrik hai: us task ko jo chahiye use `@Input` wali properties ya kisi `Provider` ki tarah bataiye,
+configuration ke waqt hal kijiye, aur chalte waqt task ke apne fields se padhiye. Jo main nahi karunga wo hai
+us task ko andekha karne wali list mein daalna, kyunki wo cache tabhi faayda deta hai jab poora jaal uske
+layak ho — asli raaste par chhoot paya ek task poora faayda hata deta hai. Aur main ye faisla nahi karunga
+ki wo cache AGP ke saath chalta hi nahi; wo saalon se sambhala jata hai, aur nakamiyan lagbhag hamesha
+project ke apne tasks ya kisi purane plugin mein hoti hain.
+</Interview>

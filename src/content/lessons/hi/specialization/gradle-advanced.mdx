@@ -1,0 +1,172 @@
+---
+title: Convention plugins और build की रफ्तार
+description: हर module की build वाली file का अलग-अलग खिसकना वही दिक्कत है जो नकल किया हुआ code है। Convention plugins उसे ठीक करते हैं, और बचा हुआ ज्यादातर build का समय configuration के cache में छिपा है।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+कई modules वाले project में वही दोहराव की दिक्कत है जो किसी भी codebase में होती है: बारह build वाली
+files, वही बीस लाइनें दोहराती हुईं। **Convention plugins** वही निकाल लेना हैं — असली Kotlin की class,
+जिसके types जाँचे जाते हैं और जिसे test किया जा सकता है, और modules उसे नाम से लगाते हैं।
+</KeyIdea>
+
+## दोहराव
+
+```kotlin title="पहले — हर module में" numbered
+android {
+    compileSdk = 36
+    defaultConfig { minSdk = 24 }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17 /* ... */ }
+    buildFeatures { compose = true }
+}
+dependencies { implementation(libs.androidx.core.ktx) /* ... */ }
+```
+
+बारह modules, बारह नकलें, और `compileSdk` का एक बदलाव जो हर एक को छूता है। जड़ वाली build की file में
+`subprojects { }` पुराना इलाज था और अब उससे मना किया जाता है: वह configuration-on-demand और
+configuration का cache तोड़ता है, क्योंकि वह configuration के वक्त projects की सरहदों के आर-पार हाथ
+बढ़ाता है।
+
+```kotlin title="build-logic/convention/.../AndroidLibraryConventionPlugin.kt" numbered
+class AndroidLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("com.android.library")
+        pluginManager.apply("org.jetbrains.kotlin.android")
+
+        extensions.configure<LibraryExtension> {
+            compileSdk = 36
+            defaultConfig.minSdk = 24
+            compileOptions { sourceCompatibility = JavaVersion.VERSION_17 }
+        }
+
+        dependencies { add("implementation", libs.findLibrary("androidx.core.ktx").get()) }
+    }
+}
+```
+
+```kotlin title="किसी module की build की file, बाद में" numbered
+plugins {
+    id("myapp.android.library")
+    id("myapp.android.hilt")
+}
+android { namespace = "com.example.feature.orders" }
+```
+
+पूरा फायदा यही है: अब module की build वाली file बताती है कि वह किस किस्म का module है, और साझा settings
+एक ही, types वाली जाँची हुई जगह पर रहती हैं। `build-logic` शामिल किया हुआ build है, तो वह आम Kotlin की
+तरह compile होता है — autocomplete, नाम बदलने और test लिख पाने के साथ।
+
+<Quiz
+  question="कोई team configuration का cache चालू करती है। Build `invocation of 'Task.project' at execution time is unsupported` से नाकाम होता है। कोई सुझाता है कि नाकाम tasks को अनदेखा करने वाली सूची में डाल दो। असल में गलत क्या है?"
+  options={[
+    "Configuration का cache Android Gradle Plugin के साथ चलता ही नहीं और उसे बंद कर देना चाहिए",
+    "कोई task चलते हुए project वाली चीज पढ़ रहा है, और वह cache ठीक इसी को मना करता है — उस task को जो चाहिए वह configuration के वक्त पकड़ना चाहिए, `@Input` वाली properties या किसी `Provider` की तरह, न कि चलते वक्त `project` तक हाथ बढ़ाना",
+    "उन tasks को `@DisableCachingByDefault` चाहिए"
+  ]}
+  answer={1}
+  explanation="Configuration का cache इस तरह चलता है कि configuration के बाद पूरे tasks के जाल को सहेजकर दोबारा चला देता है, और वह तभी सही है जब कोई task चलते हुए जिंदा project की हालत तक हाथ न बढ़ाए। जो task अपने काम के अंदर project.buildDir या project.version बुलाता है वह ऐसी चीज माँग रहा है जो cache वाले चलने में मौजूद ही नहीं, तो Gradle गलत नतीजा देने के बजाय मना कर देता है। इलाज यांत्रिक है: उस task को जो चाहिए उसे लिखे हुए inputs की तरह या आलस से किसी Provider की तरह बताइए, configuration के वक्त हल कीजिए, और चलते वक्त task के अपने fields से पढ़िए। नाकाम tasks को अनदेखा करना पूरी बात हरा देता है, क्योंकि वह cache तभी फायदा देता है जब पूरा जाल उसके लायक हो। उसे बंद कर देना सुनने से भी बुरी सलाह है — AGP सालों से configuration का cache सँभालता है, और नाकामियाँ लगभग हमेशा उस project के अपने tasks या किसी पुराने बाहरी plugin में होती हैं।"
+/>
+
+## Build का समय जाता कहाँ है
+
+```properties title="gradle.properties" numbered
+org.gradle.caching=true               # tasks के नतीजे builds और मशीनों के आर-पार दोबारा लीजिए
+org.gradle.configuration-cache=true   # दोबारा वाले build में configuration पूरी छोड़िए
+org.gradle.parallel=true
+org.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC
+kotlin.incremental=true
+```
+
+वे चार लाइनें मौजूद सबसे सस्ती जीत हैं, और उनमें सबसे बड़ा **configuration का cache** है: वह
+configuration का नतीजा सहेज लेता है ताकि दोबारा वाला build उसे पूरी तरह छोड़ दे, जो बड़े project पर हर
+build के कई सेकंड हैं, हर बार।
+
+Flags से आगे, ढाँचे वाले लीवर ज्यादा मायने रखते हैं:
+
+| लीवर | क्यों मदद करता है |
+| --- | --- |
+| `api` के बजाय `implementation` | Library बदलने पर सिर्फ वही module दोबारा compile होता है |
+| सँकरे modules | एक बदलाव कम चीजें अमान्य करता है |
+| kapt के बजाय KSP | उसी काम के लिए काफी तेज |
+| कम flavor की धुरियाँ | हर धुरी variants का गुणा बढ़ाती है |
+
+Gradle की glossary वाला `api` बनाम `implementation` कई modules वाले project का सबसे बड़ा इकलौता बिंदु है,
+क्योंकि `api` उस library को हर निर्भर module के compile वाले classpath पर डाल देता है — तो एक version का
+बदलाव पूरी दुनिया दोबारा compile कराता है।
+
+<Detail summary="अंदाजे के बजाय नापना">
+```bash title="पता कीजिए" numbered
+./gradlew assembleDebug --scan          # साझा की जा सकने वाली रिपोर्ट कि समय कहाँ गया
+./gradlew assembleDebug --profile       # स्थानीय HTML वाली रिपोर्ट
+./gradlew :app:dependencies             # classpath पर सच में है क्या
+```
+
+Build का scan ईमानदार शुरुआत है, क्योंकि build के समय के बारे में अंदाजे आमतौर पर गलत होते हैं। पढ़ने
+लायक खास चीजें:
+
+**Configuration का समय बनाम चलने का समय।** अगर हर build पर configuration में सेकंड लगते हैं, तो आपका
+इलाज configuration का cache है, और parallelism नहीं।
+
+**कौन से tasks पहले से ताजा थे, cache से आए, या चले।** जो task कभी cache से नहीं आता उसका आमतौर पर कोई
+input हर बार बदलता है — कोई timestamp, कोई पूरा path, कोई file जो हर बार दोबारा बनती है।
+
+**असली रास्ता।** Parallelism तभी मदद करता है जब वह जाल चौड़ा हो; एक-दूसरे पर टिके modules की लंबी कड़ी
+क्रम से ही चलती है, चाहे आपके पास कितने भी cores हों।
+
+Profiling वाले पाठ की बात यहाँ भी लागू है: असली हालत नापिए। साफ build वह नहीं है जिसे developers भुगतते
+हैं — किसी एक module में एक लाइन बदलने के बाद का incremental build वह है, और वही आँकड़ा बेहतर करने लायक
+है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली वही है जो लोग पुराने जवाबों से नकल करते हैं">
+**जड़ वाली build की file में `subprojects { }`।** Configuration-on-demand और cache तोड़ता है।
+
+**Configuration के cache की नाकामियाँ अनदेखी करना।** वह cache तभी फायदा देता है जब पूरा जाल उसके लायक हो।
+
+**जहाँ `implementation` चलता वहाँ `api`।** एक बदलाव हर निर्भर module दोबारा compile कराता है।
+
+**KSP होते हुए kapt।** उसी annotation वाले काम के लिए काफी धीमा।
+
+**साफ build को बेहतर करना।** Developers incremental builds में रहते हैं; वही नापिए।
+</Pitfall>
+
+## अभ्यास
+
+1. तीन modules की साझा Android वाली settings किसी convention plugin में निकालिए।
+2. Configuration का cache चालू कीजिए और जो नाकाम हो उसे अनदेखा करने के बजाय ठीक कीजिए।
+3. Build का scan चलाइए और असली रास्ते का सबसे लंबा task ढूँढ़िए।
+4. एक `api` को `implementation` कीजिए और उसके बाद incremental build नापिए।
+5. एक लाइन बदलने के बाद का incremental build अपने बदलावों से पहले और बाद में नापिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Convention plugin | साझा build की settings असली, जाँची जा सकने वाली Kotlin class की तरह |
+| `build-logic` | शामिल किया build; आम Kotlin की तरह compile |
+| `subprojects { }` | मना किया गया; configuration का cache तोड़ता है |
+| Configuration का cache | दोबारा वाले build में configuration पूरी छोड़ देता है |
+| उसकी नाकामियाँ | चलते वक्त `project` पढ़ता कोई task |
+| इलाज | Inputs configuration के वक्त पकड़िए |
+| Build का cache | Tasks के नतीजे builds और मशीनों के आर-पार दोबारा लेता है |
+| `implementation` | कई modules वाले project का सबसे बड़ा ढाँचे वाला लीवर |
+| kapt पर KSP | वही काम, काफी तेज |
+| नापिए | Incremental build, साफ वाला नहीं |
+
+<Interview title="एक सवाल, जहाँ error का संदेश ही निर्देश है">
+"आपका build `invocation of 'Task.project' at execution time is unsupported` से नाकाम होता है। अब?"
+
+वह configuration का cache आपको बता रहा है कि कोई task चलते हुए जिंदा project की हालत तक हाथ बढ़ाता है।
+वह cache configuration के बाद tasks का जाल सहेजकर दोबारा चलाकर काम करता है, तो जो task अपने काम के अंदर
+`project.buildDir` बुलाता है वह ऐसी चीज माँग रहा है जो cache वाले चलने में मौजूद ही नहीं — और Gradle का
+मना करना उसके गलत नतीजा देने से बेहतर है।
+
+इलाज यांत्रिक है: उस task को जो चाहिए उसे `@Input` वाली properties या किसी `Provider` की तरह बताइए,
+configuration के वक्त हल कीजिए, और चलते वक्त task के अपने fields से पढ़िए। जो मैं नहीं करूँगा वह है उस
+task को अनदेखा करने वाली सूची में डालना, क्योंकि वह cache तभी फायदा देता है जब पूरा जाल उसके लायक हो —
+असली रास्ते पर छूट पाया एक task पूरा फायदा हटा देता है। और मैं यह नतीजा नहीं निकालूँगा कि वह cache AGP
+के साथ चलता ही नहीं; वह सालों से सँभाला जाता है, और नाकामियाँ लगभग हमेशा project के अपने tasks या किसी
+पुराने plugin में होती हैं।
+</Interview>

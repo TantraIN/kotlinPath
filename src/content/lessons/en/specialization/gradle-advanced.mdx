@@ -1,0 +1,171 @@
+---
+title: Convention plugins and build performance
+description: Every module's build file drifting apart is the same problem as copy-pasted code. Convention plugins fix it, and the configuration cache is where most of the remaining build time hides.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A multi-module project has the same duplication problem as any codebase: twelve build files repeating
+the same twenty lines. **Convention plugins** are the extraction — a real Kotlin class, type-checked and
+testable, that modules apply by name.
+</KeyIdea>
+
+## The duplication
+
+```kotlin title="Before — in every module" numbered
+android {
+    compileSdk = 36
+    defaultConfig { minSdk = 24 }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17 /* ... */ }
+    buildFeatures { compose = true }
+}
+dependencies { implementation(libs.androidx.core.ktx) /* ... */ }
+```
+
+Twelve modules, twelve copies, and a `compileSdk` bump that touches every one. `subprojects { }` in the
+root build file was the old fix and is now discouraged: it breaks configuration-on-demand and the
+configuration cache, because it reaches across project boundaries at configuration time.
+
+```kotlin title="build-logic/convention/.../AndroidLibraryConventionPlugin.kt" numbered
+class AndroidLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("com.android.library")
+        pluginManager.apply("org.jetbrains.kotlin.android")
+
+        extensions.configure<LibraryExtension> {
+            compileSdk = 36
+            defaultConfig.minSdk = 24
+            compileOptions { sourceCompatibility = JavaVersion.VERSION_17 }
+        }
+
+        dependencies { add("implementation", libs.findLibrary("androidx.core.ktx").get()) }
+    }
+}
+```
+
+```kotlin title="A module's build file, after" numbered
+plugins {
+    id("myapp.android.library")
+    id("myapp.android.hilt")
+}
+android { namespace = "com.example.feature.orders" }
+```
+
+That is the whole benefit: a module's build file now says what kind of module it is, and the shared
+configuration lives in one type-checked place. `build-logic` is an included build, so it compiles like
+normal Kotlin — with autocomplete, refactoring and the ability to write a test.
+
+<Quiz
+  question="A team enables the configuration cache. The build fails with `invocation of 'Task.project' at execution time is unsupported`. Someone proposes adding the failing tasks to the ignore list. What is actually wrong?"
+  options={[
+    "The configuration cache is incompatible with the Android Gradle Plugin and should be turned off",
+    "A task is reading the project object while it runs, which is exactly what the cache forbids — the task must capture the values it needs at configuration time, as `@Input` properties or a `Provider`, rather than reaching for `project` during execution",
+    "The tasks need `@DisableCachingByDefault`"
+  ]}
+  answer={1}
+  explanation="The configuration cache works by serialising the whole task graph after configuration and replaying it, which is only sound if no task reaches back into live project state while executing. A task that calls project.buildDir or project.version inside its action is capturing something that no longer exists in a cached run, so Gradle refuses rather than producing a wrong result. The fix is mechanical: declare what the task needs as annotated inputs or lazily as a Provider, resolved at configuration time and read from the task's own fields at execution. Ignoring the failing tasks defeats the point, since the cache only pays off when the whole graph is compatible. Turning it off is worse advice than it sounds — AGP has supported the configuration cache for years, and the failures are almost always in a project's own custom tasks or an old third-party plugin."
+/>
+
+## Where build time goes
+
+```properties title="gradle.properties" numbered
+org.gradle.caching=true               # reuse task outputs across builds and machines
+org.gradle.configuration-cache=true   # skip configuration entirely on a repeat build
+org.gradle.parallel=true
+org.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC
+kotlin.incremental=true
+```
+
+Those four lines are the cheapest wins available, and the **configuration cache** is the biggest of them:
+it serialises the result of configuration so a repeat build skips it entirely, which on a large project
+is several seconds per build, every build.
+
+Beyond flags, the structural levers matter more:
+
+| Lever | Why it helps |
+| --- | --- |
+| `implementation` over `api` | Changing a library recompiles only that module |
+| Narrow modules | An edit invalidates less |
+| KSP instead of kapt | Substantially faster for the same work |
+| Fewer flavor dimensions | Every dimension multiplies the variant matrix |
+
+The `api` versus `implementation` point from the Gradle glossary is the single biggest one in a
+multi-module project, because `api` puts a library on the compile classpath of every dependent module —
+so one version bump recompiles the world.
+
+<Detail summary="Measuring instead of guessing">
+```bash title="Find out" numbered
+./gradlew assembleDebug --scan          # a shareable report of where time went
+./gradlew assembleDebug --profile       # a local HTML report
+./gradlew :app:dependencies             # what is actually on the classpath
+```
+
+A build scan is the honest starting point, because build-time intuitions are usually wrong. The specific
+things worth reading:
+
+**Configuration time versus execution time.** If configuration is seconds on every build, the
+configuration cache is your fix, not more parallelism.
+
+**Which tasks were up-to-date, from cache, or executed.** A task that never hits the cache usually has a
+non-deterministic input — a timestamp, an absolute path, a file that is regenerated every run.
+
+**The critical path.** Parallelism only helps if the graph is wide; a long chain of dependent modules is
+serial no matter how many cores you have.
+
+The build-time equivalent of the profiling lesson applies here too: measure a realistic scenario. A clean
+build is not what developers experience — an incremental build after a one-line change in one module is,
+and that is the number worth optimising.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one is the one people copy from old answers">
+**`subprojects { }` in the root build file.** Breaks configuration-on-demand and the cache.
+
+**Ignoring configuration-cache failures.** The cache pays off only when the whole graph is compatible.
+
+**`api` where `implementation` would do.** One bump recompiles every dependent module.
+
+**kapt where KSP exists.** Substantially slower for the same annotation processing.
+
+**Optimising a clean build.** Developers live in incremental builds; measure that.
+</Pitfall>
+
+## Practice
+
+1. Extract the shared Android config from three modules into a convention plugin.
+2. Turn on the configuration cache and fix whatever fails rather than ignoring it.
+3. Run a build scan and find the longest task on the critical path.
+4. Change one `api` to `implementation` and measure the incremental build afterwards.
+5. Time an incremental build after a one-line change, before and after your changes.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Convention plugin | Shared build config as a real, testable Kotlin class |
+| `build-logic` | An included build; compiles like normal Kotlin |
+| `subprojects { }` | Discouraged; breaks the configuration cache |
+| Configuration cache | Skips configuration entirely on a repeat build |
+| Its failures | A task reading `project` at execution time |
+| The fix | Capture inputs at configuration time |
+| Build cache | Reuses task outputs across builds and machines |
+| `implementation` | The biggest structural lever in a multi-module project |
+| KSP over kapt | Same work, substantially faster |
+| Measure | An incremental build, not a clean one |
+
+<Interview title="A question where the error message is the instruction">
+"Your build fails with `invocation of 'Task.project' at execution time is unsupported`. What now?"
+
+That is the configuration cache telling you a task reaches into live project state while it runs. The
+cache works by serialising the task graph after configuration and replaying it, so a task calling
+`project.buildDir` inside its action is asking for something that does not exist in a cached run — and
+Gradle refusing is better than it producing a wrong result.
+
+The fix is mechanical: declare what the task needs as annotated `@Input` properties or a `Provider`,
+resolved at configuration time and read from the task's own fields during execution. What I would not do
+is add the task to the ignore list, because the cache only pays off when the whole graph is compatible —
+one exempt task on the critical path removes the benefit. And I would not conclude the cache is
+incompatible with AGP; it has been supported for years, and the failures are nearly always a project's
+own custom tasks or an old plugin.
+</Interview>
