@@ -1,0 +1,178 @@
+---
+title: Keystores, हस्ताक्षर और Play App Signing
+description: आपकी signing की key ही इकलौती चीज है जो साबित करती है कि यह update आपका है। Play App Signing के बिना उसे खोना यानी ऐप हमेशा के लिए update होने लायक नहीं बचता — इसीलिए आजकल का जवाब यह है कि उसे खुद रखिए ही मत।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Android किसी ऐप को उसके **package के नाम और हस्ताक्षर वाले certificate** से पहचानता है। किसी दूसरी key
+से हस्ताक्षरित update एक अलग ऐप है, और वापसी की कोई विधि है ही नहीं — तो key सँभालना build की कोई
+बारीकी नहीं, वह चीज है जो तय करती है कि आपके ऐप का कोई भविष्य है या नहीं।
+</KeyIdea>
+
+## Keystore बनाना
+
+```bash title="keytool" numbered
+keytool -genkeypair -v \
+  -keystore upload.jks -alias upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+`-validity 10000` करीब 27 साल है, और वही चलन वाला मान है क्योंकि Play को 2033 के बाद तक चलती key
+चाहिए। जो key खत्म हो जाए वह ऐसी key है जिससे आप हस्ताक्षर नहीं कर सकते।
+
+```kotlin title="build.gradle.kts" numbered
+val props = Properties().apply {
+    file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(props.getProperty("storeFile") ?: "")
+            storePassword = props.getProperty("storePassword")
+            keyAlias = props.getProperty("keyAlias")
+            keyPassword = props.getProperty("keyPassword")
+        }
+    }
+    buildTypes { release { signingConfig = signingConfigs.getByName("release") } }
+}
+```
+
+`keystore.properties` और खुद `.jks`, दोनों `.gitignore` में जाते हैं। यही वह file है जिसे secrets वाले
+पाठ ने सच में राज कहा था — `google-services.json` के उलट, git के इतिहास में पड़ा keystore असली उजागर
+होना है और इकलौता इलाज नई upload वाली key बनाना है।
+
+## Play App Signing
+
+यही वह हिस्सा है जो खतरा बदल देता है। Play App Signing के साथ Google **ऐप की signing की key** रखता है
+और आप **upload की key**:
+
+```text title="दो keys" numbered
+आप AAB पर हस्ताक्षर करते हैं:      upload वाली key   (बदली जा सकने वाली)
+Google APK पर दोबारा करता है:      ऐप की signing की key   (पक्की, Google के पास)
+```
+
+Upload वाली key खो जाए तो आप Play के सहारे से बात करते हैं, मालिकाना साबित करते हैं और नई दर्ज करा लेते
+हैं — ऐप update होता रहता है। Play App Signing के बिना उस इकलौती key का खोना यानी वह ऐप कभी update नहीं
+हो सकता; आप नई listing छापते हैं और हर install तथा हर समीक्षा गँवा देते हैं।
+
+इसके नतीजे course में और जगह भी हैं। Users के devices पर Google का certificate होता है, तो:
+
+- **App Links** को `assetlinks.json` में Play के हस्ताक्षर वाला SHA-256 चाहिए, आपकी upload वाली key का
+  नहीं — deep links वाले पाठ का, सिर्फ release में आता chooser।
+- **Google से sign-in** को Play के हस्ताक्षर वाला SHA-1 दर्ज चाहिए, वरना वह debug में चलता है और
+  release में नाकाम।
+- **API key की पाबंदियों** को Play के हस्ताक्षर वाला fingerprint चाहिए।
+
+तीनों Play Console में App Integrity के नीचे हैं, और तीनों वही एक गलती हैं, अलग कपड़ों में: users को जो
+मिलता है उसके बजाय अपने पास पड़ा fingerprint लेना।
+
+<Quiz
+  question="कोई team release वाले builds किसी developer के laptop पर ऐसे keystore से हस्ताक्षरित करती है जो सिर्फ वहीं है। उस laptop की disk खराब हो जाती है। उनके पास Play App Signing चालू है। कितना बुरा हुआ?"
+  options={[
+    "घातक — वह ऐप कभी update नहीं हो सकता और उन्हें नई listing छापनी पड़ेगी",
+    "सँभल सकता है। वह upload वाली key थी, और Play App Signing का मतलब है कि ऐप की signing की key Google के पास है — वे upload की key दोबारा तय कराते हैं, नई दर्ज करते हैं, और उसी listing पर updates भेजते रहते हैं",
+    "सिर्फ तब सँभलता है जब keystore का password Play Console में रखा हो"
+  ]}
+  answer={1}
+  explanation="यही वह आफत है जिसे रोकने के लिए Play App Signing लाया गया था, और जवाब पूरी तरह इस पर टिका है कि वह चालू है या नहीं। उसके साथ, laptop पर पड़ी key सिर्फ upload वाली थी — वह credential जो Play को साबित करती है कि यह build उसी team का है। ऐप की signing की key Google के पास है, और users के devices वही जाँचते हैं, तो खोई हुई upload की key एक support का टिकट भर है: खाते का मालिकाना साबित कीजिए, नया upload वाला certificate दर्ज कीजिए, चलते रहिए। उसके बिना, उस laptop पर उस ऐप की पहचान की इकलौती नकल थी: भविष्य का कोई update कभी सही तरीके से हस्ताक्षरित हो ही नहीं सकता, और आगे का इकलौता रास्ता है नया package का नाम, नई listing, और हर install, हर रेटिंग तथा हर समीक्षा का जाना। Password दोनों ही हालतों में बेमतलब है — keystore की file के बिना password कुछ भी नहीं, और इसीलिए backup उस file का चाहिए।"
+/>
+
+## CI में हस्ताक्षर
+
+```yaml title=".github/workflows/release.yml" numbered
+- name: Decode keystore
+  run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+
+- name: Build
+  env:
+    STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+    KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+  run: ./gradlew bundleRelease
+```
+
+किसी secret में base64 CI तक binary पहुँचाने का चलन वाला तरीका है, क्योंकि secrets रखने वाली जगहें
+strings रखती हैं। मायने यह रखता है कि क्या *नहीं* होता: वह keystore repository तक पहुँचता ही नहीं, और
+खुली हुई file सिर्फ उस runner में रहती है, जो काम खत्म होते ही नष्ट हो जाता है।
+
+Signing वाली settings मत छापिए, और release वाले build पर `--info` या `--debug` से सँभलिए, क्योंकि
+Gradle खुशी-खुशी वे values उस build के log में लिख देगा जिसे repository तक पहुँच रखने वाला कोई भी पढ़
+सकता है।
+
+<Detail summary="आपने सच में भेजा क्या, यह जाँचना">
+जब हस्ताक्षर से जुड़ा कुछ बिगड़े तो दो commands जानने लायक हैं।
+
+```bash title="Check a build" numbered
+apksigner verify --print-certs app-release.apk
+keytool -list -v -keystore upload.jks -alias upload
+```
+
+पहली वह certificate छापती है जिसने सच में उस APK पर हस्ताक्षर किए, उसके SHA-1 और SHA-256 समेत — और इसी
+से पक्का होता है कि वह build उसी key से हस्ताक्षरित है जो आप सोच रहे हैं। दूसरी keystore को सीधे पढ़ती
+है।
+
+App Bundles के साथ एक बारीकी है: आप जो AAB चढ़ाते हैं वह आपकी upload वाली key से हस्ताक्षरित है, और
+Play जो APKs बनाता है वे ऐप की signing की key से। तो अपने स्थानीय AAB को जाँचना आपको यह कुछ नहीं बताता
+कि users को क्या मिलता है। वह जाँचने के लिए Play Console के App Bundle Explorer से हस्ताक्षरित APK
+उतारिए और *उसे* जाँचिए — और `assetlinks.json` वाला SHA-256 मेल खाता है या नहीं, यह भी इसी तरह पक्का
+होता है।
+
+`bundletool build-apks --local-testing` किसी AAB से स्थानीय रूप से लग सकने वाली APKs बनाता है, और उसी
+से आप वह चीज जाँचते हैं जो Play सच में बनाता, न कि वह bundle।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली की कोई वापसी नहीं है">
+**बिना backup और बिना Play App Signing वाला keystore।** ऐप हमेशा के लिए update होने लायक नहीं बचता।
+
+**Keystore या उसके passwords git में।** असली उजागर होना; वह file सच में राज है।
+
+**Upload वाली key का fingerprint लेना।** App Links, Google से sign-in और API keys, सबको Play वाला
+चाहिए।
+
+**स्थानीय AAB जाँचना।** वह upload की key से हस्ताक्षरित है; users को Play का हस्ताक्षर मिलता है।
+
+**कम मियाद वाली key।** Play को 2033 के बाद तक चलती key चाहिए।
+</Pitfall>
+
+## अभ्यास
+
+1. Keystore बनाइए और स्थानीय रूप से release वाला build हस्ताक्षरित कीजिए।
+2. उस पर `apksigner verify --print-certs` चलाइए और fingerprints लिखिए।
+3. उन्हें Play Console के App Integrity वाले पन्ने से मिलाइए।
+4. Keystore का path और passwords `keystore.properties` में ले जाइए और दोनों gitignore कीजिए।
+5. अपने AAB से `bundletool` द्वारा APKs बनाइए और उन्हीं का हस्ताक्षर जाँचिए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| ऐप की पहचान | Package का नाम और हस्ताक्षर वाला certificate |
+| गलत key | एक अलग ऐप; वापसी की कोई विधि नहीं |
+| Upload वाली key | जिससे आप AAB पर हस्ताक्षर करते हैं; बदली जा सकती है |
+| ऐप की signing की key | जिसे users के devices जाँचते हैं; Google के पास |
+| Play App Signing | खोई key को घातक से support के टिकट में बदल देता है |
+| `keystore.properties` | Gitignore किया; यह सच में राज है |
+| Fingerprints | App Links, sign-in और API keys को Play वाला चाहिए, आपका नहीं |
+| CI | Base64 वाला secret, ऐसे runner में खुलता जो नष्ट हो जाता है |
+| `apksigner verify` | इस build पर हस्ताक्षर सच में किसने किए |
+| `bundletool` | Play जो APKs बनाता, वही स्थानीय रूप से बनाइए |
+
+<Interview title="एक सवाल, जिसका गलत जवाब हमेशा के लिए है">
+"Signing की key खो जाए तो क्या होता है?"
+
+वह पूरी तरह इस पर टिका है कि Play App Signing चालू है या नहीं, और उसे चालू रखने की पूरी वजह यही है।
+उसके बिना, जो key खोई वह ऐप की पहचान थी — Android किसी ऐप को package के नाम और हस्ताक्षर वाले
+certificate से पहचानता है, तो भविष्य का कोई update कभी सही तरीके से हस्ताक्षरित हो ही नहीं सकता।
+इकलौता रास्ता है नया package का नाम और नई listing, जिसमें हर install, हर रेटिंग और हर समीक्षा चली जाती
+है।
+
+Play App Signing के साथ आपके पास जो key थी वह सिर्फ upload वाली थी। ऐप की signing की key Google के पास
+है, और users के devices असल में वही जाँचते हैं, तो खोई हुई upload की key एक support की माँग है:
+मालिकाना साबित कीजिए, नया upload वाला certificate दर्ज कीजिए, भेजते रहिए। साथ की जिस बात पर मैं उँगली
+रखूँगा वह यह है कि फिर बाकी हर जगह Google का certificate ही मायने रखता है — `assetlinks.json` वाला
+SHA-256, Google से sign-in के लिए SHA-1, API keys की पाबंदियाँ — और उनके लिए अपना स्थानीय fingerprint
+लेना ही वह जाना-पहचाना debug-में-चलता, release-में-टूटता bug है।
+</Interview>

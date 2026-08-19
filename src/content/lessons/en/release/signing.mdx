@@ -1,0 +1,174 @@
+---
+title: Keystores, signing and Play App Signing
+description: Your signing key is the only thing that proves an update is from you. Lose it without Play App Signing and the app is unupdatable forever — which is why the modern answer is to not hold it yourself.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Android identifies an app by its **package name plus its signing certificate**. An update signed with a
+different key is a different app, and there is no recovery process — so key management is not a build
+detail, it is the thing that decides whether your app has a future.
+</KeyIdea>
+
+## Creating a keystore
+
+```bash title="keytool" numbered
+keytool -genkeypair -v \
+  -keystore upload.jks -alias upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+`-validity 10000` is about 27 years, and it is the conventional value because Play requires a key valid
+past 2033. A key that expires is a key you cannot sign with.
+
+```kotlin title="build.gradle.kts" numbered
+val props = Properties().apply {
+    file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(props.getProperty("storeFile") ?: "")
+            storePassword = props.getProperty("storePassword")
+            keyAlias = props.getProperty("keyAlias")
+            keyPassword = props.getProperty("keyPassword")
+        }
+    }
+    buildTypes { release { signingConfig = signingConfigs.getByName("release") } }
+}
+```
+
+`keystore.properties` and the `.jks` itself go in `.gitignore`. This is the file the secrets lesson said
+genuinely is a secret — unlike `google-services.json`, a keystore in git history is a real compromise
+and the only fix is generating a new upload key.
+
+## Play App Signing
+
+This is the part that changes the risk. With Play App Signing, Google holds the **app signing key** and
+you hold an **upload key**:
+
+```text title="Two keys" numbered
+you sign the AAB with:      the upload key   (replaceable)
+Google re-signs the APK:    the app signing key   (permanent, held by Google)
+```
+
+If you lose the upload key, you contact Play support, prove ownership and register a new one — the app
+keeps updating. Without Play App Signing, losing the one key means the app can never be updated again;
+you publish a new listing and lose every install and review.
+
+It has consequences elsewhere in the course. Google's certificate is the one on users' devices, so:
+
+- **App Links** need the Play-signed SHA-256 in `assetlinks.json`, not your upload key's — the deep
+  links lesson's release-only chooser.
+- **Google sign-in** needs the Play-signed SHA-1 registered, or it works in debug and fails in release.
+- **API key restrictions** must use the Play-signed fingerprint.
+
+All three are in the Play Console under App Integrity, and all three are the same mistake wearing
+different clothes: using the fingerprint you have locally rather than the one users get.
+
+<Quiz
+  question="A team signs release builds on a developer's laptop with a keystore that exists only there. The laptop's disk fails. They have Play App Signing enabled. How bad is it?"
+  options={[
+    "Fatal — the app can never be updated and they must publish a new listing",
+    "Recoverable. That was the upload key, and Play App Signing means Google holds the app signing key — they request an upload key reset, register a new one, and continue shipping updates to the same listing",
+    "Recoverable only if the keystore password was stored in the Play Console"
+  ]}
+  answer={1}
+  explanation="This is exactly the disaster Play App Signing was introduced to prevent, and the answer depends entirely on whether it is enabled. With it, the key on the laptop was only the upload key — the credential that proves to Play that a build came from the team. Google holds the app signing key, which is the one users' devices check, so a lost upload key is a support ticket: prove ownership of the account, register a new upload certificate, carry on. Without it, that laptop held the only copy of the identity of the app: no update can ever be signed correctly again, and the only path forward is a new package name, a new listing, and the loss of every install, rating and review. The password is irrelevant either way — a password without the keystore file is nothing, which is why the file itself needs the backup."
+/>
+
+## Signing in CI
+
+```yaml title=".github/workflows/release.yml" numbered
+- name: Decode keystore
+  run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+
+- name: Build
+  env:
+    STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+    KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+  run: ./gradlew bundleRelease
+```
+
+Base64 in a secret is the standard way to get a binary into CI, since secret stores hold strings. What
+matters is what does *not* happen: the keystore never reaches the repository, and the decoded file lives
+only in the runner, which is destroyed after the job.
+
+Do not print the signing config, and be careful with `--info` or `--debug` on a release build, since
+Gradle will happily log values you did not mean to publish into a build log anyone with repository
+access can read.
+
+<Detail summary="Verifying what you actually shipped">
+Two commands worth knowing when something signing-related goes wrong.
+
+```bash title="Check a build" numbered
+apksigner verify --print-certs app-release.apk
+keytool -list -v -keystore upload.jks -alias upload
+```
+
+The first prints the certificate that actually signed an APK, including its SHA-1 and SHA-256 — which is
+how you confirm whether a build was signed with the key you think. The second reads the keystore
+directly.
+
+There is a subtlety with App Bundles: the AAB you upload is signed with your upload key, and the APKs
+Play generates are signed with the app signing key. So verifying your local AAB tells you nothing about
+what users receive. To check that, download the signed APK from the Play Console's App Bundle Explorer
+and verify *that* — which is also how you confirm the SHA-256 in `assetlinks.json` matches.
+
+`bundletool build-apks --local-testing` builds installable APKs from an AAB locally, which is how you
+test the thing Play would actually generate rather than the bundle.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first one has no recovery">
+**A keystore with no backup and no Play App Signing.** The app becomes unupdatable, permanently.
+
+**The keystore or its passwords in git.** A real compromise; the file is a genuine secret.
+
+**Using the upload key's fingerprint.** App Links, Google sign-in and API keys all need Play's.
+
+**Verifying the local AAB.** It is signed with the upload key; users get Play's signature.
+
+**A key with short validity.** Play requires validity past 2033.
+</Pitfall>
+
+## Practice
+
+1. Generate a keystore and sign a release build locally.
+2. Run `apksigner verify --print-certs` on it and note the fingerprints.
+3. Compare those with the App Integrity page in the Play Console.
+4. Move the keystore path and passwords into `keystore.properties` and gitignore both.
+5. Build an APK set from your AAB with `bundletool` and verify its signature instead.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| App identity | Package name plus signing certificate |
+| Wrong key | A different app; no recovery process |
+| Upload key | What you sign the AAB with; replaceable |
+| App signing key | What users' devices check; held by Google |
+| Play App Signing | Turns a lost key from fatal into a support ticket |
+| `keystore.properties` | Gitignored; this one really is a secret |
+| Fingerprints | App Links, sign-in and API keys need Play's, not yours |
+| CI | Base64 secret, decoded into a runner that is destroyed |
+| `apksigner verify` | What actually signed this build |
+| `bundletool` | Build the APKs Play would generate, locally |
+
+<Interview title="A question with a permanent wrong answer">
+"What happens if you lose your signing key?"
+
+It depends entirely on whether Play App Signing is enabled, and that is the whole reason to enable it.
+Without it, the key you lost is the app's identity — Android identifies an app by package name plus
+signing certificate, so no future update can ever be signed correctly. The only path is a new package
+name and a new listing, which loses every install, rating and review.
+
+With Play App Signing, the key you held was only the upload key. Google holds the app signing key, which
+is what users' devices actually check, so a lost upload key is a support request: prove ownership,
+register a new upload certificate, keep shipping. The related thing I would flag is that Google's
+certificate is then the one that matters everywhere else — the SHA-256 in `assetlinks.json`, the SHA-1
+for Google sign-in, API key restrictions — and using your local fingerprint for those is the classic
+works-in-debug, breaks-in-release bug.
+</Interview>

@@ -1,0 +1,180 @@
+---
+title: Keystores, hastakshar aur Play App Signing
+description: Aapki signing ki key hi iklauti cheez hai jo sabit karti hai ki ye update aapka hai. Play App Signing ke bina use khona yani app hamesha ke liye update hone layak nahi bachta — isiliye aajkal ka jawab ye hai ki use khud rakhiye hi mat.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Android kisi app ko uske **package ke naam aur hastakshar wale certificate** se pehchanta hai. Kisi doosri
+key se hastaksharit update ek alag app hai, aur wapsi ki koi vidhi hai hi nahi — to key sambhalna build ki
+koi bareeki nahi, wo cheez hai jo tay karti hai ki aapke app ka koi bhavishya hai ya nahi.
+</KeyIdea>
+
+## Keystore banana
+
+```bash title="keytool" numbered
+keytool -genkeypair -v \
+  -keystore upload.jks -alias upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+`-validity 10000` kareeb 27 saal hai, aur wahi chalan wala maan hai kyunki Play ko 2033 ke baad tak chalti
+key chahiye. Jo key khatam ho jaye wo aisi key hai jisse aap hastakshar nahi kar sakte.
+
+```kotlin title="build.gradle.kts" numbered
+val props = Properties().apply {
+    file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(props.getProperty("storeFile") ?: "")
+            storePassword = props.getProperty("storePassword")
+            keyAlias = props.getProperty("keyAlias")
+            keyPassword = props.getProperty("keyPassword")
+        }
+    }
+    buildTypes { release { signingConfig = signingConfigs.getByName("release") } }
+}
+```
+
+`keystore.properties` aur khud `.jks`, dono `.gitignore` mein jate hain. Yahi wo file hai jise secrets
+wale lesson ne sach mein raaz kaha tha — `google-services.json` ke ulat, git ke itihas mein pada keystore
+asli ujagar hona hai aur iklauta ilaaj nai upload wali key banana hai.
+
+## Play App Signing
+
+Yahi wo hissa hai jo khatra badal deta hai. Play App Signing ke saath Google **app ki signing ki key**
+rakhta hai aur aap **upload ki key**:
+
+```text title="do keys" numbered
+aap AAB par hastakshar karte ho:      upload wali key   (badli ja sakne wali)
+Google APK par dobara karta hai:      app ki signing ki key   (pakki, Google ke paas)
+```
+
+Upload wali key kho jaye to aap Play ke sahare se baat karte ho, maalikana sabit karte ho aur nai darj
+kara lete ho — app update hota rehta hai. Play App Signing ke bina us iklauti key ka khona yani wo app
+kabhi update nahi ho sakta; aap nai listing chhapte ho aur har install tatha har sameeksha ganwa dete ho.
+
+Iske natije course mein aur jagah bhi hain. Users ke devices par Google ka certificate hota hai, to:
+
+- **App Links** ko `assetlinks.json` mein Play ke hastakshar wala SHA-256 chahiye, aapki upload wali key
+  ka nahi — deep links wale lesson ka, sirf release mein aata chooser.
+- **Google se sign-in** ko Play ke hastakshar wala SHA-1 darj chahiye, warna wo debug mein chalta hai aur
+  release mein nakaam.
+- **API key ki pabandiyon** ko Play ke hastakshar wala fingerprint chahiye.
+
+Teenon Play Console mein App Integrity ke neeche hain, aur teenon wahi ek galti hain, alag kapdon mein:
+users ko jo milta hai uske bajaye apne paas pada fingerprint lena.
+
+<Quiz
+  question="Koi team release wale builds kisi developer ke laptop par aise keystore se hastaksharit karti hai jo sirf wahin hai. Us laptop ki disk kharab ho jati hai. Unke paas Play App Signing chalu hai. Kitna bura hua?"
+  options={[
+    "Ghatak — wo app kabhi update nahi ho sakta aur unhe nai listing chhapni padegi",
+    "Sambhal sakta hai. Wo upload wali key thi, aur Play App Signing ka matlab hai ki app ki signing ki key Google ke paas hai — wo upload ki key dobara tay karate hain, nai darj karte hain, aur usi listing par updates bhejte rehte hain",
+    "Sirf tab sambhalta hai jab keystore ka password Play Console mein rakha ho"
+  ]}
+  answer={1}
+  explanation="Yahi wo aafat hai jise rokne ke liye Play App Signing laya gaya tha, aur jawab poori tarah is par tika hai ki wo chalu hai ya nahi. Uske saath, laptop par padi key sirf upload wali thi — wo credential jo Play ko sabit karti hai ki ye build usi team ka hai. App ki signing ki key Google ke paas hai, aur users ke devices wahi jaanchte hain, to khoyi hui upload ki key ek support ka ticket bhar hai: khate ka maalikana sabit kijiye, naya upload wala certificate darj kijiye, chalte rahiye. Uske bina, us laptop par us app ki pehchan ki iklauti nakal thi: bhavishya ka koi update kabhi sahi tarike se hastaksharit ho hi nahi sakta, aur aage ka iklauta raasta hai naya package ka naam, nai listing, aur har install, har rating tatha har sameeksha ka jana. Password dono hi haalaton mein bematlab hai — keystore ki file ke bina password kuch bhi nahi, aur isiliye backup us file ka chahiye."
+/>
+
+## CI mein hastakshar
+
+```yaml title=".github/workflows/release.yml" numbered
+- name: Decode keystore
+  run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+
+- name: Build
+  env:
+    STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+    KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+  run: ./gradlew bundleRelease
+```
+
+Kisi secret mein base64 CI tak binary pahunchane ka chalan wala tarika hai, kyunki secrets rakhne wali
+jagahein strings rakhti hain. Maayne ye rakhta hai ki kya *nahi* hota: wo keystore repository tak
+pahunchta hi nahi, aur khuli hui file sirf us runner mein rehti hai, jo kaam khatam hote hi nasht ho jata
+hai.
+
+Signing wali settings mat chhapiye, aur release wale build par `--info` ya `--debug` se sambhaliye, kyunki
+Gradle khushi-khushi wo values us build ke log mein likh dega jise repository tak pahunch rakhne wala koi
+bhi padh sakta hai.
+
+<Detail summary="Aapne sach mein bheja kya, ye dekhna">
+Jab hastakshar se juda kuch bigde to do commands janne layak hain.
+
+```bash title="Check a build" numbered
+apksigner verify --print-certs app-release.apk
+keytool -list -v -keystore upload.jks -alias upload
+```
+
+Pehli wo certificate chhapti hai jisne sach mein us APK par hastakshar kiye, uske SHA-1 aur SHA-256 samet
+— aur isi se pakka hota hai ki wo build usi key se hastaksharit hai jo aap soch rahe ho. Doosri keystore
+ko seedhe padhti hai.
+
+App Bundles ke saath ek bareeki hai: aap jo AAB chadhate ho wo aapki upload wali key se hastaksharit hai,
+aur Play jo APKs banata hai wo app ki signing ki key se. To apne sthaniya AAB ko dekhna aapko ye kuch nahi
+batata ki users ko kya milta hai. Wo dekhne ke liye Play Console ke App Bundle Explorer se hastaksharit
+APK utariye aur *use* dekhiye — aur `assetlinks.json` wala SHA-256 mel khata hai ya nahi, ye bhi isi tarah
+pakka hota hai.
+
+`bundletool build-apks --local-testing` kisi AAB se sthaniya roop se lag sakne wali APKs banata hai, aur
+usi se aap wo cheez dekhte ho jo Play sach mein banata, na ki wo bundle.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli ki koi wapsi nahi hai">
+**Bina backup aur bina Play App Signing wala keystore.** App hamesha ke liye update hone layak nahi
+bachta.
+
+**Keystore ya uske passwords git mein.** Asli ujagar hona; wo file sach mein raaz hai.
+
+**Upload wali key ka fingerprint lena.** App Links, Google se sign-in aur API keys, sabko Play wala
+chahiye.
+
+**Sthaniya AAB dekhna.** Wo upload ki key se hastaksharit hai; users ko Play ka hastakshar milta hai.
+
+**Kam miyad wali key.** Play ko 2033 ke baad tak chalti key chahiye.
+</Pitfall>
+
+## Abhyaas
+
+1. Keystore banaiye aur sthaniya roop se release wala build hastaksharit kijiye.
+2. Us par `apksigner verify --print-certs` chalaiye aur fingerprints likhiye.
+3. Unhe Play Console ke App Integrity wale panne se milaiye.
+4. Keystore ka path aur passwords `keystore.properties` mein le jaiye aur dono gitignore kijiye.
+5. Apne AAB se `bundletool` dwara APKs banaiye aur unhin ka hastakshar dekhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| App ki pehchan | Package ka naam aur hastakshar wala certificate |
+| Galat key | Ek alag app; wapsi ki koi vidhi nahi |
+| Upload wali key | Jisse aap AAB par hastakshar karte ho; badli ja sakti hai |
+| App ki signing ki key | Jise users ke devices jaanchte hain; Google ke paas |
+| Play App Signing | Khoyi key ko ghatak se support ke ticket mein badal deta hai |
+| `keystore.properties` | Gitignore kiya; ye sach mein raaz hai |
+| Fingerprints | App Links, sign-in aur API keys ko Play wala chahiye, aapka nahi |
+| CI | Base64 wala secret, aise runner mein khulta jo nasht ho jata hai |
+| `apksigner verify` | Is build par hastakshar sach mein kisne kiye |
+| `bundletool` | Play jo APKs banata, wahi sthaniya roop se banaiye |
+
+<Interview title="Ek sawal, jiska galat jawab hamesha ke liye hai">
+"Signing ki key kho jaye to kya hota hai?"
+
+Wo poori tarah is par tika hai ki Play App Signing chalu hai ya nahi, aur use chalu rakhne ki poori wajah
+yahi hai. Uske bina, jo key khoyi wo app ki pehchan thi — Android kisi app ko package ke naam aur
+hastakshar wale certificate se pehchanta hai, to bhavishya ka koi update kabhi sahi tarike se hastaksharit
+ho hi nahi sakta. Iklauta raasta hai naya package ka naam aur nai listing, jismein har install, har rating
+aur har sameeksha chali jati hai.
+
+Play App Signing ke saath aapke paas jo key thi wo sirf upload wali thi. App ki signing ki key Google ke
+paas hai, aur users ke devices asal mein wahi jaanchte hain, to khoyi hui upload ki key ek support ki maang
+hai: maalikana sabit kijiye, naya upload wala certificate darj kijiye, bhejte rahiye. Saath ki jis baat par
+main ungli rakhunga wo ye hai ki phir baaki har jagah Google ka certificate hi maayne rakhta hai —
+`assetlinks.json` wala SHA-256, Google se sign-in ke liye SHA-1, API keys ki pabandiyan — aur unke liye
+apna sthaniya fingerprint lena hi wo jana-pehchana debug-mein-chalta, release-mein-toota bug hai.
+</Interview>
