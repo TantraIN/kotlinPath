@@ -1,0 +1,153 @@
+---
+title: Testing ke tracks aur dheere-dheere failna
+description: Dheere-dheere failana tabhi kaam ka hai jab aap kuch dekh rahe ho aur rokne ko taiyar ho. Jo teams seedhe 100% par bhejti hain aur jo failati to hain par dekhti kabhi nahi, dono ka anjaam ek hi hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Dheere-dheere failana ye seemit karta hai ki **koi kharab release kitne users tak pahunche** — par sirf
+tab tak jab tak aap aisa koi aankda dekh rahe ho jo bata de ki wo kharab hai, aur sirf tab jab rokna aisa
+faisla ho jo koi jaldi le sake.
+</KeyIdea>
+
+## Tracks
+
+| Track | Kise milta hai | Sameeksha |
+| --- | --- | --- |
+| Internal | Aapke ginaye 100 tak dekhne wale | Minute; lagbhag koi nahi |
+| Closed | Koi list ya Google Group | Poori sameeksha |
+| Open | Jo bhi listing se jud jaye | Poori sameeksha |
+| Production | Sab | Poori sameeksha |
+
+Internal wala track lagatar lene layak hai, kyunki wo minton mein mil jata hai aur use sameeksha nahi
+chahiye. Closed wo jagah hai jahan asli beta wala samooh rehta hai. Open sarvajanik hai aur aapki listing
+par dikhta hai, to wo padtal jitna hi marketing ka faisla hai.
+
+Sameeksha ke baare mein do baatein. Usmein aam taur par ghanton se ek din lagta hai, par pehli baar bhejne
+ya kisi samvedansheel permission ko chhoone wale app mein hafta bhi lag sakta hai — to release ke calendar
+mein uski jagah honi chahiye. Aur sameeksha har track par alag hoti hai, to jo build kisi track par
+sameeksha paar kar chuka hai use aage badhana tez hai.
+
+**Pre-launch ki reportein** aapke build ko Google ki prayogshala mein asli devices par chalati hain aur
+kisi ke lagane se pehle crashes, sulabhta ki mushkilein tatha performance ki baatein batati hain. Wo muft
+hain aur zyadatar teams unhe andekha karti hain.
+
+## Dheere-dheere failana
+
+```text title="Aam chadhai" numbered
+din 0   1%     crash-free dar aur ANR ki dar dekhiye
+din 1   5%     agar thehra hua ho
+din 2   20%
+din 4   50%
+din 7   100%
+```
+
+Pratishat se kam maayne wo thehrav rakhte hain. Jo failav ek ghante mein 1% se 100% pahunch jaye wo failav
+nahi hai; wo der se kiya gaya poora release hai.
+
+Dekhne ki list chhoti hai: crash se bache users, ANR ki dar, aur ek aisa behaviour wala aankda jo kisi kaam
+ke tootne ko pakad le — har ghante sign-ins, har ghante orders, aapka app jo bhi karta hai. Akeli crash-free
+dar us release ko chook jati hai jismein kuch crash nahi hota aur checkout ka button kuch karta hi nahi.
+
+<Quiz
+  question="Koi team 10% par bhejti hai. Crashlytics crash se bache sessions 99.4% dikhata hai, pichhli release jitna hi, to wo 100% kar dete hain. Uske baad support ke ticket uchhal padte hain ki users khareed poori nahi kar pa rahe. Us aankde se kya chhoota?"
+  options={[
+    "Crash-free dar 24 ghante peeche chalti hai, to wo data purana tha",
+    "Jo bahav toota ho par crash na kare wo crash wale aankde ko dikhta hi nahi — us release ko takniki aankde ke saath behaviour wala koi aankda chahiye tha, jaise har ghante khareed, pichhle hafte ke usi samay se milakar",
+    "10% itna chhota namoona hai ki crash-free dar ka koi matlab nahi"
+  ]}
+  answer={1}
+  explanation="Crash-free dar theek ek sawal ka jawab deti hai — process mara ya nahi — aur aisa checkout ka button jo kahin juda hi nahi, koi validation ka niyam jo sahi input thukra de, ya API ke karaar ka aisa badlaav jo khaali list lautaye, teenon use bilkul tandurust chhod dete hain. Yahi wo nakami hai jise dheere-dheere failana pakadne ke liye hai aur akele takniki aankde nahi pakad sakte, isiliye dekhne ki list mein aisa kuch hona chahiye jo utpaad ke kaam karna band karte hi hile: har ghante khareed, sign-ins, bheje gaye sandesh. Milan bhi barabari ka hona chahiye — ek ghante pehle se nahi, pichhle hafte ke unhin ghanton se — kyunki mangalwar ki subah somwar ki shaam se hamesha buri dikhti hai. Namoone ka naap asli baat hai aur yahan mushkil nahi: asli users ke 10% par khareed ki dar ka girna ek ghante mein dikh jata hai."
+/>
+
+## Rokna, aur wo ektarfa darwaza
+
+```text title="Kya ho sakta hai aur kya nahi" numbered
+failav rokna            -> haan, turant; naye users ko milna band
+failav phir shuru karna -> haan
+failav wapas lena       -> nahi
+```
+
+Bheji hui cheez wapas lene jaisa kuch hai hi nahi. Rokna us release ko aur users tak pahunchne se rokta hai,
+par jo pehle hi update kar chuke unke paas wahi toota hua roop rehta hai — lage hue app ko neeche utarne ka
+Android mein koi raasta nahi. Aage ka iklauta ilaaj bade `versionCode` wala naya build hai, jise sameeksha
+chahiye.
+
+Iske do natije hain. Pehla, wo chadhai itni dheemi honi chahiye ki rokna sach mein nuksan ghataye; 50% par
+rokna aapke aadhe users bachata hai, jo sunne mein jitna lagta hai usse kahin kam hai. Doosra, jis cheez ko
+band karna pad sakta hai wo gunvatta wale phase ke Remote Config ke flag ke peeche honi chahiye — un users
+tak pahunchne ki iklauti vyavastha wahi hai jo pehle hi update kar chuke, aur wo dinon ke bajaye minton mein
+chalti hai.
+
+<Detail summary="Managed publishing, aur release ka calendar">
+**Managed publishing** sameeksha ko release se alag kar deta hai: builds sameeksha se gujarkar manzoor hue
+pade rehte hain jab tak aap publish na dabao. Uske bina, manzoor hua build tabhi chala jata hai jab
+sameeksha khatam hoti hai, jo shanivar ki raat do baje bhi ho sakti hai.
+
+Ye isliye maayne rakhta hai ki gadbad hoti kab hai. Shukrawar dopahar nikli release ke paas poora weekend hai
+ek-sitara sameekshayein jama karne ke liye, isse pehle ki koi aankde padhe, aur wo ek-sitara sameekshayein us
+bug se zyada jeeti hain — Play ki rating judti jati hai, to ek kharab weekend mahinon tak ank dabaye rakhta
+hai.
+
+Jis vyavharik shakal par zyadatar teams pahunchti hain:
+
+- Somwar se budhwar, subah mein bhejiye, aur koi dekh raha ho.
+- Internal track lagatar; production tay lay par.
+- Aisa ek naamzad insaan jo bina baithak ke rok sake.
+- Wapsi ki yojana likhi hui, jo Remote Config ka flag hai, naya build nahi.
+
+Ismein kuch bhi takniki nahi hai, aur ye sab milkar tay karta hai ki dheere-dheere failana asal mein kitne
+kaam ka hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri failane ko bematlab kar deti hai">
+**Sirf crash-free dar dekhna.** Bina crash ke toota bahav use dikhta hi nahi.
+
+**Bina dekhe failana.** 100% par bhejne jaisa hi anjaam, kuch aur kadmon ke saath.
+
+**Wapas lene ki ummid.** Aap nahi le sakte; jinhone update kiya unke paas toota build rehta hai.
+
+**Shukrawar ko release.** Weekend ek-sitara sameekshaon se bhar jata hai jo sudhaar se zyada jeeti hain.
+
+**Pre-launch ki reportein andekhi karna.** Asli devices par crashes aur sulabhta ki muft baatein.
+</Pitfall>
+
+## Abhyaas
+
+1. Internal wale track par bhejiye aur likhiye ki milne mein kitni der lagti hai.
+2. 1% wala failav shuru kijiye, phir rokiye, aur pakka kijiye ki jo pehle update kar chuke unka kya hota hai.
+3. Crash-free dar ke saath apne release ke dashboard par behaviour wala ek aankda jodiye.
+4. Apne maujooda build ki pre-launch ki report padhiye.
+5. Agli release se pehle apni sabse jokhim bhari nai suvidha Remote Config ke flag ke peeche rakhiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Internal | 100 tak dekhne wale, minton mein, bina sameeksha |
+| Closed | Asli beta wala samooh; poori sameeksha |
+| Open | Sarvajanik aur aapki listing par |
+| Sameeksha | Ghanton se hafte tak; calendar usi ke hisab se |
+| Pre-launch ki report | Asli devices par muft baatein |
+| Dheere-dheere failana | Pahunch seemit karta hai, sirf tab jab aap dekho aur rok sako |
+| Dekhiye | Crash-free, ANR, aur behaviour wala ek aankda |
+| Rokna | Naye users rokta hai; update hua palatta nahi |
+| Wapsi nahi | Ilaaj naya build hai, ya Remote Config ka flag |
+| Managed publishing | Release kab jaye ye tay karta hai, sameeksha nahi |
+
+<Interview title="Ek sawal, ki failav aapko bachata kisse hai">
+"Koi jokhim bhara badlaav aap kaise bhejoge?"
+
+Pehle Remote Config ke flag ke peeche, band par default rakhkar, taki wo code nishkriya jaye aur main use
+bina release chalu kar sakun — aur gadbad hone par minton mein band. Ye isliye maayne rakhta hai ki
+dheere-dheere failana wapas nahi liya ja sakta: rokna naye users tak pahunchna band karta hai, par jo pehle
+hi update kar chuke unke paas wahi rehta hai, aur Android mein neeche utarne ka raasta hai hi nahi.
+
+Phir dheemi chadhai — 1%, 5%, 20%, asli thehravon ke saath — aur koi sach mein dekhta hua. Dekhne ki list
+mein behaviour wala aankda hona hi chahiye, sirf crash-free dar aur ANR nahi, kyunki jis nakami ko pakadne ke
+liye failav hai wo aksar wahi hai jahan kuch crash nahi hota aur koi button chupchap kuch nahi karta. Aur
+main hafte ke shuru mein, subah bhejunga, kyunki shukrawar ki release weekend bhar ek-sitara sameekshayein
+jama karti hai aur Play ki rating judti jati hai — bug theek ho jata hai aur ank mahinon tak nahi ubarta.
+</Interview>

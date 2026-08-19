@@ -1,0 +1,148 @@
+---
+title: Testing tracks and staged rollout
+description: A staged rollout is only useful if you are watching something and willing to halt. Teams that ship to 100% immediately and teams that stage but never look have the same outcome.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A staged rollout limits **how many users a bad release reaches** — but only while you are watching a
+metric that would tell you it is bad, and only if halting is a decision someone is allowed to make
+quickly.
+</KeyIdea>
+
+## The tracks
+
+| Track | Who gets it | Review |
+| --- | --- | --- |
+| Internal | Up to 100 testers you list | Minutes; effectively none |
+| Closed | An opt-in list or a Google Group | Full review |
+| Open | Anyone who joins from the listing | Full review |
+| Production | Everyone | Full review |
+
+Internal testing is the one to use constantly, because it is available within minutes and needs no
+review. Closed testing is where a real beta group lives. Open testing is public and appears on your
+listing, which is a marketing decision as much as a testing one.
+
+Two things about review. It usually takes hours to a day, but a first submission or an app that touches
+a sensitive permission can take a week — so the release calendar has to allow for it. And review happens
+per track, so promoting a build that already passed review on one track is fast.
+
+**Pre-launch reports** run your build on real devices in Google's lab and report crashes, accessibility
+problems and performance issues before anyone installs it. They are free and most teams ignore them.
+
+## Staged rollout
+
+```text title="A typical ramp" numbered
+day 0   1%     watch crash-free rate and ANR rate
+day 1   5%     if stable
+day 2   20%
+day 4   50%
+day 7   100%
+```
+
+The percentages matter less than the pauses. A rollout that goes 1% to 100% in an hour is not staged;
+it is a delayed full release.
+
+What to watch is a short list: crash-free users, ANR rate, and one behavioural metric that would catch a
+functional break — sign-ins per hour, orders per hour, whatever your app is for. Crash-free rate alone
+misses the release where nothing crashes and the checkout button does nothing.
+
+<Quiz
+  question="A team ships at 10%. Crashlytics shows crash-free sessions at 99.4%, unchanged from the previous release, so they promote to 100%. Support tickets then spike about users unable to complete purchases. What did the metric miss?"
+  options={[
+    "Crash-free rate lags by 24 hours, so the data was stale",
+    "A broken flow that does not crash is invisible to a crash metric — the release needed a behavioural metric like purchases per hour, compared against the same period last week, alongside the technical one",
+    "10% is too small a sample for crash-free rate to be meaningful"
+  ]}
+  answer={1}
+  explanation="Crash-free rate answers exactly one question — did the process die — and a checkout button wired to nothing, a validation rule rejecting valid input, or an API contract change that returns an empty list all leave it perfectly healthy. That is the failure mode staged rollouts are supposed to catch and technical metrics alone cannot, which is why the watchlist has to include something that moves when the product stops working: purchases per hour, sign-ins, messages sent. The comparison also has to be like-for-like — against the same hours last week rather than against an hour ago — because a Tuesday morning always looks worse than a Monday evening. Sample size is a real consideration and not the issue here: at 10% of a real user base, a purchase-rate collapse is visible within an hour."
+/>
+
+## Halting and the one-way door
+
+```text title="What you can and cannot do" numbered
+halt a rollout          -> yes, immediately; new users stop receiving it
+resume a rollout        -> yes
+roll back a rollout     -> NO
+```
+
+There is no un-ship. Halting stops the release reaching more users, but everyone who already updated
+keeps the broken version — Android has no downgrade path for an installed app. The only forward fix is
+a new build with a higher `versionCode`, which needs review.
+
+Two consequences follow. First, the ramp should be slow enough that a halt limits the damage
+meaningfully; halting at 50% saves half your users, which is much less impressive than it sounds.
+Second, anything that might need turning off should be behind a Remote Config flag from the quality
+phase — that is the only mechanism that reaches users who already updated, and it works in minutes
+rather than days.
+
+<Detail summary="Managed publishing, and the release calendar">
+**Managed publishing** decouples review from release: builds go through review and then sit approved
+until you press publish. Without it, an approved build goes live whenever review happens to finish,
+which might be 2am on a Saturday.
+
+That matters because of when things go wrong. A release that goes out on a Friday afternoon has the
+weekend to accumulate one-star reviews before anyone reads the metrics, and the one-star reviews
+outlive the bug — Play's rating is cumulative, so a bad weekend depresses the score for months.
+
+The practical shape most teams converge on:
+
+- Ship Monday to Wednesday, in the morning, with someone watching.
+- Internal track continuously; production on a fixed cadence.
+- A named person who can halt without a meeting.
+- The rollback plan written down, which is the Remote Config flag, not a new build.
+
+None of that is technical, and all of it decides how much a staged rollout is actually worth.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second makes staging pointless">
+**Watching only crash-free rate.** A broken flow that does not crash is invisible to it.
+
+**Staging without watching.** The same outcome as shipping to 100%, with extra steps.
+
+**Expecting to roll back.** You cannot; users who updated keep the broken build.
+
+**Friday releases.** The weekend fills with one-star reviews that outlive the fix.
+
+**Ignoring pre-launch reports.** Free crash and accessibility findings on real devices.
+</Pitfall>
+
+## Practice
+
+1. Ship to internal testing and note how long it takes to become available.
+2. Start a 1% rollout, then halt it, and confirm what happens to users who already updated.
+3. Add one behavioural metric to your release dashboard alongside crash-free rate.
+4. Read a pre-launch report for your current build.
+5. Put your riskiest new feature behind a Remote Config flag before the next release.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Internal | Up to 100 testers, minutes, no review |
+| Closed | A real beta group; full review |
+| Open | Public and on your listing |
+| Review | Hours to a week; plan the calendar around it |
+| Pre-launch report | Free findings on real devices |
+| Staged rollout | Limits reach, only if you watch and can halt |
+| Watch | Crash-free, ANR, and one behavioural metric |
+| Halt | Stops new users; does not undo the update |
+| No rollback | The fix is a new build, or a Remote Config flag |
+| Managed publishing | Decides when a release goes live, not review |
+
+<Interview title="A question about what a rollout actually protects you from">
+"How would you release a risky change?"
+
+Behind a Remote Config flag first, defaulting to off, so the code ships inert and I can enable it
+without a release — and disable it in minutes if it goes wrong. That matters because a staged rollout
+cannot be rolled back: halting stops new users receiving the build, but everyone who already updated
+keeps it, and Android has no downgrade.
+
+Then a slow ramp — 1%, 5%, 20% with real pauses — and someone actually watching. The watchlist has to
+include a behavioural metric, not just crash-free rate and ANRs, because the failure a staged rollout is
+meant to catch is often one where nothing crashes and a button silently does nothing. And I would ship
+early in the week, in the morning, because a Friday release accumulates one-star reviews over a weekend
+and Play's rating is cumulative — the bug gets fixed and the score does not recover for months.
+</Interview>
