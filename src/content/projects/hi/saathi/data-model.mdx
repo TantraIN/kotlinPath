@@ -1,0 +1,186 @@
+---
+title: "शक्लें: domain, entity और DTO"
+description: Database, नेट और screen, तीनों के लिए एक ही class कम काम लगती है, और वही फैसला आगे के हर बदलाव को महँगा बना देता है। तीन शक्लें आती कहाँ से हैं, यह वही जगह है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Database, server और screen, हर एक को अलग शक्ल चाहिए, और वे अलग-अलग वजहों से बदलते
+हैं। एक ही class तीनों को देने का मतलब है उन सब वजहों का वही एक file बदलना — और ठीक
+यही backend के छोटे बदलाव को चालीस जगहों के बदलाव में बदल देता है।
+</KeyIdea>
+
+## तीन किस्म, एक ही विचार
+
+```kotlin title="domain/Item.kt" numbered
+/** ऐप जिस बारे में है। न Android, न Room, न Firestore। */
+data class Item(
+    val id: String,
+    val text: String,
+    val done: Boolean,
+    val addedBy: String,
+    val updatedAt: Instant,
+)
+```
+
+```kotlin title="data/local/ItemEntity.kt" numbered
+@Entity(tableName = "items")
+data class ItemEntity(
+    @PrimaryKey val id: String,
+    val listId: String,
+    val text: String,
+    val done: Boolean,
+    val addedBy: String,
+    val updatedAt: Long,          // Room बुनियादी किस्म रखता है, Instant नहीं
+    val pendingSync: Boolean,     // सिर्फ यहीं का: यह बदलाव server तक पहुँचा या नहीं
+)
+```
+
+```kotlin title="data/remote/ItemDto.kt" numbered
+/** ठीक वही जो Firestore रखता है। सब null हो सकता है, क्योंकि document पुराना हो सकता है। */
+data class ItemDto(
+    val text: String? = null,
+    val done: Boolean? = null,
+    val addedBy: String? = null,
+    val updatedAt: Timestamp? = null,
+)
+```
+
+देखिए फर्क क्या है। Entity में `pendingSync` है, जिसे server को कभी नहीं देखना चाहिए
+और screen को जिससे कोई मतलब ही नहीं। DTO में सब कुछ null हो सकता है, क्योंकि ऐप के
+पुराने रूप का लिखा document किसी खाने के बिना हो सकता है। Domain के model में इनमें
+से कोई दिक्कत नहीं, और UI सिर्फ उसी को छूती है।
+
+<Compare
+  left={{
+    title: "एक साझी class",
+    accent: "rose",
+    points: [
+      "- UI को पता चल जाता है कि हर खाना null हो सकता है",
+      "- Room के annotations उस किस्म में रिस जाते हैं जिसे server भी लेता है",
+      "- Backend पर एक नाम बदलना हर छूती हुई file का बदलाव है",
+      "+ पहले दिन कम files",
+    ],
+  }}
+  right={{
+    title: "तीन शक्लें और दो mappers",
+    accent: "emerald",
+    points: [
+      "+ Server का बदलाव एक mapper पर रुक जाता है",
+      "+ UI को कभी ऐसा null खाना नहीं मिलता जिसे उसे सँभालना पड़े",
+      "+ सिर्फ यहीं के झंडे यहीं रहते हैं",
+      "- दो फालतू files, जो पहले बदलाव तक बेकार लगती हैं",
+    ],
+  }}
+/>
+
+## Mappers
+
+```kotlin title="data/Mappers.kt" numbered
+fun ItemEntity.toDomain() = Item(
+    id = id,
+    text = text,
+    done = done,
+    addedBy = addedBy,
+    updatedAt = Instant.ofEpochMilli(updatedAt),
+)
+
+fun ItemDto.toEntity(id: String, listId: String) = ItemEntity(
+    id = id,
+    listId = listId,
+    text = text.orEmpty(),                                 // छूटे मान का फैसला एक बार, यहीं
+    done = done ?: false,
+    addedBy = addedBy.orEmpty(),
+    updatedAt = updatedAt?.toDate()?.time ?: 0L,
+    pendingSync = false,                                   // यह server से आया है, तो sync है
+)
+```
+
+दूसरे function का हर `orEmpty()` और `?:` छूटे हुए data के बारे में एक फैसला है, एक
+बार लिया गया, उसी जगह जो server की आदतें जानती है। उसके बिना वही फैसला हर composable
+में अलग-अलग, जरूरत पड़ने पर लिया जाता है, और आमतौर पर बिना सोचे `?: ""` की तरह।
+
+## पहचान का फैसला
+
+यह गलत करना आसान है और बदलना महँगा, तो इसे अपना शीर्षक मिलना चाहिए।
+
+```kotlin title="कोई चीज जोड़ना" numbered
+val item = ItemEntity(
+    id = UUID.randomUUID().toString(),   // पहचान client तय करता है, server नहीं
+    listId = listId,
+    text = text,
+    done = false,
+    addedBy = uid,
+    updatedAt = System.currentTimeMillis(),
+    pendingSync = true,
+)
+dao.insert(item)                          // तुरंत, बिना नेट, और अपनी आखिरी पहचान के साथ
+```
+
+Client की बनाई पहचान, न अपने आप बढ़ता कोई column, न server का दिया कोई नंबर।
+
+<Quiz
+  question="बिना नेट पहले चलने वाला कोई ऐप चीजों की पहचान के लिए Room का `@PrimaryKey(autoGenerate = true)` लेता है, और sync होने पर Firestore के document की पहचान अपना लेता है। कोई उपयोगकर्ता ट्रेन में तीन चीजें जोड़ता है, एक को बदलने के लिए छूता है, और ऐप पूरे वक्त खुला रहा है।"
+  options={[
+    "यह चलता है: Room हर चीज को तुरंत एक अलग स्थानीय पहचान देता है",
+    "Sync होते ही पहचान बदल जाती है, तो जो कुछ पुरानी पहचान पकड़े है — खुली हुई बदलने वाली screen, कतार में पड़ी WorkManager की माँग, back का ढेर — वह अब ऐसी पंक्ति की ओर इशारा कर रहा है जो उस पहचान से मौजूद ही नहीं। Client पर पहचान बनाना उसे पहले millisecond से पक्का रखता है, बिना नेट और नेट के साथ, दोनों में",
+    "Firestore वह लिखना ठुकरा देता है क्योंकि document की पहचान अंकों में होनी चाहिए"
+  ]}
+  answer={1}
+  explanation="स्थानीय अपने आप बढ़ती गिनती सच में तुरंत एक अलग पहचान देती है, तो insert पूरा होता है और सब सही दिखता है — पर वह पहचान अस्थायी है, और जब वह पंक्ति server की पहचान से दोबारा लिखी जाती है तो sync से पहले पकड़ा गया हर हवाला चुपचाप बासी हो जाता है। जिस screen को उपयोगकर्ता बदल रहा है वह सबसे दिखता नुकसान है, और पुरानी पहचान लिए कतार में पड़ी sync की माँग सबसे कम दिखता, क्योंकि वह बाद में ऐसी error से गिरती है जो पहचान बदलने की नहीं, नेट की ओर इशारा करती है। Client की बनाई UUID पूरी की पूरी दिक्कत मिटा देती है: पंक्ति के database छूने से पहले ही उसकी पक्की पहचान होती है, तो बिना नेट और नेट वाला लिखना एक ही लिखना है और कोई हवाला कभी बेकार नहीं होता। Firestore को string वाली document की पहचान से कोई शिकायत नहीं, तो वह पहचान चुनना आपके हाथ में है।"
+/>
+
+## दो खाने जो data के बारे में हैं ही नहीं
+
+`pendingSync` और `updatedAt` किसी चीज का ब्योरा नहीं देते। वे उस चीज के बारे में
+हमारी जानकारी का ब्योरा देते हैं, और दो कदम बाद वाले sync के चक्कर को दोनों चाहिए।
+
+| खाना | कहाँ रहता है | किस सवाल का जवाब |
+| --- | --- | --- |
+| `pendingSync` | सिर्फ Room में | Server को इस बदलाव की खबर हुई या नहीं? |
+| `updatedAt` | Room और Firestore, दोनों में | टकराते दो बदलावों में नया कौन सा है? |
+
+`pendingSync` ही UI को किसी चीज को अभी न भेजी हुई दिखाने देता है, और वही पीछे चलता
+worker ढूँढ़कर काम पाता है। चूँकि वह उपकरण से बाहर जाता ही नहीं, वह DTO में नहीं है —
+और यह ध्यान देने लायक ब्योरा है, क्योंकि DTO का अलग किस्म के तौर पर होना इसी वजह से है।
+
+<Detail summary="यहाँ `updatedAt` client की घड़ी क्यों है, और वह कब काफी नहीं">
+Firestore `FieldValue.serverTimestamp()` से server की मुहर लिख सकता है, जो आखिरी बात
+है और गलत तारीख वाले फोन से बेअसर। हम स्थानीय लिखने के लिए उसे नहीं ले रहे, एक वजह
+से: वह server पर तय होती है, तो बिना नेट लिखे का कोई इस्तेमाल लायक मान sync तक होता
+ही नहीं, और आखिरी लिखे की जीत को मान *अभी* चाहिए।
+
+तो client की घड़ी यहीं लिख दी जाती है, और सौदा साफ-साफ कह दिया जाता है: बुरी तरह गलत
+घड़ी वाला फोन ऐसा टकराव जीत सकता है जो उसे हारना चाहिए था। घर के सौदे की सूची के लिए
+यह मंजूर है — गलत होने की कीमत text की एक दोहराई हुई लाइन है।
+
+जहाँ टकराव हारने वाला मायने रखता हो — पैसा, booking, भंडार — वहाँ यह काफी नहीं, और
+जवाब कोई बेहतर मुहर नहीं है। जवाब यह है कि टकराव client पर सुलझाना बंद कीजिए: हालत
+नहीं, इरादे लिखिए, और फैसला किसी transaction या server के function को करने दीजिए।
+</Detail>
+
+<Pitfall title="चार, और पहली वह है जिसे सस्ते में पलटा नहीं जा सकता">
+**बिना नेट पहले चलने वाले ऐप में server की दी पहचान।** Sync से पहले लिया हर हवाला
+बासी हो जाता है। पहचान client पर बनाइए।
+
+**Domain के model पर Room के annotations।** अब domain किसी database पर टिका है, और
+बिना उसके unit test नहीं हो सकता।
+
+**Null हो सकने वाले खाने UI तक पहुँचना।** हर screen अपना बचाव गढ़ती है, और वे आपस
+में नहीं मिलते।
+
+**`pendingSync` को DTO में रखना।** वह Firestore में लिख दिया जाता है, जहाँ वह बेमतलब
+है और हर दूसरे client को उलझाता है।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| तीन किस्म मौजूद हैं | `Item`, `ItemEntity`, `ItemDto`, तीन packages में |
+| Domain साफ है | उसमें कुछ भी Room, Firestore या Android import नहीं करता |
+| Mappers ही अकेला पुल हैं | खाने सिर्फ `toDomain` और `toEntity` में मिलाए जाते हैं |
+| पहचान client से आती है | Insert पर `UUID.randomUUID()`, कभी `autoGenerate` नहीं |
+| Sync के खाने अलग हैं | `pendingSync` सिर्फ entity में है |
+
+आगे: Room को सच का स्रोत बनाइए, और फोन के aeroplane mode में सूची को तुरंत बनते देखिए।

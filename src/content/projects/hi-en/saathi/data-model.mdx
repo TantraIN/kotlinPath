@@ -1,0 +1,194 @@
+---
+title: "Shaklein: domain, entity aur DTO"
+description: Database, net aur screen, teenon ke liye ek hi class kam kaam lagti hai, aur wahi faisla aage ke har badlaav ko mehnga bana deta hai. Teen shaklein aati kahan se hain, yeh wahi jagah hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Database, server aur screen, har ek ko alag shakl chahiye, aur wo alag-alag wajahon
+se badalte hain. Ek hi class teenon ko dene ka matlab hai un sab wajahon ka wahi ek
+file badalna — aur theek yahi backend ke chhote badlaav ko chaalis jagahon ke badlaav
+mein badal deta hai.
+</KeyIdea>
+
+## Teen kism, ek hi vichaar
+
+```kotlin title="domain/Item.kt" numbered
+/** App jis baare mein hai. Na Android, na Room, na Firestore. */
+data class Item(
+    val id: String,
+    val text: String,
+    val done: Boolean,
+    val addedBy: String,
+    val updatedAt: Instant,
+)
+```
+
+```kotlin title="data/local/ItemEntity.kt" numbered
+@Entity(tableName = "items")
+data class ItemEntity(
+    @PrimaryKey val id: String,
+    val listId: String,
+    val text: String,
+    val done: Boolean,
+    val addedBy: String,
+    val updatedAt: Long,          // Room buniyaadi kism rakhta hai, Instant nahi
+    val pendingSync: Boolean,     // sirf yahin ka: yeh badlaav server tak pahuncha ya nahi
+)
+```
+
+```kotlin title="data/remote/ItemDto.kt" numbered
+/** Theek wahi jo Firestore rakhta hai. Sab null ho sakta hai, kyonki document purana ho sakta hai. */
+data class ItemDto(
+    val text: String? = null,
+    val done: Boolean? = null,
+    val addedBy: String? = null,
+    val updatedAt: Timestamp? = null,
+)
+```
+
+Dekhiye farak kya hai. Entity mein `pendingSync` hai, jise server ko kabhi nahi dekhna
+chahiye aur screen ko jisse koi matlab hi nahi. DTO mein sab kuchh null ho sakta hai,
+kyonki app ke purane roop ka likha document kisi khaane ke bina ho sakta hai. Domain ke
+model mein inmein se koi dikkat nahi, aur UI sirf usi ko chhooti hai.
+
+<Compare
+  left={{
+    title: "Ek saajhi class",
+    accent: "rose",
+    points: [
+      "- UI ko pata chal jaata hai ki har khaana null ho sakta hai",
+      "- Room ke annotations us kism mein ris jaate hain jise server bhi leta hai",
+      "- Backend par ek naam badalna har chhooti hui file ka badlaav hai",
+      "+ Pehle din kam files",
+    ],
+  }}
+  right={{
+    title: "Teen shaklein aur do mappers",
+    accent: "emerald",
+    points: [
+      "+ Server ka badlaav ek mapper par ruk jaata hai",
+      "+ UI ko kabhi aisa null khaana nahi milta jise use sambhalna pade",
+      "+ Sirf yahin ke jhande yahin rehte hain",
+      "- Do faltu files, jo pehle badlaav tak bekaar lagti hain",
+    ],
+  }}
+/>
+
+## Mappers
+
+```kotlin title="data/Mappers.kt" numbered
+fun ItemEntity.toDomain() = Item(
+    id = id,
+    text = text,
+    done = done,
+    addedBy = addedBy,
+    updatedAt = Instant.ofEpochMilli(updatedAt),
+)
+
+fun ItemDto.toEntity(id: String, listId: String) = ItemEntity(
+    id = id,
+    listId = listId,
+    text = text.orEmpty(),                                 // chhoote maan ka faisla ek baar, yahin
+    done = done ?: false,
+    addedBy = addedBy.orEmpty(),
+    updatedAt = updatedAt?.toDate()?.time ?: 0L,
+    pendingSync = false,                                   // yeh server se aaya hai, to sync hai
+)
+```
+
+Doosre function ka har `orEmpty()` aur `?:` chhoote hue data ke baare mein ek faisla
+hai, ek baar liya gaya, usi jagah jo server ki aadatein jaanti hai. Uske bina wahi
+faisla har composable mein alag-alag, zaroorat padne par liya jaata hai, aur aamtaur
+par bina soche `?: ""` ki tarah.
+
+## Pehchaan ka faisla
+
+Yeh galat karna aasaan hai aur badalna mehnga, to ise apna sheershak milna chahiye.
+
+```kotlin title="Koi cheez jodna" numbered
+val item = ItemEntity(
+    id = UUID.randomUUID().toString(),   // pehchaan client tay karta hai, server nahi
+    listId = listId,
+    text = text,
+    done = false,
+    addedBy = uid,
+    updatedAt = System.currentTimeMillis(),
+    pendingSync = true,
+)
+dao.insert(item)                          // turant, bina net, aur apni aakhri pehchaan ke saath
+```
+
+Client ki banai pehchaan, na apne aap badhta koi column, na server ka diya koi number.
+
+<Quiz
+  question="Bina net pehle chalne wala koi app cheezon ki pehchaan ke liye Room ka `@PrimaryKey(autoGenerate = true)` leta hai, aur sync hone par Firestore ke document ki pehchaan apna leta hai. Koi user train mein teen cheezein jodta hai, ek ko badalne ke liye chhoota hai, aur app poore waqt khula raha hai."
+  options={[
+    "Yeh chalta hai: Room har cheez ko turant ek alag sthaaniya pehchaan deta hai",
+    "Sync hote hi pehchaan badal jaati hai, to jo kuchh purani pehchaan pakde hai — khuli hui badalne wali screen, kataar mein padi WorkManager ki maang, back ka dher — wo ab aisi pankti ki or ishaara kar raha hai jo us pehchaan se maujood hi nahi. Client par pehchaan banana use pehle millisecond se pakka rakhta hai, bina net aur net ke saath, donon mein",
+    "Firestore wo likhna thukra deta hai kyonki document ki pehchaan ankon mein honi chahiye"
+  ]}
+  answer={1}
+  explanation="Sthaaniya apne aap badhti ginti sach mein turant ek alag pehchaan deti hai, to insert poora hota hai aur sab sahi dikhta hai — par wo pehchaan asthaayi hai, aur jab wo pankti server ki pehchaan se dobara likhi jaati hai to sync se pehle pakda gaya har hawala chupchaap baasi ho jaata hai. Jis screen ko user badal raha hai wo sabse dikhta nuksaan hai, aur purani pehchaan liye kataar mein padi sync ki maang sabse kam dikhta, kyonki wo baad mein aisi error se girti hai jo pehchaan badalne ki nahi, net ki or ishaara karti hai. Client ki banai UUID poori ki poori dikkat mita deti hai: pankti ke database chhoone se pehle hi uski pakki pehchaan hoti hai, to bina net aur net wala likhna ek hi likhna hai aur koi hawala kabhi bekaar nahi hota. Firestore ko string wali document ki pehchaan se koi shikaayat nahi, to wo pehchaan chunna aapke haath mein hai."
+/>
+
+## Do khaane jo data ke baare mein hain hi nahi
+
+`pendingSync` aur `updatedAt` kisi cheez ka byora nahi dete. Wo us cheez ke baare mein
+hamari jaankari ka byora dete hain, aur do step baad wale sync ke chakkar ko donon
+chahiye.
+
+| Khaana | Kahan rehta hai | Kis sawaal ka jawaab |
+| --- | --- | --- |
+| `pendingSync` | Sirf Room mein | Server ko is badlaav ki khabar hui ya nahi? |
+| `updatedAt` | Room aur Firestore, donon mein | Takraate do badlaavon mein naya kaun sa hai? |
+
+`pendingSync` hi UI ko kisi cheez ko abhi na bheji hui dikhane deta hai, aur wahi
+peechhe chalta worker dhoondhkar kaam paata hai. Chunki wo upkaran se bahar jaata hi
+nahi, wo DTO mein nahi hai — aur yeh dhyaan dene layak byora hai, kyonki DTO ka alag
+kism ke taur par hona isi wajah se hai.
+
+<Detail summary="Yahan `updatedAt` client ki ghadi kyon hai, aur wo kab kaafi nahi">
+Firestore `FieldValue.serverTimestamp()` se server ki muhar likh sakta hai, jo aakhri
+baat hai aur galat taareekh wale phone se beasar. Hum sthaaniya likhne ke liye use
+nahi le rahe, ek wajah se: wo server par tay hoti hai, to bina net likhe ka koi
+istemaal layak maan sync tak hota hi nahi, aur aakhri likhe ki jeet ko maan *abhi*
+chahiye.
+
+To client ki ghadi yahin likh di jaati hai, aur sauda saaf-saaf keh diya jaata hai:
+buri tarah galat ghadi wala phone aisa takraav jeet sakta hai jo use haarna chahiye
+tha. Ghar ke saude ki list ke liye yeh manzoor hai — galat hone ki keemat text ki ek
+dohrai hui line hai.
+
+Jahan takraav haarne wala maayne rakhta ho — paisa, booking, bhandaar — wahan yeh
+kaafi nahi, aur jawaab koi behtar muhar nahi hai. Jawaab yeh hai ki takraav client par
+suljhana band kijiye: haalat nahi, iraade likhiye, aur faisla kisi transaction ya
+server ke function ko karne dijiye.
+</Detail>
+
+<Pitfall title="Chaar, aur pehli wo hai jise saste mein palta nahi ja sakta">
+**Bina net pehle chalne wale app mein server ki di pehchaan.** Sync se pehle liya har
+hawala baasi ho jaata hai. Pehchaan client par banaiye.
+
+**Domain ke model par Room ke annotations.** Ab domain kisi database par tika hai, aur
+bina uske unit test nahi ho sakta.
+
+**Null ho sakne wale khaane UI tak pahunchna.** Har screen apna bachaav gadhti hai, aur
+wo aapas mein nahi milte.
+
+**`pendingSync` ko DTO mein rakhna.** Wo Firestore mein likh diya jaata hai, jahan wo
+bematlab hai aur har doosre client ko uljhata hai.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Teen kism maujood hain | `Item`, `ItemEntity`, `ItemDto`, teen packages mein |
+| Domain saaf hai | Usmein kuchh bhi Room, Firestore ya Android import nahi karta |
+| Mappers hi akela pul hain | Khaane sirf `toDomain` aur `toEntity` mein milaye jaate hain |
+| Pehchaan client se aati hai | Insert par `UUID.randomUUID()`, kabhi `autoGenerate` nahi |
+| Sync ke khaane alag hain | `pendingSync` sirf entity mein hai |
+
+Aage: Room ko sach ka srot banaiye, aur phone ke aeroplane mode mein list ko turant
+bante dekhiye.

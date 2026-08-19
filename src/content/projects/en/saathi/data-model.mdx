@@ -1,0 +1,194 @@
+---
+title: "The shapes: domain, entity and DTO"
+description: One class for the database, the network and the screen looks like less work, and is the decision that makes every later change expensive. Here is where the three shapes come from.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+The database, the server and the screen each want a different shape, and they change
+for different reasons. One class serving all three means every one of those reasons
+edits the same file — which is exactly what makes a small backend change turn into a
+change in forty places.
+</KeyIdea>
+
+## Three types, one idea
+
+```kotlin title="domain/Item.kt" numbered
+/** What the app is about. No Android, no Room, no Firestore. */
+data class Item(
+    val id: String,
+    val text: String,
+    val done: Boolean,
+    val addedBy: String,
+    val updatedAt: Instant,
+)
+```
+
+```kotlin title="data/local/ItemEntity.kt" numbered
+@Entity(tableName = "items")
+data class ItemEntity(
+    @PrimaryKey val id: String,
+    val listId: String,
+    val text: String,
+    val done: Boolean,
+    val addedBy: String,
+    val updatedAt: Long,          // Room stores primitives, not Instant
+    val pendingSync: Boolean,     // local-only: has this reached the server yet
+)
+```
+
+```kotlin title="data/remote/ItemDto.kt" numbered
+/** Exactly what Firestore stores. Nullable, because a document may be old. */
+data class ItemDto(
+    val text: String? = null,
+    val done: Boolean? = null,
+    val addedBy: String? = null,
+    val updatedAt: Timestamp? = null,
+)
+```
+
+Look at what differs. The entity has `pendingSync`, which the server must never see
+and the screen has no business knowing about. The DTO has nullable everything,
+because a document written by an older version of the app may be missing a field. The
+domain model has neither problem, and it is the only one the UI touches.
+
+<Compare
+  left={{
+    title: "One shared class",
+    accent: "rose",
+    points: [
+      "- The UI learns that every field can be null",
+      "- Room annotations leak into a type the server also uses",
+      "- A backend rename is a change in every file that touched it",
+      "+ Fewer files on day one",
+    ],
+  }}
+  right={{
+    title: "Three shapes and two mappers",
+    accent: "emerald",
+    points: [
+      "+ A server change stops at one mapper",
+      "+ The UI never sees a nullable field it must handle",
+      "+ Local-only flags stay local",
+      "- Two extra files, and they feel pointless until the first change",
+    ],
+  }}
+/>
+
+## The mappers
+
+```kotlin title="data/Mappers.kt" numbered
+fun ItemEntity.toDomain() = Item(
+    id = id,
+    text = text,
+    done = done,
+    addedBy = addedBy,
+    updatedAt = Instant.ofEpochMilli(updatedAt),
+)
+
+fun ItemDto.toEntity(id: String, listId: String) = ItemEntity(
+    id = id,
+    listId = listId,
+    text = text.orEmpty(),                                 // decide the fallback once, here
+    done = done ?: false,
+    addedBy = addedBy.orEmpty(),
+    updatedAt = updatedAt?.toDate()?.time ?: 0L,
+    pendingSync = false,                                   // it came from the server, so it is synced
+)
+```
+
+Every `orEmpty()` and `?:` in that second function is a decision about missing data,
+made once, in the one place that knows the server's habits. Without it, the same
+decision is made ad hoc in each composable, differently, and usually as `?: ""` with
+no thought at all.
+
+## The id decision
+
+This one is easy to get wrong and expensive to change, so it deserves its own
+heading.
+
+```kotlin title="Adding an item" numbered
+val item = ItemEntity(
+    id = UUID.randomUUID().toString(),   // the client decides the id, not the server
+    listId = listId,
+    text = text,
+    done = false,
+    addedBy = uid,
+    updatedAt = System.currentTimeMillis(),
+    pendingSync = true,
+)
+dao.insert(item)                          // instant, offline, and already has its final id
+```
+
+A generated id from the client, not an auto-incrementing column and not a server
+assignment.
+
+<Quiz
+  question="An offline-first app uses Room's `@PrimaryKey(autoGenerate = true)` for item ids, and takes the Firestore document id when the item syncs. A user adds three items on a train, taps one to edit it, and the app has been open the whole time."
+  options={[
+    "It works: Room gives each item a unique local id immediately",
+    "The id changes when the item syncs, so anything holding the old id — the open edit screen, a pending WorkManager request, the navigation back stack — is now pointing at a row that no longer exists under that id. Generating the id on the client keeps it stable from the first millisecond, offline and online alike",
+    "Firestore rejects the write because the document id must be numeric"
+  ]}
+  answer={1}
+  explanation="Local auto-increment does give a unique id immediately, so the insert succeeds and everything looks correct — but that id is temporary, and when the row is rewritten under the server's id every reference captured before the sync silently becomes stale. The screen the user is editing is the most visible casualty, and a queued sync request holding the old id is the least visible one, because it fails later with an error that points at the network rather than the identity change. A client-generated UUID removes the whole class of problem: the row has its permanent id before it touches the database, so offline and online writes are the same write and no reference is ever invalidated. Firestore is happy with a string document id, so the identity is yours to choose."
+/>
+
+## Two fields that are not about the data
+
+`pendingSync` and `updatedAt` do not describe an item. They describe our knowledge of
+it, and both are needed by the sync loop in two steps.
+
+| Field | Lives in | Answers |
+| --- | --- | --- |
+| `pendingSync` | Room only | Does the server know about this edit yet? |
+| `updatedAt` | Room and Firestore | Which of two conflicting edits is newer? |
+
+`pendingSync` is what lets the UI show an item as not-yet-synced, and what the
+background worker queries to find work. Because it never leaves the device, it is not
+in the DTO — a detail worth noticing, because it is the reason the DTO exists as a
+separate type at all.
+
+<Detail summary="Why `updatedAt` is a client clock here, and when that is not good enough">
+Firestore can write a server timestamp with `FieldValue.serverTimestamp()`, which is
+authoritative and immune to a phone with the wrong date. We are not using it for the
+local write, for one reason: it resolves on the server, so an offline write has no
+usable value until it syncs, and last-write-wins needs a value *now*.
+
+So the client clock is written locally, and the trade is stated plainly: a phone with
+a badly wrong clock can win a conflict it should have lost. For a household shopping
+list, that is acceptable — the cost of getting it wrong is one duplicated line of
+text.
+
+For anything where the loser of a conflict matters — money, bookings, inventory —
+this is not good enough, and the answer is not a better timestamp. It is to stop
+resolving conflicts on the client at all: write intents rather than states, and let a
+transaction or a server function decide.
+</Detail>
+
+<Pitfall title="Four, and the first is the one you cannot cheaply undo">
+**Server-assigned ids in an offline-first app.** Every reference taken before sync
+goes stale. Generate on the client.
+
+**Room annotations on the domain model.** The domain now depends on a database, and
+cannot be unit tested without one.
+
+**Nullable fields reaching the UI.** Each screen invents its own fallback, and they
+disagree.
+
+**Putting `pendingSync` in the DTO.** It gets written to Firestore, where it is
+meaningless and confusing to every other client.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| Three types exist | `Item`, `ItemEntity`, `ItemDto`, in three packages |
+| The domain is clean | Nothing in it imports Room, Firestore or Android |
+| Mappers are the only bridge | `toDomain` and `toEntity` are the only places fields are matched |
+| Ids come from the client | `UUID.randomUUID()` at insert, never `autoGenerate` |
+| Sync fields are marked | `pendingSync` is in the entity only |
+
+Next: make Room the source of truth, and watch the list render instantly with the
+phone in aeroplane mode.
