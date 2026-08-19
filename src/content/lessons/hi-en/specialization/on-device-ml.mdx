@@ -1,0 +1,159 @@
+---
+title: "Upkaran par ML: ML Kit aur TensorFlow Lite"
+description: Upkaran par anumaan lagana tezi, nijta aur bina net ka chalna khareedta hai, aur unki keemat model ke naap, upkaranon ke farak aur aise model se chukata hai jis par aap patch nahi laga sakte. Mushkil hissa kabhi model nahi hota — wo hota hai jo aap use khilate hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Upkaran par ML ki lagbhag har gadbadi **taiyari ka bemel** hai, kharab model nahi. Jo wazan laptop par
+achha naap dete hain wahi phone par betuka lautate hain kyonki tasveer ghoomi hui, alag naap ki ya
+training se alag tarah se saamaanya ki hui pahunchi.
+</KeyIdea>
+
+## API ke do star
+
+ML Kit aapko poore kiye hue kaam deta hai — text pehchanna, barcode, chehre, mudra, anuvaad, vishay alag
+karna. Aap use tasveer dete hain aur tayshuda kism ke nateeje paate hain. LiteRT, wahi runtime jise
+pehle TensorFlow Lite kehte the, *aapka* model chalata hai aur aapko kachche tensors deta hai.
+
+ML Kit hi lijiye, jab tak wo kaam uski soochi mein na ho. Kasa hua, sambhala ja raha, hardware se tez
+kiya gaya model us apne wale se zyada keemti hai jise aapko zinda rakhna pade.
+
+```kotlin title="TextAnalyzer.kt" numbered
+class TextAnalyzer(private val onText: (String) -> Unit) : ImageAnalysis.Analyzer {
+    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    @OptIn(ExperimentalGetImage::class)
+    override fun analyze(proxy: ImageProxy) {
+        val media = proxy.image ?: return proxy.close()
+        val input = InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees)
+
+        recognizer.process(input)
+            .addOnSuccessListener { onText(it.text) }
+            .addOnCompleteListener { proxy.close() }          // hamesha, warna camera ruk jaayega
+    }
+}
+```
+
+Zyadatar khatra do lainon mein hai. `proxy.imageInfo.rotationDegrees` wahi hai jise log chhod dete hain,
+aur `addOnCompleteListener` mein `proxy.close()` wahi hai jise log galat jagah rakhte hain — jaldi band
+kijiye to aap dobara istemaal ho chuke buffer ko padhte hain, bhoolie to kuchh frames baad camera kuchh
+deta hi nahi.
+
+<Quiz
+  question="Gallery se chuni tasveeron par text ki pehchaan sahi hai, par chalte hue camera ki jhalak par khaali ya betuke nateeje aate hain — har upkaran par."
+  options={[
+    "Jhalak ka resolution pehchanne wale ke liye bahut kam hai",
+    "Ghumaav bheja hi nahi ja raha. Camera ka sensor apna buffer ek tay disha mein deta hai, chahe phone jaise bhi pakda ho, to `rotationDegrees` ke bina model ko tedha text dikhta hai — jabki gallery ki tasveerein pehle se seedhi aati hain",
+    "Pehchanne wale model ka Google Play services se utarna abhi poora nahi hua"
+  ]}
+  answer={1}
+  explanation="Camera ke sensor ek tay disha mein jade hote hain aur hamesha usi disha mein buffer dete hain, to seedha pakda phone bhi aada frame banata hai, aur `ImageProxy` wo sudhaar aap par chhodte hue `imageInfo.rotationDegrees` mein bata deta hai, khud lagata nahi. Wo argument chhodiye aur pehchanne wale ko nabbe ansh ghooma hua text milta hai, jise padhne ki uski training nahi hai, to error nahi, khaali nateeje milte hain — aur yeh har upkaran par dohrata hai kyonki yeh upkaran ki sanak nahi, chhoota hua argument hai. Gallery ki tasveerein isliye chalti hain ki kholte waqt EXIF ki disha pehle hi lag chuki hoti hai, aur theek isiliye yeh gadbadi thehri hui tasveeron par ki gayi parakh se bach nikalti hai. Jhalak ka resolution sahipan ko dheere-dheere ghatata, shoonya nahi karta, aur abhi utar raha model apni alag naakami bataata hai, khaali text nahi lautata."
+/>
+
+## Saath bheja hua ya utaara hua
+
+ML Kit do tarah se aata hai, aur yeh chunaav build ka byora nahi, utpaad ka asli faisla hai.
+
+| | App ke saath bheja hua | Google Play services se |
+| --- | --- | --- |
+| App ka naap | Har model ke kai MB | Lagbhag kuchh nahi |
+| Pehla istemaal | Turant chalta hai | Utarne ka intezaar ho sakta hai |
+| Bina net | Hamesha | Utarne ke baad hi |
+| Sudhaar | Aapki releases ke saath | Apne aap, alag se |
+
+Zyadatar projects mein saath na bhejne wala raasta hi chalan hai, aur uski keemat ek aisi haalat hai jise
+aapki UI ko sach mein sambhalna padega: model abhi hai hi nahi. Nayi-naveli install aur kamzor connection
+par upyogkarta yahi sabse pehle dekhta hai, to wahan chupchaap khaali screen nahi, asli sandesh chahiye.
+
+<Detail summary="Apne model: naap, delegates aur naapna">
+Jab ML Kit wo kaam nahi karta, to aap koi `.tflite` model bhejte hain aur khud chalate hain.
+
+**Quantisation** pehli ghundi hai. float32 wazanon ko int8 mein badalna model ko kareeb chaar guna chhota
+aur saaf taur par tez kar deta hai, aur thode sahipan ki keemat leta hai. Zyadatar vargikaran aur
+pehchaan ke kaam mein wo sauda saaf faayde ka hai; us nuksaan ko maan lene ke bajay naapiye.
+
+**Delegates** kaam ko CPU se hatate hain. GPU wala delegate bade convolutional models ki madad karta hai
+aur chhote walon ke liye CPU se dheema bhi ho sakta hai, taiyari aur dhulaai ki keemat ki wajah se. Naye
+upkaran banane walon ke NPU wale delegates dete hain, jo aur tez hain aur har jagah nahi hain — to
+delegate chalte waqt ki ek koshish honi chahiye jiske peechhe CPU khada ho, koi maanyata nahi.
+
+**Naapna** wahin teams kotaahi karti hain. Teen ank maayne rakhte hain, aur unmein se koi ausat sahipan
+nahi:
+
+- aapke sahara diye *sabse saste* upkaran par p95 anumaan ka samay, aapke sabse achhe wale par nahi
+- lagataar paanch minute chalne ke baad ka samay, jab garmi se raftaar ghatne lagti hai
+- anumaan ke dauraan memory, kyonki jo choti 8 GB par bach jaati hai wo 4 GB par shayad nahi
+
+**Gemini Nano** sabse naya vikalp hai — AICore se pahuncha jaane wala, upkaran par chalta LLM, saar
+banane, dobara likhne aur bakhaan karne ke liye. Wo thode se upkaranon par hai, to uska hona chalte waqt
+jaanchna padega, aur peechhe koi asli raasta khada rakhna padega.
+</Detail>
+
+## Upkaran par aakhir kyon
+
+Phone par anumaan tez hai, bina net chalta hai, aur data ko kisi maang se bahar rakhta hai — jo
+tasveeron, kaagzon aur aawaz ke liye aksar wahi wajah hai jisse koi suvidha banne di jaati hai. Uski har
+call ki keemat bhi shoonya hai, to wo aise badhta hai jaise server ka koi endpoint nahi badhta.
+
+Aap jo chhodte hain wo cheezon ko theek kar paana hai. Server wala model ek deployment door hai behtar ho
+jaane se; saath bheja hua model tab badalta hai jab log app badlein, aur alag wala tab jab Google bheje.
+Aapko upkaranon ki poori kataar bhi milti hai, jahan aapka sahara diya sabse dheema phone tay karta hai
+ki wo suvidha turant lagti hai ya tooti hui.
+
+Aam hal donon ka mel hai: aam aur tez maamle ke liye upkaran par chalaiye, aur kabhi-kabhaar wale mushkil
+maamle ke liye server par laut jaaiye.
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli do zyadatar galat nateeje hain">
+**`rotationDegrees` chhod dena.** Model ko tedha input dikhta hai aur kuchh kaam ka nahi lautta.
+
+**Bemel saamaanya karna.** Training `-1..1` ki thi, app `0..1` bhejta hai; nateeja poore bharose se galat.
+
+**Mukhya dhaage par anumaan.** Har frame par dasiyon milliseconds, seedhe frame ke budget par gire hue.
+
+**Alag wale model ko maujood maanna.** Nayi install par pehli baar koi model nahi hai aur asli sandesh chahiye.
+
+**Apne sabse achhe phone par thanda naapna.** Aisi suvidha bhej deta hai jo saste phone par garam hokar bekaar ho jaati hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Camera par text ki pehchaan `rotationDegrees` ke saath aur uske bina chalaiye aur nateeje milaiye.
+2. Poora hone wale listener se `proxy.close()` hataiye aur feed jamne se pehle ke frames giniye.
+3. Alag wala model bhejiye, Play services ka data mitaiye, aur wo screen gadhiye jo upyogkarta pehle dekhta hai.
+4. Kisi float model ko int8 mein badaliye aur unhi inputs par naap, der aur sahipan naapiye.
+5. Paanch minute anumaan chalaiye aur upkaran ke garam hote jaane ke saath der ka naksha banaiye.
+
+## Dohraav
+
+| Cheez | Ek line |
+| --- | --- |
+| ML Kit | Poore kiye hue kaam; jahan wo kaam aata hai wahin lijiye |
+| LiteRT | Aapka apna model, kachche tensors, aapki apni taiyari |
+| `rotationDegrees` | Camera ke buffer tedhe hain; bhejiye warna kuchh nahi milega |
+| `proxy.close()` | Hamesha, poora hone wale listener mein, warna camera rukta hai |
+| Saath bheja hua | Bada app, pehli baar mein hi chalta, bina net hamesha |
+| Alag wala | Chhota app, utarna pad sakta hai, UI ki ek haalat chahiye |
+| Quantisation | Kareeb chaar guna chhota, tez, thoda kam sahi |
+| Delegates | GPU ya NPU aazmaiye, hamesha CPU par lautiye |
+| Naapiye | Sabse saste upkaran par p95, aur garmi se raftaar ghatne ke baad |
+| Sauda | Tezi, nijta, bina net, keemat — banaam sudhaar paane ki sahooliyat |
+
+<Interview title="Model kahan chale, is par ek sawaal">
+"Yeh model upkaran par chalayenge ya server par?"
+
+Main data aur net se shuru karunga. Agar input tasveerein, aawaz ya kaagaz hain, to upkaran par hone ka
+matlab hai wo saamagri phone se bahar jaati hi nahi, jo aksar wahi baat hai jisse suvidha manzoor hoti
+hai, aur wo lift ke andar bhi chalti hai aur har call par kuchh nahi leti. Server wala model sudharna
+aasaan hai — ek deployment aur har upyogkarta ke paas behtar roop hai — aur wo hamare sabse kamzor phone
+se bandha nahi hai.
+
+To main teen baatein poochhunga: kya ise bina net chalna chahiye, kya data naazuk hai, aur model kitni
+baar badlega? Baar-baar badalna use server ki or dhakelta hai; naazuk data aur bina net ka chalna use
+upkaran ki or kheenchte hain. Jab donon zor se kheenchein, to imaandaar jawaab mel hai: aam maamle ke
+liye upkaran par, mushkil ke liye server par. Aur jo bhi chunein, main p95 ki der apne sahara diye sabse
+saste upkaran par naapunga, apne sabse achhe wale par nahi, kyonki wahi phone tay karta hai ki suvidha
+turant lagti hai ya tooti hui.
+</Interview>

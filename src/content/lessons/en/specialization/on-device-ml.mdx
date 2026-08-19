@@ -1,0 +1,155 @@
+---
+title: "On-device ML: ML Kit and TensorFlow Lite"
+description: On-device inference buys latency, privacy and offline use, and pays for them in model size, device variance and a model you cannot patch. The hard part is never the model — it is what you feed it.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Almost every on-device ML bug is a **preprocessing mismatch**, not a bad model. The same weights that
+score well on a laptop return nonsense on a phone because the image arrived rotated, scaled or
+normalised differently from how the model was trained.
+</KeyIdea>
+
+## Two levels of API
+
+ML Kit gives you finished tasks — text recognition, barcodes, faces, pose, translation, subject
+segmentation. You hand it an image and get typed results. LiteRT, the runtime formerly called
+TensorFlow Lite, runs *your* model and hands you raw tensors.
+
+Use ML Kit unless the task is not on its list. A tuned, maintained, hardware-accelerated model is worth
+more than a custom one you have to keep alive.
+
+```kotlin title="TextAnalyzer.kt" numbered
+class TextAnalyzer(private val onText: (String) -> Unit) : ImageAnalysis.Analyzer {
+    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    @OptIn(ExperimentalGetImage::class)
+    override fun analyze(proxy: ImageProxy) {
+        val media = proxy.image ?: return proxy.close()
+        val input = InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees)
+
+        recognizer.process(input)
+            .addOnSuccessListener { onText(it.text) }
+            .addOnCompleteListener { proxy.close() }          // always, or the camera stalls
+    }
+}
+```
+
+Two lines carry most of the risk. `proxy.imageInfo.rotationDegrees` is the one people drop, and
+`proxy.close()` in `addOnCompleteListener` is the one people put in the wrong place — close it early and
+you analyse a recycled buffer, forget it and the camera delivers nothing after a few frames.
+
+<Quiz
+  question="Text recognition is accurate on photos picked from the gallery, but on the live camera preview it returns empty results or garbage — on every device."
+  options={[
+    "The preview resolution is too low for the recogniser",
+    "The rotation is not being passed. A camera sensor delivers its buffer in a fixed orientation regardless of how the phone is held, so without `rotationDegrees` the model is shown sideways text — while gallery images arrive already upright",
+    "The recognition model has not finished downloading from Google Play services"
+  ]}
+  answer={1}
+  explanation="Camera sensors are mounted in a fixed orientation and always emit buffers in that orientation, so a portrait phone still produces a landscape frame, and `ImageProxy` reports the correction you owe it in `imageInfo.rotationDegrees` rather than applying it. Skip that argument and the recogniser receives text rotated ninety degrees, which it is not trained to read, so you get empty results rather than an error — and it reproduces on every device because it is not a device quirk but a missing argument. Gallery images work because decoding already applied the EXIF orientation, which is exactly why this bug survives testing on still images. Preview resolution would degrade accuracy gradually, not flatten it to nothing, and a model still downloading reports its own distinct failure instead of returning empty text."
+/>
+
+## Bundled or downloaded
+
+ML Kit ships two ways, and the choice is a real product decision rather than a build detail.
+
+| | Bundled in the app | Via Google Play services |
+| --- | --- | --- |
+| App size | Several MB per model | Almost nothing |
+| First use | Works immediately | May need a download |
+| Offline | Always | Only after the download |
+| Updates | With your releases | Independently |
+
+The unbundled path is the default in most projects, and its cost is one state your UI must actually
+handle: the model is not there yet. On a fresh install with a poor connection, that is the first thing a
+user sees, so it needs a real message rather than a silently empty screen.
+
+<Detail summary="Custom models: size, delegates and measurement">
+When ML Kit does not cover the task, you ship a `.tflite` model and run it yourself.
+
+**Quantisation** is the first lever. Converting float32 weights to int8 makes the model roughly four
+times smaller and meaningfully faster, and costs a little accuracy. For most classification and
+detection work that trade is clearly worth taking; measure the loss rather than assuming it.
+
+**Delegates** move work off the CPU. A GPU delegate helps large convolutional models and can be slower
+than the CPU for small ones because of setup and transfer costs. Newer devices expose vendor NPU
+delegates, which are faster still and not present everywhere — so a delegate must be a runtime attempt
+with a CPU fallback, never an assumption.
+
+**Measurement** is where teams cut corners. Three numbers matter, and none is average accuracy:
+
+- p95 inference time on the *cheapest* device you support, not your flagship
+- time after five minutes of sustained use, once thermal throttling starts
+- memory during inference, because a peak that survives on 8 GB may not on 4 GB
+
+**Gemini Nano** is the newest option — an on-device LLM reached through AICore for summarising,
+rewriting and describing. It exists on a small set of devices, so its availability must be checked at
+runtime with a real fallback path.
+</Detail>
+
+## Why on-device at all
+
+Inference on the phone is fast, works offline, and keeps the data out of a request — which for photos,
+documents and audio is often the whole reason a feature is allowed to exist. It also costs nothing per
+call, so it scales in a way a server endpoint does not.
+
+What you give up is the ability to fix things. A cloud model is one deployment away from being better; a
+bundled model changes when users update, and an unbundled one when Google ships it. You also inherit
+the full range of devices, where the slowest phone you support decides whether the feature feels
+instant or broken.
+
+The common resolution is a hybrid: run on-device for the fast, common case, and fall back to a server
+for the rare hard one.
+
+## Pitfalls
+
+<Pitfall title="Five, and the first two are most wrong outputs">
+**Dropping `rotationDegrees`.** The model sees sideways input and returns nothing useful.
+
+**Mismatched normalisation.** Training used `-1..1`, the app sends `0..1`; output is confidently wrong.
+
+**Inference on the main thread.** Tens of milliseconds per frame, dropped straight onto the frame budget.
+
+**Assuming the unbundled model exists.** First run on a new install has no model and needs a real message.
+
+**Benchmarking cold on a flagship.** Ships a feature that throttles into uselessness on a budget phone.
+</Pitfall>
+
+## Practice
+
+1. Run text recognition on the camera with and without `rotationDegrees` and compare the output.
+2. Remove `proxy.close()` from the completion listener and count the frames before the feed freezes.
+3. Ship the unbundled model, clear Play services data, and design the screen the user sees first.
+4. Convert a float model to int8 and measure size, latency and accuracy on the same input set.
+5. Run inference for five minutes and plot latency as the device heats up.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| ML Kit | Finished tasks; prefer it when it covers the job |
+| LiteRT | Your own model, raw tensors, your own preprocessing |
+| `rotationDegrees` | Camera buffers are sideways; pass it or get nothing |
+| `proxy.close()` | Always, in the completion listener, or the camera stalls |
+| Bundled | Bigger app, works on first launch, offline always |
+| Unbundled | Small app, may need a download, needs a UI state |
+| Quantisation | About four times smaller, faster, slightly less accurate |
+| Delegates | Try GPU or NPU, always fall back to CPU |
+| Measure | p95 on the cheapest device, and after thermal throttling |
+| Trade | Latency, privacy, offline, cost — against updateability |
+
+<Interview title="One question about where the model runs">
+"Would you run this model on the device or on a server?"
+
+I would start from the data and the network. If the input is photos, audio or documents, on-device
+means the content never leaves the phone, which is often what makes the feature acceptable at all, and
+it works in a lift and costs nothing per call. A server model is easier to improve — one deployment and
+every user has the better version — and it is not bounded by the weakest phone we support.
+
+So I would ask three things: does it need to work offline, is the data sensitive, and how often will the
+model change? Frequent changes push it to the server; sensitive data and offline use pull it on device.
+When both pull hard, the honest answer is a hybrid: on-device for the common case, server for the hard
+one. And whichever we choose, I would measure p95 latency on our cheapest supported device rather than
+a flagship, because that is the phone that decides whether the feature feels instant or broken.
+</Interview>
