@@ -276,4 +276,76 @@ export const COROUTINES_GLOSSARY: Glossary = {
     },
     related: ["async", "launch", "suspend"],
   },
+
+  callbackFlow: {
+    term: "callbackFlow",
+    kind: { en: "Flow builder", hi: "Flow बनाने वाला", "hi-en": "Flow banane wala" },
+    source: "coroutines",
+    importLine: "import kotlinx.coroutines.flow.callbackFlow",
+    does: {
+      en: "Wraps a callback-based API as a `Flow`, with a place to unregister when collection stops.",
+      hi: "Callback वाली किसी API को `Flow` में लपेट देता है, और collect रुकने पर हटाने की जगह देता है।",
+      "hi-en": "Callback wali kisi API ko `Flow` mein lapet deta hai, aur collect rukne par hataane ki jagah deta hai.",
+    },
+    affects: {
+      en: "It is the standard bridge for everything Android hands you through a listener — location, sensors, Firestore snapshots, a WebSocket — and its value is that unregistering becomes structural instead of something you remember. The builder will not compile without an `awaitClose`, which is deliberate: the missing unregister is the bug it exists to prevent.",
+      hi: "Android आपको जो कुछ listener से देता है — जगह, sensors, Firestore की झलकें, कोई WebSocket — उन सबका यह मानक पुल है, और इसकी कीमत यह है कि हटाना याद रखने की बात नहीं, बनावट का हिस्सा बन जाता है। बिना `awaitClose` के यह compile ही नहीं होगा, और यह जानबूझकर है: छूटा हुआ हटाना ही वह गड़बड़ी है जिसे रोकने को यह बना है।",
+      "hi-en": "Android aapko jo kuchh listener se deta hai — jagah, sensors, Firestore ki jhalkein, koi WebSocket — un sabka yeh maanak pul hai, aur iski keemat yeh hai ki hataana yaad rakhne ki baat nahi, banaavat ka hissa ban jaata hai. Bina `awaitClose` ke yeh compile hi nahi hoga, aur yeh jaanboojhkar hai: chhoota hua hataana hi wo gadbadi hai jise rokne ko yeh bana hai.",
+    },
+    related: ["awaitClose", "trySend", "Flow"],
+  },
+
+  trySend: {
+    term: "trySend",
+    kind: { en: "Function", hi: "Function", "hi-en": "Function" },
+    source: "coroutines",
+    importLine: null,
+    does: {
+      en: "Offers a value to the channel without suspending, returning whether it was accepted.",
+      hi: "बिना रुके channel को कोई मान देता है, और बताता है कि वह लिया गया या नहीं।",
+      "hi-en": "Bina ruke channel ko koi maan deta hai, aur bataata hai ki wo liya gaya ya nahi.",
+    },
+    affects: {
+      en: "A listener callback is not a suspending context, so `send` cannot be called from one and `trySend` is what fits. It can fail silently when the buffer is full, which is the right default for sensor and location streams where the newest value matters and an old one does not — but for events that must not be dropped, set a buffer or check the result rather than assuming delivery.",
+      hi: "Listener का callback रुक सकने वाली जगह नहीं है, तो वहाँ से `send` बुलाया ही नहीं जा सकता और `trySend` ही बैठता है। Buffer भर जाने पर यह चुपचाप नाकाम हो सकता है, जो sensor और जगह की धाराओं के लिए सही तयशुदा बर्ताव है जहाँ नया मान मायने रखता है और पुराना नहीं — पर जिन घटनाओं का गिरना नहीं चाहिए, वहाँ पहुँचना मान लेने के बजाय buffer रखिए या नतीजा देखिए।",
+      "hi-en": "Listener ka callback ruk sakne wali jagah nahi hai, to wahan se `send` bulaya hi nahi ja sakta aur `trySend` hi baithta hai. Buffer bhar jaane par yeh chupchaap naakaam ho sakta hai, jo sensor aur jagah ki dhaaraon ke liye sahi tayshuda bartaav hai jahan naya maan maayne rakhta hai aur purana nahi — par jin ghatnaon ka girna nahi chahiye, wahan pahunchna maan lene ke bajay buffer rakhiye ya nateeja dekhiye.",
+    },
+    related: ["callbackFlow", "awaitClose"],
+  },
+
+  awaitClose: {
+    term: "awaitClose",
+    kind: { en: "Suspending function", hi: "Suspending function", "hi-en": "Suspending function" },
+    source: "coroutines",
+    importLine: "import kotlinx.coroutines.channels.awaitClose",
+    does: {
+      en: "Suspends until the flow is cancelled, then runs the block that unregisters the callback.",
+      hi: "Flow रद्द होने तक रुका रहता है, फिर वह हिस्सा चलाता है जो callback हटाता है।",
+      "hi-en": "Flow radd hone tak ruka rehta hai, phir wo hissa chalata hai jo callback hataata hai.",
+    },
+    affects: {
+      en: "This one line is the difference between a screen that stops listening and one that keeps a location callback, a sensor or a Firestore listener alive after the user has left — draining battery, or billing reads, forever. Because the builder requires it, the leak that used to be the most common in listener code is now a compile error.",
+      hi: "यही एक लाइन उस screen और इसमें फर्क है जो सुनना बंद कर देती है बनाम वह जो उपयोगकर्ता के जाने के बाद भी जगह का callback, कोई sensor या Firestore का listener जिंदा रखती है — बैटरी सोखते हुए, या पढ़ने के पैसे कटवाते हुए, हमेशा के लिए। चूँकि builder इसे माँगता है, listener वाले code की सबसे आम leak अब compile की error है।",
+      "hi-en": "Yahi ek line us screen aur ismein farak hai jo sunna band kar deti hai banaam wo jo upyogkarta ke jaane ke baad bhi jagah ka callback, koi sensor ya Firestore ka listener zinda rakhti hai — battery sokhte hue, ya padhne ke paise katwate hue, hamesha ke liye. Chunki builder ise maangta hai, listener wale code ki sabse aam leak ab compile ki error hai.",
+    },
+    related: ["callbackFlow", "trySend"],
+  },
+
+  retryWhen: {
+    term: "retryWhen",
+    kind: { en: "Flow operator", hi: "Flow का operator", "hi-en": "Flow ka operator" },
+    source: "coroutines",
+    importLine: "import kotlinx.coroutines.flow.retryWhen",
+    does: {
+      en: "Re-collects the upstream flow when it fails, if the predicate you write returns true.",
+      hi: "ऊपर वाला flow नाकाम होने पर उसे फिर से collect करता है, अगर आपकी लिखी शर्त सही लौटाए।",
+      "hi-en": "Oopar wala flow naakaam hone par use phir se collect karta hai, agar aapki likhi shart sahi lautaaye.",
+    },
+    affects: {
+      en: "The predicate receives the attempt number, which is what lets you write exponential backoff plus jitter rather than a fixed delay — a fixed delay means every disconnected client returns at the same instant and knocks the server over again. Return `false` for `CancellationException`, or the flow will fight its own cancellation and the screen will never let go.",
+      hi: "वह शर्त कोशिश की गिनती पाती है, और इसी से आप तय देर के बजाय बढ़ता ठहराव और छींटे लिख पाते हैं — तय देर का मतलब है कि हर टूटा हुआ client उसी पल लौटता है और server को दोबारा गिरा देता है। `CancellationException` पर `false` लौटाइए, वरना वह flow अपने ही रद्द होने से लड़ेगा और screen कभी छोड़ेगी नहीं।",
+      "hi-en": "Wo shart koshish ki ginti paati hai, aur isi se aap tay der ke bajay badhta thehraav aur chheente likh paate hain — tay der ka matlab hai ki har toota hua client usi pal lautta hai aur server ko dobara gira deta hai. `CancellationException` par `false` lautaiye, warna wo flow apne hi radd hone se ladega aur screen kabhi chhodegi nahi.",
+    },
+    related: ["callbackFlow", "Flow"],
+  },
 };

@@ -1,8 +1,12 @@
 import { ANDROID_GLOSSARY } from "./android";
 import { ARCHITECTURE_GLOSSARY } from "./architecture";
+import { FIREBASE_GLOSSARY } from "./firebase";
 import { HILT_GLOSSARY } from "./hilt";
 import { NETWORK_GLOSSARY } from "./network";
 import { PLATFORM_GLOSSARY } from "./platform";
+import { RELEASE_GLOSSARY } from "./release";
+import { SECURITY_GLOSSARY } from "./security";
+import { SPECIALIZATION_GLOSSARY } from "./specialization";
 import { PERSISTENCE_GLOSSARY } from "./persistence";
 import { TESTING_GLOSSARY } from "./testing";
 import { COMPOSE_GLOSSARY } from "./compose";
@@ -36,6 +40,10 @@ export const GLOSSARY: Glossary = {
   ...HILT_GLOSSARY,
   ...PLATFORM_GLOSSARY,
   ...TESTING_GLOSSARY,
+  ...SECURITY_GLOSSARY,
+  ...FIREBASE_GLOSSARY,
+  ...RELEASE_GLOSSARY,
+  ...SPECIALIZATION_GLOSSARY,
   ...GRADLE_GLOSSARY,
   ...MANIFEST_GLOSSARY,
   ...LAYOUT_GLOSSARY,
@@ -58,6 +66,10 @@ const CODE_TERMS = new Set(
     ...HILT_GLOSSARY,
     ...PLATFORM_GLOSSARY,
     ...TESTING_GLOSSARY,
+    ...SECURITY_GLOSSARY,
+    ...FIREBASE_GLOSSARY,
+    ...RELEASE_GLOSSARY,
+    ...SPECIALIZATION_GLOSSARY,
     ...GRADLE_GLOSSARY,
   }),
 );
