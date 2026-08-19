@@ -1,0 +1,163 @@
+---
+title: Build types, flavors and variants
+description: A build type and a flavor are different axes, and Gradle multiplies them. Understanding the multiplication is what stops a project growing eight variants nobody meant to create.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A **build type** is how you build — debuggable, minified, signed. A **flavor** is what you build — which
+backend, which branding, free or paid. Gradle produces one variant for every combination, so two types
+and two flavors is four builds, and the count is what to keep an eye on.
+</KeyIdea>
+
+## The two axes
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    buildTypes {
+        debug   { applicationIdSuffix = ".debug"; isMinifyEnabled = false }
+        release { isMinifyEnabled = true; isShrinkResources = true }
+    }
+
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev")  { applicationIdSuffix = ".dev";  buildConfigField("String", "BASE_URL", "\"https://dev.api.example.com/\"") }
+        create("prod") {                                 buildConfigField("String", "BASE_URL", "\"https://api.example.com/\"") }
+    }
+}
+```
+
+That gives `devDebug`, `devRelease`, `prodDebug`, `prodRelease`. Add a second dimension — say free and
+paid — and you have eight. Each one is a full build in CI, so a dimension you added for one small
+difference doubles your build time forever.
+
+`flavorDimensions` is required as soon as you have flavors, and adding a second dimension is the
+decision to double the matrix. Most projects need exactly one.
+
+## Source sets
+
+```text title="Layout" numbered
+app/src/main/          shared by everything
+app/src/dev/           only the dev flavor
+app/src/prod/          only prod
+app/src/debug/         only debug builds
+app/src/devDebug/      only that exact variant
+```
+
+Files in a flavor source set **replace** the ones in `main` rather than merging with them, which is what
+lets `dev` and `prod` each have their own `google-services.json` — the Firebase lesson's setup.
+
+A Kotlin class can only exist in one source set per variant. Putting `Analytics.kt` in both `main` and
+`dev` is a duplicate-class error, so the pattern is: the interface in `main`, the implementations in the
+flavor source sets.
+
+Resources merge instead of replacing, so a flavor can override one string without copying the file.
+
+<Quiz
+  question="A team adds a `mock` flavor whose implementation of `AnalyticsClient` does nothing. They put the interface and the real implementation in `main`, and the mock in `src/mock/`. The build fails with a duplicate class error. What is the fix?"
+  options={[
+    "Rename the mock class so the names do not collide",
+    "The real implementation must move out of `main` into `src/prod/`, because a flavor source set adds to `main` rather than replacing individual classes — every flavor needs its own implementation and `main` keeps only the interface",
+    "The mock flavor needs `matchingFallbacks` set to `prod`"
+  ]}
+  answer={1}
+  explanation="Flavor source sets are additive at the class level: the compiler sees main plus the selected flavor as one source path, so two files declaring the same fully-qualified class is a straightforward duplicate. Renaming the mock removes the error and also removes the point — the code in main would still reference the real class by name, so the mock is never used. The working shape is that main holds only the interface and anything variant-independent, and each flavor source set holds exactly one implementation. That also makes the compiler enforce completeness: adding a third flavor without an implementation fails the build rather than silently falling back. matchingFallbacks is unrelated; it resolves flavor mismatches between modules, not duplicate classes."
+/>
+
+## Variant-specific configuration
+
+```kotlin title="Config.kt" numbered
+buildTypes {
+    debug {
+        isDebuggable = true
+        buildConfigField("boolean", "LOGGING", "true")
+        resValue("string", "app_name", "MyApp Debug")     // distinguishable on the launcher
+        manifestPlaceholders["mapsKey"] = devMapsKey
+    }
+    release {
+        buildConfigField("boolean", "LOGGING", "false")
+        signingConfig = signingConfigs.getByName("release")
+    }
+}
+```
+
+`resValue` generating a different `app_name` is worth doing on day one: with `applicationIdSuffix` the
+debug build installs alongside release, and without a different label you cannot tell which icon is
+which.
+
+`manifestPlaceholders` fills `${mapsKey}` in the manifest, which is how a per-variant API key gets in
+without a second manifest file.
+
+<Detail summary="Keeping the matrix from exploding">
+Two things stop a variant matrix becoming unmanageable.
+
+**`variantFilter`** removes combinations that make no sense, so CI does not build them:
+
+```kotlin title="Filter" numbered
+androidComponents {
+    beforeVariants { variant ->
+        variant.enable = !(variant.productFlavors.any { it.second == "mock" } &&
+                           variant.buildType == "release")     // no mock release
+    }
+}
+```
+
+**Asking whether it needs to be a flavor at all.** A flavor is right when the difference is compiled in
+— a different implementation, a different resource. It is the wrong tool for something that could be a
+runtime setting: an environment picker on a debug screen, or a Remote Config flag, both avoid doubling
+the build matrix.
+
+The rule of thumb is that a flavor costs you a full CI build every time. If the difference could be
+decided at run time by someone who already has the app installed, it probably should be.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first doubles your CI time">
+**A dimension added for one small difference.** Every dimension multiplies the whole matrix.
+
+**A class in both `main` and a flavor.** Source sets add; `main` keeps only the interface.
+
+**No `applicationIdSuffix` on debug.** You cannot have debug and release installed together.
+
+**Same `app_name` across variants.** Two identical icons and no way to tell them apart.
+
+**A flavor for something that could be a runtime setting.** A debug picker costs no build time.
+</Pitfall>
+
+## Practice
+
+1. Add a second flavor dimension and count how many variants Gradle now produces.
+2. Put the same class in `main` and a flavor source set and read the error.
+3. Give debug a different `app_name` and `applicationIdSuffix`, then install both.
+4. Use `manifestPlaceholders` for a per-variant API key.
+5. Disable one variant with `beforeVariants` and confirm it disappears from the list.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| Build type | How you build — debuggable, minified, signed |
+| Flavor | What you build — backend, branding, tier |
+| Variants | Every combination; dimensions multiply |
+| Source sets | Additive; a class lives in exactly one per variant |
+| Resources | Merge, so a flavor can override one string |
+| `buildConfigField` | Per-variant constants in `BuildConfig` |
+| `resValue` | Per-variant resources, like `app_name` |
+| `manifestPlaceholders` | Per-variant manifest values |
+| `applicationIdSuffix` | Both builds installed side by side |
+| `beforeVariants` | Disable combinations that make no sense |
+
+<Interview title="A question about a cost that compounds">
+"When would you add a product flavor?"
+
+When the difference has to be compiled in — a different implementation of an interface, a different
+resource, a different `google-services.json`. Flavors are the right tool for that because source sets
+let each flavor supply its own file and the compiler enforces that every flavor has one.
+
+What I would push back on is a flavor for something that could be decided at run time. Every dimension
+multiplies the variant matrix, so a second dimension turns four builds into eight, and each one is a
+full CI build forever. An environment picker on a debug-only screen, or a Remote Config flag, gives the
+same flexibility without that cost — and it can be changed by someone who already has the app
+installed, which a flavor cannot.
+</Interview>

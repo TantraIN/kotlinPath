@@ -1,0 +1,166 @@
+---
+title: Build types, flavors aur variants
+description: Build type aur flavor alag dhuriyan hain, aur Gradle unhe guna kar deta hai. Us guna ko samajhna hi kisi project ko aath aise variants ugane se rokta hai jo kisi ne banane chahe hi nahi the.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+**Build type** ye hai ki aap banate kaise ho — debuggable, minify kiya hua, hastaksharit. **Flavor** ye
+hai ki aap banate kya ho — kaunsa backend, kaun si pehchan, muft ya paise wala. Gradle har jod ke liye ek
+variant banata hai, to do types aur do flavors yani chaar builds, aur nazar usi ginti par rakhni hai.
+</KeyIdea>
+
+## Dono dhuriyan
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    buildTypes {
+        debug   { applicationIdSuffix = ".debug"; isMinifyEnabled = false }
+        release { isMinifyEnabled = true; isShrinkResources = true }
+    }
+
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev")  { applicationIdSuffix = ".dev";  buildConfigField("String", "BASE_URL", "\"https://dev.api.example.com/\"") }
+        create("prod") {                                 buildConfigField("String", "BASE_URL", "\"https://api.example.com/\"") }
+    }
+}
+```
+
+Usse `devDebug`, `devRelease`, `prodDebug`, `prodRelease` milte hain. Doosri dhuri jodiye — maan lijiye
+muft aur paise wala — aur aath ho jate hain. Har ek CI mein poora build hai, to jo dhuri aapne ek chhote
+farak ke liye jodi wo aapka build ka samay hamesha ke liye dogna kar deti hai.
+
+Flavors hote hi `flavorDimensions` zaruri hai, aur doosri dhuri jodna us poore guna ko dogna karne ka
+faisla hai. Zyadatar projects ko theek ek chahiye.
+
+## Source sets
+
+```text title="Layout" numbered
+app/src/main/          sabke liye share
+app/src/dev/           sirf dev wala flavor
+app/src/prod/          sirf prod
+app/src/debug/         sirf debug wale builds
+app/src/devDebug/      sirf wahi ek variant
+```
+
+Flavor ke source set ki files `main` walon mein milne ke bajaye unki **jagah leti** hain, aur isi se
+`dev` tatha `prod` ki apni-apni `google-services.json` ho pati hai — Firebase wale lesson ki taiyari.
+
+Kotlin ki koi class har variant mein sirf ek source set mein reh sakti hai. `Analytics.kt` ko `main` aur
+`dev` dono mein rakhna dohri class ki error hai, to tarika ye hai: interface `main` mein, implementations
+flavor wale source sets mein.
+
+Resources jagah lene ke bajaye milte hain, to koi flavor poori file nakal kiye bina ek string badal sakta
+hai.
+
+<Quiz
+  question="Koi team `mock` naam ka flavor jodti hai jiska `AnalyticsClient` wala implementation kuch nahi karta. Wo interface aur asli implementation `main` mein rakhte hain, aur mock ko `src/mock/` mein. Build dohri class ki error se nakaam hota hai. Ilaaj kya hai?"
+  options={[
+    "Mock wali class ka naam badal dijiye taki naam na takrayein",
+    "Asli implementation ko `main` se hatakar `src/prod/` mein jana padega, kyunki flavor wala source set alag-alag classes ki jagah lene ke bajaye `main` mein judta hai — har flavor ko apna implementation chahiye aur `main` mein sirf interface rehta hai",
+    "Us mock wale flavor ko `matchingFallbacks` mein `prod` chahiye"
+  ]}
+  answer={1}
+  explanation="Flavor wale source sets class ke star par judte hain: compiler ko main aur chuna hua flavor milkar ek hi source ka raasta dikhte hain, to ek hi poore naam wali class batati do files seedhi-saadi dohrav hain. Mock ka naam badalne se error hat jati hai aur baat bhi hat jati hai — main ka code us asli class ko naam se bulata rahega, to wo mock kabhi istemal hi nahi hoga. Chalne wali shakal ye hai ki main mein sirf interface aur wo sab rahe jo variant se bandha nahi, aur har flavor wale source set mein theek ek implementation. Usse compiler poora hona bhi manwata hai: bina implementation ke teesra flavor jodna chupchap kisi aur par lautne ke bajaye build nakaam kar deta hai. matchingFallbacks ka isse koi lena-dena nahi; wo modules ke beech flavor ka bemel suljhata hai, dohri classes nahi."
+/>
+
+## Har variant ki apni settings
+
+```kotlin title="Config.kt" numbered
+buildTypes {
+    debug {
+        isDebuggable = true
+        buildConfigField("boolean", "LOGGING", "true")
+        resValue("string", "app_name", "MyApp Debug")     // launcher par pehchana ja sake
+        manifestPlaceholders["mapsKey"] = devMapsKey
+    }
+    release {
+        buildConfigField("boolean", "LOGGING", "false")
+        signingConfig = signingConfigs.getByName("release")
+    }
+}
+```
+
+`resValue` se alag `app_name` banana pehle hi din karne layak hai: `applicationIdSuffix` ke saath debug
+wala build release ke bagal mein lagta hai, aur alag naam ke bina aap bata hi nahi sakte ki kaunsa icon
+kaunsa hai.
+
+`manifestPlaceholders` manifest mein `${mapsKey}` bharta hai, aur har variant ki apni API ki key doosri
+manifest ki file ke bina isi tarah pahunchti hai.
+
+<Detail summary="Us guna ko failne se rokna">
+Do cheezein variants ke guna ko bekaboo hone se rokti hain.
+
+**`variantFilter`** un jodon ko hata deta hai jinka koi matlab nahi, taki CI unhe banaye hi nahi:
+
+```kotlin title="Filter" numbered
+androidComponents {
+    beforeVariants { variant ->
+        variant.enable = !(variant.productFlavors.any { it.second == "mock" } &&
+                           variant.buildType == "release")     // mock ka release nahi
+    }
+}
+```
+
+**Ye puchna ki use flavor hona bhi chahiye ya nahi.** Flavor tab sahi hai jab wo farak compile hokar andar
+jata hai — alag implementation, alag resource. Wo us cheez ke liye galat auzar hai jo chalte waqt ki
+setting ho sakti thi: debug wali screen par mahaul chunne wala, ya Remote Config ka koi flag — dono build
+ke guna ko dogna hone se bachate hain.
+
+Mota niyam ye hai ki har flavor aapko har baar ek poora CI ka build kharch karata hai. Agar wo farak
+chalte waqt us insaan se tay ho sakta hai jiske paas app pehle se laga hai, to shayad usi tarah hona
+chahiye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli aapka CI ka samay dogna kar deti hai">
+**Ek chhote farak ke liye jodi gayi dhuri.** Har dhuri poore guna ko badha deti hai.
+
+**`main` aur kisi flavor, dono mein class.** Source sets judte hain; `main` mein sirf interface.
+
+**Debug par `applicationIdSuffix` na hona.** Debug aur release saath nahi lag sakte.
+
+**Har variant par wahi `app_name`.** Do ek jaise icons aur unhe alag batane ka koi raasta nahi.
+
+**Aisi cheez ke liye flavor jo chalte waqt ki setting ho sakti thi.** Debug wale chunaav ki koi build ki
+keemat nahi.
+</Pitfall>
+
+## Abhyaas
+
+1. Flavor ki doosri dhuri jodiye aur giniye ki Gradle ab kitne variants banata hai.
+2. Wahi class `main` aur kisi flavor wale source set, dono mein rakhiye aur error padhiye.
+3. Debug ko alag `app_name` aur `applicationIdSuffix` dijiye, phir dono lagaiye.
+4. Har variant ki apni API ki key ke liye `manifestPlaceholders` lijiye.
+5. `beforeVariants` se ek variant band kijiye aur pakka kijiye ki wo list se gayab ho jata hai.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| Build type | Banate kaise ho — debuggable, minify kiya, hastaksharit |
+| Flavor | Banate kya ho — backend, pehchan, shreni |
+| Variants | Har jod; dhuriyan guna karti hain |
+| Source sets | Judte hain; har variant mein class theek ek jagah |
+| Resources | Milte hain, to flavor ek string badal sakta hai |
+| `buildConfigField` | `BuildConfig` mein har variant ke apne constants |
+| `resValue` | Har variant ke apne resources, jaise `app_name` |
+| `manifestPlaceholders` | Manifest ki har variant wali values |
+| `applicationIdSuffix` | Dono builds saath-saath lage hue |
+| `beforeVariants` | Bematlab jod band kijiye |
+
+<Interview title="Ek sawal, aisi keemat ka jo judti jati hai">
+"Aap product flavor kab jodoge?"
+
+Jab wo farak compile hokar andar jana hi chahiye — kisi interface ka alag implementation, koi alag
+resource, koi alag `google-services.json`. Uske liye flavors hi sahi auzar hain kyunki source sets har
+flavor ko apni file dene dete hain aur compiler manwata hai ki har flavor ke paas ek ho.
+
+Jis par main sawal uthaunga wo hai aisi cheez ke liye flavor jo chalte waqt tay ho sakti thi. Har dhuri
+variants ke guna ko badhati hai, to doosri dhuri chaar builds ko aath bana deti hai, aur har ek hamesha ke
+liye ek poora CI ka build hai. Sirf debug wali screen par mahaul chunne wala, ya Remote Config ka koi
+flag, wahi lachilapan bina us keemat ke deta hai — aur use wo insaan badal sakta hai jiske paas app pehle
+se laga hai, jo flavor nahi de sakta.
+</Interview>

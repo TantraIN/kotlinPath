@@ -1,0 +1,162 @@
+---
+title: Build types, flavors और variants
+description: Build type और flavor अलग धुरियाँ हैं, और Gradle उन्हें गुणा कर देता है। उस गुणा को समझना ही किसी project को आठ ऐसे variants उगाने से रोकता है जो किसी ने बनाने चाहे ही नहीं थे।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+**Build type** यह है कि आप बनाते कैसे हैं — debuggable, minify किया हुआ, हस्ताक्षरित। **Flavor** यह है
+कि आप बनाते क्या हैं — कौन सा backend, कौन सी पहचान, मुफ्त या पैसे वाला। Gradle हर जोड़ के लिए एक
+variant बनाता है, तो दो types और दो flavors यानी चार builds, और नजर उसी गिनती पर रखनी है।
+</KeyIdea>
+
+## दोनों धुरियाँ
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    buildTypes {
+        debug   { applicationIdSuffix = ".debug"; isMinifyEnabled = false }
+        release { isMinifyEnabled = true; isShrinkResources = true }
+    }
+
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev")  { applicationIdSuffix = ".dev";  buildConfigField("String", "BASE_URL", "\"https://dev.api.example.com/\"") }
+        create("prod") {                                 buildConfigField("String", "BASE_URL", "\"https://api.example.com/\"") }
+    }
+}
+```
+
+उससे `devDebug`, `devRelease`, `prodDebug`, `prodRelease` मिलते हैं। दूसरी धुरी जोड़िए — मान लीजिए मुफ्त
+और पैसे वाला — और आठ हो जाते हैं। हर एक CI में पूरा build है, तो जो धुरी आपने एक छोटे फर्क के लिए जोड़ी
+वह आपका build का समय हमेशा के लिए दोगुना कर देती है।
+
+Flavors होते ही `flavorDimensions` जरूरी है, और दूसरी धुरी जोड़ना उस पूरे गुणा को दोगुना करने का फैसला
+है। ज्यादातर projects को ठीक एक चाहिए।
+
+## Source sets
+
+```text title="Layout" numbered
+app/src/main/          सबके लिए साझा
+app/src/dev/           सिर्फ dev वाला flavor
+app/src/prod/          सिर्फ prod
+app/src/debug/         सिर्फ debug वाले builds
+app/src/devDebug/      सिर्फ वही एक variant
+```
+
+Flavor के source set की files `main` वालों में मिलने के बजाय उनकी **जगह लेती** हैं, और इसी से `dev`
+तथा `prod` की अपनी-अपनी `google-services.json` हो पाती है — Firebase वाले पाठ की तैयारी।
+
+Kotlin की कोई class हर variant में सिर्फ एक source set में रह सकती है। `Analytics.kt` को `main` और
+`dev` दोनों में रखना दोहरी class की error है, तो तरीका यह है: interface `main` में, implementations
+flavor वाले source sets में।
+
+Resources जगह लेने के बजाय मिलते हैं, तो कोई flavor पूरी file नकल किए बिना एक string बदल सकता है।
+
+<Quiz
+  question="कोई team `mock` नाम का flavor जोड़ती है जिसका `AnalyticsClient` वाला implementation कुछ नहीं करता। वे interface और असली implementation `main` में रखते हैं, और mock को `src/mock/` में। Build दोहरी class की error से नाकाम होता है। इलाज क्या है?"
+  options={[
+    "Mock वाली class का नाम बदल दीजिए ताकि नाम न टकराएँ",
+    "असली implementation को `main` से हटाकर `src/prod/` में जाना पड़ेगा, क्योंकि flavor वाला source set अलग-अलग classes की जगह लेने के बजाय `main` में जुड़ता है — हर flavor को अपना implementation चाहिए और `main` में सिर्फ interface रहता है",
+    "उस mock वाले flavor को `matchingFallbacks` में `prod` चाहिए"
+  ]}
+  answer={1}
+  explanation="Flavor वाले source sets class के स्तर पर जुड़ते हैं: compiler को main और चुना हुआ flavor मिलकर एक ही source का रास्ता दिखते हैं, तो एक ही पूरे नाम वाली class बताती दो files सीधी-सादी दोहराव हैं। Mock का नाम बदलने से error हट जाती है और बात भी हट जाती है — main का code उस असली class को नाम से बुलाता रहेगा, तो वह mock कभी इस्तेमाल ही नहीं होगा। चलने वाली शक्ल यह है कि main में सिर्फ interface और वह सब रहे जो variant से बँधा नहीं, और हर flavor वाले source set में ठीक एक implementation। उससे compiler पूरा होना भी मनवाता है: बिना implementation के तीसरा flavor जोड़ना चुपचाप किसी और पर लौटने के बजाय build नाकाम कर देता है। matchingFallbacks का इससे कोई लेना-देना नहीं; वह modules के बीच flavor का बेमेल सुलझाता है, दोहरी classes नहीं।"
+/>
+
+## हर variant की अपनी settings
+
+```kotlin title="Config.kt" numbered
+buildTypes {
+    debug {
+        isDebuggable = true
+        buildConfigField("boolean", "LOGGING", "true")
+        resValue("string", "app_name", "MyApp Debug")     // launcher पर पहचाना जा सके
+        manifestPlaceholders["mapsKey"] = devMapsKey
+    }
+    release {
+        buildConfigField("boolean", "LOGGING", "false")
+        signingConfig = signingConfigs.getByName("release")
+    }
+}
+```
+
+`resValue` से अलग `app_name` बनाना पहले ही दिन करने लायक है: `applicationIdSuffix` के साथ debug वाला
+build release के बगल में लगता है, और अलग नाम के बिना आप बता ही नहीं सकते कि कौन सा icon कौन सा है।
+
+`manifestPlaceholders` manifest में `${mapsKey}` भरता है, और हर variant की अपनी API की key दूसरी
+manifest की file के बिना इसी तरह पहुँचती है।
+
+<Detail summary="उस गुणा को फैलने से रोकना">
+दो चीजें variants के गुणा को बेकाबू होने से रोकती हैं।
+
+**`variantFilter`** उन जोड़ों को हटा देता है जिनका कोई मतलब नहीं, ताकि CI उन्हें बनाए ही नहीं:
+
+```kotlin title="Filter" numbered
+androidComponents {
+    beforeVariants { variant ->
+        variant.enable = !(variant.productFlavors.any { it.second == "mock" } &&
+                           variant.buildType == "release")     // mock का release नहीं
+    }
+}
+```
+
+**यह पूछना कि उसे flavor होना भी चाहिए या नहीं।** Flavor तब सही है जब वह फर्क compile होकर अंदर जाता
+है — अलग implementation, अलग resource। वह उस चीज के लिए गलत औजार है जो चलते वक्त की setting हो सकती
+थी: debug वाली screen पर माहौल चुनने वाला, या Remote Config का कोई flag — दोनों build के गुणा को दोगुना
+होने से बचाते हैं।
+
+मोटा नियम यह है कि हर flavor आपको हर बार एक पूरा CI का build खर्च कराता है। अगर वह फर्क चलते वक्त उस
+इंसान से तय हो सकता है जिसके पास ऐप पहले से लगा है, तो शायद उसी तरह होना चाहिए।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली आपका CI का समय दोगुना कर देती है">
+**एक छोटे फर्क के लिए जोड़ी गई धुरी।** हर धुरी पूरे गुणा को बढ़ा देती है।
+
+**`main` और किसी flavor, दोनों में class।** Source sets जुड़ते हैं; `main` में सिर्फ interface।
+
+**Debug पर `applicationIdSuffix` न होना।** Debug और release साथ नहीं लग सकते।
+
+**हर variant पर वही `app_name`।** दो एक जैसे icons और उन्हें अलग बताने का कोई रास्ता नहीं।
+
+**ऐसी चीज के लिए flavor जो चलते वक्त की setting हो सकती थी।** Debug वाले चुनाव की कोई build की कीमत
+नहीं।
+</Pitfall>
+
+## अभ्यास
+
+1. Flavor की दूसरी धुरी जोड़िए और गिनिए कि Gradle अब कितने variants बनाता है।
+2. वही class `main` और किसी flavor वाले source set, दोनों में रखिए और error पढ़िए।
+3. Debug को अलग `app_name` और `applicationIdSuffix` दीजिए, फिर दोनों लगाइए।
+4. हर variant की अपनी API की key के लिए `manifestPlaceholders` लीजिए।
+5. `beforeVariants` से एक variant बंद कीजिए और पक्का कीजिए कि वह सूची से गायब हो जाता है।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| Build type | बनाते कैसे हैं — debuggable, minify किया, हस्ताक्षरित |
+| Flavor | बनाते क्या हैं — backend, पहचान, श्रेणी |
+| Variants | हर जोड़; धुरियाँ गुणा करती हैं |
+| Source sets | जुड़ते हैं; हर variant में class ठीक एक जगह |
+| Resources | मिलते हैं, तो flavor एक string बदल सकता है |
+| `buildConfigField` | `BuildConfig` में हर variant के अपने constants |
+| `resValue` | हर variant के अपने resources, जैसे `app_name` |
+| `manifestPlaceholders` | Manifest की हर variant वाली values |
+| `applicationIdSuffix` | दोनों builds साथ-साथ लगे हुए |
+| `beforeVariants` | बेमतलब जोड़ बंद कीजिए |
+
+<Interview title="एक सवाल, ऐसी कीमत का जो जुड़ती जाती है">
+"आप product flavor कब जोड़ेंगे?"
+
+जब वह फर्क compile होकर अंदर जाना ही चाहिए — किसी interface का अलग implementation, कोई अलग resource,
+कोई अलग `google-services.json`। उसके लिए flavors ही सही औजार हैं क्योंकि source sets हर flavor को अपनी
+file देने देते हैं और compiler मनवाता है कि हर flavor के पास एक हो।
+
+जिस पर मैं सवाल उठाऊँगा वह है ऐसी चीज के लिए flavor जो चलते वक्त तय हो सकती थी। हर धुरी variants के
+गुणा को बढ़ाती है, तो दूसरी धुरी चार builds को आठ बना देती है, और हर एक हमेशा के लिए एक पूरा CI का build
+है। सिर्फ debug वाली screen पर माहौल चुनने वाला, या Remote Config का कोई flag, वही लचीलापन बिना उस कीमत
+के देता है — और उसे वह इंसान बदल सकता है जिसके पास ऐप पहले से लगा है, जो flavor नहीं दे सकता।
+</Interview>
