@@ -1,0 +1,182 @@
+---
+title: Media3 aur ExoPlayer
+description: Player koi view nahi hai — wo lambe samay tak jeene wali, mehngi cheez hai jo kam milne wala hardware pakde rehti hai. Media ki zyadatar gadbadiyan playback ke code se nahi, uski umar galat rakhne se aati hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`Player` ek **hardware ka decoder**, audio focus ki ijaazat aur ek wakelock pakde rehta hai. Ye poore
+process bhar ki, gini-chuni cheezein hain, to Media3 ka saara anushaasan yahi jaanna hai ki player kab
+banta hai, uska maalik kaun hai, aur wo kab chhootta hai — playback ki API khud chhoti hai.
+</KeyIdea>
+
+## Sabse chhota asli player
+
+```kotlin title="PlayerScreen.kt" numbered
+@Composable
+fun PlayerScreen(url: String) {
+    val context = LocalContext.current
+    val player = remember {
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus = */ true)
+            .build()
+            .apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+            }
+    }
+
+    DisposableEffect(Unit) { onDispose { player.release() } }
+
+    AndroidView(factory = { PlayerView(it).apply { this.player = player } })
+}
+```
+
+`ExoPlayer`, `Player` wali interface ka ek roop hai; Media3 wo library hai jismein ab wo interface aur
+uski UI rehti hai, `androidx.media3` ke neeche. Kisi saade MP4 ke liye `setMediaItem` aur `prepare` kaafi
+hain, aur milti hui artifact classpath par aate hi wahi do lainein HLS aur DASH bhi sambhaal leti hain —
+source ka kism URI se pehchana jaata hai.
+
+Jo line sabse zyada maayne rakhti hai wo hai `release()`. Wo memory ki bachat nahi hai.
+
+<Quiz
+  question="Kisi screen par pehli baar video chalta hai. Teen-chaar baar wahan se jaakar lautne ke baad playback decoder ke shuru hone ki error se toot jaata hai — aur sirf kuchh hi upkaranon par."
+  options={[
+    "Player memory leak karta hai jab tak app ka dher khatam na ho jaaye",
+    "Wo players kabhi chhode hi nahi gaye, aur har ek MediaCodec ka hardware decoder pakde hai — poore process bhar ki, gini-chuni cheez, to kuchh chhoote hue players ke baad dene ko bachta hi nahi. Upkaran ismein alag-alag hain ki wo ek saath kitne chalne dete hain, isiliye kuchh pehle tootte hain",
+    "Us media ke URL ki umar chhoti hai aur baad ki maangein thukra di jaati hain"
+  ]}
+  answer={1}
+  explanation="Player sirf dher par padi koi cheez nahi hai: ek banana MediaCodec se video ka hardware decoder le leta hai, aur koi upkaran poore tantra ke liye unmein se mutthi bhar hi deta hai, to har chhoota hua player us poonji mein se hamesha ke liye ghata deta hai jab tak process na mare. Upkaran par tika hona isi gadbadi ki pehchaan hai — koi phone ek saath aath chalne de aur doosra do, to wahi leak yahan chauthi baar par aur wahan doosri baar par dikhti hai, aur theek isiliye wo ek hi upkaran par ki gayi padtal se bach nikalti hai. Dher ke khatam hone par OutOfMemoryError uthta, decoder ke shuru hone ki naakami nahi, aur use isse matlab na hota ki aap kis upkaran par hain. Chhoti umar wala URL umar beetne ke baad pehli hi maang par toot-ta, chahe screen kitni baar kholi gayi ho, aur wo naakami source ki error ki tarah aati, decoder ki nahi."
+/>
+
+## Player rehta kahan hai
+
+Chunaav screen aur kisi service ke beech hai, aur wo ek sawaal se nikalta hai: kya upyogkarta ke jaane
+par aawaz chalti rehni chahiye?
+
+| Jawaab | Player rehta hai | Chhootta hai |
+| --- | --- | --- |
+| Nahi — feed mein video, koi jhalak | Usi composable ya fragment mein | `onDispose` / `onStop` mein |
+| Haan — sangeet, podcast, audiobook | Kisi `MediaSessionService` mein | Us service ke `onDestroy` mein |
+
+Pehle maamle mein `onStart` mein banaiye aur `onStop` mein chhodiye, `onCreate`/`onDestroy` mein nahi.
+Phone par wo jodiyan ek jaisi lagti hain; hain nahi. Peechhe chala gaya activity ruka hota hai, mara
+nahi, to `onDestroy` mein chhodna ek decoder chalta hua aur ek wakelock pakda hua chhod deta hai jabki
+upyogkarta kahin aur hai.
+
+Doosre maamle ka jawaab `MediaSessionService` hai, aur wajah yeh nahi ki akeli foreground service aawaz
+nahi chala sakti — chala sakti hai. Wajah wo sab hai jo `MediaSession` se muft milta hai.
+
+```kotlin title="PlaybackService.kt" numbered
+class PlaybackService : MediaSessionService() {
+    private var session: MediaSession? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        val player = ExoPlayer.Builder(this).build()
+        session = MediaSession.Builder(this, player).build()
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
+
+    override fun onDestroy() {
+        session?.run { player.release(); release() }
+        session = null
+        super.onDestroy()
+    }
+}
+```
+
+Koi session abhi chal rahe gaane aur playback ki haalat ko poore tantra ke saamne rakh deta hai. Wo
+notification, lock screen, Bluetooth ke headset wale button, Android Auto, Wear aur Assistant, sab usse
+aapke ek bhi line likhe bina baat kar lete hain. Aapki UI phir usi session se kisi `MediaController` ke
+zariye baat karti hai, jo khud bhi ek `Player` hai — to screen ko farak hi nahi padta ki asli player isi
+process mein hai ya kisi service mein.
+
+<Detail summary="Badalti hui streaming aur buffer">
+Saade MP4 ki ek hi quality hoti hai. HLS aur DASH video ko kai qualities par chhote-chhote tukdon mein
+baantte hain, aur player apne abhi ke bandwidth ke andaaze se har tukde ki quality chunta hai — yahi
+badalna hai, aur isiliye koi stream us surang se bach nikalta hai jahan tay bitrate wali file atak
+jaati.
+
+`DefaultLoadControl` mein wo ghundiyan hain, aur wo aapas mein sauda karti hain:
+
+```kotlin title="LoadControl" numbered
+DefaultLoadControl.Builder()
+    .setBufferDurationsMs(
+        /* minBufferMs = */ 50_000,
+        /* maxBufferMs = */ 50_000,
+        /* bufferForPlaybackMs = */ 2_500,
+        /* bufferForPlaybackAfterRebufferMs = */ 5_000,
+    )
+    .build()
+```
+
+`bufferForPlaybackMs` yeh hai ki playback shuru hone se pehle kitna aa chuka ho, to use ghatana video ko
+jaldi shuru karata hai aur jaldi atkaata bhi hai. `maxBufferMs` yeh hai ki player kitna aage tak padhta
+hai, to use badhana atakna rokta hai par wo data utaar leta hai jo shayad koi dekhe hi nahi — naap kar
+paise lene wale connection par mehnga, aur log aage kood jaayein to bekaar.
+
+Caching donon ke neeche baithti hai. HTTP wale source ke aage koi `CacheDataSource` dobara chalane ko
+muft aur bina net ke chalane ko mumkin bana deta hai, aur bina net ke liye saamaan laane ka sahara diya
+gaya raasta khud files likhna nahi, `DownloadManager` hai.
+
+Utpaadan mein jo naap maayne rakhta hai wo ausat bitrate nahi, **rebuffer ratio** hai — dekhe gaye samay
+mein se atke rehne ka hissa. `AnalyticsListener` use bataata hai, shuru hone ke samay ke saath, aur oopar
+ke ankon ko chhoone par donon hilte hain.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli media ki zyadatar shikaayatein hain">
+**Player ko na chhodna.** Hardware ke decoder poore process bhar ke aur gine-chune hain; leak chauthe upkaran par toot-ti hai, pehle par nahi.
+
+**`onCreate` mein banana, `onDestroy` mein chhodna.** Peechhe rehte hue bhi decode karta hai aur wakelock pakde rehta hai.
+
+**Player ko mukhya dhaage ke bahar se chhoona.** `Player` ek hi dhaage ka hai; usi dhaage se chalaiye jis par wo bana.
+
+**Bina soche `TextureView`.** `SurfaceView` kam bijli leta hai aur surakshit DRM ke raaston ke liye zaroori hai.
+
+**Lambe content ke liye saada MP4.** Koi badlaav nahi, to kamzor net quality ghatane ke bajay atakta hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Koi video chalaiye, bina chhode das baar jaakar lautiye, aur naakami padhiye.
+2. Usi player ko `MediaSessionService` mein le jaaiye aur lock screen se chalaiye.
+3. Player ko kisi HLS manifest par lagaiye aur net dheema karte hue chuni gayi track badalte dekhiye.
+4. `bufferForPlaybackMs` aadha kijiye aur dheeme connection par shuru hone ka samay tatha atakna naapiye.
+5. Aage koi `CacheDataSource` lagaiye aur pakka kijiye ki doosri baar chalane par koi net ki maang nahi jaati.
+
+## Dohraav
+
+| Cheez | Ek line |
+| --- | --- |
+| `Player` | Interface; `ExoPlayer` uska roop hai |
+| `release()` | Kam milne wala hardware ka decoder chhodta hai, sirf memory nahi |
+| Umar | Screens ke liye `onStart`/`onStop`, peechhe ki aawaz ke liye service |
+| `MediaSessionService` | Notification, lock screen, Auto, Wear, Assistant muft |
+| `MediaController` | Khud `Player` hai; UI ko pata nahi chalta playback kahan chal raha hai |
+| HLS / DASH | Kai qualities par tukde; har tukde par badlaav |
+| `bufferForPlaybackMs` | Shuru hone ki der banaam jaldi atakna |
+| `maxBufferMs` | Atakne se bachaav banaam bekaar gaya data |
+| `CacheDataSource` | Dobara chalana muft, bina net ke mumkin |
+| Rebuffer ratio | Utpaadan ka naap, bitrate nahi |
+
+<Interview title="Peechhe chalti aawaz par ek sawaal">
+"Aisi aawaz kaise banayenge jo upyogkarta ke app chhodne par bhi chalti rahe?"
+
+Player rakhne wala koi `MediaSessionService`, aur UI mein koi `MediaController`. Wo service playback ko
+kisi bhi activity se alag zinda rakhti hai, aur wo session haalat ko tantra ke saamne rakhta hai, aur
+keemat wahin hai: media ki notification, lock screen ke button, Bluetooth ke button, Android Auto, Wear
+aur Assistant, ye sab session hone se aate hain, har ek ke liye code likhne se nahi. Aur chunki
+`MediaController` khud `Player` hai, screen usse theek waise hi judti hai jaise kisi apne hi player se
+judti.
+
+Jis baat par main ungli rakhunga wo maalikaana hai. Theek ek hi hissa player banata aur chhodta hai, aur
+peechhe chalti aawaz ke liye wo service hai — UI ko wo cheez kabhi nahi chhodni chahiye jiski wo maalik
+nahi. Sirf bheetar video chalane wali screens ulta maamla hain: wahan player screen ka hai, `onStart`
+mein banta aur `onStop` mein chhootta hai, kyonki na dikhti screen ke haath mein pada hardware ka decoder
+media ki sabse aam gadbadi hai.
+</Interview>

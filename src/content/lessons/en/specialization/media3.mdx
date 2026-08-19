@@ -1,0 +1,179 @@
+---
+title: Media3 and ExoPlayer
+description: A player is not a view — it is a long-lived, expensive object holding scarce hardware. Most media bugs come from getting its lifetime wrong, not from the playback code.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+A `Player` holds a **hardware decoder**, an audio focus grant and a wakelock. Those are process-wide,
+limited resources, so the whole discipline of Media3 is knowing exactly when the player is created,
+who owns it, and when it is released — the playback API itself is small.
+</KeyIdea>
+
+## The smallest real player
+
+```kotlin title="PlayerScreen.kt" numbered
+@Composable
+fun PlayerScreen(url: String) {
+    val context = LocalContext.current
+    val player = remember {
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus = */ true)
+            .build()
+            .apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+            }
+    }
+
+    DisposableEffect(Unit) { onDispose { player.release() } }
+
+    AndroidView(factory = { PlayerView(it).apply { this.player = player } })
+}
+```
+
+`ExoPlayer` is one implementation of the `Player` interface; Media3 is the library that interface and
+its UI live in now, under `androidx.media3`. `setMediaItem` plus `prepare` is enough for a progressive
+MP4, and the same two lines handle HLS and DASH once the matching artifact is on the classpath — the
+source type is detected from the URI.
+
+The line that matters most is `release()`. It is not a memory optimisation.
+
+<Quiz
+  question="Video plays on the first visit to a screen. After navigating away and back three or four times, playback fails with a decoder initialisation error — and only on some devices."
+  options={[
+    "The player leaks memory until the app runs out of heap",
+    "The players were never released, and each one holds a MediaCodec hardware decoder — a limited, process-wide resource, so after a few leaked players there is none left to hand out. Devices differ in how many concurrent instances they allow, which is why some fail earlier than others",
+    "The media URL has a short expiry and the later requests are rejected"
+  ]}
+  answer={1}
+  explanation="A player is not just an object on the heap: creating one acquires a hardware video decoder from MediaCodec, and a device exposes only a handful of those for the whole system, so every leaked player permanently subtracts from that pool until the process dies. The device-dependence is the fingerprint of this bug — one phone may allow eight concurrent instances and another two, so the same leak surfaces on the fourth visit here and the second visit there, which is exactly why it survives testing on a single device. Heap exhaustion would raise OutOfMemoryError rather than a decoder-initialisation failure, and would not care which device you were on. A short-lived URL would fail the first request after expiry regardless of how many times the screen was opened, and the failure would surface as a source error, not a decoder one."
+/>
+
+## Where the player lives
+
+The choice is between the screen and a service, and it follows from one question: should audio keep
+playing when the user leaves?
+
+| Answer | Where the player lives | Released in |
+| --- | --- | --- |
+| No — video in a feed, a preview | The composable or fragment | `onDispose` / `onStop` |
+| Yes — music, podcasts, audiobooks | A `MediaSessionService` | The service's `onDestroy` |
+
+For the first case, create in `onStart` and release in `onStop`, not `onCreate`/`onDestroy`. On a phone
+those pairs look equivalent; they are not. A backgrounded activity is stopped but not destroyed, so
+releasing in `onDestroy` leaves a decoder running and a wakelock held while the user is somewhere else
+entirely.
+
+For the second case the answer is `MediaSessionService`, and the reason is not that a foreground
+service alone cannot play audio — it can. It is everything a `MediaSession` gets for free.
+
+```kotlin title="PlaybackService.kt" numbered
+class PlaybackService : MediaSessionService() {
+    private var session: MediaSession? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        val player = ExoPlayer.Builder(this).build()
+        session = MediaSession.Builder(this, player).build()
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
+
+    override fun onDestroy() {
+        session?.run { player.release(); release() }
+        session = null
+        super.onDestroy()
+    }
+}
+```
+
+A session publishes the current track and playback state to the whole system. The notification, the
+lock screen, Bluetooth headset buttons, Android Auto, Wear, and the Assistant all speak to it without a
+line of code from you. Your UI then talks to the same session through a `MediaController`, which is a
+`Player` too — so the screen does not care whether the real player is in-process or in a service.
+
+<Detail summary="Adaptive streaming and the buffer">
+A progressive MP4 has one quality. HLS and DASH split the video into short segments at several
+qualities, and the player picks a quality per segment from its current bandwidth estimate — that is
+adaptation, and it is why a stream survives a train tunnel that would stall a fixed-bitrate file.
+
+`DefaultLoadControl` holds the knobs, and they trade against each other:
+
+```kotlin title="LoadControl" numbered
+DefaultLoadControl.Builder()
+    .setBufferDurationsMs(
+        /* minBufferMs = */ 50_000,
+        /* maxBufferMs = */ 50_000,
+        /* bufferForPlaybackMs = */ 2_500,
+        /* bufferForPlaybackAfterRebufferMs = */ 5_000,
+    )
+    .build()
+```
+
+`bufferForPlaybackMs` is how much must be loaded before playback starts, so lowering it makes video
+start faster and stall sooner. `maxBufferMs` is how far ahead the player reads, so raising it prevents
+stalls but downloads data the user may never watch — expensive on a metered connection and wasteful if
+people skip.
+
+Caching sits underneath both. A `CacheDataSource` in front of the HTTP source makes repeat plays free
+and offline playback possible, and `DownloadManager` is the supported way to fetch content for offline
+use rather than writing files yourself.
+
+The metric that matters in production is not average bitrate but **rebuffer ratio** — the share of
+watch time spent stalled. `AnalyticsListener` reports it, along with startup time, and both move when
+you touch the numbers above.
+</Detail>
+
+## Pitfalls
+
+<Pitfall title="Five, and the first is most media bug reports">
+**Not releasing the player.** Hardware decoders are process-wide and limited; leaks fail on device four, not device one.
+
+**Creating in `onCreate`, releasing in `onDestroy`.** Decodes and holds a wakelock while backgrounded.
+
+**Touching the player off the main thread.** `Player` is single-threaded; use the thread it was built on.
+
+**`TextureView` by default.** `SurfaceView` costs less power and is required for secure DRM paths.
+
+**Progressive MP4 for long content.** No adaptation, so a weak network stalls instead of dropping quality.
+</Pitfall>
+
+## Practice
+
+1. Play a video, navigate away and back ten times without releasing, and read the failure.
+2. Move the same player into a `MediaSessionService` and control it from the lock screen.
+3. Point the player at an HLS manifest and watch the selected track change as you throttle the network.
+4. Halve `bufferForPlaybackMs` and measure start time and stalls on a slow connection.
+5. Put a `CacheDataSource` in front and confirm the second play makes no network requests.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `Player` | Interface; `ExoPlayer` is the implementation |
+| `release()` | Frees a scarce hardware decoder, not just memory |
+| Lifetime | `onStart`/`onStop` for screens, service for background audio |
+| `MediaSessionService` | Notification, lock screen, Auto, Wear, Assistant for free |
+| `MediaController` | Is a `Player`; UI does not know where playback runs |
+| HLS / DASH | Segments at several qualities; adapt per segment |
+| `bufferForPlaybackMs` | Start latency traded against early stalls |
+| `maxBufferMs` | Stall protection traded against wasted data |
+| `CacheDataSource` | Repeat plays free, offline possible |
+| Rebuffer ratio | The production metric, not bitrate |
+
+<Interview title="One question about background audio">
+"How would you build audio that keeps playing when the user leaves the app?"
+
+A `MediaSessionService` holding the player, and a `MediaController` in the UI. The service keeps
+playback alive independently of any activity, and the session publishes state to the system, which is
+where the value is: the media notification, lock screen controls, Bluetooth buttons, Android Auto, Wear
+and the Assistant all come from having a session rather than from writing code for each one. Because
+`MediaController` implements `Player`, the screen binds to it exactly as it would to a local player.
+
+The part I would call out is ownership. Exactly one component creates and releases the player, and for
+background audio that is the service — the UI must never release something it does not own. Screens
+that only play inline video are the opposite case: the player belongs to the screen, is created in
+`onStart` and released in `onStop`, because a hardware decoder held by an invisible screen is the most
+common media bug there is.
+</Interview>

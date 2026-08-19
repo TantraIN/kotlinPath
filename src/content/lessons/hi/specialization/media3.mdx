@@ -1,0 +1,177 @@
+---
+title: Media3 और ExoPlayer
+description: Player कोई view नहीं है — वह लंबे समय तक जीने वाली, महँगी चीज है जो कम मिलने वाला hardware पकड़े रहती है। Media की ज्यादातर गड़बड़ियाँ playback के code से नहीं, उसकी उम्र गलत रखने से आती हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+`Player` एक **hardware का decoder**, audio focus की इजाजत और एक wakelock पकड़े रहता है। ये पूरे process
+भर की, गिनी-चुनी चीजें हैं, तो Media3 का सारा अनुशासन यही जानना है कि player कब बनता है, उसका मालिक कौन
+है, और वह कब छूटता है — playback की API खुद छोटी है।
+</KeyIdea>
+
+## सबसे छोटा असली player
+
+```kotlin title="PlayerScreen.kt" numbered
+@Composable
+fun PlayerScreen(url: String) {
+    val context = LocalContext.current
+    val player = remember {
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus = */ true)
+            .build()
+            .apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+            }
+    }
+
+    DisposableEffect(Unit) { onDispose { player.release() } }
+
+    AndroidView(factory = { PlayerView(it).apply { this.player = player } })
+}
+```
+
+`ExoPlayer`, `Player` वाली interface का एक रूप है; Media3 वह library है जिसमें अब वह interface और उसकी
+UI रहती है, `androidx.media3` के नीचे। किसी सादे MP4 के लिए `setMediaItem` और `prepare` काफी हैं, और
+मिलती हुई artifact classpath पर आते ही वही दो लाइनें HLS और DASH भी सँभाल लेती हैं — source का किस्म URI
+से पहचाना जाता है।
+
+जो लाइन सबसे ज्यादा मायने रखती है वह है `release()`। वह memory की बचत नहीं है।
+
+<Quiz
+  question="किसी screen पर पहली बार video चलता है। तीन-चार बार वहाँ से जाकर लौटने के बाद playback decoder के शुरू होने की error से टूट जाता है — और सिर्फ कुछ ही उपकरणों पर।"
+  options={[
+    "Player memory leak करता है जब तक ऐप का ढेर खत्म न हो जाए",
+    "वे players कभी छोड़े ही नहीं गए, और हर एक MediaCodec का hardware decoder पकड़े है — पूरे process भर की, गिनी-चुनी चीज, तो कुछ छूटे हुए players के बाद देने को बचता ही नहीं। उपकरण इसमें अलग-अलग हैं कि वे एक साथ कितने चलने देते हैं, इसीलिए कुछ पहले टूटते हैं",
+    "उस media के URL की उम्र छोटी है और बाद की माँगें ठुकरा दी जाती हैं"
+  ]}
+  answer={1}
+  explanation="Player सिर्फ ढेर पर पड़ी कोई चीज नहीं है: एक बनाना MediaCodec से video का hardware decoder ले लेता है, और कोई उपकरण पूरे तंत्र के लिए उनमें से मुट्ठी भर ही देता है, तो हर छूटा हुआ player उस पूँजी में से हमेशा के लिए घटा देता है जब तक process न मरे। उपकरण पर टिका होना इसी गड़बड़ी की पहचान है — कोई फोन एक साथ आठ चलने दे और दूसरा दो, तो वही leak यहाँ चौथी बार पर और वहाँ दूसरी बार पर दिखती है, और ठीक इसीलिए वह एक ही उपकरण पर की गई जाँच-परख से बच निकलती है। ढेर के खत्म होने पर OutOfMemoryError उठता, decoder के शुरू होने की नाकामी नहीं, और उसे इससे मतलब न होता कि आप किस उपकरण पर हैं। छोटी उम्र वाला URL उम्र बीतने के बाद पहली ही माँग पर टूटता, चाहे screen कितनी बार खोली गई हो, और वह नाकामी source की error की तरह आती, decoder की नहीं।"
+/>
+
+## Player रहता कहाँ है
+
+चुनाव screen और किसी service के बीच है, और वह एक सवाल से निकलता है: क्या उपयोगकर्ता के जाने पर आवाज
+चलती रहनी चाहिए?
+
+| जवाब | Player रहता है | छूटता है |
+| --- | --- | --- |
+| नहीं — feed में video, कोई झलक | उसी composable या fragment में | `onDispose` / `onStop` में |
+| हाँ — संगीत, podcast, audiobook | किसी `MediaSessionService` में | उस service के `onDestroy` में |
+
+पहले मामले में `onStart` में बनाइए और `onStop` में छोड़िए, `onCreate`/`onDestroy` में नहीं। फोन पर वे
+जोड़ियाँ एक जैसी लगती हैं; हैं नहीं। पीछे चला गया activity रुका होता है, मरा नहीं, तो `onDestroy` में
+छोड़ना एक decoder चलता हुआ और एक wakelock पकड़ा हुआ छोड़ देता है जबकि उपयोगकर्ता कहीं और है।
+
+दूसरे मामले का जवाब `MediaSessionService` है, और वजह यह नहीं कि अकेली foreground service आवाज नहीं चला
+सकती — चला सकती है। वजह वह सब है जो `MediaSession` से मुफ्त मिलता है।
+
+```kotlin title="PlaybackService.kt" numbered
+class PlaybackService : MediaSessionService() {
+    private var session: MediaSession? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        val player = ExoPlayer.Builder(this).build()
+        session = MediaSession.Builder(this, player).build()
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
+
+    override fun onDestroy() {
+        session?.run { player.release(); release() }
+        session = null
+        super.onDestroy()
+    }
+}
+```
+
+कोई session अभी चल रहे गाने और playback की हालत को पूरे तंत्र के सामने रख देता है। वह notification, lock
+screen, Bluetooth के headset वाले बटन, Android Auto, Wear और Assistant, सब उससे आपके एक भी line लिखे
+बिना बात कर लेते हैं। आपकी UI फिर उसी session से किसी `MediaController` के जरिए बात करती है, जो खुद भी
+एक `Player` है — तो screen को फर्क ही नहीं पड़ता कि असली player इसी process में है या किसी service में।
+
+<Detail summary="बदलती हुई streaming और buffer">
+सादे MP4 की एक ही quality होती है। HLS और DASH video को कई qualities पर छोटे-छोटे टुकड़ों में बाँटते
+हैं, और player अपने अभी के bandwidth के अंदाजे से हर टुकड़े की quality चुनता है — यही बदलना है, और
+इसीलिए कोई stream उस सुरंग से बच निकलता है जहाँ तय bitrate वाली file अटक जाती।
+
+`DefaultLoadControl` में वे घुंडियाँ हैं, और वे आपस में सौदा करती हैं:
+
+```kotlin title="LoadControl" numbered
+DefaultLoadControl.Builder()
+    .setBufferDurationsMs(
+        /* minBufferMs = */ 50_000,
+        /* maxBufferMs = */ 50_000,
+        /* bufferForPlaybackMs = */ 2_500,
+        /* bufferForPlaybackAfterRebufferMs = */ 5_000,
+    )
+    .build()
+```
+
+`bufferForPlaybackMs` यह है कि playback शुरू होने से पहले कितना आ चुका हो, तो उसे घटाना video को जल्दी
+शुरू कराता है और जल्दी अटकाता भी है। `maxBufferMs` यह है कि player कितना आगे तक पढ़ता है, तो उसे बढ़ाना
+अटकना रोकता है पर वह data उतार लेता है जो शायद कोई देखे ही नहीं — नाप कर पैसे लेने वाले connection पर
+महँगा, और लोग आगे कूद जाएँ तो बेकार।
+
+Caching दोनों के नीचे बैठती है। HTTP वाले source के आगे कोई `CacheDataSource` दोबारा चलाने को मुफ्त और
+बिना नेट के चलाने को मुमकिन बना देता है, और बिना नेट के लिए सामान लाने का सहारा दिया गया रास्ता खुद
+files लिखना नहीं, `DownloadManager` है।
+
+उत्पादन में जो नाप मायने रखता है वह औसत bitrate नहीं, **rebuffer ratio** है — देखे गए समय में से अटके
+रहने का हिस्सा। `AnalyticsListener` उसे बताता है, शुरू होने के समय के साथ, और ऊपर के अंकों को छूने पर
+दोनों हिलते हैं।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली media की ज्यादातर शिकायतें हैं">
+**Player को न छोड़ना।** Hardware के decoder पूरे process भर के और गिने-चुने हैं; leak चौथे उपकरण पर टूटती है, पहले पर नहीं।
+
+**`onCreate` में बनाना, `onDestroy` में छोड़ना।** पीछे रहते हुए भी decode करता है और wakelock पकड़े रहता है।
+
+**Player को मुख्य धागे के बाहर से छूना।** `Player` एक ही धागे का है; उसी धागे से चलाइए जिस पर वह बना।
+
+**बिना सोचे `TextureView`।** `SurfaceView` कम बिजली लेता है और सुरक्षित DRM के रास्तों के लिए जरूरी है।
+
+**लंबे content के लिए सादा MP4।** कोई बदलाव नहीं, तो कमजोर नेट quality घटाने के बजाय अटकता है।
+</Pitfall>
+
+## अभ्यास
+
+1. कोई video चलाइए, बिना छोड़े दस बार जाकर लौटिए, और नाकामी पढ़िए।
+2. उसी player को `MediaSessionService` में ले जाइए और lock screen से चलाइए।
+3. Player को किसी HLS manifest पर लगाइए और नेट धीमा करते हुए चुनी गई track बदलते देखिए।
+4. `bufferForPlaybackMs` आधा कीजिए और धीमे connection पर शुरू होने का समय तथा अटकना नापिए।
+5. आगे कोई `CacheDataSource` लगाइए और पक्का कीजिए कि दूसरी बार चलाने पर कोई नेट की माँग नहीं जाती।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| `Player` | Interface; `ExoPlayer` उसका रूप है |
+| `release()` | कम मिलने वाला hardware का decoder छोड़ता है, सिर्फ memory नहीं |
+| उम्र | Screens के लिए `onStart`/`onStop`, पीछे की आवाज के लिए service |
+| `MediaSessionService` | Notification, lock screen, Auto, Wear, Assistant मुफ्त |
+| `MediaController` | खुद `Player` है; UI को पता नहीं चलता playback कहाँ चल रहा है |
+| HLS / DASH | कई qualities पर टुकड़े; हर टुकड़े पर बदलाव |
+| `bufferForPlaybackMs` | शुरू होने की देर बनाम जल्दी अटकना |
+| `maxBufferMs` | अटकने से बचाव बनाम बेकार गया data |
+| `CacheDataSource` | दोबारा चलाना मुफ्त, बिना नेट के मुमकिन |
+| Rebuffer ratio | उत्पादन का नाप, bitrate नहीं |
+
+<Interview title="पीछे चलती आवाज पर एक सवाल">
+"ऐसी आवाज कैसे बनाएँगे जो उपयोगकर्ता के ऐप छोड़ने पर भी चलती रहे?"
+
+Player रखने वाला कोई `MediaSessionService`, और UI में कोई `MediaController`। वह service playback को
+किसी भी activity से अलग जिंदा रखती है, और वह session हालत को तंत्र के सामने रखता है, और कीमत वहीं है:
+media की notification, lock screen के बटन, Bluetooth के बटन, Android Auto, Wear और Assistant, ये सब
+session होने से आते हैं, हर एक के लिए code लिखने से नहीं। और चूँकि `MediaController` खुद `Player` है,
+screen उससे ठीक वैसे ही जुड़ती है जैसे किसी अपने ही player से जुड़ती।
+
+जिस बात पर मैं उँगली रखूँगा वह मालिकाना है। ठीक एक ही हिस्सा player बनाता और छोड़ता है, और पीछे चलती
+आवाज के लिए वह service है — UI को वह चीज कभी नहीं छोड़नी चाहिए जिसकी वह मालिक नहीं। सिर्फ भीतर video
+चलाने वाली screens उलटा मामला हैं: वहाँ player screen का है, `onStart` में बनता और `onStop` में छूटता
+है, क्योंकि न दिखती screen के हाथ में पड़ा hardware का decoder media की सबसे आम गड़बड़ी है।
+</Interview>
