@@ -1,0 +1,188 @@
+---
+title: Aisa sign-in jo dobara khulne par bhi bacha rahe
+description: Sign in karana aasaan aadha hai. Jo aadha bigadta hai wo yeh hai ki khulne ke pehle do sau milliseconds mein aapka app user ke baare mein kya maanta hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Yeh kabhi mat poochhiye ki **koi signed in hai kya**. Use dekhte rahiye. Kholte waqt
+SDK jab tak disk se session lautata hai, `currentUser` ek pal ke liye `null` hota
+hai, to shuruaat mein ki gayi ek baar ki parakh tay kar leti hai ki user signed out
+hai aur use login ki screen par phenk deti hai.
+</KeyIdea>
+
+## App ko user chahiye hi kyon
+
+Shared list kisi ki to honi chahiye. Bina pehchaan ke yeh kehne ka koi tareeka hi
+nahi ki *yeh list aapki aur unki hai, sabki nahi* — aur do step baad ke suraksha
+niyamon mein yahi sab kuchh hai. Sign-in koi suvidha nahi jo hum apne aap mein jod
+rahe hain; wo wahi cheez hai jo un niyamon ko mumkin banati hai.
+
+## Dependencies
+
+```kotlin title="app/build.gradle.kts" numbered
+implementation(libs.firebase.auth)
+implementation(libs.androidx.credentials)                 // tantra ka credential chunne wala
+implementation(libs.androidx.credentials.play.services)   // uska Google Play wala pichhwada
+implementation(libs.googleid)                             // Google ID wale token ka kism
+```
+
+Ek button ke liye teen libraries zaroorat se zyada lagti hain jab tak batwara na
+dikhe. `credentials` wo Android ki API hai jo *tantra* se koi credential maangti hai
+— wahi neeche wali chaadar banati hai, wahi jaanti hai ki upkaran par kaun se khaate
+hain, aur wahi passkeys tatha sahej hue passwords ke liye bhi chalti hai. `googleid`
+us khaas kism ka byora hai. Phir Firebase Auth us credential ko Firebase ke user se
+badal deta hai.
+
+<Note title="Wo client ki pehchaan aati kahan se hai">
+Neeche wali web client ki pehchaan aap chipkate nahi. Pichhle step mein
+`google-services` wale plugin ne use `google-services.json` se banaya tha, ek aam
+string wale sansaadhan ki tarah, aur isiliye yahan use `getString` se padha ja raha
+hai.
+</Note>
+
+## Sign in karana
+
+```kotlin title="AuthRepository.kt" numbered
+class AuthRepository @Inject constructor(
+    private val auth: FirebaseAuth,
+    private val credentialManager: CredentialManager,
+    @ApplicationContext private val context: Context,
+) {
+    suspend fun signInWithGoogle(activityContext: Context): Result<Unit> = runCatching {
+        val option = GetGoogleIdOption.Builder()
+            .setServerClientId(context.getString(R.string.default_web_client_id))  // web wali pehchaan
+            .setFilterByAuthorizedAccounts(false)   // false = naye khaate bhi dikhaiye
+            .build()
+
+        val response = credentialManager.getCredential(
+            context = activityContext,              // Activity hi chahiye: yeh UI dikhata hai
+            request = GetCredentialRequest(listOf(option)),
+        )
+
+        val idToken = GoogleIdTokenCredential.createFrom(response.credential.data).idToken
+        auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+    }
+}
+```
+
+Is function ki zyadatar gadbadiyan do arguments mein hain.
+
+`setServerClientId` ko **web** wali client ki pehchaan chahiye, Android wali nahi.
+Android wali pehchaan maujood hai aur usi console mein dikhti bhi hai, aur use lene
+se aisa token banta hai jise Firebase aisi error se thukraata hai jo yeh bataati hi
+nahi ki aapne kaun si pehchaan lagai.
+
+`setFilterByAuthorizedAccounts(false)` hi pehli baar aane wale user ko mumkin banata
+hai. `true` ke saath wo chaadar sirf un khaaton ko dikhati hai jo aapka app pehle
+istemaal kar chuke hain — lautte user ke liye sahi, aur nayi-naveli install par
+khaali chaadar.
+
+`activityContext` bhi maayne rakhta hai: yeh call UI dikhati hai, to use Activity
+chahiye, app wala context nahi. App wala context dene par wo chalte waqt girti hai.
+
+## Jo hissa asal mein maayne rakhta hai
+
+```kotlin title="AuthRepository.kt" numbered
+/** Abhi ka user deta hai, aur har badlaav par dobara. */
+val user: Flow<FirebaseUser?> = callbackFlow {
+    val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+    auth.addAuthStateListener(listener)                     // judte hi abhi wala maan deta hai
+    awaitClose { auth.removeAuthStateListener(listener) }
+}
+```
+
+Yahi nanha flow is step ki poori baat hai. Wo listener judte hi ek baar chalta hai —
+us waqt SDK jo jaanta ho usi ke saath — aur phir tab chalta hai jab session laut aata
+hai, jab token taaza karna naakaam hota hai, aur jab user sign out karta hai.
+
+Isse navigation haath se kiye modon ki kataar nahi, haalat ka function ban jaata hai.
+Kahin se bhi sign out kijiye, ya server par token radd ho jaaye, aur har screen ek
+saath jawaab deti hai kyonki wo sab wahi ek dhaara padh rahi hain.
+
+<Quiz
+  question="App `MainActivity.onCreate` mein `auth.currentUser != null` parakhta hai aur null hone par login ki screen par le jaata hai. Signed in users kareeb har paanch mein se ek baar khulne par login par pahunch jaate hain, purane phonon par aur bhi zyada."
+  options={[
+    "Session beet chuka hai, aur Firebase chupchaap user ko sign out kar raha hai",
+    "Kholte waqt SDK ne disk se session lautana abhi poora nahi kiya hota, to `currentUser` thodi der ke liye `null` hota hai — aur ek baar ki parakh agar usi jharokhe mein chal jaaye to use signed out padh leti hai. Yeh daud hai, isiliye kabhi-kabhi hoti hai aur dheemi disk par zyada. `addAuthStateListener` dekhte rehna ise theek kar deta hai, kyonki lautna poora hote hi listener dobara chalta hai",
+    "`onCreate` Firebase ke shuru hone se pehle chalta hai, to wo call paribhasha se hi null lautati hai"
+  ]}
+  answer={1}
+  explanation="Session lautane ka matlab hai disk se rakha hua token padhna, aur aapki activity banne ke theek usi pal wo kaam poora nahi hota, to `currentUser` sahi-sahi null kehta hai aur ek pal baad koi user. Ek baar ki padhai yeh keh hi nahi sakti, aur chunki samay disk ki raftaar tatha thandi banaam garam shuruaat par tika hai, wahi code aapki mez par pass hota hai aur saste phone par paanch mein se ek baar naakaam — jo umar beetne ki nahi, daud ki pehchaan hai. Beeta hua session kabhi-kabhi nahi, har baar naakaam hota, aur agli baar khulne par bhi. Firebase asal mein `onCreate` tak shuru ho chuka hota hai, kyonki uska ContentProvider `Application.onCreate` se pehle chala tha — shuru ho chuka hona hi use lautana shuru karne deta hai, aur yahi listener ko nateeja sunne ka sahi raasta banata hai."
+/>
+
+## Ise UI se jodna
+
+```kotlin title="SaathiApp.kt" numbered
+val user by viewModel.user.collectAsStateWithLifecycle()
+
+when (user) {
+    null -> LoginScreen(onSignIn = viewModel::signIn)
+    else -> ListsScreen()
+}
+```
+
+Yahan ek teesri haalat chhupi hai, aur use saaf-saaf kehna kaam ka hai: *abhi pata
+nahi*. User ko `FirebaseUser?` ki tarah gadhna "signed out" aur "abhi aa raha hai" ko
+ek hi `null` mein mila deta hai, jisse har thandi shuruaat par login ki screen ek pal
+ko kaundh jaati hai.
+
+```kotlin title="Do nahi, teen haalatein" numbered
+sealed interface AuthState {
+    data object Loading : AuthState                       // pehli aawaz se pehle
+    data object SignedOut : AuthState
+    data class SignedIn(val uid: String) : AuthState
+}
+```
+
+`Loading` par koi splash dikhaiye, aur wo kaundh gaayab ho jaati hai. Yeh oopar wali
+daud ka hi sabak hai, tippani mein nahi, kismon ki vyavastha mein kaha hua.
+
+<Detail summary="Sign out, aur uske saath kya-kya mitana padta hai">
+```kotlin title="Sign out" numbered
+suspend fun signOut() {
+    auth.signOut()
+    credentialManager.clearCredentialState(ClearCredentialStateRequest())  // warna chupchaap wahi khaata
+    database.clearAllTables()                                              // agle user ko yeh data na dikhe
+}
+```
+
+Teen lainein, kyonki pichhla user teen jagah maujood hai.
+
+`auth.signOut()` Firebase ka session mitata hai. `clearCredentialState` ke bina
+credential wala manager bina chunne ki chaadar dikhaye wahi khaata lauta sakta hai, to
+user sign out chhoota hai aur turant phir sign in ho jaata hai — jo "sign out chalta
+hi nahi" ki tarah bataya jaata hai.
+
+Teesri line wahi hai jo log bhoolte hain. Room ke paas ab bhi pichhle user ki listein
+hain, aur saajhe phone par agla vyakti unhein dekh leta hai. Har user ke hisaab se
+jama har cheez yahin mitti hai, warna yeh bahut maamuli dikhti wajah wala data ka
+risaav hai.
+</Detail>
+
+<Pitfall title="Chaar, aur pehli do hi zyadatar shikaayatein hain">
+**Shuruaat mein ek baar `currentUser` parakhna.** Kabhi-kabhi login par uchhaal. Use
+dekhte rahiye.
+
+**Android wali client ki pehchaan lena.** Firebase wo token aisi error se thukraata
+hai jo pehchaan ka naam nahi leti.
+
+**Pehli baar aane walon ke liye `setFilterByAuthorizedAccounts(true)`.** Nayi-naveli
+install par khaali chunne wali chaadar, jo toota hua button lagti hai.
+
+**Sthaaniya data mitaaye bina sign out.** Agla user app kholkar kisi aur ki listein
+dekhta hai.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Sign-in chalta hai | Google ki chaadar aati hai aur aap signed in utarte hain |
+| Dobara khulne par bachta hai | App maariye, phir kholiye, koi login ki screen nahi |
+| Login ki kaundh nahi | Thandi shuruaat splash dikhati hai, login ki jhalak kabhi nahi |
+| Sign-out poora hai | Sign out karke doosre khaate se aane par purana data nahi dikhta |
+| Auth ek dhaara hai | Kahin kuchh bhi seedhe `currentUser` nahi padhta |
+
+Aage: tay kijiye ki data kaun si shaklein lega — aur ek hi class database, net aur
+screen, teenon ko ek saath kyon nahi sambhal sakti.

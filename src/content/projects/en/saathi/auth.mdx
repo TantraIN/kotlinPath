@@ -1,0 +1,181 @@
+---
+title: Sign-in that survives a restart
+description: Signing in is the easy half. The half that goes wrong is what your app believes about the user in the first two hundred milliseconds after launch.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Never ask **is someone signed in**. Observe it. `currentUser` is `null` for a moment
+at launch while the SDK restores the session from disk, so a one-time check at
+startup decides the user is signed out and throws them back to the login screen.
+</KeyIdea>
+
+## Why the app needs a user at all
+
+A shared list has to belong to someone. Without an identity there is no way to say
+*this list is yours and theirs, and not everyone's* — which is the entire content
+of the security rules two steps from now. Sign-in is not a feature we are adding
+for its own sake; it is the thing that makes the rules possible.
+
+## The dependencies
+
+```kotlin title="app/build.gradle.kts" numbered
+implementation(libs.firebase.auth)
+implementation(libs.androidx.credentials)                 // the system credential picker
+implementation(libs.androidx.credentials.play.services)   // its Google Play backend
+implementation(libs.googleid)                             // the Google ID token type
+```
+
+Three libraries for one button looks excessive until you see the split.
+`credentials` is the Android API for asking the *system* for a credential — it draws
+the bottom sheet, it knows the accounts on the device, and it works for passkeys and
+saved passwords too. `googleid` describes the specific credential type. Firebase Auth
+then exchanges that credential for a Firebase user.
+
+<Note title="Where the client id comes from">
+The web client id below is not something you paste. The `google-services` plugin
+generated it from `google-services.json` in the previous step, as an ordinary string
+resource, which is why this reads it with `getString`.
+</Note>
+
+## Signing in
+
+```kotlin title="AuthRepository.kt" numbered
+class AuthRepository @Inject constructor(
+    private val auth: FirebaseAuth,
+    private val credentialManager: CredentialManager,
+    @ApplicationContext private val context: Context,
+) {
+    suspend fun signInWithGoogle(activityContext: Context): Result<Unit> = runCatching {
+        val option = GetGoogleIdOption.Builder()
+            .setServerClientId(context.getString(R.string.default_web_client_id))  // the web id
+            .setFilterByAuthorizedAccounts(false)   // false = also offer new accounts
+            .build()
+
+        val response = credentialManager.getCredential(
+            context = activityContext,              // must be an Activity: it shows UI
+            request = GetCredentialRequest(listOf(option)),
+        )
+
+        val idToken = GoogleIdTokenCredential.createFrom(response.credential.data).idToken
+        auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+    }
+}
+```
+
+Two arguments carry most of the bugs in this function.
+
+`setServerClientId` wants the **web** client id, not the Android one. The Android
+client id exists and is visible in the same console, and using it produces a token
+Firebase rejects with an error that never mentions which id you used.
+
+`setFilterByAuthorizedAccounts(false)` is what makes a first-time user possible. With
+`true`, the sheet only offers accounts that have already used your app — correct for
+a returning-user flow, and an empty sheet on a fresh install.
+
+The `activityContext` matters too: this call shows a UI, so it needs an Activity, not
+the application context. Passing the application context throws at run time.
+
+## The part that actually matters
+
+```kotlin title="AuthRepository.kt" numbered
+/** Emits the current user, and again every time it changes. */
+val user: Flow<FirebaseUser?> = callbackFlow {
+    val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+    auth.addAuthStateListener(listener)                     // fires immediately with the current value
+    awaitClose { auth.removeAuthStateListener(listener) }
+}
+```
+
+This tiny flow is the whole point of the step. The listener fires once as soon as it
+is added — with whatever the SDK knows right then — and again when the session is
+restored, when a token refresh fails, and when the user signs out.
+
+That makes navigation a function of state rather than a series of manual redirects.
+Sign out anywhere, or have a token revoked on the server, and every screen reacts at
+once because they are all reading the same stream.
+
+<Quiz
+  question="The app checks `auth.currentUser != null` in `MainActivity.onCreate` and navigates to the login screen when it is null. Signed-in users are sent to login roughly one launch in five, more often on older phones."
+  options={[
+    "The session expired, and Firebase is silently signing the user out",
+    "At launch the SDK has not finished restoring the session from disk yet, so `currentUser` is briefly `null` — and a one-shot check that happens to run inside that window reads it as signed out. It is a race, which is why it is intermittent and worse on slow storage. Observing `addAuthStateListener` fixes it, because the listener fires again once restoration completes",
+    "`onCreate` runs before Firebase is initialised, so the call returns null by definition"
+  ]}
+  answer={1}
+  explanation="Restoring a session means reading a persisted token from disk, and that work is not finished at the instant your activity is created, so `currentUser` legitimately answers null and then answers a user a moment later. A one-shot read cannot express that, and because the timing depends on disk speed and cold-versus-warm start, the same code passes on your desk and fails one launch in five on a cheaper phone — the signature of a race rather than an expiry. An expired session would fail consistently rather than intermittently, and would also fail the very next launch. Firebase is in fact already initialised by `onCreate`, because its ContentProvider ran before `Application.onCreate` — being initialised is precisely what lets it start the restore, and what makes the listener the right way to hear the result."
+/>
+
+## Wiring it into the UI
+
+```kotlin title="SaathiApp.kt" numbered
+val user by viewModel.user.collectAsStateWithLifecycle()
+
+when (user) {
+    null -> LoginScreen(onSignIn = viewModel::signIn)
+    else -> ListsScreen()
+}
+```
+
+There is a third state hiding here, and it is worth being explicit about: *we do not
+know yet*. Modelling the user as `FirebaseUser?` collapses "signed out" and "still
+loading" into the same `null`, which makes the login screen flash for a moment on
+every cold start.
+
+```kotlin title="Three states, not two" numbered
+sealed interface AuthState {
+    data object Loading : AuthState                       // before the first emission
+    data object SignedOut : AuthState
+    data class SignedIn(val uid: String) : AuthState
+}
+```
+
+Show a splash for `Loading`, and the flash disappears. This is the same lesson as the
+race above, expressed in the type system instead of a comment.
+
+<Detail summary="Signing out, and what has to be cleared with it">
+```kotlin title="Sign out" numbered
+suspend fun signOut() {
+    auth.signOut()
+    credentialManager.clearCredentialState(ClearCredentialStateRequest())  // or it silently re-picks
+    database.clearAllTables()                                              // the next user must not see this data
+}
+```
+
+Three lines because there are three places the previous user exists.
+
+`auth.signOut()` clears the Firebase session. Without `clearCredentialState`, the
+credential manager may hand back the same account without showing the picker, so the
+user taps sign out and is immediately signed back in — reported as "sign out does not
+work".
+
+The third line is the one people forget. Room still holds the previous user's lists,
+and on a shared phone the next person sees them. Anything cached per-user is cleared
+here, or it is a data leak with a very ordinary-looking cause.
+</Detail>
+
+<Pitfall title="Four, and the first two are most of the reports">
+**Checking `currentUser` once at startup.** Intermittent bounces to login. Observe it.
+
+**Using the Android client id.** Firebase rejects the token with an error that does
+not name the id.
+
+**`setFilterByAuthorizedAccounts(true)` for first-time users.** An empty picker on a
+fresh install, which reads as a broken button.
+
+**Signing out without clearing local data.** The next user opens the app and sees
+someone else's lists.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| Sign-in works | The Google sheet appears and you land signed in |
+| It survives a restart | Kill the app, reopen, no login screen |
+| No login flash | A cold start shows the splash, never a flicker of login |
+| Sign-out is complete | Signing out and back in with another account shows no old data |
+| Auth is a stream | Nothing anywhere reads `currentUser` directly |
+
+Next: decide the shapes the data takes — and why one class cannot serve the
+database, the network and the screen at the same time.

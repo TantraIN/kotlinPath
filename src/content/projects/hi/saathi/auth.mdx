@@ -1,0 +1,181 @@
+---
+title: ऐसा sign-in जो दोबारा खुलने पर भी बचा रहे
+description: Sign in कराना आसान आधा है। जो आधा बिगड़ता है वह यह है कि खुलने के पहले दो सौ milliseconds में आपका ऐप उपयोगकर्ता के बारे में क्या मानता है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+यह कभी मत पूछिए कि **कोई signed in है क्या**। उसे देखते रहिए। खुलते वक्त SDK जब तक
+disk से session लौटाता है, `currentUser` एक पल के लिए `null` होता है, तो शुरुआत में
+की गई एक बार की परख तय कर लेती है कि उपयोगकर्ता signed out है और उसे login की screen
+पर फेंक देती है।
+</KeyIdea>
+
+## ऐप को उपयोगकर्ता चाहिए ही क्यों
+
+साझा सूची किसी की तो होनी चाहिए। बिना पहचान के यह कहने का कोई तरीका ही नहीं कि *यह
+सूची आपकी और उनकी है, सबकी नहीं* — और दो कदम बाद के सुरक्षा नियमों में यही सब कुछ है।
+Sign-in कोई सुविधा नहीं जो हम अपने आप में जोड़ रहे हैं; वह वही चीज है जो उन नियमों को
+मुमकिन बनाती है।
+
+## निर्भरताएँ
+
+```kotlin title="app/build.gradle.kts" numbered
+implementation(libs.firebase.auth)
+implementation(libs.androidx.credentials)                 // तंत्र का credential चुनने वाला
+implementation(libs.androidx.credentials.play.services)   // उसका Google Play वाला पिछवाड़ा
+implementation(libs.googleid)                             // Google ID वाले token का किस्म
+```
+
+एक बटन के लिए तीन libraries जरूरत से ज्यादा लगती हैं जब तक बँटवारा न दिखे।
+`credentials` वह Android की API है जो *तंत्र* से कोई credential माँगती है — वही नीचे
+वाली चादर बनाती है, वही जानती है कि उपकरण पर कौन से खाते हैं, और वही passkeys तथा
+सहेजे हुए passwords के लिए भी चलती है। `googleid` उस खास किस्म का ब्योरा है। फिर
+Firebase Auth उस credential को Firebase के उपयोगकर्ता से बदल देता है।
+
+<Note title="वह client की पहचान आती कहाँ से है">
+नीचे वाली web client की पहचान आप चिपकाते नहीं। पिछले कदम में `google-services` वाले
+plugin ने उसे `google-services.json` से बनाया था, एक आम string वाले संसाधन की तरह,
+और इसीलिए यहाँ उसे `getString` से पढ़ा जा रहा है।
+</Note>
+
+## Sign in कराना
+
+```kotlin title="AuthRepository.kt" numbered
+class AuthRepository @Inject constructor(
+    private val auth: FirebaseAuth,
+    private val credentialManager: CredentialManager,
+    @ApplicationContext private val context: Context,
+) {
+    suspend fun signInWithGoogle(activityContext: Context): Result<Unit> = runCatching {
+        val option = GetGoogleIdOption.Builder()
+            .setServerClientId(context.getString(R.string.default_web_client_id))  // web वाली पहचान
+            .setFilterByAuthorizedAccounts(false)   // false = नए खाते भी दिखाइए
+            .build()
+
+        val response = credentialManager.getCredential(
+            context = activityContext,              // Activity ही चाहिए: यह UI दिखाता है
+            request = GetCredentialRequest(listOf(option)),
+        )
+
+        val idToken = GoogleIdTokenCredential.createFrom(response.credential.data).idToken
+        auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+    }
+}
+```
+
+इस function की ज्यादातर गड़बड़ियाँ दो arguments में हैं।
+
+`setServerClientId` को **web** वाली client की पहचान चाहिए, Android वाली नहीं। Android
+वाली पहचान मौजूद है और उसी console में दिखती भी है, और उसे लेने से ऐसा token बनता है
+जिसे Firebase ऐसी error से ठुकराता है जो यह बताती ही नहीं कि आपने कौन सी पहचान लगाई।
+
+`setFilterByAuthorizedAccounts(false)` ही पहली बार आने वाले उपयोगकर्ता को मुमकिन
+बनाता है। `true` के साथ वह चादर सिर्फ उन खातों को दिखाती है जो आपका ऐप पहले इस्तेमाल
+कर चुके हैं — लौटते उपयोगकर्ता के लिए सही, और नई-नवेली install पर खाली चादर।
+
+`activityContext` भी मायने रखता है: यह call UI दिखाती है, तो उसे Activity चाहिए, ऐप
+वाला context नहीं। ऐप वाला context देने पर वह चलते वक्त गिरती है।
+
+## जो हिस्सा असल में मायने रखता है
+
+```kotlin title="AuthRepository.kt" numbered
+/** अभी का उपयोगकर्ता देता है, और हर बदलाव पर दोबारा। */
+val user: Flow<FirebaseUser?> = callbackFlow {
+    val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+    auth.addAuthStateListener(listener)                     // जुड़ते ही अभी वाला मान देता है
+    awaitClose { auth.removeAuthStateListener(listener) }
+}
+```
+
+यही नन्हा flow इस कदम की पूरी बात है। वह listener जुड़ते ही एक बार चलता है — उस वक्त
+SDK जो जानता हो उसी के साथ — और फिर तब चलता है जब session लौट आता है, जब token ताजा
+करना नाकाम होता है, और जब उपयोगकर्ता sign out करता है।
+
+इससे navigation हाथ से किए मोड़ों की कतार नहीं, हालत का function बन जाता है। कहीं से
+भी sign out कीजिए, या server पर token रद्द हो जाए, और हर screen एक साथ जवाब देती है
+क्योंकि वे सब वही एक धारा पढ़ रही हैं।
+
+<Quiz
+  question="ऐप `MainActivity.onCreate` में `auth.currentUser != null` परखता है और null होने पर login की screen पर ले जाता है। Signed in उपयोगकर्ता करीब हर पाँच में से एक बार खुलने पर login पर पहुँच जाते हैं, पुराने फोनों पर और भी ज्यादा।"
+  options={[
+    "Session बीत चुका है, और Firebase चुपचाप उपयोगकर्ता को sign out कर रहा है",
+    "खुलते वक्त SDK ने disk से session लौटाना अभी पूरा नहीं किया होता, तो `currentUser` थोड़ी देर के लिए `null` होता है — और एक बार की परख अगर उसी झरोखे में चल जाए तो उसे signed out पढ़ लेती है। यह दौड़ है, इसीलिए कभी-कभी होती है और धीमी disk पर ज्यादा। `addAuthStateListener` देखते रहना इसे ठीक कर देता है, क्योंकि लौटना पूरा होते ही listener दोबारा चलता है",
+    "`onCreate` Firebase के शुरू होने से पहले चलता है, तो वह call परिभाषा से ही null लौटाती है"
+  ]}
+  answer={1}
+  explanation="Session लौटाने का मतलब है disk से रखा हुआ token पढ़ना, और आपकी activity बनने के ठीक उसी पल वह काम पूरा नहीं होता, तो `currentUser` सही-सही null कहता है और एक पल बाद कोई उपयोगकर्ता। एक बार की पढ़ाई यह कह ही नहीं सकती, और चूँकि समय disk की रफ्तार तथा ठंडी बनाम गरम शुरुआत पर टिका है, वही code आपकी मेज पर पास होता है और सस्ते फोन पर पाँच में से एक बार नाकाम — जो उम्र बीतने की नहीं, दौड़ की पहचान है। बीता हुआ session कभी-कभी नहीं, हर बार नाकाम होता, और अगली बार खुलने पर भी। Firebase असल में `onCreate` तक शुरू हो चुका होता है, क्योंकि उसका ContentProvider `Application.onCreate` से पहले चला था — शुरू हो चुका होना ही उसे लौटाना शुरू करने देता है, और यही listener को नतीजा सुनने का सही रास्ता बनाता है।"
+/>
+
+## इसे UI से जोड़ना
+
+```kotlin title="SaathiApp.kt" numbered
+val user by viewModel.user.collectAsStateWithLifecycle()
+
+when (user) {
+    null -> LoginScreen(onSignIn = viewModel::signIn)
+    else -> ListsScreen()
+}
+```
+
+यहाँ एक तीसरी हालत छिपी है, और उसे साफ-साफ कहना काम का है: *अभी पता नहीं*।
+उपयोगकर्ता को `FirebaseUser?` की तरह गढ़ना "signed out" और "अभी आ रहा है" को एक ही
+`null` में मिला देता है, जिससे हर ठंडी शुरुआत पर login की screen एक पल को कौंध जाती है।
+
+```kotlin title="दो नहीं, तीन हालतें" numbered
+sealed interface AuthState {
+    data object Loading : AuthState                       // पहली आवाज से पहले
+    data object SignedOut : AuthState
+    data class SignedIn(val uid: String) : AuthState
+}
+```
+
+`Loading` पर कोई splash दिखाइए, और वह कौंध गायब हो जाती है। यह ऊपर वाली दौड़ का ही
+सबक है, टिप्पणी में नहीं, किस्मों की व्यवस्था में कहा हुआ।
+
+<Detail summary="Sign out, और उसके साथ क्या-क्या मिटाना पड़ता है">
+```kotlin title="Sign out" numbered
+suspend fun signOut() {
+    auth.signOut()
+    credentialManager.clearCredentialState(ClearCredentialStateRequest())  // वरना चुपचाप वही खाता
+    database.clearAllTables()                                              // अगले उपयोगकर्ता को यह data न दिखे
+}
+```
+
+तीन लाइनें, क्योंकि पिछला उपयोगकर्ता तीन जगह मौजूद है।
+
+`auth.signOut()` Firebase का session मिटाता है। `clearCredentialState` के बिना
+credential वाला manager बिना चुनने की चादर दिखाए वही खाता लौटा सकता है, तो उपयोगकर्ता
+sign out छूता है और तुरंत फिर sign in हो जाता है — जो "sign out चलता ही नहीं" की तरह
+बताया जाता है।
+
+तीसरी लाइन वही है जो लोग भूलते हैं। Room के पास अब भी पिछले उपयोगकर्ता की सूचियाँ हैं,
+और साझा फोन पर अगला व्यक्ति उन्हें देख लेता है। हर उपयोगकर्ता के हिसाब से जमा हर चीज
+यहीं मिटती है, वरना यह बहुत मामूली दिखती वजह वाला data का रिसाव है।
+</Detail>
+
+<Pitfall title="चार, और पहली दो ही ज्यादातर शिकायतें हैं">
+**शुरुआत में एक बार `currentUser` परखना।** कभी-कभी login पर उछाल। उसे देखते रहिए।
+
+**Android वाली client की पहचान लेना।** Firebase वह token ऐसी error से ठुकराता है जो
+पहचान का नाम नहीं लेती।
+
+**पहली बार आने वालों के लिए `setFilterByAuthorizedAccounts(true)`।** नई-नवेली install
+पर खाली चुनने वाली चादर, जो टूटा हुआ बटन लगती है।
+
+**स्थानीय data मिटाए बिना sign out।** अगला उपयोगकर्ता ऐप खोलकर किसी और की सूचियाँ
+देखता है।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| Sign-in चलता है | Google की चादर आती है और आप signed in उतरते हैं |
+| दोबारा खुलने पर बचता है | ऐप मारिए, फिर खोलिए, कोई login की screen नहीं |
+| Login की कौंध नहीं | ठंडी शुरुआत splash दिखाती है, login की झलक कभी नहीं |
+| Sign-out पूरा है | Sign out करके दूसरे खाते से आने पर पुराना data नहीं दिखता |
+| Auth एक धारा है | कहीं कुछ भी सीधे `currentUser` नहीं पढ़ता |
+
+आगे: तय कीजिए कि data कौन सी शक्लें लेगा — और एक ही class database, नेट और screen,
+तीनों को एक साथ क्यों नहीं सँभाल सकती।
