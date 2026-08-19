@@ -1,0 +1,164 @@
+---
+title: "Navigation: routes, arguments aur back ka dher"
+description: Teen screens, aur wo banaavat jo tay karti hai ki user ke back dabane par kya hoga. Routes sahi rakhna hi agle step — back aur transitions — ko lagbhag muft bana deta hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Route ek **pata hai, maal nahi**. Jis cheez ki baat hai uski pehchaan bhejiye; use laane
+ka kaam manzil par chhodiye. Poori cheez liye chalta route suvidhajanak dikhta hai aur
+pehli hi baar toot jaata hai jab screen khuli rehte data badal jaaye — ya process disk
+se lautaya jaaye.
+</KeyIdea>
+
+## Teen screens
+
+<PipelineDiagram
+  title="Navigation ka graph"
+  description="Lists shuruaati manzil hai. Koi list chunne par cheezon ki list khulti hai, aur koi cheez chunne par use badalne wali screen. Back usi raaste par ulta chalta hai."
+  stages={[
+    { label: "Lists", sub: "shuruaati manzil", accent: "emerald" },
+    { label: "List", sub: "listId", accent: "violet" },
+    { label: "Edit item", sub: "listId, itemId", accent: "sky" },
+  ]}
+/>
+
+## Kism se surakshit routes
+
+```kotlin title="ui/Routes.kt" numbered
+@Serializable data object ListsRoute
+@Serializable data class ListRoute(val listId: String)
+@Serializable data class EditItemRoute(val listId: String, val itemId: String)
+```
+
+Teen ghoshnaayein aur ek plugin — `kotlinx-serialization` — un string wale routes ki
+jagah le lete hain jo Navigation ko pehle chahiye the. Yeh farak sajaavati nahi hai:
+strings ke saath `"list/{listId}"` aur argument ke naam mein ek akshar ki galti aaraam se
+compile hoti hai aur chalte waqt null argument se girti hai. Inke saath chhoota ya galat
+naam wala argument compile ki error hai.
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+NavHost(navController = navController, startDestination = ListsRoute) {
+
+    composable<ListsRoute> {
+        ListsScreen(onOpen = { listId -> navController.navigate(ListRoute(listId)) })
+    }
+
+    composable<ListRoute> {
+        ListScreen(
+            onEdit = { itemId -> navController.navigate(EditItemRoute(listId, itemId)) },
+            onBack = { navController.navigateUp() },
+        )
+    }
+
+    composable<EditItemRoute> {
+        EditItemScreen(onDone = { navController.popBackStack() })
+    }
+}
+```
+
+`navigate(ListRoute(listId))` koi saji hui string nahi, ek asli cheez leta hai. Wo route
+wali cheez back ke dher ki entry mein saheji jaati hai, aur ViewModel mein
+`savedStateHandle.toRoute<ListRoute>()` use wapas padh leta hai — wahi line jo aap
+pichhle step mein likh chuke hain.
+
+<Quiz
+  question="Database ki doosri padhai se bachne ke liye koi developer route ko `EditItemRoute(val item: Item)` bana deta hai aur poori cheez bhej deta hai. Yeh chalta hai. Phir koi parakhne wala bataata hai ki kisi cheez ko badalkar, ek minute ke liye doosre app mein jaakar lautne par us cheez ka purana text dikhta hai."
+  options={[
+    "Navigation route wali cheezon ko jama rakhta hai, to bhandaar se purani nakal parosi jaati hai",
+    "Wo route navigation ke waqt li gayi ek jhalak hai. Wo back ke dher mein saheji jaati hai aur process ke marne ke baad lautai jaati hai, to screen wahi dikhati hai jaisi wo cheez tab thi jab user ne chhua — tab se doosre ki taraf se aaye badlaav samet, ya khud user ka kiya badlaav. Pehchaan bhejne se screen abhi wali pankti padhti hai",
+    "`Item` `@Serializable` nahi hai, to wo cheez chupchaap tayshuda maanon se badal di jaati hai"
+  ]}
+  answer={1}
+  explanation="Route ka argument saheji hui haalat hai, yaani wo navigation ke pal par jam jaata hai aur baad mein hubahu lautaya jaata hai — to manzil abhi ki nahi, beete hue ki nakal padh rahi hai, aur saajhe app mein abhi wala aage badh chuka ho sakta hai kyonki doosre ne wahi cheez badli. Taaza karne ka koi raasta na hona hi us gadbadi ko kabhi-kabhi hone wali aur uljhane wali banata hai: wo tab tak sahi lagti hai jab tak itna waqt na beete ki neeche kuchh badal jaaye. Pehchaan bhejna pata route mein aur data database mein rakhta hai, to screen abhi wali pankti collect karti hai aur badalne par badal jaati hai. Navigation apni taraf se kuchh jama nahi rakhta, aur jo kism serialise nahi ho sakta wo chupchaap badla nahi jaata, compile ki error deta hai — aur kism se surakshit routes ki hifaazat theek yahi hai."
+/>
+
+## Back ke dher ko sambhalna
+
+Navigate karna aasaan hai; yeh tay karna ki user kis par laut sakta hai, wahi hissa hai
+jiske niyam hain.
+
+```kotlin title="Login wali screen hataana" numbered
+navController.navigate(ListsRoute) {
+    popUpTo<LoginRoute> { inclusive = true }   // login hataiye, khud use bhi
+    launchSingleTop = true                     // doosri nakal mat chadhaiye
+}
+```
+
+Bina `popUpTo` ke, sign in karne ke baad back dabana user ko usi app ki login wali screen
+par lauta deta hai jismein wo pehle hi signed in hai. Auth wale app mein yeh sabse aam
+navigation ki gadbadi hai, aur ek vikalp use theek kar deta hai.
+
+`launchSingleTop` wahan maayne rakhta hai jahan koi manzil apne hi aap tak pahunch sakti
+ho — koi notification wahi list khole jo user pehle se dekh raha hai, ya kisi pankti par
+do baar chhoona. Uske bina ek screen chhodne ke liye back do baar dabana padta hai.
+
+| Vikalp | Kab lijiye |
+| --- | --- |
+| `popUpTo(route)` | Peechhe ki screens par lautna nahi chahiye |
+| `inclusive = true` | Khud wo manzil bhi hat jaani chahiye — login, onboarding |
+| `launchSingleTop` | Manzil apne hi aap se dobara khul sakti hai |
+| `restoreState` | Neeche wale tabs jinhein apni scroll ki jagah yaad rakhni hai |
+
+<Detail summary="`navigateUp` aur `popBackStack` ek hi call nahi hain">
+Zyadatar waqt wo ek jaisa bartaav karte hain, aur isiliye farak sirf usi maamle mein
+dikhta hai jo maayne rakhta hai.
+
+`popBackStack()` *aapke* back ke dher ki oopar wali entry hataata hai. Agar wo khaali
+hai, kuchh nahi hota aur user phans jaata hai.
+
+`navigateUp()` mezbaan se poochhta hai — jo koi doosra app bhi ho sakta hai. Jab aapki
+screen kisi deep link se khuli ho, ya kisi aur app ki share wali chaadar se, to
+`navigateUp` user ko wahin lauta deta hai. Toolbar ke teer se insaan yahi ummeed karta
+hai, aur isiliye toolbar ka Up `navigateUp()` bulaye aur screen ke bheetar ka "Done" wala
+button `popBackStack()`.
+
+Yeh share wale step mein thos ho jaayega, jab WhatsApp se aaya koi link app ko seedhe kisi
+list par kholta hai aur peechhe koi dher hota hi nahi.
+</Detail>
+
+## ViewModel rehta kahan hai
+
+```kotlin title="Manzil ke daayre mein" numbered
+composable<ListRoute> {
+    val viewModel: ListViewModel = hiltViewModel()   // isi back stack ki entry ke daayre mein
+    ListScreen(viewModel)
+}
+```
+
+`composable` wale hisse ke bheetar `hiltViewModel()` us ViewModel ko usi navigation ki
+entry ke daayre mein rakhta hai, Activity ke nahi. To dher par padi do alag lists ko do
+ViewModel milte hain, do `listId` ke saath, aur koi screen hataane par uska ViewModel bhi
+mit jaata hai.
+
+Lagbhag hamesha aap yahi chaahte hain. Apvaad wo haalat hai jo sach mein screens mein
+saajha ho — koi kai-kadamon wala form — jahan aap use oopar wale graph ki entry ke daayre
+mein rakhte hain, aur Activity ke daayre wala ViewModel uthane ke bajay saaf-saaf kehte
+hain.
+
+<Pitfall title="Chaar, aur pehli do kisi bhi parakhne wale ko ek minute mein dikh jaati hain">
+**Route ke arguments mein poori cheezein bhejna.** Thodi der baad baasi data, aur process
+ke marne ke baad bhi.
+
+**Sign in ke baad `popUpTo` na lagana.** Back signed in app ki login wali screen par lauta
+deta hai.
+
+**`launchSingleTop` chhootna.** Ek hi screen ki nakal chadh jaati hai aur back do baar
+dabana padta hai.
+
+**Toolbar ke teer par `popBackStack()`.** Deep link se khuli screen ke paas hataane ko
+kuchh nahi hota, aur Up kuchh karta hi nahi.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Routes kism se surakshit hain | Arguments strings nahi, constructor ke parameters hain |
+| Sirf pehchaanein safar karti hain | Koi route domain ki cheez liye nahi chalta |
+| Login dher mein nahi hai | Sign in ke baad back app se bahar le jaata hai, login par nahi |
+| Har manzil ka apna ViewModel | Dher par padi do lists apni-apni haalat rakhti hain |
+| Up aur back alag hain | Toolbar ka teer `navigateUp()` bulata hai |
+
+Aage: user ke back dabane par asal mein hota kya hai — aur wo ishaare wali jhalak jo
+seedhe dikhne wale tareeke se sambhalne par toot jaati hai.

@@ -1,0 +1,161 @@
+---
+title: "Navigation: routes, arguments और back का ढेर"
+description: तीन screens, और वह बनावट जो तय करती है कि उपयोगकर्ता के back दबाने पर क्या होगा। Routes सही रखना ही अगले कदम — back और transitions — को लगभग मुफ्त बना देता है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Route एक **पता है, माल नहीं**। जिस चीज की बात है उसकी पहचान भेजिए; उसे लाने का काम
+मंजिल पर छोड़िए। पूरी चीज लिए चलता route सुविधाजनक दिखता है और पहली ही बार टूट जाता है
+जब screen खुली रहते data बदल जाए — या process disk से लौटाया जाए।
+</KeyIdea>
+
+## तीन screens
+
+<PipelineDiagram
+  title="Navigation का graph"
+  description="Lists शुरुआती मंजिल है। कोई सूची चुनने पर चीजों की सूची खुलती है, और कोई चीज चुनने पर उसे बदलने वाली screen। Back उसी रास्ते पर उलटा चलता है।"
+  stages={[
+    { label: "Lists", sub: "शुरुआती मंजिल", accent: "emerald" },
+    { label: "List", sub: "listId", accent: "violet" },
+    { label: "Edit item", sub: "listId, itemId", accent: "sky" },
+  ]}
+/>
+
+## किस्म से सुरक्षित routes
+
+```kotlin title="ui/Routes.kt" numbered
+@Serializable data object ListsRoute
+@Serializable data class ListRoute(val listId: String)
+@Serializable data class EditItemRoute(val listId: String, val itemId: String)
+```
+
+तीन घोषणाएँ और एक plugin — `kotlinx-serialization` — उन string वाले routes की जगह ले
+लेते हैं जो Navigation को पहले चाहिए थे। यह फर्क सजावटी नहीं है: strings के साथ
+`"list/{listId}"` और argument के नाम में एक अक्षर की गलती आराम से compile होती है और
+चलते वक्त null argument से गिरती है। इनके साथ छूटा या गलत नाम वाला argument compile की
+error है।
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+NavHost(navController = navController, startDestination = ListsRoute) {
+
+    composable<ListsRoute> {
+        ListsScreen(onOpen = { listId -> navController.navigate(ListRoute(listId)) })
+    }
+
+    composable<ListRoute> {
+        ListScreen(
+            onEdit = { itemId -> navController.navigate(EditItemRoute(listId, itemId)) },
+            onBack = { navController.navigateUp() },
+        )
+    }
+
+    composable<EditItemRoute> {
+        EditItemScreen(onDone = { navController.popBackStack() })
+    }
+}
+```
+
+`navigate(ListRoute(listId))` कोई सजी हुई string नहीं, एक असली चीज लेता है। वह route
+वाली चीज back के ढेर की entry में सहेजी जाती है, और ViewModel में
+`savedStateHandle.toRoute<ListRoute>()` उसे वापस पढ़ लेता है — वही लाइन जो आप पिछले कदम
+में लिख चुके हैं।
+
+<Quiz
+  question="Database की दूसरी पढ़ाई से बचने के लिए कोई developer route को `EditItemRoute(val item: Item)` बना देता है और पूरी चीज भेज देता है। यह चलता है। फिर कोई परखने वाला बताता है कि किसी चीज को बदलकर, एक मिनट के लिए दूसरे ऐप में जाकर लौटने पर उस चीज का पुराना text दिखता है।"
+  options={[
+    "Navigation route वाली चीजों को जमा रखता है, तो भंडार से पुरानी नकल परोसी जाती है",
+    "वह route navigation के वक्त ली गई एक झलक है। वह back के ढेर में सहेजी जाती है और process के मरने के बाद लौटाई जाती है, तो screen वही दिखाती है जैसी वह चीज तब थी जब उपयोगकर्ता ने छुआ — तब से दूसरे की तरफ से आए बदलाव समेत, या खुद उपयोगकर्ता का किया बदलाव। पहचान भेजने से screen अभी वाली पंक्ति पढ़ती है",
+    "`Item` `@Serializable` नहीं है, तो वह चीज चुपचाप तयशुदा मानों से बदल दी जाती है"
+  ]}
+  answer={1}
+  explanation="Route का argument सहेजी हुई हालत है, यानी वह navigation के पल पर जम जाता है और बाद में हूबहू लौटाया जाता है — तो मंजिल अभी की नहीं, बीते हुए की नकल पढ़ रही है, और साझे ऐप में अभी वाला आगे बढ़ चुका हो सकता है क्योंकि दूसरे ने वही चीज बदली। ताजा करने का कोई रास्ता न होना ही उस गड़बड़ी को कभी-कभी होने वाली और उलझाने वाली बनाता है: वह तब तक सही लगती है जब तक इतना वक्त न बीते कि नीचे कुछ बदल जाए। पहचान भेजना पता route में और data database में रखता है, तो screen अभी वाली पंक्ति collect करती है और बदलने पर बदल जाती है। Navigation अपनी तरफ से कुछ जमा नहीं रखता, और जो किस्म serialise नहीं हो सकता वह चुपचाप बदला नहीं जाता, compile की error देता है — और किस्म से सुरक्षित routes की हिफाजत ठीक यही है।"
+/>
+
+## Back के ढेर को सँभालना
+
+Navigate करना आसान है; यह तय करना कि उपयोगकर्ता किस पर लौट सकता है, वही हिस्सा है
+जिसके नियम हैं।
+
+```kotlin title="Login वाली screen हटाना" numbered
+navController.navigate(ListsRoute) {
+    popUpTo<LoginRoute> { inclusive = true }   // login हटाइए, खुद उसे भी
+    launchSingleTop = true                     // दूसरी नकल मत चढ़ाइए
+}
+```
+
+बिना `popUpTo` के, sign in करने के बाद back दबाना उपयोगकर्ता को उसी ऐप की login वाली
+screen पर लौटा देता है जिसमें वह पहले ही signed in है। Auth वाले ऐप में यह सबसे आम
+navigation की गड़बड़ी है, और एक विकल्प उसे ठीक कर देता है।
+
+`launchSingleTop` वहाँ मायने रखता है जहाँ कोई मंजिल अपने ही आप तक पहुँच सकती हो — कोई
+notification वही सूची खोले जो उपयोगकर्ता पहले से देख रहा है, या किसी पंक्ति पर दो बार
+छूना। उसके बिना एक screen छोड़ने के लिए back दो बार दबाना पड़ता है।
+
+| विकल्प | कब लीजिए |
+| --- | --- |
+| `popUpTo(route)` | पीछे की screens पर लौटना नहीं चाहिए |
+| `inclusive = true` | खुद वह मंजिल भी हट जानी चाहिए — login, onboarding |
+| `launchSingleTop` | मंजिल अपने ही आप से दोबारा खुल सकती है |
+| `restoreState` | नीचे वाले tabs जिन्हें अपनी scroll की जगह याद रखनी है |
+
+<Detail summary="`navigateUp` और `popBackStack` एक ही call नहीं हैं">
+ज्यादातर वक्त वे एक जैसा बर्ताव करते हैं, और इसीलिए फर्क सिर्फ उसी मामले में दिखता है
+जो मायने रखता है।
+
+`popBackStack()` *आपके* back के ढेर की ऊपर वाली entry हटाता है। अगर वह खाली है, कुछ
+नहीं होता और उपयोगकर्ता फँस जाता है।
+
+`navigateUp()` मेजबान से पूछता है — जो कोई दूसरा ऐप भी हो सकता है। जब आपकी screen किसी
+deep link से खुली हो, या किसी और ऐप की share वाली चादर से, तो `navigateUp` उपयोगकर्ता
+को वहीं लौटा देता है। toolbar के तीर से इंसान यही उम्मीद करता है, और इसीलिए toolbar का
+Up `navigateUp()` बुलाए और screen के भीतर का "Done" वाला बटन `popBackStack()`।
+
+यह share वाले कदम में ठोस हो जाएगा, जब WhatsApp से आया कोई link ऐप को सीधे किसी सूची
+पर खोलता है और पीछे कोई ढेर होता ही नहीं।
+</Detail>
+
+## ViewModel रहता कहाँ है
+
+```kotlin title="मंजिल के दायरे में" numbered
+composable<ListRoute> {
+    val viewModel: ListViewModel = hiltViewModel()   // इसी back stack की entry के दायरे में
+    ListScreen(viewModel)
+}
+```
+
+`composable` वाले हिस्से के भीतर `hiltViewModel()` उस ViewModel को उसी navigation की
+entry के दायरे में रखता है, Activity के नहीं। तो ढेर पर पड़ी दो अलग सूचियों को दो
+ViewModel मिलते हैं, दो `listId` के साथ, और कोई screen हटाने पर उसका ViewModel भी मिट
+जाता है।
+
+लगभग हमेशा आप यही चाहते हैं। अपवाद वह हालत है जो सच में screens में साझा हो — कोई
+कई-कदमों वाला form — जहाँ आप उसे ऊपर वाले graph की entry के दायरे में रखते हैं, और
+Activity के दायरे वाला ViewModel उठाने के बजाय साफ-साफ कहते हैं।
+
+<Pitfall title="चार, और पहली दो किसी भी परखने वाले को एक मिनट में दिख जाती हैं">
+**Route के arguments में पूरी चीजें भेजना।** थोड़ी देर बाद बासी data, और process के मरने
+के बाद भी।
+
+**Sign in के बाद `popUpTo` न लगाना।** Back signed in ऐप की login वाली screen पर लौटा
+देता है।
+
+**`launchSingleTop` छूटना।** एक ही screen की नकल चढ़ जाती है और back दो बार दबाना
+पड़ता है।
+
+**Toolbar के तीर पर `popBackStack()`।** Deep link से खुली screen के पास हटाने को कुछ
+नहीं होता, और Up कुछ करता ही नहीं।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| Routes किस्म से सुरक्षित हैं | Arguments strings नहीं, constructor के parameters हैं |
+| सिर्फ पहचानें सफर करती हैं | कोई route domain की चीज लिए नहीं चलता |
+| Login ढेर में नहीं है | Sign in के बाद back ऐप से बाहर ले जाता है, login पर नहीं |
+| हर मंजिल का अपना ViewModel | ढेर पर पड़ी दो सूचियाँ अपनी-अपनी हालत रखती हैं |
+| Up और back अलग हैं | Toolbar का तीर `navigateUp()` बुलाता है |
+
+आगे: उपयोगकर्ता के back दबाने पर असल में होता क्या है — और वह इशारे वाली झलक जो सीधे
+दिखने वाले तरीके से सँभालने पर टूट जाती है।

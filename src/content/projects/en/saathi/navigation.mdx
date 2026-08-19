@@ -1,0 +1,158 @@
+---
+title: "Navigation: routes, arguments and the back stack"
+description: Three screens, and the structure that decides what happens when the user presses back. Getting the routes right is what makes the next step — back and transitions — mostly free.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+A route is an **address, not a payload**. Pass the id of the thing; let the destination
+load it. A route carrying the object looks convenient and breaks the first time the
+data changes while the screen is open — or the process is restored from disk.
+</KeyIdea>
+
+## The three screens
+
+<PipelineDiagram
+  title="The navigation graph"
+  description="Lists is the start destination. Selecting a list opens the item list, and selecting an item opens the edit screen. Back walks the same path in reverse."
+  stages={[
+    { label: "Lists", sub: "start destination", accent: "emerald" },
+    { label: "List", sub: "listId", accent: "violet" },
+    { label: "Edit item", sub: "listId, itemId", accent: "sky" },
+  ]}
+/>
+
+## Type-safe routes
+
+```kotlin title="ui/Routes.kt" numbered
+@Serializable data object ListsRoute
+@Serializable data class ListRoute(val listId: String)
+@Serializable data class EditItemRoute(val listId: String, val itemId: String)
+```
+
+Three declarations and one plugin — `kotlinx-serialization` — replace the string
+routes that Navigation used to need. The difference is not aesthetic: with strings,
+`"list/{listId}"` and a typo in the argument name compile fine and fail at run time
+with a null argument. With these, a missing or misnamed argument is a compile error.
+
+```kotlin title="ui/SaathiNavHost.kt" numbered
+NavHost(navController = navController, startDestination = ListsRoute) {
+
+    composable<ListsRoute> {
+        ListsScreen(onOpen = { listId -> navController.navigate(ListRoute(listId)) })
+    }
+
+    composable<ListRoute> {
+        ListScreen(
+            onEdit = { itemId -> navController.navigate(EditItemRoute(listId, itemId)) },
+            onBack = { navController.navigateUp() },
+        )
+    }
+
+    composable<EditItemRoute> {
+        EditItemScreen(onDone = { navController.popBackStack() })
+    }
+}
+```
+
+`navigate(ListRoute(listId))` takes an instance, not a formatted string. The route
+object is serialised into the back stack entry, and `savedStateHandle.toRoute<ListRoute>()`
+in the ViewModel reads it back — which is the line you already wrote in the previous
+step.
+
+<Quiz
+  question="To avoid a second database read, a developer changes the route to `EditItemRoute(val item: Item)` and passes the whole object. It works. Then a tester reports that editing an item, switching to another app for a minute, and coming back shows the item's old text."
+  options={[
+    "Navigation caches route objects, so a stale copy is served from the cache",
+    "The route is a snapshot taken at navigation time. It is serialised into the back stack and restored after process death, so the screen shows whatever the item looked like when the user tapped — including edits that arrived from the other person since, or a value the user themselves changed. Passing the id makes the screen read the current row instead",
+    "`Item` is not `@Serializable`, so the object is silently replaced with defaults"
+  ]}
+  answer={1}
+  explanation="A route argument is saved state, which means it is frozen at the moment of navigation and faithfully restored later — so the destination is reading a copy of the past rather than the present, and in a shared app the present may have moved on because the other person edited the same item. The absence of any refresh path is what makes the bug intermittent and confusing: it looks correct until enough time passes for something to change underneath. Passing the id keeps the address in the route and the data in the database, so the screen collects the current row and updates when it changes. Navigation is not caching anything of its own, and a non-serialisable type is a compile error rather than a silent substitution, which is precisely the protection the type-safe routes give you."
+/>
+
+## Managing the back stack
+
+Navigating is easy; deciding what the user can come back to is the part with rules.
+
+```kotlin title="Clearing the login screen" numbered
+navController.navigate(ListsRoute) {
+    popUpTo<LoginRoute> { inclusive = true }   // remove login, including itself
+    launchSingleTop = true                     // do not stack a second copy
+}
+```
+
+Without `popUpTo`, pressing back after signing in returns the user to the login
+screen of an app they are already signed into. It is the single most common
+navigation bug in an app with auth, and one option fixes it.
+
+`launchSingleTop` matters wherever a destination can be reached from itself — a
+notification opening a list the user is already viewing, or a double tap on a row.
+Without it, back has to be pressed twice to leave one screen.
+
+| Option | Use when |
+| --- | --- |
+| `popUpTo(route)` | The screens behind should not be returned to |
+| `inclusive = true` | The target itself should also go — login, onboarding |
+| `launchSingleTop` | The destination may be re-entered from itself |
+| `restoreState` | Bottom-nav tabs that should keep their scroll position |
+
+<Detail summary="`navigateUp` and `popBackStack` are not the same call">
+They behave identically most of the time, which is why the difference only shows up in
+the case that matters.
+
+`popBackStack()` removes the top entry of *your* back stack. If it is empty, nothing
+happens and the user is stuck.
+
+`navigateUp()` asks the host — which may be another app. When your screen was opened
+from a deep link, or from a share sheet in someone else's app, `navigateUp` returns
+the user there. That is the behaviour a person expects from the toolbar arrow, and it
+is why toolbar Up should call `navigateUp()` while an in-screen "Done" button should
+call `popBackStack()`.
+
+This becomes concrete in the sharing step, when a link from WhatsApp opens the app
+directly onto a list with no back stack behind it.
+</Detail>
+
+## Where the ViewModel lives
+
+```kotlin title="Scoped to the destination" numbered
+composable<ListRoute> {
+    val viewModel: ListViewModel = hiltViewModel()   // scoped to this back stack entry
+    ListScreen(viewModel)
+}
+```
+
+`hiltViewModel()` inside a `composable` block scopes the ViewModel to that navigation
+entry, not to the Activity. Two different lists on the stack therefore get two
+ViewModels with two `listId`s, and popping a screen clears its ViewModel.
+
+That is almost always what you want. The exception is state genuinely shared across
+screens — a multi-step form — where you scope to the parent graph entry instead, and
+say so explicitly rather than reaching for an Activity-scoped ViewModel.
+
+<Pitfall title="Four, and the first two are visible to any tester in a minute">
+**Passing objects as route arguments.** Stale data after any delay, and after process
+death.
+
+**No `popUpTo` after sign-in.** Back returns to the login screen of a signed-in app.
+
+**Missing `launchSingleTop`.** A duplicate screen stacks up and back must be pressed
+twice.
+
+**`popBackStack()` on the toolbar arrow.** A deep-linked screen has nothing to pop, and
+Up does nothing.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| Routes are type-safe | Arguments are constructor parameters, not strings |
+| Only ids travel | No route holds a domain object |
+| Login is not in the stack | Back after sign-in leaves the app, not to login |
+| ViewModels are per-destination | Two lists on the stack keep separate state |
+| Up and back are distinguished | The toolbar arrow calls `navigateUp()` |
+
+Next: what actually happens when the user presses back — and the gesture preview that
+breaks if you handle it the obvious way.
