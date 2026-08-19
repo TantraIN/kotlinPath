@@ -1,0 +1,151 @@
+---
+title: Play Console, AAB and store listing
+description: You upload a bundle and Play builds the APKs. That indirection is the whole shift — what you test locally is not what any user installs, and the listing is a bigger lever on installs than most features.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+An **AAB is not installable**. It is a description of your app from which Play generates a per-device
+APK — one density, one ABI, one language. So the thing users receive is smaller than your bundle and
+different from anything you built locally.
+</KeyIdea>
+
+## AAB versus APK
+
+```bash title="Build" numbered
+./gradlew bundleRelease            # app-release.aab  -> upload this
+./gradlew assembleRelease          # app-release.apk  -> for local testing only
+```
+
+App Bundles have been required for new apps on Play since 2021. The saving is real: a device gets one
+of each variant instead of all of them, which typically cuts the download by a third or more on an app
+with several densities and ABIs.
+
+The consequence is the one that catches people: you cannot install an AAB, and the APK you built locally
+is signed with a different key and contains every variant. To test what a user actually gets:
+
+```bash title="bundletool" numbered
+bundletool build-apks --bundle=app-release.aab --output=app.apks \
+  --ks=upload.jks --ks-key-alias=upload --local-testing
+bundletool install-apks --apks=app.apks
+```
+
+Or download the signed, device-specific APK from the Play Console's App Bundle Explorer, which is the
+only way to see exactly what Play generated.
+
+## Versioning
+
+```kotlin title="Versions" numbered
+defaultConfig {
+    versionCode = 42            // an integer Play compares; must always increase
+    versionName = "2.3.1"       // a string users see; Play does not care
+}
+```
+
+`versionCode` is the only one Play enforces, and the rule is absolute: it must be higher than anything
+you have ever uploaded to that track, including a build you rolled back or deleted. A reused code is
+rejected, so deriving it from something monotonic — a CI run number, or a date-based scheme — avoids the
+manual mistake.
+
+An App Bundle can also produce several APKs with different codes internally; the `versionCode` you set is
+the base, and Play handles the rest.
+
+<Quiz
+  question="A team tests the release APK from `assembleRelease` thoroughly, uploads the AAB, and users on some devices report missing images and a crash on startup. Local testing showed nothing. What is the likely cause?"
+  options={[
+    "The AAB was built from a different commit than the APK",
+    "The universal APK contains every density, ABI and language, while Play delivers a split per device — so a resource referenced only by name, or a native library loaded manually, is present locally and absent in the delivered split",
+    "Play re-compressed the resources and corrupted them"
+  ]}
+  answer={1}
+  explanation="A locally built APK is universal: every drawable density, every ABI, every language is inside it, so anything the app looks up dynamically resolves fine. Play splits that bundle and sends one device one slice, and code that resolves resources by name with getIdentifier — or loads a .so by path, or assumes a language's strings exist — can be reaching for something that was never delivered. That is why testing the APK you built proves less than it appears to. The fix is to test the delivered artefact, either via bundletool with --local-testing or by downloading the device-specific APK from App Bundle Explorer. Where a dynamic lookup is genuinely needed, the resource must be excluded from splitting or referenced statically so R8 and the bundler both see it — which is the same reflection problem from the R8 lesson, one layer further out."
+/>
+
+## The store listing
+
+The listing is a conversion surface, not paperwork:
+
+| Field | What matters |
+| --- | --- |
+| Title (30 chars) | The name plus, if it fits, what it is |
+| Short description (80) | The one line shown in search results |
+| Full description (4000) | Readable prose; keyword stuffing is a policy violation |
+| Screenshots | The first two carry most of the decision |
+| Feature graphic | Shown on the listing and in some placements |
+
+Screenshots are the field with the largest effect and the least effort spent on it. Plain device
+captures underperform framed screenshots with a short caption explaining what the screen does, because a
+listing is scrolled past in seconds and an unlabelled screenshot communicates nothing.
+
+Play also lets you run **store listing experiments** — A/B tests on the icon, screenshots or
+description, measured on install rate. That is a better source of truth than an internal opinion about
+which screenshot is nicer.
+
+<Detail summary="Data safety, which is a declaration you must actually match">
+The Data safety form asks what you collect, whether you share it, and whether it is encrypted in
+transit. It is not a formality: Play cross-checks it, and a mismatch between the declaration and what
+your SDKs actually do is a common rejection and a common removal.
+
+The part teams get wrong is transitive collection. Analytics, ads, crash reporting and attribution SDKs
+all collect on their own, so the honest declaration covers what your dependencies do, not only your own
+code. The Firebase lesson's point applies directly: Analytics arrives with several other SDKs and starts
+collecting immediately, so it belongs in the form whether or not you chose it.
+
+The related requirement is a **privacy policy URL**, which is mandatory for any app that collects
+anything — and effectively every app does, because a crash reporter collects a device identifier.
+
+Getting this wrong does not fail at build time or review time reliably; it tends to surface as an
+enforcement action months later, which is why the declaration is worth doing carefully once.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first means you tested the wrong thing">
+**Testing the universal APK.** Users get a split; dynamic lookups can be missing from it.
+
+**A reused `versionCode`.** Rejected, including against builds you deleted.
+
+**Plain device screenshots.** The highest-leverage listing field, usually the least worked on.
+
+**Keyword stuffing the description.** A policy violation, not a growth tactic.
+
+**A Data safety form that omits your SDKs.** Play cross-checks; enforcement arrives later.
+</Pitfall>
+
+## Practice
+
+1. Build an AAB and try to install it directly.
+2. Generate device APKs with `bundletool` and compare the size with the universal APK.
+3. Upload with a `versionCode` you have used before and read the rejection.
+4. Download a device-specific APK from App Bundle Explorer and verify its signature.
+5. List every SDK in your app and check each one against your Data safety declaration.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| AAB | Not installable; Play generates per-device APKs |
+| Split delivery | One density, one ABI, one language |
+| Local APK | Universal, and signed with a different key |
+| `bundletool` | Build and install what Play would generate |
+| App Bundle Explorer | The exact APK a device receives |
+| `versionCode` | Must always increase; never reused |
+| `versionName` | For users; Play ignores it |
+| Screenshots | The highest-leverage listing field |
+| Listing experiments | A/B tests measured on install rate |
+| Data safety | Must cover what your SDKs collect, not just your code |
+
+<Interview title="A question about testing the wrong artefact">
+"You tested the release APK and users still hit missing resources. How?"
+
+Because the APK you built is universal and the one users get is not. `assembleRelease` produces a single
+artefact containing every density, ABI and language, so anything resolved dynamically — a drawable looked
+up with `getIdentifier`, a native library loaded by path — finds what it needs. Play splits the bundle
+and delivers one slice per device, and that slice may not contain what the lookup was reaching for.
+
+So I would test the delivered artefact rather than the built one: `bundletool build-apks
+--local-testing`, or download the device-specific APK from App Bundle Explorer, which is also the only
+way to check the signature users actually see. And I would treat a dynamic resource lookup as the same
+class of problem as reflection under R8 — something the tooling cannot see, which therefore has to be
+made visible or removed.
+</Interview>

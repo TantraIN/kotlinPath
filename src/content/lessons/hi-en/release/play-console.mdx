@@ -1,0 +1,156 @@
+---
+title: Play Console, AAB aur store ki listing
+description: Aap bundle chadhate ho aur APKs Play banata hai. Wahi ghumav poora badlaav hai — aap sthaniya roop se jo dekhte ho wo koi user lagata hi nahi, aur listing installs par zyadatar suvidhaon se bada zor lagati hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+**AAB lagaya nahi ja sakta**. Wo aapke app ka byora hai jisse Play har device ke liye APK banata hai — ek
+density, ek ABI, ek bhasha. To jo cheez users ko milti hai wo aapke bundle se chhoti hai aur usse alag hai
+jo aapne sthaniya roop se banaya.
+</KeyIdea>
+
+## AAB banam APK
+
+```bash title="Build" numbered
+./gradlew bundleRelease            # app-release.aab  -> yahi chadhaiye
+./gradlew assembleRelease          # app-release.apk  -> sirf sthaniya jaanch ke liye
+```
+
+Play par naye apps ke liye App Bundles 2021 se zaruri hain. Bachat asli hai: kisi device ko har variant ke
+bajaye har ek ka ek hi milta hai, jo kai densities aur ABIs wale app mein download ko aam taur par
+ek-tihai ya usse zyada ghata deta hai.
+
+Baat wahi hai jo logon ko pakadta hai: aap AAB laga nahi sakte, aur jo APK aapne sthaniya roop se banai
+wo alag key se hastaksharit hai aur usmein har variant hai. User ko sach mein jo milta hai use dekhne ke
+liye:
+
+```bash title="bundletool" numbered
+bundletool build-apks --bundle=app-release.aab --output=app.apks \
+  --ks=upload.jks --ks-key-alias=upload --local-testing
+bundletool install-apks --apks=app.apks
+```
+
+Ya Play Console ke App Bundle Explorer se hastaksharit, device wali APK utariye, jo Play ne theek-theek
+kya banaya ye dekhne ka iklauta raasta hai.
+
+## Version
+
+```kotlin title="Versions" numbered
+defaultConfig {
+    versionCode = 42            // ek purnank jise Play milata hai; hamesha badhna chahiye
+    versionName = "2.3.1"       // users ko dikhti string; Play ko isse matlab nahi
+}
+```
+
+Play sirf `versionCode` manwata hai, aur niyam pakka hai: wo us track par aapke kabhi chadhaye har build se
+bada hona chahiye, un builds samet jinhe aapne wapas liya ya mitaya. Dohraya gaya code thukra diya jata
+hai, to use kisi lagatar badhti cheez se nikalna — CI ke chalne ki ginti, ya tareekh wala koi dhancha —
+haath ki galti bacha leta hai.
+
+App Bundle andar se alag codes wali kai APKs bhi bana sakta hai; aapka rakha `versionCode` buniyad hai, aur
+baaki Play sambhal leta hai.
+
+<Quiz
+  question="Koi team `assembleRelease` wali release ki APK theek se dekhti hai, AAB chadhati hai, aur kuch devices ke users gayab tasveerein tatha shuru mein crash batate hain. Sthaniya padtal mein kuch nahi dikha tha. Sambhavit wajah kya hai?"
+  options={[
+    "Wo AAB us commit se alag commit se bana tha jisse APK bani thi",
+    "Sarvabhaumik APK mein har density, ABI aur bhasha hoti hai, jabki Play har device ko ek hissa bhejta hai — to sirf naam se dhoondha gaya koi resource, ya haath se ladi gayi koi native library, sthaniya roop se maujood hai aur bheje gaye hisse mein gayab",
+    "Play ne resources dobara dabakar unhe bigad diya"
+  ]}
+  answer={1}
+  explanation="Sthaniya roop se bani APK sarvabhaumik hai: har drawable ki density, har ABI, har bhasha usi ke andar hai, to app jo kuch bhi chalte waqt dhoondhta hai wo mil jata hai. Play us bundle ko baantkar ek device ko ek tukda bhejta hai, aur jo code getIdentifier se naam ke hisab se resources dhoondhta hai — ya kisi .so ko path se ladta hai, ya maan leta hai ki kisi bhasha ki strings maujood hain — wo aisi cheez tak haath badha raha ho sakta hai jo kabhi bheji hi nahi gayi. Isiliye aapki banai APK dekhna jitna lagta hai usse kam sabit karta hai. Ilaaj hai bheji jane wali cheez dekhna, ya to bundletool se --local-testing ke saath ya App Bundle Explorer se device wali APK utarkar. Jahan chalte waqt dhoondhna sach mein chahiye, wahan us resource ko bantware se bahar rakhna padta hai ya sthir roop se bulana padta hai taki R8 aur bundler, dono use dekh sakein — aur ye R8 wale lesson ki wahi reflection ki mushkil hai, ek parat aur bahar."
+/>
+
+## Store ki listing
+
+Listing kagzi karyavahi nahi, badlaav ki satah hai:
+
+| Khana | Kya maayne rakhta hai |
+| --- | --- |
+| Naam (30 akshar) | Naam, aur agar jagah bache to ye ki wo hai kya |
+| Chhota byora (80) | Khoj ke natijon mein dikhti wahi ek line |
+| Poora byora (4000) | Padhi ja sakne wali bhasha; keywords thoosna neeti ka ullanghan hai |
+| Screenshots | Pehle do hi zyadatar faisla dhote hain |
+| Feature graphic | Listing par aur kuch jagahon par dikhta hai |
+
+Screenshots wo khana hai jiska asar sabse bada hai aur jis par mehnat sabse kam lagti hai. Device ki saadi
+tasveerein un framed screenshots se kam chalti hain jin par chhoti si likhai batati hai ki wo screen karti
+kya hai, kyunki listing secondon mein scroll ho jati hai aur bina likhai wala screenshot kuch kehta hi
+nahi.
+
+Play **store listing ke prayog** bhi karne deta hai — icon, screenshots ya byore par A/B padtal, jo install
+ki dar par naapi jati hai. Kaunsa screenshot zyada achha hai, is par andaruni raay se wo sach ka behtar
+thikana hai.
+
+<Detail summary="Data safety, jo aisi ghoshna hai jisse aapko sach mein mel khana hai">
+Data safety wala form puchta hai ki aap kya jama karte ho, use share karte ho ya nahi, aur wo taar par
+encrypt hota hai ya nahi. Wo aupcharikta nahi hai: Play use milakar dekhta hai, aur us ghoshna tatha aapki
+SDKs ke sach mein karne ke beech ka bemel aam asweekriti bhi hai aur aam hataya jana bhi.
+
+Jo hissa teams galat karti hain wo hai doosron ke jariye hota jama karna. Analytics, ads, crash ki
+reporting aur attribution wali SDKs, sab apne aap jama karti hain, to imandaar ghoshna wo dhakti hai jo
+aapki dependencies karti hain, sirf aapka apna code nahi. Firebase wale lesson ki baat seedhe lagu hai:
+Analytics kai doosri SDKs ke saath aati hai aur turant jama karna shuru kar deti hai, to wo us form mein
+jati hai, chahe aapne use chuna ho ya na ho.
+
+Saath ki shart hai **privacy policy ka URL**, jo har us app ke liye zaruri hai jo kuch bhi jama karta hai —
+aur asal mein har app karta hai, kyunki crash ki reporting device ki koi pehchan jama karti hai.
+
+Ise galat karna build waqt ya sameeksha waqt bharose se nakaam nahi hota; wo mahinon baad kisi karyavahi ki
+shakal mein saamne aata hai, aur isiliye ye ghoshna ek baar dhyan se karne layak hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli ka matlab hai ki aapne galat cheez dekhi">
+**Sarvabhaumik APK dekhna.** Users ko ek hissa milta hai; chalte waqt ki khoj usmein gayab ho sakti hai.
+
+**Dohraya gaya `versionCode`.** Thukra diya jata hai, un builds ke saamne bhi jo aapne mita diye.
+
+**Device ki saadi screenshots.** Listing ka sabse asardar khana, jis par aam taur par sabse kam kaam hota
+hai.
+
+**Byore mein keywords thoosna.** Neeti ka ullanghan hai, badhne ki tarkeeb nahi.
+
+**Aisa Data safety ka form jo aapki SDKs chhod deta hai.** Play milakar dekhta hai; karyavahi baad mein
+aati hai.
+</Pitfall>
+
+## Abhyaas
+
+1. AAB banaiye aur use seedhe lagane ki koshish kijiye.
+2. `bundletool` se device wali APKs banaiye aur naap ko sarvabhaumik APK se milaiye.
+3. Pehle istemal kiya `versionCode` lekar chadhaiye aur asweekriti padhiye.
+4. App Bundle Explorer se device wali APK utariye aur uska hastakshar dekhiye.
+5. Apne app ki har SDK ginaiye aur har ek ko apni Data safety ki ghoshna se milaiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| AAB | Lagaya nahi ja sakta; Play har device ki APK banata hai |
+| Baantkar bhejna | Ek density, ek ABI, ek bhasha |
+| Sthaniya APK | Sarvabhaumik, aur alag key se hastaksharit |
+| `bundletool` | Play jo banata wahi banaiye aur lagaiye |
+| App Bundle Explorer | Kisi device ko theek-theek milne wali APK |
+| `versionCode` | Hamesha badhe; kabhi dohraya na jaye |
+| `versionName` | Users ke liye; Play use andekha karta hai |
+| Screenshots | Listing ka sabse asardar khana |
+| Listing ke prayog | Install ki dar par naapi gayi A/B padtal |
+| Data safety | Aapki SDKs jo jama karti hain wo bhi dhake, sirf aapka code nahi |
+
+<Interview title="Ek sawal, galat cheez dekhne ka">
+"Aapne release ki APK dekhi aur phir bhi users ko resources gayab mile. Kaise?"
+
+Kyunki jo APK aapne banai wo sarvabhaumik hai aur jo users ko milti hai wo nahi. `assembleRelease` ek hi
+cheez banata hai jismein har density, ABI aur bhasha hoti hai, to chalte waqt dhoondhi jane wali har cheez
+— `getIdentifier` se dhoondha gaya koi drawable, path se ladi gayi koi native library — use mil jati hai.
+Play us bundle ko baantkar har device ko ek hissa bhejta hai, aur us hisse mein wo cheez ho hi na, jiske
+liye wo khoj haath badha rahi thi.
+
+To main banai hui cheez ke bajaye bheji jane wali cheez dekhunga: `bundletool build-apks --local-testing`,
+ya App Bundle Explorer se device wali APK utarkar, jo users ko sach mein dikhte hastakshar ko dekhne ka bhi
+iklauta raasta hai. Aur main chalte waqt ki resource wali khoj ko R8 ke neeche reflection jaisi hi kism ki
+mushkil manunga — aisi cheez jo auzar ko dikhti nahi, to use ya to dikhana padega ya hatana.
+</Interview>
