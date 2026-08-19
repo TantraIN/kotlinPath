@@ -92,6 +92,28 @@ const LANG_ALIASES: Record<string, string> = {
 const IDENT_CHAIN = /^@?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.?$/;
 
 /**
+ * A span that is code rather than prose: identifiers glued to structural
+ * punctuation, with no whitespace and no quotes — `(MediaItem.`, `>().`,
+ * `session?.`, `(AudioAttributes.DEFAULT,`.
+ *
+ * Shiki attaches punctuation to whichever identifier it sits next to, so
+ * `setMediaItem(MediaItem.fromUri(url))` arrives as the single span
+ * `(MediaItem.`. The chain shape rejects that for the leading bracket, which
+ * left every term unannotated wherever it happened to follow an opening
+ * bracket — a large share of the call sites in the course.
+ *
+ * Prose is still excluded, by the two things that separate a line of code from
+ * a sentence about one: a sentence has whitespace between its words, and a
+ * comment or string carries a marker of its own. Both are refused below, and a
+ * fragment that survives is still only annotated segment by segment, so
+ * nothing anchors unless it is a glossary key in its own right.
+ */
+const CODE_FRAGMENT = /^[^\s"'`]+$/;
+
+/** Comment and preprocessor markers, which mean the span is not code. */
+const NOT_CODE = /\/\/|\/\*|\*\/|^#/;
+
+/**
  * XML element and attribute names, which Kotlin's shape does not cover: they
  * may contain hyphens (`intent-filter`, `uses-permission`), and Shiki hands
  * back the local name on its own because `android:exported` arrives as three
@@ -126,10 +148,16 @@ function glossaryTransformer(scope: GlossaryScope): ShikiTransformer {
 
       const raw = child.value;
       const trimmed = raw.trim();
-      if (!trimmed || !shape.test(trimmed)) return;
+      if (!trimmed) return;
+
+      const isChain = shape.test(trimmed);
+      // Punctuation-glued code only ever reaches the per-segment pass below.
+      const isFragment =
+        scope === "code" && CODE_FRAGMENT.test(trimmed) && !NOT_CODE.test(trimmed);
+      if (!isChain && !isFragment) return;
 
       // The whole span is one term — annotate it in place, no extra element.
-      const whole = raw === trimmed ? resolveTerm(trimmed.replace(/^@/, ""), scope) : null;
+      const whole = isChain && raw === trimmed ? resolveTerm(trimmed.replace(/^@/, ""), scope) : null;
       if (whole) {
         node.properties = {
           ...node.properties,
