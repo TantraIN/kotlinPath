@@ -1,0 +1,154 @@
+---
+title: Native code के लिए NDK और JNI
+description: Native code अपने आप तेज नहीं होता, और Kotlin तथा C++ के बीच की सरहद ज्यादातर लोगों की उम्मीद से महँगी है। जहाँ वह जीतता है वे मामले उसकी शोहरत से कहीं सँकरे और खास हैं।
+updated: 2026-08-18
+---
+
+<KeyIdea>
+**JNI की सरहद** पार करने में समय लगता है और JVM की memory वाली सुरक्षा छूट जाती है। तो native code तब
+जीतता है जब हर पार करने पर बहुत सारा काम हो — कोई video का filter, audio का callback, पहले से मौजूद कोई
+C की library — और तब हारता है जब आप छोटे काम के लिए बार-बार पार करें।
+</KeyIdea>
+
+## तैयारी
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+    defaultConfig {
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }   // x86 सिर्फ तब जब emulators चाहिए
+    }
+}
+```
+
+```kotlin title="Native.kt" numbered
+class ImageProcessor {
+    external fun blur(pixels: IntArray, width: Int, height: Int, radius: Int)
+
+    companion object { init { System.loadLibrary("imageproc") } }
+}
+```
+
+```cpp title="imageproc.cpp" numbered
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_ImageProcessor_blur(JNIEnv* env, jobject, jintArray pixels,
+                                     jint width, jint height, jint radius) {
+    jint* data = env->GetIntArrayElements(pixels, nullptr);
+    // ... data पर काम ...
+    env->ReleaseIntArrayElements(pixels, data, 0);   // 0 = वापस नकल करके छोड़ दीजिए
+}
+```
+
+उस function का नाम package, class और method को अपने अंदर लिए है — `Java_com_example_ImageProcessor_blur`
+— तो Kotlin की उस class का नाम बदलना या उसे हटाना उस जोड़ को compile वक्त नहीं, चलते वक्त
+`UnsatisfiedLinkError` से तोड़ देता है। इसी कमजोरी की वजह से गैर-मामूली projects `RegisterNatives` लेते
+हैं, जो `JNI_OnLoad` में नाम साफ-साफ जोड़ देता है।
+
+हर `Get*ArrayElements` के साथ मेल खाता `Release*` चाहिए। उसे भूलना leak करता है, और वह leak Java के ढेर
+से बाहर है, तो LeakCanary और memory का profiler, दोनों कुछ नहीं दिखाते जबकि process बढ़ता जाता है।
+
+<Quiz
+  question="कोई team हर pixel वाला filter बड़े सुधार की उम्मीद में C++ में ले जाती है। Kotlin वाला loop हर pixel पर एक native function बुलाता था। Native वाला रूप धीमा है। क्यों?"
+  options={[
+    "वह C++ बेहतरी चालू करके compile नहीं हुआ था",
+    "हर call JNI की सरहद पार करती है, जिसकी कीमत हो रहे काम से कहीं ज्यादा है — दस लाख मामूली कामों के लिए दस लाख बार पार करना। पूरा loop एक ही native call होना चाहिए जो वह array ले, ताकि सरहद एक बार पार हो",
+    "Native code को भेजते वक्त `IntArray` boxed हो जाता है"
+  ]}
+  answer={1}
+  explanation="JNI का पार करना मुफ्त नहीं है: उसमें stack का बदलना, arguments को सजाना, और JIT का उस call के आर-पार inline करने की क्षमता खो देना शामिल है, और इसीलिए हर pixel पर call करना एक कसे हुए, बेहतर किए गए Kotlin के loop को दस लाख महँगी सरहदों में बदल देता है। उससे जो नियम निकलता है वह है काम को नहीं, loop को ले जाना — पूरा array भेजिए, C++ में काम कीजिए, एक बार लौटिए — ताकि वह तय कीमत हर तत्व के बजाय एक बार चुके। यह भी लिखने लायक है कि JIT सच में अच्छा है: IntArray पर सादा Kotlin का loop कसे हुए machine के code में बदलता है, तो native वाले रूप को किसी interpreter को नहीं, बेहतर किए गए नतीजे को हराना पड़ता है। Compiler के flags किनारे पर मायने रखते हैं पर इस शक्ल का धीमा होना नहीं समझाते, और IntArray boxing के बिना, सादे array की तरह भेजा जाता है।"
+/>
+
+## वह जीतता असल में कहाँ है
+
+| मामला | क्यों |
+| --- | --- |
+| पहले से मौजूद C या C++ की library | विकल्प उसे दोबारा लिखना है |
+| असली वक्त का audio | Oboe; microsecond की समय-सीमा वाले callbacks |
+| Video और तस्वीरों की कड़ियाँ | बड़े buffers, SIMD, हर frame का काम |
+| Cryptography और codecs | जमे हुए, परखे हुए implementations |
+| कोई राज छिपाना | **नहीं** — secrets वाले पाठ ने यह बताया था |
+
+आखिरी पंक्ति दोहराने लायक है क्योंकि NDK उठाने की सबसे आम गलत वजह वही है। `.so` में पड़ी string
+`strings` से निकल आती है, और उलझाई हुई होने पर भी इस्तेमाल के वक्त उसे memory में खुला होना पड़ता है,
+और वहीं hooking वाला framework उसे पढ़ लेता है।
+
+Native code वे चीजें भी छीन लेता है जिन पर आप अब टिके हैं। कोई garbage collector नहीं है, तो कोई leak
+आपको ही ढूँढ़नी है। कोई segfault पूरे process को ऐसी native crash के साथ गिरा देता है जिसे पढ़ने के लिए
+Crashlytics को symbols चाहिए। और आप जितने ABI भेजते हैं, download उतना बढ़ता है।
+
+<Detail summary="Debug करना और crashes">
+```bash title="Symbols" numbered
+# बिना कटे .so रखिए ताकि कोई crash पढ़ी जा सके
+firebase crashlytics:symbols:upload --app=APP_ID build/.../obj/arm64-v8a
+ndk-stack -sym build/.../obj/arm64-v8a -dump crash.txt
+```
+
+Native crash कोई Kotlin का exception नहीं है। वह किसी संकेत की तरह आती है — `SIGSEGV`, `SIGABRT` — और
+उस tombstone में functions के नाम नहीं, पते होते हैं, जब तक आपने ठीक उसी build के बिना कटे symbols न
+भेजे हों। उनके बिना native crash की रिपोर्ट पढ़ी नहीं जाती, और R8 की mapping वाली file के उलट यह हर ABI
+की अलग है।
+
+बनाते वक्त के दो औजार अपनी कीमत वसूल लेते हैं:
+
+**AddressSanitizer** छोड़ने के बाद इस्तेमाल और buffer के बहने को उसी पल पकड़ता है, न कि बाद की किसी
+बिगड़ी हुई crash की तरह। वह धीमा है और debug वाले build की चीज है।
+
+**`ndk-stack`** `adb logcat` के कच्चे tombstone को पढ़े जा सकने वाले stack में बदल देता है, जो किसी भी
+native crash पर सबसे तेज पहला कदम है।
+
+आम बात यह है कि Android की जो debugging आपने सीखी है — LeakCanary, memory का profiler, पढ़े जा सकने वाले
+stack traces — वह ज्यादातर JNI की सरहद के आगे नहीं जाती, और उसकी जगह कुछ रखना native जाने की कीमत का
+हिस्सा है।
+</Detail>
+
+## आम गलतियाँ
+
+<Pitfall title="पाँच, और पहली ही वजह है कि NDK के ज्यादातर प्रयोग निराश करते हैं">
+**हर तत्व पर JNI पार करना।** काम को नहीं, loop को native code में ले जाइए।
+
+**`Release*ArrayElements` भूलना।** Java के ढेर से बाहर की leak, LeakCanary को अदृश्य।
+
+**Kotlin की class का नाम बदलना।** वह प्रतीक का नाम उसे लिए है; चलते वक्त `UnsatisfiedLinkError` मिलता है।
+
+**Native symbols न भेजना।** Crash की रिपोर्टें बिना नाम वाले पते भर हैं।
+
+**राज छिपाने को NDK लेना।** निकाला जा सकता है, और इस्तेमाल के वक्त memory में खुला।
+</Pitfall>
+
+## अभ्यास
+
+1. हर तत्व वाली JNI की call और पूरे array वाली, दोनों लिखिए और सादे Kotlin से मिलाकर नापिए।
+2. कोई `Release*ArrayElements` छोड़िए और native memory को बढ़ते देखिए जबकि LeakCanary चुप है।
+3. `external fun` रखने वाली Kotlin की class का नाम बदलिए और चलते वक्त की error पढ़िए।
+4. कोई `SIGSEGV` कराइए और उस tombstone को `ndk-stack` से खोलिए।
+5. `armeabi-v7a` के साथ और उसके बिना APK का नाप मिलाइए।
+
+## दोहराव
+
+| चीज | एक लाइन |
+| --- | --- |
+| JNI की सरहद | हर पार करने की कीमत; काम नहीं, loop ले जाइए |
+| प्रतीकों के नाम | Package, class और method को अपने अंदर लिए |
+| `RegisterNatives` | साफ-साफ जोड़; नाम बदलने पर बचता है |
+| `Get*`/`Release*` | जोड़ी में हों, वरना Java के ढेर से बाहर leak |
+| अच्छे मामले | मौजूद C की libraries, audio, video, codecs |
+| बुरा मामला | कोई राज छिपाना |
+| JIT | इतना अच्छा कि आपको बेहतर किए नतीजे को हराना पड़े |
+| Native crashes | संकेत और tombstones, exceptions नहीं |
+| Symbols | हर ABI की, हर build की; भेजिए वरना रिपोर्ट बेकार |
+| ABIs | हर एक download बढ़ाता है |
+
+<Interview title="एक सवाल, ऐसे सुधार का जो हुआ ही नहीं">
+"किसी team ने गरम loop C++ में लिखा और वह धीमा हो गया। क्या हुआ?"
+
+लगभग पक्के तौर पर यह कि उन्होंने loop नहीं, काम को ले जाया। अगर Kotlin का code हर तत्व पर एक native
+function बुलाता है, तो उनमें से हर call JNI की सरहद पार करती है — stack का बदलना, arguments सजाना, और
+JIT का उसके आर-पार inline करने की क्षमता खोना — तो दस लाख मामूली काम दस लाख महँगी सरहदें बन जाते हैं।
+पूरा array भेजना और loop C++ में चलाना वह कीमत एक बार चुकाता है।
+
+दूसरा आधा यह है कि JIT सच में अच्छा है। `IntArray` पर सादा Kotlin का loop कसे हुए machine के code में
+बदलता है, तो native को किसी interpreter को नहीं, बेहतर किए गए नतीजे को हराना पड़ता है। इसीलिए वे मामले
+खास हैं जहाँ NDK जीतता है — मौजूद कोई C की library, असली वक्त का audio, हर frame के बड़े buffers — और
+इसीलिए मैं उसे अपनाने से पहले नाप चाहूँगा, क्योंकि उसकी कीमत memory की सुरक्षा, पढ़ी जा सकने वाली
+crashes और download का नाप भी है।
+</Interview>

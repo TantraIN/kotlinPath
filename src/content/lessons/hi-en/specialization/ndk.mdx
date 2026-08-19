@@ -1,0 +1,158 @@
+---
+title: Native code ke liye NDK aur JNI
+description: Native code apne aap tez nahi hota, aur Kotlin tatha C++ ke beech ki sarhad zyadatar logon ki umeed se mehngi hai. Jahan wo jeetta hai wo maamle uski shohrat se kahin sankre aur khaas hain.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+**JNI ki sarhad** paar karne mein samay lagta hai aur JVM ki memory wali suraksha chhoot jaati hai. To
+native code tab jeetta hai jab har paar karne par bahut saara kaam ho — koi video ka filter, audio ka
+callback, pehle se maujood koi C ki library — aur tab haarta hai jab aap chhote kaam ke liye baar-baar
+paar karein.
+</KeyIdea>
+
+## Taiyari
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+    defaultConfig {
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }   // x86 sirf tab jab emulators chahiye
+    }
+}
+```
+
+```kotlin title="Native.kt" numbered
+class ImageProcessor {
+    external fun blur(pixels: IntArray, width: Int, height: Int, radius: Int)
+
+    companion object { init { System.loadLibrary("imageproc") } }
+}
+```
+
+```cpp title="imageproc.cpp" numbered
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_ImageProcessor_blur(JNIEnv* env, jobject, jintArray pixels,
+                                     jint width, jint height, jint radius) {
+    jint* data = env->GetIntArrayElements(pixels, nullptr);
+    // ... data par kaam ...
+    env->ReleaseIntArrayElements(pixels, data, 0);   // 0 = wapas nakal karke chhod dijiye
+}
+```
+
+Us function ka naam package, class aur method ko apne andar liye hai —
+`Java_com_example_ImageProcessor_blur` — to Kotlin ki us class ka naam badalna ya use hataana us jod ko
+compile waqt nahi, chalte waqt `UnsatisfiedLinkError` se tod deta hai. Isi kamzori ki wajah se
+gair-maamuli projects `RegisterNatives` lete hain, jo `JNI_OnLoad` mein naam saaf-saaf jod deta hai.
+
+Har `Get*ArrayElements` ke saath mel khaata `Release*` chahiye. Use bhoolna leak karta hai, aur wo leak
+Java ke dher se bahar hai, to LeakCanary aur memory ka profiler, donon kuchh nahi dikhate jabki process
+badhta jaata hai.
+
+<Quiz
+  question="Koi team har pixel wala filter bade sudhaar ki umeed mein C++ mein le jaati hai. Kotlin wala loop har pixel par ek native function bulata tha. Native wala roop dheema hai. Kyon?"
+  options={[
+    "Wo C++ behtari chaalu karke compile nahi hua tha",
+    "Har call JNI ki sarhad paar karti hai, jiski keemat ho rahe kaam se kahin zyada hai — das lakh maamuli kaamon ke liye das lakh baar paar karna. Poora loop ek hi native call hona chahiye jo wo array le, taki sarhad ek baar paar ho",
+    "Native code ko bhejte waqt `IntArray` boxed ho jaata hai"
+  ]}
+  answer={1}
+  explanation="JNI ka paar karna muft nahi hai: usmein stack ka badalna, arguments ko sajana, aur JIT ka us call ke aar-paar inline karne ki kshamta kho dena shaamil hai, aur isiliye har pixel par call karna ek kase hue, behtar kiye gaye Kotlin ke loop ko das lakh mehngi sarhadon mein badal deta hai. Usse jo niyam nikalta hai wo hai kaam ko nahi, loop ko le jaana — poora array bhejiye, C++ mein kaam kijiye, ek baar lautiye — taki wo tay keemat har tatva ke bajay ek baar chuke. Yeh bhi likhne layak hai ki JIT sach mein achha hai: IntArray par saada Kotlin ka loop kase hue machine ke code mein badalta hai, to native wale roop ko kisi interpreter ko nahi, behtar kiye gaye nateeje ko haraana padta hai. Compiler ke flags kinaare par maayne rakhte hain par is shakl ka dheema hona nahi samjhate, aur IntArray boxing ke bina, saade array ki tarah bheja jaata hai."
+/>
+
+## Wo jeetta asal mein kahan hai
+
+| Maamla | Kyon |
+| --- | --- |
+| Pehle se maujood C ya C++ ki library | Vikalp use dobara likhna hai |
+| Asli waqt ka audio | Oboe; microsecond ki deadline wale callbacks |
+| Video aur tasveeron ki kadiyan | Bade buffers, SIMD, har frame ka kaam |
+| Cryptography aur codecs | Jame hue, parkhe hue implementations |
+| Koi raaz chhupana | **Nahi** — secrets wale paath ne yeh bataya tha |
+
+Aakhri pankti dohraane layak hai kyonki NDK uthane ki sabse aam galat wajah wahi hai. `.so` mein padi
+string `strings` se nikal aati hai, aur uljhai hui hone par bhi istemaal ke waqt use memory mein khula
+hona padta hai, aur wahin hooking wala framework use padh leta hai.
+
+Native code wo cheezein bhi chheen leta hai jin par aap ab tike hain. Koi garbage collector nahi hai, to
+koi leak aapko hi dhoondhni hai. Koi segfault poore process ko aisi native crash ke saath gira deta hai
+jise padhne ke liye Crashlytics ko symbols chahiye. Aur aap jitne ABI bhejte hain, download utna badhta
+hai.
+
+<Detail summary="Debug karna aur crashes">
+```bash title="Symbols" numbered
+# bina kate .so rakhiye taki koi crash padhi ja sake
+firebase crashlytics:symbols:upload --app=APP_ID build/.../obj/arm64-v8a
+ndk-stack -sym build/.../obj/arm64-v8a -dump crash.txt
+```
+
+Native crash koi Kotlin ka exception nahi hai. Wo kisi sanket ki tarah aati hai — `SIGSEGV`, `SIGABRT`
+— aur us tombstone mein functions ke naam nahi, pate hote hain, jab tak aapne theek usi build ke bina
+kate symbols na bheje hon. Unke bina native crash ki report padhi nahi jaati, aur R8 ki mapping wali
+file ke ulat yeh har ABI ki alag hai.
+
+Banate waqt ke do auzaar apni keemat vasool le lete hain:
+
+**AddressSanitizer** chhodne ke baad istemaal aur buffer ke behne ko usi pal pakadta hai, na ki baad ki
+kisi bigdi hui crash ki tarah. Wo dheema hai aur debug wale build ki cheez hai.
+
+**`ndk-stack`** `adb logcat` ke kachche tombstone ko padhe ja sakne wale stack mein badal deta hai, jo
+kisi bhi native crash par sabse tez pehla kadam hai.
+
+Aam baat yeh hai ki Android ki jo debugging aapne seekhi hai — LeakCanary, memory ka profiler, padhe ja
+sakne wale stack traces — wo zyadatar JNI ki sarhad ke aage nahi jaati, aur uski jagah kuchh rakhna
+native jaane ki keemat ka hissa hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli hi wajah hai ki NDK ke zyadatar prayog niraash karte hain">
+**Har tatva par JNI paar karna.** Kaam ko nahi, loop ko native code mein le jaaiye.
+
+**`Release*ArrayElements` bhoolna.** Java ke dher se bahar ki leak, LeakCanary ko adrishya.
+
+**Kotlin ki class ka naam badalna.** Wo prateek ka naam use liye hai; chalte waqt `UnsatisfiedLinkError` milta hai.
+
+**Native symbols na bhejna.** Crash ki reportein bina naam wale pate bhar hain.
+
+**Raaz chhupane ko NDK lena.** Nikala ja sakta hai, aur istemaal ke waqt memory mein khula.
+</Pitfall>
+
+## Abhyaas
+
+1. Har tatva wali JNI ki call aur poore array wali, donon likhiye aur saade Kotlin se milakar naapiye.
+2. Koi `Release*ArrayElements` chhodiye aur native memory ko badhte dekhiye jabki LeakCanary chup hai.
+3. `external fun` rakhne wali Kotlin ki class ka naam badaliye aur chalte waqt ki error padhiye.
+4. Koi `SIGSEGV` karaaiye aur us tombstone ko `ndk-stack` se kholiye.
+5. `armeabi-v7a` ke saath aur uske bina APK ka naap milaiye.
+
+## Dohraav
+
+| Cheez | Ek line |
+| --- | --- |
+| JNI ki sarhad | Har paar karne ki keemat; kaam nahi, loop le jaaiye |
+| Prateekon ke naam | Package, class aur method ko apne andar liye |
+| `RegisterNatives` | Saaf-saaf jod; naam badalne par bachta hai |
+| `Get*`/`Release*` | Jodi mein hon, warna Java ke dher se bahar leak |
+| Achhe maamle | Maujood C ki libraries, audio, video, codecs |
+| Bura maamla | Koi raaz chhupana |
+| JIT | Itna achha ki aapko behtar kiye nateeje ko haraana pade |
+| Native crashes | Sanket aur tombstones, exceptions nahi |
+| Symbols | Har ABI ki, har build ki; bhejiye warna report bekaar |
+| ABIs | Har ek download badhata hai |
+
+<Interview title="Ek sawaal, aise sudhaar ka jo hua hi nahi">
+"Kisi team ne garam loop C++ mein likha aur wo dheema ho gaya. Kya hua?"
+
+Lagbhag pakke taur par yeh ki unhone loop nahi, kaam ko le jaaya. Agar Kotlin ka code har tatva par ek
+native function bulata hai, to unmein se har call JNI ki sarhad paar karti hai — stack ka badalna,
+arguments sajana, aur JIT ka uske aar-paar inline karne ki kshamta khona — to das lakh maamuli kaam das
+lakh mehngi sarhadein ban jaate hain. Poora array bhejna aur loop C++ mein chalana wo keemat ek baar
+chukata hai.
+
+Doosra aadha yeh hai ki JIT sach mein achha hai. `IntArray` par saada Kotlin ka loop kase hue machine ke
+code mein badalta hai, to native ko kisi interpreter ko nahi, behtar kiye gaye nateeje ko haraana padta
+hai. Isiliye wo maamle khaas hain jahan NDK jeetta hai — maujood koi C ki library, asli waqt ka audio,
+har frame ke bade buffers — aur isiliye main use apnane se pehle naap chahunga, kyonki uski keemat
+memory ki suraksha, padhi ja sakne wali crashes aur download ka naap bhi hai.
+</Interview>

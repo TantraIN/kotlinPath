@@ -1,0 +1,155 @@
+---
+title: NDK and JNI for native code
+description: Native code is not automatically faster, and the boundary between Kotlin and C++ costs more than most people expect. The cases where it wins are narrower and more specific than the reputation suggests.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Crossing the **JNI boundary** costs time and gives up the JVM's memory safety. So native code wins when
+a lot of work happens per crossing — a video filter, an audio callback, an existing C library — and
+loses when you cross often for small work.
+</KeyIdea>
+
+## The setup
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+    defaultConfig {
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }   // x86 only if you need emulators
+    }
+}
+```
+
+```kotlin title="Native.kt" numbered
+class ImageProcessor {
+    external fun blur(pixels: IntArray, width: Int, height: Int, radius: Int)
+
+    companion object { init { System.loadLibrary("imageproc") } }
+}
+```
+
+```cpp title="imageproc.cpp" numbered
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_ImageProcessor_blur(JNIEnv* env, jobject, jintArray pixels,
+                                     jint width, jint height, jint radius) {
+    jint* data = env->GetIntArrayElements(pixels, nullptr);
+    // ... work on data ...
+    env->ReleaseIntArrayElements(pixels, data, 0);   // 0 = copy back and free
+}
+```
+
+The function name encodes the package, class and method — `Java_com_example_ImageProcessor_blur` — so
+renaming or moving the Kotlin class breaks the link at run time with `UnsatisfiedLinkError`, not at
+compile time. That fragility is why non-trivial projects use `RegisterNatives` instead, which maps names
+explicitly in `JNI_OnLoad`.
+
+Every `Get*ArrayElements` needs a matching `Release*`. Forgetting it leaks, and the leak is outside the
+Java heap, so LeakCanary and the memory profiler both show nothing while the process grows.
+
+<Quiz
+  question="A team moves a per-pixel filter to C++ expecting a large speedup. The Kotlin loop called a native function once per pixel. The native version is slower. Why?"
+  options={[
+    "The C++ was not compiled with optimisations enabled",
+    "Each call crosses the JNI boundary, which costs far more than the work being done — a million crossings for a million trivial operations. The whole loop should be one native call taking the array, so the boundary is crossed once",
+    "`IntArray` is boxed when passed to native code"
+  ]}
+  answer={1}
+  explanation="A JNI transition is not free: it involves a stack transition, argument marshalling and losing the JIT's ability to inline across the call, which is why a per-pixel call turns a tight optimised Kotlin loop into a million expensive boundary crossings. The rule that follows is to move the loop rather than the operation — pass the whole array, do the work in C++, return once — so the fixed cost is paid once instead of per element. It is also worth noting that the JIT is genuinely good: a straightforward Kotlin loop over an IntArray compiles to tight machine code, so the native version has to beat optimised JIT output rather than beat an interpreter. Compiler flags matter at the margin but do not explain a slowdown of this shape, and an IntArray is passed as a primitive array without boxing."
+/>
+
+## Where it actually wins
+
+| Case | Why |
+| --- | --- |
+| An existing C or C++ library | Rewriting it is the alternative |
+| Real-time audio | Oboe; callbacks with microsecond deadlines |
+| Video and image pipelines | Large buffers, SIMD, per-frame work |
+| Cryptography and codecs | Established, audited implementations |
+| Hiding a secret | **No** — the secrets lesson covered this |
+
+The last row is worth repeating because it is the most common wrong reason to reach for the NDK. A
+string in a `.so` is extractable with `strings`, and even obfuscated it must be plaintext in memory when
+used, which is where a hooking framework reads it.
+
+Native code also gives up things you now rely on. There is no garbage collector, so a leak is yours to
+find. A segfault takes the whole process down with a native crash that Crashlytics needs a symbol upload
+to symbolicate. And every ABI you ship adds to the download.
+
+<Detail summary="Debugging and crashes">
+```bash title="Symbols" numbered
+# keep the unstripped .so so a crash can be read
+firebase crashlytics:symbols:upload --app=APP_ID build/.../obj/arm64-v8a
+ndk-stack -sym build/.../obj/arm64-v8a -dump crash.txt
+```
+
+A native crash is not a Kotlin exception. It arrives as a signal — `SIGSEGV`, `SIGABRT` — and the
+tombstone contains addresses, not function names, unless you have uploaded the unstripped symbols for
+that exact build. Without them a native crash report is unreadable, and unlike the R8 mapping file this
+is per-ABI.
+
+Two development-time tools pay for themselves:
+
+**AddressSanitizer** catches use-after-free and buffer overruns at the moment they happen rather than as
+a corrupted crash later. It is slow and belongs in a debug build.
+
+**`ndk-stack`** turns a raw `adb logcat` tombstone into a readable stack, which is the fastest first step
+on any native crash.
+
+The general point is that the Android debugging story you have learned — LeakCanary, the memory
+profiler, readable stack traces — mostly does not extend past the JNI boundary, and replacing it is part
+of the cost of going native.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first is the reason most NDK experiments disappoint">
+**Crossing JNI per element.** Move the loop into native code, not the operation.
+
+**Forgetting `Release*ArrayElements`.** A leak outside the Java heap, invisible to LeakCanary.
+
+**Renaming the Kotlin class.** The symbol name encodes it; you get `UnsatisfiedLinkError` at run time.
+
+**Not uploading native symbols.** Crash reports are addresses with no names.
+
+**Using the NDK to hide a secret.** Extractable, and plaintext in memory when used.
+</Pitfall>
+
+## Practice
+
+1. Write a per-element JNI call and a whole-array one, and measure both against pure Kotlin.
+2. Omit a `Release*ArrayElements` and watch native memory grow with nothing in LeakCanary.
+3. Rename the Kotlin class holding an `external fun` and read the run-time error.
+4. Cause a `SIGSEGV` and symbolicate the tombstone with `ndk-stack`.
+5. Compare APK size with and without `armeabi-v7a`.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| JNI boundary | Costs per crossing; move the loop, not the operation |
+| Symbol names | Encode package, class and method |
+| `RegisterNatives` | Explicit mapping; survives renames |
+| `Get*/Release*` | Must pair, or you leak outside the Java heap |
+| Good cases | Existing C libraries, audio, video, codecs |
+| Bad case | Hiding a secret |
+| The JIT | Good enough that you must beat optimised output |
+| Native crashes | Signals and tombstones, not exceptions |
+| Symbols | Per-ABI, per-build, uploaded or the report is useless |
+| ABIs | Each one adds to the download |
+
+<Interview title="A question about a speedup that did not happen">
+"A team rewrote a hot loop in C++ and it got slower. What happened?"
+
+Almost certainly that they moved the operation rather than the loop. If the Kotlin code calls a native
+function once per element, every one of those calls crosses the JNI boundary — a stack transition,
+argument marshalling, and the JIT losing the ability to inline across it — so a million trivial
+operations become a million expensive crossings. Passing the whole array and doing the loop in C++ pays
+that cost once.
+
+The other half is that the JIT is genuinely good. A straightforward Kotlin loop over an `IntArray`
+compiles to tight machine code, so native has to beat optimised output, not an interpreter. That is why
+the cases where the NDK wins are specific — an existing C library, real-time audio, large per-frame
+buffers — and why I would want a measurement before adopting it, because it also costs the memory safety,
+the readable crashes and the download size.
+</Interview>
