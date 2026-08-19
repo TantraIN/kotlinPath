@@ -1,0 +1,174 @@
+---
+title: Kotlin Multiplatform aur Compose Multiplatform
+description: KMP tark share karta hai, UI nahi, aur wahi sarhad asli faisla hai. Jo teams sab kuch share karne chalti hain unka app dono platforms par atpata lagta hai aur do apps se dheema banta hai.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Kotlin Multiplatform **share kiye Kotlin** ko Android, iOS, desktop aur web ke liye compile karta hai.
+Share karne layak wo hissa hai jismein koi platform hai hi nahi — models, padtal ke niyam, networking,
+repository ki parat. Jo aam taur par share karne layak nahi wo hai UI, kyunki har platform ki apni
+paramparayein wahin rehti hain.
+</KeyIdea>
+
+## Source sets ki banawat
+
+```text title="Structure" numbered
+shared/src/commonMain/     har jagah compile hota hai; koi platform ki API nahi
+shared/src/androidMain/    JVM aur Android ki APIs milti hain
+shared/src/iosMain/        Objective-C aur Swift se judav milta hai
+```
+
+```kotlin title="build.gradle.kts" numbered
+kotlin {
+    androidTarget()
+    listOf(iosX64(), iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework { baseName = "Shared"; isStatic = true }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            implementation(libs.ktor.client.core)          // multiplatform
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
+        }
+        androidMain.dependencies { implementation(libs.ktor.client.okhttp) }
+        iosMain.dependencies    { implementation(libs.ktor.client.darwin) }
+    }
+}
+```
+
+Libraries ka chunaav isi se nikalta hai ki `commonMain` mein koi platform nahi hai: Retrofit ke bajaye
+Ktor, saade Room ke bajaye SQLDelight ya Room-KMP, `java.time` ke bajaye `kotlinx.datetime`. Asli apnane
+ki keemat wahi hai — KMP seekhna nahi, balki apne dhanche ke un hisson ko badalna jo sirf JVM ke hain.
+
+Hilt unhin mein se ek hai. Jaisa DI wale lesson ne kaha tha, Dagger JVM ka code banata hai, to share code
+Koin, haath se DI, ya kotlin-inject leta hai.
+
+## `expect` aur `actual`
+
+```kotlin title="commonMain" numbered
+expect class Platform() {
+    val name: String
+}
+
+expect fun randomUuid(): String
+```
+
+```kotlin title="androidMain" numbered
+actual class Platform actual constructor() {
+    actual val name: String = "Android ${Build.VERSION.SDK_INT}"
+}
+
+actual fun randomUuid(): String = java.util.UUID.randomUUID().toString()
+```
+
+`expect`/`actual` us thode se hisse ke liye bachne ka raasta hai jo sach mein alag hai. Use kam hi lijiye:
+jis codebase mein har teesri ghoshna `expect` hai usne kuch share nahi kiya, usne wahi code do baar likha
+hai, kuch atirikt rasm ke saath.
+
+Jo vikalp zyada door tak chalta hai wo hai `commonMain` mein interface aur har platform par inject kiya
+implementation — wahi paltav jiski daleel DI wale phase ne di thi, aur wo behtar baithta hai kyunki
+platform ke code ko kisi tay shakal se mel nahi khana padta.
+
+<Quiz
+  question="Koi team Compose Multiplatform se UI samet poora app share karti hai. iOS wale users shikayat karte hain ki wo galat lagta hai — peeche jane ka ishara, scroll ki chaal, tareekh chunne wala, aur lists ka uchhalna. Team kehti hai ki wo design jaisa hi dikhta hai. Galat kya hua?"
+  options={[
+    "Compose Multiplatform ka iOS wala renderer adhoora hai aur ye theek ho jayega",
+    "Ek jaisa dikhna hi maksad tha aur wo maksad nahi hona chahiye tha. iOS wale users iOS ki paramparaon ki ummid rakhte hain, aur Compose native cheezein apnane ke bajaye apne hi widgets banata hai — to UI share karna jane-pehchane ehsaas ke badle share code deta hai, jo kuch apps ke liye sahi sauda hai aur zyadatar ke liye nahi",
+    "Unhe native controls ke liye `UIKitInteropProperties` chalu karna chahiye tha"
+  ]}
+  answer={1}
+  explanation="Ye utpaad ka faisla hai jo kisi takniki faisle ke jariye ittefaqan ho gaya. Compose Multiplatform UIKit se jodne ke bajaye Skia ke canvas par apne hi widgets banata hai, aur theek isiliye wo har platform par ek jaisa dikh sakta hai — aur ek jaisa wo nahi hai jo iOS wale users maang rahe hain. Navigation ke ishare, scroll ka dheema hona, system ke tareekh tatha share karne wale chunaav, kampan aur aksharon ki paramparayein, sab alag hain, aur unhe ek-ek karke milana wahi platform wala kaam dobara khada kar deta hai jisse aap bach rahe the. Aise apps hain jahan ye sauda sahi hai: andaruni auzar, saamagri wale apps, jahan bhi brand platform ki parampara se mazboot ho. Native vikalpon se ladte kisi aam app ke liye aam shakal hai share tark aur native UI — iOS par SwiftUI, Android par Compose — jo zyadatar code share rakhti hai aur har platform ko apne jaisa lagne deti hai."
+/>
+
+## Wo sarhad aam taur par kahan baithti hai
+
+| Parat | Share karein? |
+| --- | --- |
+| Models, padtal ke niyam, karobar ke niyam | Haan — saada Kotlin, koi platform nahi |
+| Networking aur serialisation | Haan — Ktor aur kotlinx.serialization |
+| Database | Haan — SQLDelight ya Room-KMP |
+| Repository aur use cases | Haan |
+| `ViewModel`/presentation | Kabhi-kabhi — `androidx.lifecycle` mein ab KMP wala `ViewModel` hai |
+| UI | Aam taur par nahi, jab tak upar wala sauda aapke liye sahi na ho |
+
+Presentation ki parat tak share karna wahi meetha bindu hai jis par zyadatar teams pahunchti hain: wo
+zyadatar code hai, usi mein dohrav ka sabse bada khatra hai, aur usmein todne layak koi platform ki
+parampara nahi hai.
+
+<Detail summary="Iski keemat, imandari se">
+KMP production ke layak hai aur muft nahi.
+
+**Build ka samay.** Gradle se iOS ke liye compile karna dheema hai, aur Kotlin/Native ka compiler JVM wale
+se dheema. Share module minute jodta hai.
+
+**Auzar.** Xcode se share code debug karna chalta hai par dono native anubhavon se kam sehaj hai. Stack
+traces ek sarhad paar karte hain.
+
+**iOS wali API ki satah.** Kotlin Objective-C ko niryat karta hai, to `sealed class` wale ped, default
+arguments aur generics bahar jate hue ghat jate hain. `suspend` wale functions lapete bina completion
+handlers ban jate hain, aur `Flow` ko Swift se istemal karne layak banane ko ek sahayak chahiye. SKIE aur
+KMP-NativeCoroutines ise chikna karne ke liye hain aur achhe Swift anubhav ke liye asal mein zaruri hain.
+
+**Libraries ka milna.** Jo chahiye uska zyadatar maujood hai, par sab nahi, aur `commonMain` mein sirf JVM
+ki koi dependency jugaad nahi, pakki rukavat hai.
+
+Imandaar nichod ye hai ki KMP tab faayda deta hai jab sach mein ek hi niyamon wale do apps hon aur ek team
+dono sambhalti ho. Aise iklaute Android app ke liye jiska iOS wala roop kisi din ho sakta hai, wo bina kamai
+ki keemat hai — aur DI wale lesson ki baat lagu hai: banawat tay hone se pehle faisla kijiye, kyunki baad
+mein badalna har class ko chhoota hai.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur doosri utpaad ka faisla hai jo ittefaqan ho jata hai">
+**Har jagah `expect`/`actual`.** Wo rasm ke saath do baar likhna hai, share karna nahi.
+
+**Bina tay kiye UI share karna.** iOS wale users pixels nahi, paramparayein notice karte hain.
+
+**`commonMain` mein sirf JVM ki dependency.** Jugaad nahi; wo module compile hi nahi hoga.
+
+**Swift wali API ki satah andekhi karna.** Sealed types aur `suspend` bina SKIE ya lapete ghat jate hain.
+
+**Kalpanik doosre app ke liye KMP apnana.** Poori keemat, koi kamai nahi.
+</Pitfall>
+
+## Abhyaas
+
+1. Saade Kotlin wala ek parakhne wala hissa `commonMain` mein le jaiye aur dono platforms se lijiye.
+2. Share code mein kisi Retrofit ki call ko Ktor se badliye.
+3. Ek `expect`/`actual` jodi likhiye, phir use inject kiye interface ki tarah dobara likhiye aur milaiye.
+4. Share `suspend` wala function Swift se bina SKIE bulaiye, phir uske saath.
+5. iOS wala target jodne se pehle aur baad mein saaf build ka samay naapiye.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `commonMain` | Har jagah compile; koi platform ki API nahi |
+| Libraries badalna | Ktor, SQLDelight, `kotlinx.datetime` — asli apnane ki keemat |
+| Hilt | Sirf JVM; share code Koin ya kotlin-inject leta hai |
+| `expect`/`actual` | Us thode se hisse ke liye jo sach mein alag hai |
+| Inject kiya interface | Gair-mamooli har cheez ke liye `expect` se behtar chalta hai |
+| Aam sarhad | Presentation tak share; UI native rakhiye |
+| Compose Multiplatform | Apne widgets banata hai; ek jaisa hona native hona nahi |
+| Swift se judav | Sealed types aur `suspend` ghatte hain; SKIE chikna karta hai |
+| Build ka samay | iOS wala target minute kharch karata hai |
+| Kab faayda | Do asli apps, wahi niyam, ek team |
+
+<Interview title="Ek sawal, jiska jawab wahi sarhad hai">
+"Kotlin Multiplatform wale project mein aap kya share karoge?"
+
+Presentation ki parat tak sab kuch, aur UI nahi. Models, padtal ke niyam, karobar ke niyam, networking aur
+repository saada Kotlin hain jinmein todne layak koi platform ki parampara nahi hai, aur wo zyadatar code
+hain aur wahi hissa hain jiske do apps ke beech alag ho jane ka sabse zyada khatra hai. Usse zyadatar faayda
+mil jata hai aur koi behas nahi hoti.
+
+UI wahin hai jahan main default se rukunga. Compose Multiplatform UIKit se jodne ke bajaye apne hi widgets
+banata hai, to share UI har platform par ek jaisa dikhta hai — aur ek jaisa wo nahi hai jo iOS wale users
+chahte hain: peeche jane ka ishara, scroll ki chaal aur system ke chunaav, sab alag hain, aur unhe ek-ek
+karke milana wahi kaam dobara khada kar deta hai jisse aap bach rahe the. Aise apps hain jahan wo sauda sahi
+hai, zyadatar andaruni ya saamagri wale. Aur main faisla jaldi karunga, kyunki KMP jo libraries badalwata
+hai — Retrofit ke bajaye Ktor, Hilt ke bajaye Koin — wo baad mein badalne par har class ko chhooti hain.
+</Interview>

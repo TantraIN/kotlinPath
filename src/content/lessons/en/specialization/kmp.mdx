@@ -1,0 +1,172 @@
+---
+title: Kotlin Multiplatform and Compose Multiplatform
+description: KMP shares logic, not UI, and that boundary is the decision. Teams that try to share everything get an app that is awkward on both platforms and slower to build than two of them.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Kotlin Multiplatform compiles **shared Kotlin** to Android, iOS, desktop and web. What is worth sharing
+is the part with no platform in it — models, validation, networking, the repository layer. What is
+usually not worth sharing is the UI, because that is where each platform's conventions live.
+</KeyIdea>
+
+## The source set layout
+
+```text title="Structure" numbered
+shared/src/commonMain/     compiles everywhere; no platform APIs
+shared/src/androidMain/    JVM and Android APIs available
+shared/src/iosMain/        Objective-C and Swift interop available
+```
+
+```kotlin title="build.gradle.kts" numbered
+kotlin {
+    androidTarget()
+    listOf(iosX64(), iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework { baseName = "Shared"; isStatic = true }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            implementation(libs.ktor.client.core)          // multiplatform
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
+        }
+        androidMain.dependencies { implementation(libs.ktor.client.okhttp) }
+        iosMain.dependencies    { implementation(libs.ktor.client.darwin) }
+    }
+}
+```
+
+The library choices follow from `commonMain` having no platform: Ktor instead of Retrofit, SQLDelight or
+Room-KMP instead of plain Room, `kotlinx.datetime` instead of `java.time`. That is the real adoption
+cost — not learning KMP, but replacing the parts of your stack that are JVM-only.
+
+Hilt is one of those. As the DI lesson said, Dagger generates JVM code, so shared code uses Koin, manual
+DI, or kotlin-inject.
+
+## `expect` and `actual`
+
+```kotlin title="commonMain" numbered
+expect class Platform() {
+    val name: String
+}
+
+expect fun randomUuid(): String
+```
+
+```kotlin title="androidMain" numbered
+actual class Platform actual constructor() {
+    actual val name: String = "Android ${Build.VERSION.SDK_INT}"
+}
+
+actual fun randomUuid(): String = java.util.UUID.randomUUID().toString()
+```
+
+`expect`/`actual` is the escape hatch for the small amount that genuinely differs. Use it sparingly: a
+codebase where every third declaration is `expect` has not shared anything, it has written the same code
+twice with extra ceremony.
+
+The alternative that scales better is an interface in `commonMain` and an implementation injected per
+platform — the same inversion the DI phase argued for, and it composes better because the platform code
+does not have to match a fixed shape.
+
+<Quiz
+  question="A team shares their entire app including UI with Compose Multiplatform. iOS users complain it feels wrong — the back gesture, the scroll physics, the date picker, the way lists bounce. The team says it looks identical to the design. What went wrong?"
+  options={[
+    "Compose Multiplatform's iOS renderer is unfinished and will fix this",
+    "Looking identical was the goal and it should not have been. iOS users expect iOS conventions, and Compose renders its own widgets rather than adopting native ones — so sharing the UI trades a familiar feel for shared code, which is the right trade for some apps and not most",
+    "They needed to enable `UIKitInteropProperties` for native controls"
+  ]}
+  answer={1}
+  explanation="This is a product decision that got made by accident through a technical one. Compose Multiplatform draws its own widgets on a Skia canvas rather than mapping to UIKit, which is exactly why it can look identical across platforms — and identical is not what iOS users are asking for. Navigation gestures, scroll deceleration, the system date and share pickers, haptics and typography conventions all differ, and matching them individually recreates the platform-specific work you were avoiding. There are apps where the trade is right: internal tools, content-first apps, anything where the brand is stronger than the platform convention. For a consumer app competing with native alternatives, the usual shape is shared logic and native UI — SwiftUI on iOS, Compose on Android — which keeps the majority of the code shared and lets each platform feel like itself."
+/>
+
+## Where the boundary usually sits
+
+| Layer | Share? |
+| --- | --- |
+| Models, validation, business rules | Yes — pure Kotlin, no platform |
+| Networking and serialisation | Yes — Ktor and kotlinx.serialization |
+| Database | Yes — SQLDelight or Room-KMP |
+| Repository and use cases | Yes |
+| `ViewModel`/presentation | Sometimes — `androidx.lifecycle` now has a KMP `ViewModel` |
+| UI | Usually not, unless the trade above is right for you |
+
+Sharing down to the presentation layer is the sweet spot most teams converge on: it is the majority of
+the code, it has the most duplication risk, and it has no platform conventions to violate.
+
+<Detail summary="What it costs, honestly">
+KMP is production-ready and not free.
+
+**Build times.** Compiling for iOS from Gradle is slow, and the Kotlin/Native compiler is slower than
+the JVM one. A shared module adds minutes.
+
+**Tooling.** Debugging shared code from Xcode works but is less comfortable than either native
+experience. Stack traces cross a boundary.
+
+**The iOS API surface.** Kotlin exports to Objective-C, so `sealed class` hierarchies, default arguments
+and generics degrade on the way out. `suspend` functions become completion handlers unless you wrap
+them, and `Flow` needs a helper to be usable from Swift. SKIE and KMP-NativeCoroutines exist to smooth
+this and are effectively required for a good Swift experience.
+
+**Library availability.** Most of what you need exists, but not everything, and a JVM-only dependency in
+`commonMain` is a hard stop rather than a workaround.
+
+The honest summary is that KMP pays off when there are genuinely two apps with the same rules and a team
+that maintains both. For one Android app that might have an iOS version someday, it is cost with no
+return yet — and the DI lesson's point applies: decide before the architecture is set, because migrating
+later touches every class.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the second is a product decision made by accident">
+**`expect`/`actual` everywhere.** That is writing it twice with ceremony, not sharing.
+
+**Sharing UI without deciding to.** iOS users notice conventions, not pixels.
+
+**A JVM-only dependency in `commonMain`.** Not a workaround; the module will not compile.
+
+**Ignoring the Swift API surface.** Sealed types and `suspend` degrade without SKIE or a wrapper.
+
+**Adopting KMP for a hypothetical second app.** All of the cost, none of the payoff.
+</Pitfall>
+
+## Practice
+
+1. Move one pure-Kotlin validator into `commonMain` and use it from both platforms.
+2. Replace a Retrofit call with Ktor in shared code.
+3. Write one `expect`/`actual` pair, then rewrite it as an injected interface and compare.
+4. Call a shared `suspend` function from Swift without SKIE, then with it.
+5. Time a clean build before and after adding an iOS target.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `commonMain` | Compiles everywhere; no platform APIs |
+| Library swaps | Ktor, SQLDelight, `kotlinx.datetime` — the real adoption cost |
+| Hilt | JVM-only; shared code uses Koin or kotlin-inject |
+| `expect`/`actual` | For the small amount that genuinely differs |
+| Injected interface | Scales better than `expect` for anything non-trivial |
+| Usual boundary | Share up to presentation; keep UI native |
+| Compose Multiplatform | Draws its own widgets; identical is not native |
+| Swift interop | Sealed types and `suspend` degrade; SKIE smooths it |
+| Build times | An iOS target costs minutes |
+| When it pays | Two real apps, same rules, one team |
+
+<Interview title="A question where the boundary is the answer">
+"What would you share in a Kotlin Multiplatform project?"
+
+Everything up to the presentation layer, and not the UI. Models, validation, business rules, networking
+and the repository are pure Kotlin with no platform conventions to violate, and they are the majority of
+the code and the part most likely to drift out of sync between two apps. That gets most of the benefit
+with none of the argument.
+
+The UI is where I would stop by default. Compose Multiplatform draws its own widgets rather than mapping
+to UIKit, so a shared UI looks identical across platforms — and identical is not what iOS users want:
+the back gesture, scroll physics and system pickers all differ, and matching them individually recreates
+the work you were avoiding. There are apps where that trade is right, mostly internal or content-first
+ones. And I would decide early, because the library swaps KMP forces — Ktor instead of Retrofit, Koin
+instead of Hilt — touch every class if you migrate later.
+</Interview>
