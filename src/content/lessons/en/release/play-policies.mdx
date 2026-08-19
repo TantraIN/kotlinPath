@@ -1,0 +1,138 @@
+---
+title: Play policies, target API and data safety
+description: Most policy problems are not disputes about what your app does. They are declarations that stopped matching it, or a deadline that passed while nobody was watching.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Play enforces two different kinds of rule. **Deadlines** — the target API level — are dated, published a
+year ahead, and stop you shipping updates. **Declarations** — data safety, permission use — are checked
+against what your app actually does, and a mismatch surfaces as enforcement months later.
+</KeyIdea>
+
+## The target API deadline
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    compileSdk = 36
+    defaultConfig {
+        minSdk = 24        // your choice: how old a device you support
+        targetSdk = 35     // Play's rule: how recent a behaviour set you opted into
+    }
+}
+```
+
+`targetSdk` says which platform behaviours you have adapted to — the background limits, the permission
+model, the storage rules. Play requires it to be within one year of the latest release, and the deadline
+moves every August:
+
+| Roughly | Requirement |
+| --- | --- |
+| Annually, ~August | New apps and updates must target the previous year's API level |
+| Existing apps below it | Cannot ship updates; remain installable but invisible to new users on newer devices |
+
+The consequence people miss is that missing the deadline does not remove your app — it freezes it. You
+cannot ship a fix, a security patch, or anything else until you raise `targetSdk` and handle whatever
+that platform version changed. Which is why a bump left until the week before the deadline is the worst
+version of the work.
+
+`minSdk` is unrelated to policy and is purely your decision about which devices to support. Raising it
+drops users; lowering it costs compatibility work.
+
+<Quiz
+  question="An app is removed from Play for a Data safety violation. The team insists they collect nothing beyond what they declared — no analytics of their own, and the form says so. What most likely happened?"
+  options={[
+    "Play made an error and an appeal will restore the listing",
+    "A dependency collects on its own. An ads SDK, an attribution SDK or Firebase Analytics arriving transitively all collect and share data the team never wrote code for — the declaration must cover what the app does including its SDKs, not only first-party code",
+    "The privacy policy URL was unreachable, which Play treats as a collection violation"
+  ]}
+  answer={1}
+  explanation="Data safety asks what the app collects, and Play evaluates the app, not the source you wrote. Third-party SDKs are the usual gap: an ads SDK collects an advertising ID and device information by design, an attribution SDK exists specifically to collect and share, and Firebase Analytics is added transitively by several other Firebase libraries and starts collecting on its own — the point the Firebase lesson made about inheriting a decision. So a team can be entirely honest about their own code and still have an inaccurate declaration. The practical check is to enumerate every dependency, read what each says it collects, and declare the union. An unreachable privacy policy is a separate violation with a separate notice, and it would not be described as a Data safety mismatch."
+/>
+
+## Declarations that must match
+
+| Declaration | What Play checks it against |
+| --- | --- |
+| Data safety | What your app and its SDKs actually collect and share |
+| Permissions | Whether a sensitive permission matches a core feature |
+| Target audience | Whether the app is designed for children, which changes the rules |
+| Ads | Whether the app contains ads, which affects placements |
+
+**Sensitive permissions** need a declared use that is a core feature, not a convenience. `QUERY_ALL_PACKAGES`,
+all-files access, SMS and call log access, background location and exact alarms all require a form and
+most requests are rejected — which is the platform lessons' point arriving as policy: if there is a
+narrower API, using the broad permission will not be approved.
+
+**Account deletion** is now required: any app with account creation must offer in-app deletion and a web
+URL for it. That is a build item, not a paperwork item, and it catches teams late.
+
+<Detail summary="What an enforcement email actually means">
+Play's actions are graded, and knowing which one you have received changes the response:
+
+- **Warning** — a policy issue with a deadline. Fix and resubmit; nothing is down yet.
+- **Rejection** — this specific build was refused. The live version is unaffected.
+- **Removal** — the listing is gone from search and install. Existing users keep the app.
+- **Suspension** — the app is gone and the developer account is at risk.
+- **Account termination** — every app, permanently, and Google does not allow a new account.
+
+The escalation is what matters: repeated violations move you up the ladder, so treating a warning as
+optional is how a team ends up at suspension for something individually minor.
+
+The appeal process is real and worth using when you believe the finding is wrong, but it is one form
+with limited back-and-forth. What helps is specificity: name the SDK, quote the code, link the screen. A
+generic "we do not do that" appeal rarely succeeds, because the reviewer is looking at behaviour they
+observed and needs something concrete to reconcile it with.
+</Detail>
+
+## Common mistakes
+
+<Pitfall title="Five, and the first freezes your app">
+**Leaving the `targetSdk` bump until the deadline.** You cannot ship anything until it is done.
+
+**Declaring only first-party collection.** Play evaluates the app, SDKs included.
+
+**Requesting a broad permission when a narrower API exists.** The declaration form will not save it.
+
+**Ignoring a warning.** Violations escalate; a warning is the cheapest point to act.
+
+**No in-app account deletion.** Required for any app with accounts, and it is engineering work.
+</Pitfall>
+
+## Practice
+
+1. Check your `targetSdk` against the current Play requirement and note the next deadline.
+2. List every dependency and what each collects; compare with your Data safety form.
+3. Find any sensitive permission in your manifest and identify the narrower API you could use.
+4. Read Play's account deletion requirement and check whether your app satisfies it.
+5. Raise `targetSdk` by one and fix everything that breaks, before it is urgent.
+
+## Recap
+
+| Thing | One line |
+| --- | --- |
+| `targetSdk` | Which platform behaviours you opted into |
+| The deadline | Annual; missing it freezes updates, not the app |
+| `minSdk` | Your decision, not policy |
+| Data safety | Must cover SDKs, not just your code |
+| Sensitive permissions | Need a core-feature justification; narrower API wins |
+| Account deletion | Required in-app and by URL; engineering work |
+| Warning | A deadline, and the cheapest point to act |
+| Rejection | This build only; the live version is fine |
+| Removal | Gone from the store; existing users keep it |
+| Escalation | Repeated violations move you up the ladder |
+
+<Interview title="A question about a declaration nobody wrote code for">
+"How would you avoid a Data safety violation?"
+
+By enumerating dependencies rather than reviewing our own code, because Play evaluates the app and most
+collection comes from SDKs nobody wrote. An ads SDK collects an advertising ID by design, an attribution
+SDK exists to collect and share, and Firebase Analytics arrives transitively with several other Firebase
+libraries and starts collecting immediately. A team can be completely honest about what they wrote and
+still have a declaration that does not match.
+
+So the check is a list of every dependency, what each one states it collects, and declaring the union.
+I would pair that with the related requirements that are engineering work rather than paperwork — in-app
+account deletion for any app with accounts, and a reachable privacy policy URL — and treat any warning
+as the point to act, since violations escalate and a warning is the cheapest rung on that ladder.
+</Interview>

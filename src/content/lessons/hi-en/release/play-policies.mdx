@@ -1,0 +1,142 @@
+---
+title: Play ki neetiyan, target API aur data safety
+description: Neeti ki zyadatar mushkilein is behas ki nahi hotin ki aapka app karta kya hai. Wo aisi ghoshnayein hain jo usse mel khana band kar chukin, ya aisi tareekh jo kisi ke dekhe bina nikal gayi.
+updated: 2026-08-18
+---
+
+<KeyIdea>
+Play do alag kism ke niyam manwata hai. **Tareekhein** — target API ka star — tay hain, saal bhar pehle
+chhapi jati hain, aur aapko updates bhejne se rok deti hain. **Ghoshnayein** — data safety, permissions ka
+istemal — usse milakar dekhi jati hain jo aapka app sach mein karta hai, aur bemel mahinon baad kisi
+karyavahi ki shakal mein saamne aata hai.
+</KeyIdea>
+
+## Target API wali tareekh
+
+```kotlin title="build.gradle.kts" numbered
+android {
+    compileSdk = 36
+    defaultConfig {
+        minSdk = 24        // aapka chunaav: kitna purana device aap sambhalte ho
+        targetSdk = 35     // Play ka niyam: kitne naye behaviour ko aapne mana
+    }
+}
+```
+
+`targetSdk` batata hai ki aapne platform ke kaun se behaviour ke hisab se khud ko dhala hai — peeche
+chalne ki hadein, permissions ki vyavastha, storage ke niyam. Play chahta hai ki wo taza release ke ek saal
+ke andar ho, aur wo tareekh har August khiskati hai:
+
+| Mote taur par | Shart |
+| --- | --- |
+| Har saal, ~August | Naye apps aur updates ko pichhle saal ka API star lena padta hai |
+| Usse neeche pade maujooda apps | Updates nahi bhej sakte; lage reh sakte hain par naye devices ke naye users ko dikhte nahi |
+
+Jo baat log chook jate hain wo ye hai ki tareekh chookne par aapka app hatta nahi — wo jam jata hai. Aap
+koi sudhaar, koi suraksha ka paiband, kuch bhi nahi bhej sakte jab tak `targetSdk` na badhao aur us platform
+ki version ne jo badla use sambhal na lo. Isiliye tareekh se ek hafte pehle tak taala gaya wo badlaav us
+kaam ka sabse bura roop hai.
+
+`minSdk` ka neeti se koi lena-dena nahi aur wo poori tarah aapka faisla hai ki kaun se devices sambhalne
+hain. Use badhana users chhodta hai; ghatana anukoolta ka kaam badhata hai.
+
+<Quiz
+  question="Kisi app ko Data safety ke ullanghan par Play se hata diya jata hai. Team adi hai ki wo apni ghoshna se zyada kuch jama nahi karte — apna koi analytics nahi, aur form mein wahi likha hai. Sabse sambhavit baat kya hui?"
+  options={[
+    "Play se galti hui aur appeal se listing laut aayegi",
+    "Koi dependency apne aap jama karti hai. Ads wali SDK, attribution wali SDK ya doosron ke saath aati Firebase Analytics, teenon wo data jama aur share karti hain jiske liye team ne koi code likha hi nahi — us ghoshna ko wo dhakna hai jo app karta hai, SDKs samet, sirf apna code nahi",
+    "Privacy policy ka URL pahunch se bahar tha, jise Play jama karne ka ullanghan manta hai"
+  ]}
+  answer={1}
+  explanation="Data safety puchta hai ki wo app kya jama karta hai, aur Play us app ko parakhta hai, us source ko nahi jo aapne likha. Bahari SDKs wahi aam chhed hain: ads wali SDK banawat se hi vigyapan ki id aur device ki jankari jama karti hai, attribution wali SDK hoti hi isliye hai ki jama aur share kare, aur Firebase Analytics kai doosri Firebase wali libraries ke saath apne aap aati hai aur khud jama karna shuru kar deti hai — wahi baat jo Firebase wale lesson ne virasat mein mile faisle ke baare mein kahi thi. To koi team apne code ke baare mein poori tarah imandaar ho sakti hai aur phir bhi uski ghoshna galat ho. Vyavharik padtal hai har dependency ginana, har ek kya jama karti hai ye padhna, aur un sabka jod ghoshit karna. Pahunch se bahar privacy policy alag ullanghan hai jiski alag soochna aati hai, aur use Data safety ka bemel kehkar nahi bataya jata."
+/>
+
+## Wo ghoshnayein jinhe mel khana hai
+
+| Ghoshna | Play kisse milakar dekhta hai |
+| --- | --- |
+| Data safety | Aapka app aur uski SDKs sach mein kya jama aur share karti hain |
+| Permissions | Koi samvedansheel permission kisi mukhya suvidha se mel khati hai ya nahi |
+| Lakshit log | App bachchon ke liye bana hai ya nahi, jisse niyam badal jate hain |
+| Vigyapan | App mein ads hain ya nahi, jisse jagahein badalti hain |
+
+**Samvedansheel permissions** ko aisa ghoshit istemal chahiye jo mukhya suvidha ho, suvidhajanak hona nahi.
+`QUERY_ALL_PACKAGES`, saari files ki pahunch, SMS tatha call log ki pahunch, peeche wali location aur pakke
+alarms, sabko form chahiye aur zyadatar maangein thukra di jati hain — aur yahi platform wale lessons ki
+baat neeti bankar aati hai: agar koi sankri API maujood hai, to chaudi permission manzoor nahi hogi.
+
+**Khata mitana** ab zaruri hai: jis app mein khata banta hai use app ke andar mitane ka raasta aur uske liye
+ek web ka URL dena padta hai. Wo kagzi nahi, banane ka kaam hai, aur teams ko der se pakadta hai.
+
+<Detail summary="Karyavahi wali email ka matlab asal mein kya hai">
+Play ki karyavahiyon mein darje hain, aur aapko kaun si mili ye janna jawab badal deta hai:
+
+- **Chetavani** — tareekh wali neeti ki baat. Theek karke dobara bhejiye; abhi kuch band nahi hua.
+- **Asweekriti** — yahi ek build thukraya gaya. Chal rahe roop par koi asar nahi.
+- **Hataya jana** — Listing khoj aur install se gayab. Maujooda users ke paas app rehta hai.
+- **Nilamban** — App gaya aur developer ka khata khatre mein.
+- **Khata khatam** — Har app, hamesha ke liye, aur Google naya khata banane nahi deta.
+
+Maayne ye chadhai rakhti hai: baar-baar ke ullanghan aapko upar ki seedhi par le jate hain, to chetavani ko
+vaikalpik manna hi wo tarika hai jisse koi team alag-alag dekhne par chhoti si baat ke liye nilamban tak
+pahunch jati hai.
+
+Appeal ki vidhi asli hai aur jab aapko lage ki faisla galat hai tab lene layak hai, par wo seemit baatcheet
+wala ek form hai. Madad byora karta hai: us SDK ka naam lijiye, wo code uddhrit kijiye, wo screen jodiye.
+"Hum aisa karte hi nahi" wali aam appeal shayad hi chalti hai, kyunki sameekshak us behaviour ko dekh raha
+hai jo usne dekha aur use usse milane ke liye kuch thos chahiye.
+</Detail>
+
+## Aam galtiyan
+
+<Pitfall title="Paanch, aur pehli aapka app jama deti hai">
+**`targetSdk` badhana tareekh tak taalna.** Jab tak wo na ho, aap kuch bhi nahi bhej sakte.
+
+**Sirf apna jama karna ghoshit karna.** Play us app ko parakhta hai, SDKs samet.
+
+**Sankri API hote hue chaudi permission maangna.** Wo ghoshna wala form use bachayega nahi.
+
+**Chetavani andekhi karna.** Ullanghan chadhte hain; chetavani kaam karne ka sabse sasta mauka hai.
+
+**App ke andar khata mitane ka raasta na hona.** Khaton wale har app ke liye zaruri, aur wo banane ka kaam
+hai.
+</Pitfall>
+
+## Abhyaas
+
+1. Apna `targetSdk` Play ki maujooda shart se milaiye aur agli tareekh likhiye.
+2. Har dependency aur wo kya jama karti hai, ginaiye; apne Data safety ke form se milaiye.
+3. Apne manifest mein koi samvedansheel permission dhoondhiye aur wo sankri API pehchaniye jo aap le sakte
+   the.
+4. Play ki khata mitane wali shart padhiye aur dekhiye ki aapka app us par khara utarta hai ya nahi.
+5. `targetSdk` ek badhaiye aur jo toote use theek kijiye, zaruri banne se pehle.
+
+## Doharav
+
+| Cheez | Ek line |
+| --- | --- |
+| `targetSdk` | Platform ke kaun se behaviour ko aapne mana |
+| Wo tareekh | Salana; chookne par updates jamte hain, app nahi |
+| `minSdk` | Aapka faisla, neeti nahi |
+| Data safety | SDKs ko bhi dhake, sirf aapka code nahi |
+| Samvedansheel permissions | Mukhya suvidha wali daleel chahiye; sankri API jeetti hai |
+| Khata mitana | App mein aur URL se, dono zaruri; banane ka kaam |
+| Chetavani | Ek tareekh, aur kaam karne ka sabse sasta mauka |
+| Asweekriti | Sirf ye build; chal raha roop theek hai |
+| Hataya jana | Store se gayab; maujooda users ke paas rehta hai |
+| Chadhai | Baar-baar ke ullanghan upar ki seedhi par le jate hain |
+
+<Interview title="Ek sawal, aisi ghoshna ka jiske liye kisi ne code likha hi nahi">
+"Data safety ka ullanghan aap kaise bachaoge?"
+
+Apna code dekhne ke bajaye dependencies ginakar, kyunki Play us app ko parakhta hai aur zyadatar jama karna
+un SDKs se aata hai jinhe kisi ne likha hi nahi. Ads wali SDK banawat se hi vigyapan ki id jama karti hai,
+attribution wali SDK hoti hi jama aur share karne ke liye hai, aur Firebase Analytics kai doosri Firebase
+wali libraries ke saath apne aap aati hai aur turant jama karna shuru kar deti hai. Koi team apne likhe ke
+baare mein poori tarah imandaar ho sakti hai aur phir bhi uski ghoshna mel na khaye.
+
+To padtal hai har dependency ki list, har ek kya jama karna batati hai, aur un sabka jod ghoshit karna. Uske
+saath main wo sharten rakhunga jo kagaz nahi, banane ka kaam hain — khaton wale har app ke liye app ke andar
+khata mitana, aur pahunch mein privacy policy ka URL — aur kisi bhi chetavani ko kaam karne ka mauka
+manunga, kyunki ullanghan chadhte hain aur chetavani us seedhi ki sabse sasti paydan hai.
+</Interview>
