@@ -1,0 +1,213 @@
+---
+title: Firestore, security rules and the sync loop
+description: This is the step where the app becomes shared. It is also the step where you write the only server-side code in the project — and the only thing standing between your data and everyone else.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Your security rules **are** your backend. There is no other server, no middleware, no
+place to add a check later. Every phone in the world can talk directly to your
+database, and the rules are the entire reason most of them cannot read your list.
+</KeyIdea>
+
+## The shape of the data
+
+```text title="Firestore layout" noGlossary
+lists/{listId}
+    name:      "Groceries"
+    members:   ["uid_asha", "uid_ravi"]     <- who may read and write
+    createdBy: "uid_asha"
+
+lists/{listId}/items/{itemId}
+    text:      "Bread"
+    done:      false
+    addedBy:   "uid_ravi"
+    updatedAt: 1755600000000
+```
+
+`members` is an array of uids on the parent document, and it is doing all the work.
+Membership is stored once, on the list, rather than repeated on every item — so
+adding a person is one write, and the rules for an item can look upward at its
+parent.
+
+## The rules
+
+```js title="firestore.rules" numbered
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember(listId) {
+      return request.auth != null
+        && request.auth.uid in get(/databases/$(database)/documents/lists/$(listId)).data.members;
+    }
+
+    match /lists/{listId} {
+      allow read:   if isMember(listId);
+      allow create: if request.auth != null
+                    && request.auth.uid in request.resource.data.members;
+      allow update: if isMember(listId);
+      allow delete: if request.auth.uid == resource.data.createdBy;
+
+      match /items/{itemId} {
+        allow read, write: if isMember(listId);
+      }
+    }
+  }
+}
+```
+
+Three details in there are worth slowing down for.
+
+`resource.data` is the document **as it is now**; `request.resource.data` is the
+document **as it would be after this write**. The `create` rule has to use the
+second, because there is no existing document to read.
+
+`get()` is a real read, billed and counted, and it runs on every item write. That is
+the price of checking membership on the parent, and it is normally worth it — but it
+is also why very hot subcollections sometimes duplicate `members` down onto each
+document instead.
+
+The `delete` rule is deliberately stricter than the rest: any member may edit the
+list, but only the person who created it may destroy it.
+
+<Quiz
+  question="A team ships rules that read `allow read, write: if request.auth != null;` and plans to tighten them after launch. The app works correctly, and the client only ever queries lists the user is a member of."
+  options={[
+    "This is fine while the app is small — an attacker would need to reverse engineer the client first",
+    "Any signed-in user can read and write every document in the database. The client's queries are irrelevant, because nothing forces a caller to use your client: the project id is in the APK, anyone can sign in anonymously with the SDK and query the collection directly, and the rules are the only thing that would have stopped them",
+    "It is safe as long as anonymous authentication is disabled in the console"
+  ]}
+  answer={1}
+  explanation="Firestore is reachable directly from any client that knows the project id, and that id ships inside every APK, so the queries your app happens to make constrain your app and nothing else — a few lines in a script against the same SDK read whatever the rules allow. `request.auth != null` only asserts that someone signed in, which any stranger can do in seconds, so it authorises the entire database to the entire world of signed-in users. Turning off anonymous auth does not help either, because a Google sign-in is equally easy to obtain and equally anonymous from your database's point of view. This is why rules are not a hardening step to do later: until they are right, there is no access control at all."
+/>
+
+Test rules in the console's Rules Playground before you deploy them, and deploy with
+`firebase deploy --only firestore:rules` so they are in version control rather than
+edited in a browser tab.
+
+## Pulling: the server writes into Room
+
+```kotlin title="data/SyncManager.kt" numbered
+fun observeItems(listId: String): Flow<Unit> = callbackFlow {
+    val registration = firestore.collection("lists").document(listId).collection("items")
+        .addSnapshotListener { snapshot, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            val docs = snapshot?.documents.orEmpty()
+            launch {
+                dao.upsert(docs.map { it.toObject<ItemDto>()!!.toEntity(it.id, listId) })
+                dao.deleteMissing(listId, docs.map { it.id })   // deletions are absences
+            }
+        }
+    awaitClose { registration.remove() }        // or it listens, and bills, forever
+}
+```
+
+Notice that this flow emits `Unit`. It has no result the UI wants, because the UI is
+not listening to it — it is a pump that moves documents into Room, and the screen
+finds out because Room's `Flow` re-emits.
+
+`deleteMissing` handles the case Firestore does not announce loudly: a document
+someone else deleted simply stops appearing. Without that line, deleted items live
+forever on every other device.
+
+## Pushing: local edits that must not be lost
+
+```kotlin title="sync/SyncWorker.kt" numbered
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted params: WorkerParameters,
+    private val dao: ItemDao,
+    private val firestore: FirebaseFirestore,
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = try {
+        for (item in dao.pending()) {
+            firestore.collection("lists").document(item.listId)
+                .collection("items").document(item.id)
+                .set(item.toDto(), SetOptions.merge())        // merge, not replace
+                .await()
+            dao.upsert(listOf(item.copy(pendingSync = false)))
+        }
+        Result.success()
+    } catch (e: FirebaseFirestoreException) {
+        if (e.code == PERMISSION_DENIED) Result.failure() else Result.retry()
+    }
+}
+```
+
+The `catch` is the part that is usually written as a bare `Result.retry()`, and that
+is wrong in one specific case. A permission error will fail identically forever, so
+retrying it burns battery on a schedule until the user uninstalls. `retry` is for
+things that might succeed later — no network, a timeout, a server error. `failure`
+is for things that will not.
+
+<Detail summary="Conflicts, and the honest limits of last-write-wins">
+Two people edit the same item while both are offline. Both sync. One wins.
+
+We resolve on `updatedAt`: the write with the newer timestamp is kept. That is
+last-write-wins, and its two weaknesses are worth stating rather than discovering.
+
+**A wrong clock wins.** A phone whose date is a day ahead beats every honest edit
+until it is corrected. For a shopping list this is a shrug; for anything with a
+ledger it is not.
+
+**The loser is gone silently.** Nobody is told their edit was discarded. If losing
+an edit matters, the fix is not a cleverer timestamp — it is to stop overwriting
+whole documents. Write intents instead of states (`add one`, `mark done`) and apply
+them in a `runTransaction`, so two concurrent edits compose rather than compete.
+
+For Saathi, `SetOptions.merge()` already softens the worst of it: two people editing
+different fields of the same item both survive, because merge writes only the fields
+present rather than replacing the document.
+</Detail>
+
+## Wiring it up
+
+```kotlin title="Scheduling the push" numbered
+fun enqueue(workManager: WorkManager) {
+    workManager.enqueueUniqueWork(
+        "sync",
+        ExistingWorkPolicy.KEEP,                         // one queued sync is enough
+        OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build(),
+    )
+}
+```
+
+`ExistingWorkPolicy.KEEP` is doing real work here. Adding ten items offline enqueues
+ten requests; `KEEP` collapses them into the one that is already waiting, and that
+one worker drains everything `pending()` returns.
+
+<Pitfall title="Five, and the first one is a security bug rather than a bug">
+**Permissive rules with a plan to tighten later.** Until the rules are right, there
+is no access control. Write them before the first real write.
+
+**Forgetting `awaitClose`.** The snapshot listener keeps running and keeps billing
+reads after the screen is gone.
+
+**Treating a missing document as nothing.** Deletions arrive as absences. Reconcile
+the full set, or deleted items never disappear.
+
+**`Result.retry()` on a permission error.** It fails identically forever, on a
+backoff schedule, on the user's battery.
+
+**Replacing documents instead of merging.** Two people editing different fields of
+the same item, and one of them silently loses their field.
+</Pitfall>
+
+## Checkpoint
+
+| Check | How you know |
+| --- | --- |
+| Rules are deployed | The Rules Playground denies a non-member read |
+| Two devices sync | An edit on one appears on the other within a second |
+| Deletions propagate | Deleting on one removes it on the other |
+| Offline edits survive | Add offline, force-stop the app, reconnect, it arrives |
+| Listeners are cleaned up | Leaving the screen stops the reads in the console |
+
+Next: the graph — one place that decides what gets built, once, and how long it lives.

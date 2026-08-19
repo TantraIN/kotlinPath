@@ -1,0 +1,215 @@
+---
+title: Firestore, suraksha ke niyam aur sync ka chakkar
+description: Yahi wo step hai jahan app shared banta hai. Yahi wo step bhi hai jahan aap is project ka akela server wala code likhte hain — aur wahi akeli cheez hai jo aapke data aur baaki duniya ke beech khadi hai.
+updated: 2026-08-19
+---
+
+<KeyIdea>
+Aapke suraksha ke niyam **hi** aapka backend hain. Koi doosra server nahi, koi beech
+ka padaav nahi, koi jagah nahi jahan baad mein koi parakh jodi ja sake. Duniya ka har
+phone seedhe aapke database se baat kar sakta hai, aur unmein se zyadatar aapki list
+kyon nahi padh paate, iski poori wajah wo niyam hain.
+</KeyIdea>
+
+## Data ki shakl
+
+```text title="Firestore ki banaavat" noGlossary
+lists/{listId}
+    name:      "Groceries"
+    members:   ["uid_asha", "uid_ravi"]     <- kaun padh aur likh sakta hai
+    createdBy: "uid_asha"
+
+lists/{listId}/items/{itemId}
+    text:      "Bread"
+    done:      false
+    addedBy:   "uid_ravi"
+    updatedAt: 1755600000000
+```
+
+`members` oopar wale document par uids ki ek kataar hai, aur saara kaam wahi kar rahi
+hai. Sadasyata har cheez par dohrai nahi jaati, list par ek baar rakhi jaati hai — to
+kisi ko jodna ek likhna hai, aur kisi item ke niyam apne oopar wale ko dekh sakte hain.
+
+## Niyam
+
+```js title="firestore.rules" numbered
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember(listId) {
+      return request.auth != null
+        && request.auth.uid in get(/databases/$(database)/documents/lists/$(listId)).data.members;
+    }
+
+    match /lists/{listId} {
+      allow read:   if isMember(listId);
+      allow create: if request.auth != null
+                    && request.auth.uid in request.resource.data.members;
+      allow update: if isMember(listId);
+      allow delete: if request.auth.uid == resource.data.createdBy;
+
+      match /items/{itemId} {
+        allow read, write: if isMember(listId);
+      }
+    }
+  }
+}
+```
+
+Ismein teen baatein thehrkar dekhne layak hain.
+
+`resource.data` wo document hai **jaisa abhi hai**; `request.resource.data` wo document
+hai **jaisa is likhne ke baad hoga**. `create` wale niyam ko doosra hi lena padta hai,
+kyonki padhne ko koi maujood document hai hi nahi.
+
+`get()` asli padhai hai, jiske paise lagte hain aur ginti hoti hai, aur wo har item ke
+likhne par chalti hai. Oopar wale par sadasyata parakhne ki yahi keemat hai, aur wo
+aamtaur par vasool ho jaati hai — par isi wajah se bahut garam subcollections
+kabhi-kabhi `members` ko har document par dohra bhi deti hain.
+
+`delete` wala niyam jaanboojhkar baakiyon se sakht hai: koi bhi sadasya list badal
+sakta hai, par use mita sirf wahi sakta hai jisne banai.
+
+<Quiz
+  question="Koi team `allow read, write: if request.auth != null;` wale niyam bhej deti hai aur sochti hai ki launch ke baad kasenge. App sahi chalta hai, aur client hamesha sirf un lists ki query karta hai jinka user sadasya hai."
+  options={[
+    "App chhota hai tab tak yeh theek hai — hamlaawar ko pehle client ultakar samajhna padega",
+    "Koi bhi signed in user database ka har document padh aur likh sakta hai. Client ki queries se koi matlab nahi, kyonki kisi ko aapka client istemaal karne par majboor nahi kiya ja sakta: project ki pehchaan APK mein hai, koi bhi SDK se benaam sign in karke seedhe collection query kar sakta hai, aur unhein rokne wali akeli cheez wo niyam hi the",
+    "Jab tak console mein benaam pehchaan band hai, yeh surakshit hai"
+  ]}
+  answer={1}
+  explanation="Firestore tak har us client se seedhe pahuncha ja sakta hai jo project ki pehchaan jaanta ho, aur wo pehchaan har APK ke bheetar jaati hai, to aapka app jo queries karta hai wo sirf aapke app ko baandhti hain aur kisi ko nahi — usi SDK ke saath script ki kuchh lainein wo sab padh leti hain jo niyam ijaazat dete hain. `request.auth != null` sirf itna kehta hai ki koi sign in hua, jo koi bhi anjaan secondon mein kar sakta hai, to wo poore database ki ijaazat signed in logon ki poori duniya ko de deta hai. Benaam pehchaan band karne se bhi baat nahi banti, kyonki Google se sign in karna utna hi aasaan hai aur aapke database ki nazar mein utna hi benaam. Isiliye niyam baad mein kasne wali cheez nahi hain: jab tak wo sahi na hon, koi rokthaam hai hi nahi."
+/>
+
+Niyamon ko bhejne se pehle console ke Rules Playground mein parkhiye, aur
+`firebase deploy --only firestore:rules` se bhejiye taki wo kisi browser ki khidki
+mein badle jaane ke bajay version control mein rahein.
+
+## Kheenchna: server Room mein likhta hai
+
+```kotlin title="data/SyncManager.kt" numbered
+fun observeItems(listId: String): Flow<Unit> = callbackFlow {
+    val registration = firestore.collection("lists").document(listId).collection("items")
+        .addSnapshotListener { snapshot, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            val docs = snapshot?.documents.orEmpty()
+            launch {
+                dao.upsert(docs.map { it.toObject<ItemDto>()!!.toEntity(it.id, listId) })
+                dao.deleteMissing(listId, docs.map { it.id })   // mitna yaani gairhaazri
+            }
+        }
+    awaitClose { registration.remove() }        // warna sunta rahega, aur paise katte rahenge
+}
+```
+
+Dhyaan dijiye ki yeh flow `Unit` deta hai. Iska koi nateeja UI ko nahi chahiye, kyonki
+UI ise sun hi nahi rahi — yeh ek pump hai jo documents ko Room mein daalta hai, aur
+screen ko pata isliye chalta hai ki Room ka `Flow` dobara bolta hai.
+
+`deleteMissing` wo maamla sambhalta hai jise Firestore zor se nahi bataata: kisi aur ka
+mitaya document bas aana band kar deta hai. Us line ke bina miti hui cheezein har
+doosre upkaran par hamesha ke liye zinda rehti hain.
+
+## Bhejna: wo sthaaniya badlaav jo khone nahi chahiye
+
+```kotlin title="sync/SyncWorker.kt" numbered
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted params: WorkerParameters,
+    private val dao: ItemDao,
+    private val firestore: FirebaseFirestore,
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = try {
+        for (item in dao.pending()) {
+            firestore.collection("lists").document(item.listId)
+                .collection("items").document(item.id)
+                .set(item.toDto(), SetOptions.merge())        // merge, jagah lena nahi
+                .await()
+            dao.upsert(listOf(item.copy(pendingSync = false)))
+        }
+        Result.success()
+    } catch (e: FirebaseFirestoreException) {
+        if (e.code == PERMISSION_DENIED) Result.failure() else Result.retry()
+    }
+}
+```
+
+`catch` wahi hissa hai jo aamtaur par sookhe `Result.retry()` ki tarah likha jaata hai,
+aur wo ek khaas maamle mein galat hai. Ijaazat wali error hamesha ek jaisi hi giregi, to
+use dobara aazmana battery ko ek tayshuda samay par tab tak jalata hai jab tak user app
+hata na de. `retry` un cheezon ke liye hai jo aage chalkar poori ho sakti hain — net
+nahi, samay beet jaana, server ki koi gadbadi. `failure` unke liye jo nahi hongi.
+
+<Detail summary="Takraav, aur aakhri likhe ki jeet ki imaandaar hadein">
+Do log wahi cheez badalte hain jab donon bina net hain. Donon sync karte hain. Ek jeetta
+hai.
+
+Hum `updatedAt` se suljhate hain: nayi muhar wala likha hua reh jaata hai. Yahi aakhri
+likhe ki jeet hai, aur uski do kamzoriyan dhoondhne ke bajay keh dena behtar hai.
+
+**Galat ghadi jeet jaati hai.** Jis phone ki taareekh ek din aage hai wo theek hone tak
+har imaandaar badlaav ko hara deta hai. Saude ki list ke liye yeh kandhe uchkane ki baat
+hai; kisi hisaab-kitaab ke liye nahi.
+
+**Haarne wala chupchaap chala jaata hai.** Kisi ko nahi bataya jaata ki uska badlaav
+phenk diya gaya. Agar koi badlaav khona maayne rakhta hai, to hal koi chaalak muhar nahi
+— hal yeh hai ki poore documents ki jagah lena band kijiye. Haalat nahi, iraade likhiye
+(`ek jodo`, `poora hua`) aur unhein `runTransaction` mein lagaiye, taki saath-saath hue
+do badlaav ladne ke bajay jud jaayein.
+
+Saathi ke liye `SetOptions.merge()` sabse bure hisse ko pehle hi naram kar deta hai: wahi
+cheez ke alag-alag khaane badalne wale donon log bach jaate hain, kyonki merge document
+ki jagah lene ke bajay sirf maujood khaane likhta hai.
+</Detail>
+
+## Ise jodna
+
+```kotlin title="Bhejne ko kataar mein daalna" numbered
+fun enqueue(workManager: WorkManager) {
+    workManager.enqueueUniqueWork(
+        "sync",
+        ExistingWorkPolicy.KEEP,                         // ek kataar mein pada sync kaafi hai
+        OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build(),
+    )
+}
+```
+
+`ExistingWorkPolicy.KEEP` yahan sach mein kaam kar raha hai. Bina net das cheezein jodna
+das maangein kataar mein daalta hai; `KEEP` unhein usi ek mein samet deta hai jo pehle se
+intezaar kar rahi hai, aur wahi ek worker `pending()` ka lautaya sab kuchh nipta deta hai.
+
+<Pitfall title="Paanch, aur pehli gadbadi nahi, suraksha ka chhed hai">
+**Dheele niyam, baad mein kasne ki yojana ke saath.** Jab tak niyam sahi na hon, koi
+rokthaam hai hi nahi. Unhein pehle asli likhne se pehle likh lijiye.
+
+**`awaitClose` bhoolna.** Screen ke jaane ke baad bhi snapshot ka listener chalta rehta
+hai aur padhne ke paise katwata rehta hai.
+
+**Gaayab document ko kuchh nahi maanna.** Mitna gairhaazri ki tarah aata hai. Poore
+jatthe ka milaan kijiye, warna miti cheezein kabhi gaayab nahi hotin.
+
+**Ijaazat wali error par `Result.retry()`.** Wo hamesha ek jaisi girti hai, ek tayshuda
+samay par, user ki battery par.
+
+**Merge ke bajay documents ki jagah lena.** Wahi cheez ke alag khaane badalte do log, aur
+unmein se ek chupchaap apna khaana kho deta hai.
+</Pitfall>
+
+## Parakh ka padaav
+
+| Parakh | Kaise pata chalega |
+| --- | --- |
+| Niyam bheje ja chuke hain | Rules Playground gair-sadasya ki padhai thukraata hai |
+| Do upkaran sync hote hain | Ek par kiya badlaav doosre par ek second mein dikhta hai |
+| Mitna aage pahunchta hai | Ek par mitane se doosre se bhi hat jaata hai |
+| Bina net ke badlaav bachte hain | Bina net jodiye, app jabran band kijiye, net laiye, wo pahunch jaata hai |
+| Listeners hataye jaate hain | Screen chhodne par console mein padhai ruk jaati hai |
+
+Aage: graph — ek jagah jo tay kare ki kya banega, ek baar, aur kitni der jiyega.

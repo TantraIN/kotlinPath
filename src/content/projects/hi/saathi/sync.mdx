@@ -1,0 +1,212 @@
+---
+title: Firestore, सुरक्षा के नियम और sync का चक्कर
+description: यही वह कदम है जहाँ ऐप साझा बनता है। यही वह कदम भी है जहाँ आप इस project का अकेला server वाला code लिखते हैं — और वही अकेली चीज है जो आपके data और बाकी दुनिया के बीच खड़ी है।
+updated: 2026-08-19
+---
+
+<KeyIdea>
+आपके सुरक्षा के नियम **ही** आपका backend हैं। कोई दूसरा server नहीं, कोई बीच का पड़ाव
+नहीं, कोई जगह नहीं जहाँ बाद में कोई परख जोड़ी जा सके। दुनिया का हर फोन सीधे आपके
+database से बात कर सकता है, और उनमें से ज्यादातर आपकी सूची क्यों नहीं पढ़ पाते, इसकी
+पूरी वजह वे नियम हैं।
+</KeyIdea>
+
+## Data की शक्ल
+
+```text title="Firestore की बनावट" noGlossary
+lists/{listId}
+    name:      "Groceries"
+    members:   ["uid_asha", "uid_ravi"]     <- कौन पढ़ और लिख सकता है
+    createdBy: "uid_asha"
+
+lists/{listId}/items/{itemId}
+    text:      "Bread"
+    done:      false
+    addedBy:   "uid_ravi"
+    updatedAt: 1755600000000
+```
+
+`members` ऊपर वाले document पर uids की एक कतार है, और सारा काम वही कर रही है। सदस्यता
+हर चीज पर दोहराई नहीं जाती, सूची पर एक बार रखी जाती है — तो किसी को जोड़ना एक लिखना
+है, और किसी item के नियम अपने ऊपर वाले को देख सकते हैं।
+
+## नियम
+
+```js title="firestore.rules" numbered
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember(listId) {
+      return request.auth != null
+        && request.auth.uid in get(/databases/$(database)/documents/lists/$(listId)).data.members;
+    }
+
+    match /lists/{listId} {
+      allow read:   if isMember(listId);
+      allow create: if request.auth != null
+                    && request.auth.uid in request.resource.data.members;
+      allow update: if isMember(listId);
+      allow delete: if request.auth.uid == resource.data.createdBy;
+
+      match /items/{itemId} {
+        allow read, write: if isMember(listId);
+      }
+    }
+  }
+}
+```
+
+इसमें तीन बातें ठहरकर देखने लायक हैं।
+
+`resource.data` वह document है **जैसा अभी है**; `request.resource.data` वह document है
+**जैसा इस लिखने के बाद होगा**। `create` वाले नियम को दूसरा ही लेना पड़ता है, क्योंकि
+पढ़ने को कोई मौजूद document है ही नहीं।
+
+`get()` असली पढ़ाई है, जिसके पैसे लगते हैं और गिनती होती है, और वह हर item के लिखने पर
+चलती है। ऊपर वाले पर सदस्यता परखने की यही कीमत है, और वह आमतौर पर वसूल हो जाती है —
+पर इसी वजह से बहुत गरम subcollections कभी-कभी `members` को हर document पर दोहरा भी देती हैं।
+
+`delete` वाला नियम जानबूझकर बाकियों से सख्त है: कोई भी सदस्य सूची बदल सकता है, पर उसे
+मिटा सिर्फ वही सकता है जिसने बनाई।
+
+<Quiz
+  question="कोई team `allow read, write: if request.auth != null;` वाले नियम भेज देती है और सोचती है कि launch के बाद कसेंगे। ऐप सही चलता है, और client हमेशा सिर्फ उन सूचियों की query करता है जिनका उपयोगकर्ता सदस्य है।"
+  options={[
+    "ऐप छोटा है तब तक यह ठीक है — हमलावर को पहले client उलटकर समझना पड़ेगा",
+    "कोई भी signed in उपयोगकर्ता database का हर document पढ़ और लिख सकता है। Client की queries से कोई मतलब नहीं, क्योंकि किसी को आपका client इस्तेमाल करने पर मजबूर नहीं किया जा सकता: project की पहचान APK में है, कोई भी SDK से बेनाम sign in करके सीधे collection query कर सकता है, और उन्हें रोकने वाली अकेली चीज वे नियम ही थे",
+    "जब तक console में बेनाम पहचान बंद है, यह सुरक्षित है"
+  ]}
+  answer={1}
+  explanation="Firestore तक हर उस client से सीधे पहुँचा जा सकता है जो project की पहचान जानता हो, और वह पहचान हर APK के भीतर जाती है, तो आपका ऐप जो queries करता है वे सिर्फ आपके ऐप को बाँधती हैं और किसी को नहीं — उसी SDK के साथ script की कुछ लाइनें वह सब पढ़ लेती हैं जो नियम इजाजत देते हैं। `request.auth != null` सिर्फ इतना कहता है कि कोई sign in हुआ, जो कोई भी अनजान सेकंडों में कर सकता है, तो वह पूरे database की इजाजत signed in लोगों की पूरी दुनिया को दे देता है। बेनाम पहचान बंद करने से भी बात नहीं बनती, क्योंकि Google से sign in करना उतना ही आसान है और आपके database की नजर में उतना ही बेनाम। इसीलिए नियम बाद में कसने वाली चीज नहीं हैं: जब तक वे सही न हों, कोई रोकथाम है ही नहीं।"
+/>
+
+नियमों को भेजने से पहले console के Rules Playground में परखिए, और
+`firebase deploy --only firestore:rules` से भेजिए ताकि वे किसी browser की खिड़की में
+बदले जाने के बजाय version control में रहें।
+
+## खींचना: server Room में लिखता है
+
+```kotlin title="data/SyncManager.kt" numbered
+fun observeItems(listId: String): Flow<Unit> = callbackFlow {
+    val registration = firestore.collection("lists").document(listId).collection("items")
+        .addSnapshotListener { snapshot, error ->
+            if (error != null) { close(error); return@addSnapshotListener }
+            val docs = snapshot?.documents.orEmpty()
+            launch {
+                dao.upsert(docs.map { it.toObject<ItemDto>()!!.toEntity(it.id, listId) })
+                dao.deleteMissing(listId, docs.map { it.id })   // मिटना यानी गैरहाजिरी
+            }
+        }
+    awaitClose { registration.remove() }        // वरना सुनता रहेगा, और पैसे कटते रहेंगे
+}
+```
+
+ध्यान दीजिए कि यह flow `Unit` देता है। इसका कोई नतीजा UI को नहीं चाहिए, क्योंकि UI इसे
+सुन ही नहीं रही — यह एक pump है जो documents को Room में डालता है, और screen को पता
+इसलिए चलता है कि Room का `Flow` दोबारा बोलता है।
+
+`deleteMissing` वह मामला सँभालता है जिसे Firestore जोर से नहीं बताता: किसी और का मिटाया
+document बस आना बंद कर देता है। उस लाइन के बिना मिटी हुई चीजें हर दूसरे उपकरण पर हमेशा
+के लिए जिंदा रहती हैं।
+
+## भेजना: वे स्थानीय बदलाव जो खोने नहीं चाहिए
+
+```kotlin title="sync/SyncWorker.kt" numbered
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted context: Context,
+    @Assisted params: WorkerParameters,
+    private val dao: ItemDao,
+    private val firestore: FirebaseFirestore,
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = try {
+        for (item in dao.pending()) {
+            firestore.collection("lists").document(item.listId)
+                .collection("items").document(item.id)
+                .set(item.toDto(), SetOptions.merge())        // merge, जगह लेना नहीं
+                .await()
+            dao.upsert(listOf(item.copy(pendingSync = false)))
+        }
+        Result.success()
+    } catch (e: FirebaseFirestoreException) {
+        if (e.code == PERMISSION_DENIED) Result.failure() else Result.retry()
+    }
+}
+```
+
+`catch` वही हिस्सा है जो आमतौर पर सूखे `Result.retry()` की तरह लिखा जाता है, और वह एक
+खास मामले में गलत है। इजाजत वाली error हमेशा एक जैसी ही गिरेगी, तो उसे दोबारा आजमाना
+बैटरी को एक तयशुदा समय पर तब तक जलाता है जब तक उपयोगकर्ता ऐप हटा न दे। `retry` उन चीजों
+के लिए है जो आगे चलकर पूरी हो सकती हैं — नेट नहीं, समय बीत जाना, server की कोई गड़बड़ी।
+`failure` उनके लिए जो नहीं होंगी।
+
+<Detail summary="टकराव, और आखिरी लिखे की जीत की ईमानदार हदें">
+दो लोग वही चीज बदलते हैं जब दोनों बिना नेट हैं। दोनों sync करते हैं। एक जीतता है।
+
+हम `updatedAt` से सुलझाते हैं: नई मुहर वाला लिखा हुआ रह जाता है। यही आखिरी लिखे की
+जीत है, और उसकी दो कमजोरियाँ ढूँढ़ने के बजाय कह देना बेहतर है।
+
+**गलत घड़ी जीत जाती है।** जिस फोन की तारीख एक दिन आगे है वह ठीक होने तक हर ईमानदार
+बदलाव को हरा देता है। सौदे की सूची के लिए यह कंधे उचकाने की बात है; किसी हिसाब-किताब
+के लिए नहीं।
+
+**हारने वाला चुपचाप चला जाता है।** किसी को नहीं बताया जाता कि उसका बदलाव फेंक दिया
+गया। अगर कोई बदलाव खोना मायने रखता है, तो हल कोई चालाक मुहर नहीं — हल यह है कि पूरे
+documents की जगह लेना बंद कीजिए। हालत नहीं, इरादे लिखिए (`एक जोड़ो`, `पूरा हुआ`) और
+उन्हें `runTransaction` में लगाइए, ताकि साथ-साथ हुए दो बदलाव लड़ने के बजाय जुड़ जाएँ।
+
+Saathi के लिए `SetOptions.merge()` सबसे बुरे हिस्से को पहले ही नरम कर देता है: वही चीज
+के अलग-अलग खाने बदलने वाले दोनों लोग बच जाते हैं, क्योंकि merge document की जगह लेने के
+बजाय सिर्फ मौजूद खाने लिखता है।
+</Detail>
+
+## इसे जोड़ना
+
+```kotlin title="भेजने को कतार में डालना" numbered
+fun enqueue(workManager: WorkManager) {
+    workManager.enqueueUniqueWork(
+        "sync",
+        ExistingWorkPolicy.KEEP,                         // एक कतार में पड़ा sync काफी है
+        OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build(),
+    )
+}
+```
+
+`ExistingWorkPolicy.KEEP` यहाँ सच में काम कर रहा है। बिना नेट दस चीजें जोड़ना दस माँगें
+कतार में डालता है; `KEEP` उन्हें उसी एक में समेट देता है जो पहले से इंतजार कर रही है,
+और वही एक worker `pending()` का लौटाया सब कुछ निपटा देता है।
+
+<Pitfall title="पाँच, और पहली गड़बड़ी नहीं, सुरक्षा का छेद है">
+**ढीले नियम, बाद में कसने की योजना के साथ।** जब तक नियम सही न हों, कोई रोकथाम है ही
+नहीं। उन्हें पहले असली लिखने से पहले लिख लीजिए।
+
+**`awaitClose` भूलना।** Screen के जाने के बाद भी snapshot का listener चलता रहता है और
+पढ़ने के पैसे कटवाता रहता है।
+
+**गायब document को कुछ नहीं मानना।** मिटना गैरहाजिरी की तरह आता है। पूरे जत्थे का
+मिलान कीजिए, वरना मिटी चीजें कभी गायब नहीं होतीं।
+
+**इजाजत वाली error पर `Result.retry()`।** वह हमेशा एक जैसी गिरती है, एक तयशुदा समय पर,
+उपयोगकर्ता की बैटरी पर।
+
+**Merge के बजाय documents की जगह लेना।** वही चीज के अलग खाने बदलते दो लोग, और उनमें से
+एक चुपचाप अपना खाना खो देता है।
+</Pitfall>
+
+## जाँच का पड़ाव
+
+| परख | कैसे पता चलेगा |
+| --- | --- |
+| नियम भेजे जा चुके हैं | Rules Playground गैर-सदस्य की पढ़ाई ठुकराता है |
+| दो उपकरण sync होते हैं | एक पर किया बदलाव दूसरे पर एक सेकंड में दिखता है |
+| मिटना आगे पहुँचता है | एक पर मिटाने से दूसरे से भी हट जाता है |
+| बिना नेट के बदलाव बचते हैं | बिना नेट जोड़िए, ऐप जबरन बंद कीजिए, नेट लाइए, वह पहुँच जाता है |
+| Listeners हटाए जाते हैं | Screen छोड़ने पर console में पढ़ाई रुक जाती है |
+
+आगे: graph — एक जगह जो तय करे कि क्या बनेगा, एक बार, और कितनी देर जिएगा।
